@@ -1,0 +1,76 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+p,
+li {
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-heading, inherit);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Anchor offsets for fixed header */
+section[id] {
+  scroll-margin-top: calc(var(--header-h) + 16px);
+}
+
+/* Media defaults */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Ссылки */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Focus styles (accessibility) */
+:where(a, button, input, textarea, select):focus {
+  outline: none;
+}
+
+:where(a, button, input, textarea, select):focus-visible {
+  outline: 3px solid rgba(233, 194, 182, 0.9);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

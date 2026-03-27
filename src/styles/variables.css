@@ -1,0 +1,50 @@
+:root {
+  /* Основная палитра — мягкая, нейтральная */
+  --bg-primary: #f7f4f0;
+  --bg-secondary: #eee7df;
+  --bg-card: #fdfbf8;
+
+  /* Акценты — спокойные, менее насыщенные */
+  --accent-powder: #e9c2b6;
+  --accent-mint: #cfdfd7;
+  --accent-sand: #e4cfb7;
+  --accent-peach: #f3d9c7;
+
+  /* Текст */
+  --text-primary: #403833;
+  --text-secondary: #72675e;
+  --text-light: #a09388;
+
+  /* Тени очень лёгкие */
+  --shadow-soft: 0 10px 25px rgba(0, 0, 0, 0.06);
+  --shadow-soft-lg: 0 18px 40px rgba(0, 0, 0, 0.08);
+  --shadow-soft-sm: 0 6px 14px rgba(0, 0, 0, 0.05);
+  --shadow-pressed: inset 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 22px 45px rgba(0, 0, 0, 0.1);
+  --shadow-shape: 0 16px 32px rgba(0, 0, 0, 0.12);
+
+  /* Градиенты карточек практически белые */
+  --gradient-card: linear-gradient(145deg,
+      rgba(255, 255, 255, 1) 0%,
+      rgba(255, 255, 255, 0.98) 45%,
+      rgba(249, 241, 232, 0.6) 100%);
+  --gradient-card-pressed: linear-gradient(145deg,
+      rgba(255, 255, 255, 1) 0%,
+      rgba(249, 241, 232, 0.9) 40%,
+      rgba(255, 255, 255, 1) 100%);
+
+  /* Градиенты */
+  --gradient-soft: linear-gradient(135deg, #faf7f3 0%, #f3ece4 100%);
+  --gradient-accent: linear-gradient(135deg, #f8b9aa 0%, #ffd9c2 100%);
+
+  /* Скругления */
+  --radius-sm: 16px;
+  --radius-md: 24px;
+  --radius-lg: 32px;
+  --radius-xl: 40px;
+
+  /* Layout helpers */
+  --container-max: 1200px;
+  --container-pad: clamp(16px, 4vw, 50px);
+  --header-h: 76px;
+}
