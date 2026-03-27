@@ -8,6 +8,7 @@ export default defineConfig({
   title: 'math-cms',
   projectId: '2hngrocd',
   dataset: 'production',
+  basePath: '/studio',
   plugins: [
     structureTool({
       structure: (S) =>

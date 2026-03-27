@@ -107,7 +107,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Некорректный класс' }, { status: 400 });
     }
 
-    if (rating && (!/^\d{1,2}$/.test(rating) || Number(rating) < 1 || Number(rating) > 10)) {
+    if (rating && (!/^\d{1,2}$/.test(rating) || Number(rating) < 0 || Number(rating) > 10)) {
       return NextResponse.json({ error: 'Некорректная оценка' }, { status: 400 });
     }
 
