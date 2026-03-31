@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope, Montserrat } from "next/font/google";
 import { draftMode } from "next/headers";
+import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
 import { Header, ModalPopup, BackToTop } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
@@ -119,6 +120,7 @@ export default async function RootLayout({
           </footer>
           <ModalPopup />
           <BackToTop />
+          <Analytics />
         </FormProvider>
       </body>
     </html>
