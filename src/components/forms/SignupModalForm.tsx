@@ -13,7 +13,6 @@ export default function SignupModalForm() {
     name: '',
     contact: '',
     grade: '',
-    rating: '',
     rtScore: '',
     comment: '',
     website: '',
@@ -42,11 +41,7 @@ export default function SignupModalForm() {
     if (!fields.grade.trim()) {
       newErrors.grade = true;
     }
-    
-    if (!fields.rating.trim()) {
-      newErrors.rating = true;
-    }
-    
+
     // Проверяем балл РТ только для 10-11 классов
     if ((fields.grade === '10' || fields.grade === '11') && !fields.rtScore.trim()) {
       newErrors.rtScore = true;
@@ -76,7 +71,6 @@ export default function SignupModalForm() {
           name: fields.name,
           contact: fields.contact,
           grade: fields.grade,
-          rating: fields.rating,
           rtScore: fields.rtScore,
           comment: fields.comment,
           website: fields.website,
@@ -91,7 +85,7 @@ export default function SignupModalForm() {
 
       if (response.ok) {
         setStatus('success');
-        setFields({ name: '', contact: '', grade: '', rating: '', rtScore: '', comment: '', website: '' });
+        setFields({ name: '', contact: '', grade: '', rtScore: '', comment: '', website: '' });
         setErrors({});
         setTimeout(() => {
           closeForm();
@@ -130,17 +124,6 @@ export default function SignupModalForm() {
             setErrors({ ...errors, rtScore: false });
           }
         }
-      }
-      return;
-    }
-
-    if (name === 'rating') {
-      const numericValue = value.replace(/\D/g, '');
-      const numValue = Number(numericValue);
-      
-      // Ограничение: 0-10
-      if (numericValue === '' || (numValue >= 0 && numValue <= 10)) {
-        setFields({ ...fields, rating: numericValue });
       }
       return;
     }
@@ -209,56 +192,42 @@ export default function SignupModalForm() {
           <label htmlFor="contact">Контакт</label>
           <ContactInput
             name="contact"
-            placeholder="+375... или @username"
+            placeholder="viber/telegram"
             value={fields.contact}
             onChange={handleChange}
             hasError={errors.contact}
           />
         </div>
 
-        <div className="modal-row modal-row-inline">
-          <div className="modal-row modal-row-small">
-            <label htmlFor="grade">Класс</label>
-            <input
-              id="grade"
-              type="text"
-              name="grade"
-              placeholder="1-11"
-              value={fields.grade}
-              onChange={handleChange}
-              className={errors.grade ? 'error-input' : ''}
-              inputMode="numeric"
-            />
-          </div>
-          <div className={`modal-row ${fields.grade === '10' || fields.grade === '11' ? 'modal-row-half' : 'modal-row-small'}`}>
-            <label htmlFor="rating">Оценка</label>
-            <input
-              id="rating"
-              type="text"
-              name="rating"
-              placeholder="0-10"
-              value={fields.rating}
-              onChange={handleChange}
-              className={errors.rating ? 'error-input' : ''}
-              inputMode="numeric"
-            />
-          </div>
-          {(fields.grade === '10' || fields.grade === '11') && (
-            <div className="modal-row modal-row-half">
-              <label htmlFor="rtScore">Балл РТ</label>
-              <input
-                id="rtScore"
-                type="text"
-                name="rtScore"
-                placeholder="0-100"
-                value={fields.rtScore}
-                onChange={handleChange}
-                className={errors.rtScore ? 'error-input' : ''}
-                inputMode="numeric"
-              />
-            </div>
-          )}
+        <div className="modal-row">
+          <label htmlFor="grade">Класс</label>
+          <input
+            id="grade"
+            type="text"
+            name="grade"
+            placeholder="1-11"
+            value={fields.grade}
+            onChange={handleChange}
+            className={errors.grade ? 'error-input' : ''}
+            inputMode="numeric"
+          />
         </div>
+
+        {(fields.grade === '10' || fields.grade === '11') && (
+          <div className="modal-row">
+            <label htmlFor="rtScore">Балл РТ</label>
+            <input
+              id="rtScore"
+              type="text"
+              name="rtScore"
+              placeholder="0-100"
+              value={fields.rtScore}
+              onChange={handleChange}
+              className={errors.rtScore ? 'error-input' : ''}
+              inputMode="numeric"
+            />
+          </div>
+        )}
 
         <div className="modal-row">
           <label htmlFor="comment">Комментарий</label>

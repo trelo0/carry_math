@@ -98,7 +98,7 @@ export default function SignupForm() {
           Контакт (телефон или Telegram)
           <ContactInput
             name="contact"
-            placeholder="+375... или @username"
+            placeholder="viber/telegram"
             value={formData.contact}
             onChange={handleChange}
             required
