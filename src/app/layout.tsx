@@ -68,6 +68,7 @@ export default async function RootLayout({
   const instagramUrl =
     siteSettings?.instagramUrl ??
     "https://www.instagram.com/carry_math?igsh=ZWRydWFwOGZjenh5&utm_source=qr";
+  const headerButtonText = siteSettings?.headerButtonText;
 
   return (
     <html lang="ru">
@@ -85,7 +86,7 @@ export default async function RootLayout({
               }),
             }}
           />
-          <Header siteTitle={siteSettings?.title} />
+          <Header siteTitle={siteSettings?.title} headerButtonText={headerButtonText} />
           {children}
           <footer className="site-footer" id="site-footer">
             <div className="footer-content">

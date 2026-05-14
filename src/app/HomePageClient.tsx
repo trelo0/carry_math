@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { TeacherCard } from '@/components';
 import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
-import { HomePageContent } from '@/lib/sanity';
+import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
 
 function useParallaxShapes() {
   useEffect(() => {
@@ -59,6 +59,7 @@ export default function HomePageClient({
   methodSteps,
   processSteps,
   problems,
+  siteSettings,
 }: {
   home: HomePageContent | null;
   courses: Course[];
@@ -66,6 +67,7 @@ export default function HomePageClient({
   methodSteps: MethodStep[];
   processSteps: ProcessStep[];
   problems: Problem[];
+  siteSettings?: SiteSettings | null;
 }) {
   useParallaxShapes();
   useRevealOnIntersect();
@@ -76,6 +78,7 @@ export default function HomePageClient({
 
   const heroTitle = home.heroTitle ?? '';
   const heroDescription = home.heroDescription ?? '';
+  const heroButtonText = siteSettings?.heroButtonText ?? 'Записаться на занятие';
 
   const problemsTitle = home.sectionProblemsTitle ?? '';
   const problemsSubtitle = home.sectionProblemsSubtitle ?? '';
@@ -114,7 +117,7 @@ export default function HomePageClient({
           <p className="hero-description">{heroDescription}</p>
           <div className="hero-buttons">
             <a href="#teachers" className="btn btn-primary">
-              Записаться на занятие
+              {heroButtonText}
             </a>
           </div>
         </div>
@@ -177,7 +180,7 @@ export default function HomePageClient({
 
             <div className={`teachers-grid teachers-${teachers.length}`}>
               {teachers.map((teacher) => (
-                <TeacherCard key={teacher._id} teacher={teacher} />
+                <TeacherCard key={teacher._id} teacher={teacher} buttonText={siteSettings?.teacherCardButtonText} />
               ))}
             </div>
           </div>

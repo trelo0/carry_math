@@ -7,18 +7,20 @@ import {
   getProblems,
   getProcessSteps,
   getTeachers,
+  getSiteSettings,
 } from '@/lib/sanity';
 
 export default async function HomePage() {
   const { isEnabled } = await draftMode();
 
-  const [home, courses, teachers, methodSteps, processSteps, problems] = await Promise.all([
+  const [home, courses, teachers, methodSteps, processSteps, problems, siteSettings] = await Promise.all([
     getHomePage({ preview: isEnabled }),
     getCourses({ preview: isEnabled }),
     getTeachers({ preview: isEnabled }),
     getMethodSteps({ preview: isEnabled }),
     getProcessSteps({ preview: isEnabled }),
     getProblems({ preview: isEnabled }),
+    getSiteSettings({ preview: isEnabled }),
   ]);
 
   if (!home) {
@@ -35,6 +37,7 @@ export default async function HomePage() {
       methodSteps={methodSteps}
       processSteps={processSteps}
       problems={problems}
+      siteSettings={siteSettings}
     />
   );
 }

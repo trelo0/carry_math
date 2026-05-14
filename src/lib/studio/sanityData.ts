@@ -32,6 +32,9 @@ export type SiteSettings = {
   footerDescription?: string;
   instagramUrl?: string;
   privacyPolicyUrl?: string;
+  headerButtonText?: string;
+  heroButtonText?: string;
+  teacherCardButtonText?: string;
 };
 
 export type HomePageContent = {
@@ -58,7 +61,10 @@ export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<S
       title,
       footerDescription,
       instagramUrl,
-      privacyPolicyUrl
+      privacyPolicyUrl,
+      headerButtonText,
+      heroButtonText,
+      teacherCardButtonText
     }`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:siteSettings'])

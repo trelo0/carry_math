@@ -5,9 +5,10 @@ import { urlFor } from '@/lib/sanity';
 
 interface TeacherCardProps {
   teacher: Teacher;
+  buttonText?: string;
 }
 
-export default function TeacherCard({ teacher }: TeacherCardProps) {
+export default function TeacherCard({ teacher, buttonText }: TeacherCardProps) {
   const { openForm } = useForm();
 
   const photoSrc =
@@ -123,7 +124,7 @@ export default function TeacherCard({ teacher }: TeacherCardProps) {
           onClick={handleTrialClick}
           disabled={isTrialBlocked}
         >
-          Записаться на пробное занятие
+          {buttonText || 'Записаться на пробное занятие'}
         </button>
       </div>
     </div>

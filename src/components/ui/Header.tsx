@@ -18,8 +18,10 @@ const FALLBACK_NAV: NavigationItem[] = [
 
 export function Header({
   siteTitle,
+  headerButtonText,
 }: {
   siteTitle?: string;
+  headerButtonText?: string;
 }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -150,7 +152,7 @@ export function Header({
 
       {isDesktop ? (
         <a href="#teachers" className={`header-cta btn btn-primary${scrolled ? " visible" : ""}`}>
-          Записаться
+          {headerButtonText || 'Записаться'}
         </a>
       ) : null}
 
@@ -200,7 +202,7 @@ export function Header({
             className="btn btn-primary mobile-menu-cta"
             onClick={() => setMenuOpen(false)}
           >
-            Записаться
+            {headerButtonText || 'Записаться'}
           </a>
         </div>
       </div>
