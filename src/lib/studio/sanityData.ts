@@ -1,6 +1,6 @@
 // src/lib/sanityData.ts
 import { groq } from 'next-sanity';
-import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
+import { Course, MethodStep, Problem, ProcessStep, Teacher, Review } from '@/data/types';
 import { getSanityClient } from './sanityClient';
 
 type FetchOptions = {
@@ -107,12 +107,7 @@ export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teach
     photo,
     "hasSpots": hasSpots,
     services,
-    trialLesson,
-    reviews[] {
-      _key,
-      image,
-      caption
-    }
+    trialLesson
   }`;
 
   const teachers: Teacher[] = await client.fetch(
@@ -178,5 +173,20 @@ export async function getProblems({ preview }: FetchOptions = {}): Promise<Probl
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:problem'])
+  );
+}
+
+// Получить отзывы
+export async function getReviews({ preview }: FetchOptions = {}): Promise<Review[]> {
+  const client = getClient({ preview });
+  return client.fetch(
+    groq`*[_type == "review"]{
+      _id,
+      image,
+      caption,
+      teacherName
+    } | order(_createdAt desc)`,
+    {},
+    getSanityFetchOptions({ preview }, ['sanity:review'])
   );
 }

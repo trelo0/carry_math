@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { TeacherCard } from '@/components';
 import ReviewsBlock from '@/components/ui/ReviewsBlock';
-import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
+import { Course, MethodStep, Problem, ProcessStep, Teacher, Review } from '@/data/types';
 import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
 
 function useParallaxShapes() {
@@ -61,6 +61,7 @@ export default function HomePageClient({
   processSteps,
   problems,
   siteSettings,
+  reviews,
 }: {
   home: HomePageContent | null;
   courses: Course[];
@@ -69,6 +70,7 @@ export default function HomePageClient({
   processSteps: ProcessStep[];
   problems: Problem[];
   siteSettings?: SiteSettings | null;
+  reviews: Review[];
 }) {
   useParallaxShapes();
   useRevealOnIntersect();
@@ -187,7 +189,7 @@ export default function HomePageClient({
           </div>
         </section>
 
-        <ReviewsBlock teachers={teachers} />
+        <ReviewsBlock reviews={reviews} />
 
         <section className="section" id="courses">
           <div className="container">

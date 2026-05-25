@@ -13,10 +13,18 @@ export interface Service {
     | 'none';
 }
 
+export interface Review {
+  _id: string;
+  image: any;
+  caption?: string;
+  teacherName?: string;
+}
+
 export interface TeacherReview {
   _key: string;
   image: any;
   caption?: string;
+  teacherName?: string;
 }
 
 export interface Teacher {
@@ -32,7 +40,6 @@ export interface Teacher {
     description: string;
   };
   services: Service[];
-  reviews?: TeacherReview[];
 }
 
 export interface Course {
