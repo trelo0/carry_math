@@ -49,6 +49,11 @@ export default defineConfig({
               .title('Как проходят занятия (шаги)')
               .schemaType('processStep')
               .child(S.documentTypeList('processStep').title('Шаги процесса')),
+            S.divider(),
+            S.listItem()
+              .title('Отзывы')
+              .schemaType('review')
+              .child(S.documentTypeList('review').title('Отзывы')),
           ]),
     }),
     visionTool(),
