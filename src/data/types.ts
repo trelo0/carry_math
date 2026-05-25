@@ -13,6 +13,12 @@ export interface Service {
     | 'none';
 }
 
+export interface TeacherReview {
+  _key: string;
+  image: any;
+  caption?: string;
+}
+
 export interface Teacher {
   _id: string; // обязательное для Sanity
   name: string;
@@ -26,6 +32,7 @@ export interface Teacher {
     description: string;
   };
   services: Service[];
+  reviews?: TeacherReview[];
 }
 
 export interface Course {

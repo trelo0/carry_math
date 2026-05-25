@@ -22,6 +22,27 @@ export default defineType({
     }),
 
     defineField({
+      name: 'reviews',
+      title: 'Отзывы (скриншоты)',
+      type: 'array',
+      of: [
+        defineArrayMember({
+          type: 'object',
+          fields: [
+            defineField({ name: 'image', title: 'Скриншот отзыва', type: 'image', options: { hotspot: true } }),
+            defineField({ name: 'caption', title: 'Подпись (необязательно)', type: 'string' }),
+          ],
+          preview: {
+            select: { media: 'image', title: 'caption' },
+            prepare({ media, title }) {
+              return { media, title: title || 'Отзыв' }
+            },
+          },
+        }),
+      ],
+    }),
+
+    defineField({
       name: 'services',
       title: 'Услуги',
       type: 'array',

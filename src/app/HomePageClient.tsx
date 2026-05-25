@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { TeacherCard } from '@/components';
+import ReviewsBlock from '@/components/ui/ReviewsBlock';
 import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
 import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
 
@@ -185,6 +186,8 @@ export default function HomePageClient({
             </div>
           </div>
         </section>
+
+        <ReviewsBlock teachers={teachers} />
 
         <section className="section" id="courses">
           <div className="container">

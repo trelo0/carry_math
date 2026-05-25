@@ -127,6 +127,7 @@ export default function TeacherCard({ teacher, buttonText }: TeacherCardProps) {
           {buttonText || 'Записаться на пробное занятие'}
         </button>
       </div>
+
     </div>
   );
 }
