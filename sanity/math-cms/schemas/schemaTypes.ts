@@ -5,6 +5,7 @@ import problem from './problem'
 import methodStep from './methodStep'
 import homePage from './homePage'
 import siteSettings from './siteSettings'
+import review from './review'
 
 export default [
   teacher,
@@ -14,4 +15,5 @@ export default [
   methodStep,
   homePage,
   siteSettings,
+  review,
 ]
