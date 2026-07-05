@@ -6,7 +6,8 @@ import "../styles/globals.css";
 import { Header, ModalPopup, BackToTop } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
 import { getSiteSettings } from "@/lib/sanity";
-import { getBaseUrlString, getMetadataBaseUrl } from "@/lib/siteUrl";
+import { buildSiteMetadata } from "@/lib/siteMetadata";
+import { getBaseUrlString } from "@/lib/siteUrl";
 
 const manrope = Manrope({
   subsets: ["latin", "cyrillic"],
@@ -19,37 +20,9 @@ const montserrat = Montserrat({
   variable: "--font-heading",
 });
 
-export const metadata: Metadata = {
-  title: "Math Future — онлайн школа математики",
-  description: "Онлайн школа математики для школьников и абитуриентов. Персональный подход, современные методики и удобный формат занятий.",
-  metadataBase: getMetadataBaseUrl(),
-  alternates: {
-    canonical: "/",
-  },
-  openGraph: {
-    title: "Math Future — онлайн школа математики",
-    description:
-      "Онлайн школа математики для школьников и абитуриентов. Персональный подход, современные методики и удобный формат занятий.",
-    type: "website",
-    locale: "ru_RU",
-    url: "/",
-    images: [
-      {
-        url: "/photo_2026-02-23_17-27-09.jpg",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Math Future — онлайн школа математики",
-    description:
-      "Онлайн школа математики для школьников и абитуриентов. Персональный подход, современные методики и удобный формат занятий.",
-    images: ["/photo_2026-02-23_17-27-09.jpg"],
-  },
-  icons: {
-    icon: "/icon.svg",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return buildSiteMetadata();
+}
 
 export default async function RootLayout({
   children,

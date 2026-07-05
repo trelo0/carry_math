@@ -40,6 +40,7 @@ export interface Teacher {
     description: string;
   };
   services: Service[];
+  reviews?: TeacherReview[];
 }
 
 export interface Course {

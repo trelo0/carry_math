@@ -2,8 +2,8 @@
 
 import { useEffect } from 'react';
 import { TeacherCard } from '@/components';
-import ReviewsBlock from '@/components/ui/ReviewsBlock';
-import { Course, MethodStep, Problem, ProcessStep, Teacher, Review } from '@/data/types';
+import TeacherReviewsBlock from '@/components/ui/TeacherReviewsBlock';
+import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
 import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
 
 function useParallaxShapes() {
@@ -61,7 +61,6 @@ export default function HomePageClient({
   processSteps,
   problems,
   siteSettings,
-  reviews,
 }: {
   home: HomePageContent | null;
   courses: Course[];
@@ -70,7 +69,6 @@ export default function HomePageClient({
   processSteps: ProcessStep[];
   problems: Problem[];
   siteSettings?: SiteSettings | null;
-  reviews: Review[];
 }) {
   useParallaxShapes();
   useRevealOnIntersect();
@@ -189,7 +187,19 @@ export default function HomePageClient({
           </div>
         </section>
 
-        <ReviewsBlock reviews={reviews} />
+        <section className="section" id="reviews">
+          <div className="container">
+            <div className="section-title">
+              <h2>Отзывы</h2>
+              <p>Они просто скрины, но зато настоящие 🙂</p>
+            </div>
+            <div className="teachers-reviews-grid">
+              {teachers.map((teacher) => (
+                <TeacherReviewsBlock key={`reviews-${teacher._id}`} teacher={teacher} />
+              ))}
+            </div>
+          </div>
+        </section>
 
         <section className="section" id="courses">
           <div className="container">

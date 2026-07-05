@@ -3,10 +3,10 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
-import { Review } from '@/data/types';
+import { Review, TeacherReview } from '@/data/types';
 import { urlFor } from '@/lib/sanity';
 
-type ReviewWithTeacher = Review & { teacherName?: string };
+type ReviewWithTeacher = (Review | TeacherReview) & { teacherName?: string };
 
 interface ReviewsSliderProps {
   reviews: ReviewWithTeacher[];
@@ -87,8 +87,8 @@ export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
               src = urlFor(review.image).width(900).url();
             }
             if (!src) return null;
-            const teacherLabel = review.teacherName || 'Преподаватель';
-            const studentName = review.caption || 'Отзыв';
+            const teacherLabel = (review.teacherName || '').trim() || 'Преподаватель';
+            const studentName = (review.caption || '').trim() || 'Отзыв';
 
             return (
               <div
@@ -149,11 +149,11 @@ export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
               src = urlFor(review.image).width(400).url();
             }
             if (!src) return null;
-            const teacherLabel = review.teacherName || 'Преподаватель';
-            const studentName = review.caption || 'Отзыв';
+            const teacherLabel = (review.teacherName || '').trim() || 'Преподаватель';
+            const studentName = (review.caption || '').trim() || 'Отзыв';
             return (
               <div
-                key={review._id}
+                key={('_id' in review ? review._id : review._key)}
                 className="review-card"
                 onClick={() => openLightbox(index)}
                 role="button"
@@ -165,7 +165,6 @@ export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
                   <div className="review-meta">
                     <span className="review-student">{studentName}</span>
                   </div>
-                  <span className="review-teacher chip">{teacherLabel}</span>
                 </div>
                 <div className="review-img-wrap">
                   <Image

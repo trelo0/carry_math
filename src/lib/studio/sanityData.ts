@@ -107,7 +107,12 @@ export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teach
     photo,
     "hasSpots": hasSpots,
     services,
-    trialLesson
+    trialLesson,
+    reviews[] {
+      _key,
+      image,
+      caption
+    }
   }`;
 
   const teachers: Teacher[] = await client.fetch(
