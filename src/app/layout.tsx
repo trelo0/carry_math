@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { Manrope, Montserrat } from "next/font/google";
+import { Manrope, Oswald } from "next/font/google";
 import { draftMode } from "next/headers";
 import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
 import { Header, ModalPopup, BackToTop } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
 import { getSiteSettings } from "@/lib/sanity";
+import { normalizeBrandName } from "@/lib/brand";
 import { buildSiteMetadata } from "@/lib/siteMetadata";
 import { getBaseUrlString } from "@/lib/siteUrl";
 
@@ -14,9 +15,9 @@ const manrope = Manrope({
   weight: ["400", "500", "600", "700"],
 });
 
-const montserrat = Montserrat({
+const oswald = Oswald({
   subsets: ["latin", "cyrillic"],
-  weight: ["500", "600", "700"],
+  weight: ["400", "500", "600", "700"],
   variable: "--font-heading",
 });
 
@@ -35,17 +36,19 @@ export default async function RootLayout({
   const siteUrl = getBaseUrlString();
   const normalizedSiteUrl = siteUrl.replace(/\/$/, "");
 
-  const title = siteSettings?.title ?? "Math Future";
+  const title = normalizeBrandName(siteSettings?.title);
   const footerDescription =
-    siteSettings?.footerDescription ?? "Современная онлайн-школа математики.";
+    siteSettings?.footerDescription ?? "Онлайн-школа для тех, кто готов побеждать.";
   const instagramUrl =
     siteSettings?.instagramUrl ??
-    "https://www.instagram.com/carry_math?igsh=ZWRydWFwOGZjenh5&utm_source=qr";
+    "https://www.instagram.com/district";
   const headerButtonText = siteSettings?.headerButtonText;
+  const modalTitle = siteSettings?.modalTitle;
+  const modalSubmitButtonText = siteSettings?.modalSubmitButtonText;
 
   return (
     <html lang="ru">
-      <body className={`${manrope.className} ${montserrat.variable}`}>
+      <body className={`${manrope.className} ${oswald.variable}`}>
         <FormProvider>
           <script
             type="application/ld+json"
@@ -65,6 +68,7 @@ export default async function RootLayout({
             <div className="footer-content">
               <div className="footer-brand">
                 <a href="#hero" className="site-logo">
+                  <span className="logo-icon" aria-hidden="true" />
                   {title}
                 </a>
                 <p>{footerDescription}</p>
@@ -92,7 +96,7 @@ export default async function RootLayout({
               <p>© {new Date().getFullYear()} {title}</p>
             </div>
           </footer>
-          <ModalPopup />
+          <ModalPopup modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
           <BackToTop />
           <Analytics />
         </FormProvider>

@@ -5,15 +5,16 @@ import { useEffect, useState } from "react";
 type NavigationItem = {
   label: string;
   href: string;
+  stub?: boolean;
 };
 
-const SECTION_IDS = ["hero", "process", "teachers", "courses",  "problems-method", "signup"] as const;
+const SECTION_IDS = ["hero", "teachers", "principles", "process"] as const;
 
-const FALLBACK_NAV: NavigationItem[] = [
-  { label: "Кому подойдёт", href: "#problems-method" },
-  { label: "Преподаватели", href: "#teachers" },
-  { label: "Программы", href: "#courses" },
+const NAV_ITEMS: NavigationItem[] = [
+  { label: "Наставники", href: "#teachers" },
+  { label: "Принципы", href: "#principles" },
   { label: "Как проходят занятия", href: "#process" },
+  { label: "Вакансии", href: "#", stub: true },
 ];
 
 export function Header({
@@ -26,11 +27,7 @@ export function Header({
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
-  const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>(
-    "hero",
-  );
-
-  const navItems = FALLBACK_NAV;
+  const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>("hero");
 
   useEffect(() => {
     const onScroll = () => {
@@ -95,7 +92,7 @@ export function Header({
 
   useEffect(() => {
     const onScroll = () => {
-      const offset = 90; // примерно высота хедера
+      const offset = 90;
       let current: (typeof SECTION_IDS)[number] = "hero";
 
       SECTION_IDS.forEach((id) => {
@@ -115,18 +112,35 @@ export function Header({
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  const handleNavClick = (item: NavigationItem, e: React.MouseEvent) => {
+    if (item.stub) {
+      e.preventDefault();
+      return;
+    }
+    setMenuOpen(false);
+  };
+
   return (
     <header className={`site-header${scrolled ? " scrolled" : ""}`}>
       <a href="#hero" className="site-logo">
-        {siteTitle ?? "Math Future"}
+        <span className="logo-icon" aria-hidden="true" />
+        {siteTitle ?? "District"}
       </a>
       <nav className="main-navigation" aria-label="Основная навигация">
         <ul>
-          {navItems.map((item) => (
-            <li key={item.href}>
+          {NAV_ITEMS.map((item) => (
+            <li key={item.label}>
               <a
                 href={item.href}
-                className={activeSection === (item.href.replace('#', '') as any) ? "active" : undefined}
+                className={
+                  !item.stub && activeSection === item.href.replace("#", "")
+                    ? "active"
+                    : item.stub
+                      ? "nav-stub"
+                      : undefined
+                }
+                onClick={(e) => handleNavClick(item, e)}
+                aria-disabled={item.stub ? true : undefined}
               >
                 {item.label}
               </a>
@@ -137,7 +151,7 @@ export function Header({
 
       <button
         type="button"
-        className="mobile-menu-button"
+        className={`mobile-menu-button${menuOpen ? " open" : ""}`}
         aria-label={menuOpen ? "Закрыть меню" : "Открыть меню"}
         aria-expanded={menuOpen}
         aria-controls="mobile-menu"
@@ -152,7 +166,7 @@ export function Header({
 
       {isDesktop ? (
         <a href="#teachers" className={`header-cta btn btn-primary${scrolled ? " visible" : ""}`}>
-          {headerButtonText || 'Записаться'}
+          {headerButtonText || "Записаться"}
         </a>
       ) : null}
 
@@ -174,7 +188,8 @@ export function Header({
               className="mobile-menu-logo"
               onClick={() => setMenuOpen(false)}
             >
-              {siteTitle ?? "Math Future"}
+              <span className="logo-icon" aria-hidden="true" />
+              {siteTitle ?? "District"}
             </a>
             <button
               type="button"
@@ -186,23 +201,24 @@ export function Header({
             </button>
           </div>
           <nav className="mobile-navigation" aria-label="Мобильная навигация">
-            {navItems.map((item) => (
+            {NAV_ITEMS.map((item) => (
               <a
-                key={item.href}
+                key={item.label}
                 href={item.href}
-                onClick={() => setMenuOpen(false)}
+                className={item.stub ? "nav-stub" : undefined}
+                onClick={(e) => handleNavClick(item, e)}
+                aria-disabled={item.stub ? true : undefined}
               >
                 {item.label}
               </a>
             ))}
-           
           </nav>
           <a
-            href="#signup"
+            href="#teachers"
             className="btn btn-primary mobile-menu-cta"
             onClick={() => setMenuOpen(false)}
           >
-            {headerButtonText || 'Записаться'}
+            {headerButtonText || "Записаться"}
           </a>
         </div>
       </div>

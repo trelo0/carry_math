@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { getSiteMetaContent } from "@/lib/siteMetadata";
 
-export const alt = "Math Future — онлайн школа математики";
+export const alt = "District — онлайн-школа";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -23,8 +23,8 @@ export default async function OpenGraphImage() {
           flexDirection: "column",
           justifyContent: "center",
           padding: "72px 80px",
-          background: "linear-gradient(135deg, #faf7f3 0%, #f3ece4 100%)",
-          color: "#403833",
+          background: "#0a0c10",
+          color: "#ffffff",
           fontFamily: "sans-serif",
         }}
       >
@@ -34,6 +34,8 @@ export default async function OpenGraphImage() {
             fontWeight: 700,
             lineHeight: 1.1,
             marginBottom: 28,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
           }}
         >
           {siteName}
@@ -42,7 +44,7 @@ export default async function OpenGraphImage() {
           style={{
             fontSize: 34,
             lineHeight: 1.4,
-            color: "#72675e",
+            color: "#a0a8b8",
             maxWidth: 900,
           }}
         >

@@ -1,11 +1,10 @@
 import HomePageClient from './HomePageClient';
 import { draftMode } from 'next/headers';
 import {
-  getCourses,
   getHomePage,
-  getMethodSteps,
-  getProblems,
+  getPrinciples,
   getProcessSteps,
+  getStats,
   getTeachers,
   getSiteSettings,
 } from '@/lib/sanity';
@@ -13,13 +12,12 @@ import {
 export default async function HomePage() {
   const { isEnabled } = await draftMode();
 
-  const [home, courses, teachers, methodSteps, processSteps, problems, siteSettings] = await Promise.all([
+  const [home, teachers, stats, principles, processSteps, siteSettings] = await Promise.all([
     getHomePage({ preview: isEnabled }),
-    getCourses({ preview: isEnabled }),
     getTeachers({ preview: isEnabled }),
-    getMethodSteps({ preview: isEnabled }),
+    getStats({ preview: isEnabled }),
+    getPrinciples({ preview: isEnabled }),
     getProcessSteps({ preview: isEnabled }),
-    getProblems({ preview: isEnabled }),
     getSiteSettings({ preview: isEnabled }),
   ]);
 
@@ -32,11 +30,10 @@ export default async function HomePage() {
   return (
     <HomePageClient
       home={home}
-      courses={courses}
       teachers={teachers}
-      methodSteps={methodSteps}
+      stats={stats}
+      principles={principles}
       processSteps={processSteps}
-      problems={problems}
       siteSettings={siteSettings}
     />
   );

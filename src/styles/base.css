@@ -7,20 +7,38 @@
 html {
   scroll-behavior: smooth;
   overflow-x: hidden;
+  min-height: 100%;
+  background-color: var(--site-bg-base);
+  background-image: var(--site-bg-gradient);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 
 body {
-  background: var(--bg-primary);
+  background: transparent;
   color: var(--text-primary);
   line-height: 1.6;
   overflow-x: hidden;
+  min-height: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image: var(--site-bg-glow), var(--site-bg-accent);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-position: top center;
+}
+
 p,
 li {
-  font-size: 15px;
+  font-size: 16px;
   letter-spacing: 0.01em;
 }
 
@@ -29,34 +47,31 @@ h2,
 h3,
 h4 {
   font-family: var(--font-heading, inherit);
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
-/* Anchor offsets for fixed header */
 section[id] {
   scroll-margin-top: calc(var(--header-h) + 16px);
 }
 
-/* Media defaults */
 img {
   max-width: 100%;
   height: auto;
 }
 
-/* Ссылки */
 a {
   color: inherit;
   text-decoration: none;
 }
 
-/* Focus styles (accessibility) */
 :where(a, button, input, textarea, select):focus {
   outline: none;
 }
 
 :where(a, button, input, textarea, select):focus-visible {
-  outline: 3px solid rgba(233, 194, 182, 0.9);
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 

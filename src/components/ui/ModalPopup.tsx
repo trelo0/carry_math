@@ -7,7 +7,13 @@ import { SignupModalForm } from '@/components';
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
 
-export default function ModalPopup() {
+export default function ModalPopup({
+  modalTitle,
+  modalSubmitButtonText,
+}: {
+  modalTitle?: string;
+  modalSubmitButtonText?: string;
+}) {
   const { isOpen, closeForm } = useForm();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const lastActiveRef = useRef<HTMLElement | null>(null);
@@ -119,11 +125,11 @@ export default function ModalPopup() {
         className="modal-content"
         role="dialog"
         aria-modal="true"
-        aria-label="Запись на занятие"
+        aria-label={modalTitle ?? 'Запись на занятие'}
         ref={contentRef}
         onClick={(e) => e.stopPropagation()}
       >
-        <SignupModalForm />
+        <SignupModalForm modalTitle={modalTitle} submitButtonText={modalSubmitButtonText} />
       </div>
     </div>
   );

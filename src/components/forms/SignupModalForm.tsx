@@ -4,7 +4,13 @@ import { useState, FormEvent } from 'react';
 import { useForm } from '@/contexts/FormContext';
 import ContactInput from './ContactInput';
 
-export default function SignupModalForm() {
+export default function SignupModalForm({
+  modalTitle,
+  submitButtonText,
+}: {
+  modalTitle?: string;
+  submitButtonText?: string;
+}) {
   const { formData, closeForm } = useForm();
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -145,7 +151,10 @@ export default function SignupModalForm() {
   return (
     <form className="modal-form" onSubmit={handleSubmit}>
       <div className="modal-header">
-        <h2 className="modal-title">Запись на занятие</h2>
+        <h2 className="modal-title">
+          <span className="logo-icon" aria-hidden="true" />
+          {modalTitle ?? 'Запись на занятие'}
+        </h2>
         <button className="modal-close" onClick={closeForm} aria-label="Закрыть">
           ×
         </button>
@@ -169,8 +178,8 @@ export default function SignupModalForm() {
               <span className="booking-value">{formData.teacher}</span>
             </div>
             <div className="booking-row">
-              <span className="booking-label">Пробное занятие:</span>
-              <span className="booking-price">{formData.price}</span>
+              <span className="booking-label">Тип занятия:</span>
+              <span className="booking-value">Пробный урок</span>
             </div>
           </div>
         )}
@@ -246,7 +255,7 @@ export default function SignupModalForm() {
           className="btn btn-primary modal-submit"
           disabled={isLoading}
         >
-          {isLoading ? 'Отправка...' : 'Отправить заявку'}
+          {isLoading ? 'Отправка...' : submitButtonText ?? 'Отправить заявку'}
         </button>
 
         {status === 'success' && (

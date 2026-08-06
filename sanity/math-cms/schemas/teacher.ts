@@ -2,7 +2,7 @@ import { defineType, defineField, defineArrayMember } from 'sanity'
 
 export default defineType({
   name: 'teacher',
-  title: 'Преподаватель',
+  title: 'Наставник',
   type: 'document',
   fields: [
     defineField({ name: 'name', title: 'Имя', type: 'string' }),
@@ -23,19 +23,32 @@ export default defineType({
 
     defineField({
       name: 'reviews',
-      title: 'Отзывы (скриншоты)',
+      title: 'Отзывы',
+      description: 'Скриншоты отзывов учеников. Показываются под карточкой преподавателя на сайте.',
       type: 'array',
       of: [
         defineArrayMember({
           type: 'object',
+          name: 'teacherReview',
+          title: 'Отзыв',
           fields: [
-            defineField({ name: 'image', title: 'Скриншот отзыва', type: 'image', options: { hotspot: true } }),
-            defineField({ name: 'caption', title: 'Подпись (необязательно)', type: 'string' }),
+            defineField({
+              name: 'image',
+              title: 'Скриншот отзыва',
+              type: 'image',
+              options: { hotspot: true },
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'caption',
+              title: 'Имя ученика / подпись',
+              type: 'string',
+            }),
           ],
           preview: {
             select: { media: 'image', title: 'caption' },
             prepare({ media, title }) {
-              return { media, title: title || 'Отзыв' }
+              return { media, title: title || 'Отзыв без подписи' }
             },
           },
         }),

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { getHomePage, getSiteSettings } from "@/lib/sanity";
+import { normalizeBrandName } from "@/lib/brand";
 import { getMetadataBaseUrl } from "@/lib/siteUrl";
 
 export async function getSiteMetaContent() {
@@ -8,13 +9,13 @@ export async function getSiteMetaContent() {
     getHomePage(),
   ]);
 
-  const siteName = siteSettings?.title?.trim() || "Math Future";
+  const siteName = normalizeBrandName(siteSettings?.title);
   const description =
     home?.heroDescription?.trim() ||
     siteSettings?.footerDescription?.trim() ||
-    "Онлайн школа математики для школьников и абитуриентов.";
+    "Онлайн-школа для тех, кто готов побеждать.";
 
-  const title = `${siteName} — онлайн школа математики`;
+  const title = `${siteName} — онлайн-школа`;
 
   return { siteName, title, description };
 }

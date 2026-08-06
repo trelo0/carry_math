@@ -13,13 +13,6 @@ export interface Service {
     | 'none';
 }
 
-export interface Review {
-  _id: string;
-  image: any;
-  caption?: string;
-  teacherName?: string;
-}
-
 export interface TeacherReview {
   _key: string;
   image: any;
@@ -28,11 +21,11 @@ export interface TeacherReview {
 }
 
 export interface Teacher {
-  _id: string; // обязательное для Sanity
+  _id: string;
   name: string;
   subject: string;
   description: string;
-  photo: any; // Sanity Image
+  photo: any;
   hasSpots: boolean;
   trialLesson: {
     price: string;
@@ -43,27 +36,21 @@ export interface Teacher {
   reviews?: TeacherReview[];
 }
 
-export interface Course {
+export interface Stat {
   _id: string;
-  icon: string;
+  value: string;
+  label: string;
+  order?: number;
+}
+
+export interface Principle {
+  _id: string;
   title: string;
   description: string;
   order?: number;
 }
 
-export interface MethodStep {
-  _id: string;
-  title: string;
-  description: string;
-}
-
 export interface ProcessStep {
-  _id: string;
-  title: string;
-  description: string;
-}
-
-export interface Problem {
   _id: string;
   title: string;
   description: string;

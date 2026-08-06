@@ -31,36 +31,27 @@ export default defineConfig({
               ),
             S.divider(),
             S.listItem()
-              .title('Преподаватели')
+              .title('Наставники')
               .schemaType('teacher')
-              .child(S.documentTypeList('teacher').title('Преподаватели')),
+              .child(S.documentTypeList('teacher').title('Наставники')),
             S.listItem()
-              .title('Курсы')
-              .schemaType('course')
-              .child(S.documentTypeList('course').title('Курсы')),
+              .title('Статистика')
+              .schemaType('stat')
+              .child(S.documentTypeList('stat').title('Статистика')),
             S.listItem()
-              .title('Проблемы')
-              .schemaType('problem')
-              .child(S.documentTypeList('problem').title('Проблемы')),
-            S.listItem()
-              .title('Система достижения (шаги)')
-              .schemaType('methodStep')
-              .child(S.documentTypeList('methodStep').title('Шаги методики')),
+              .title('Принципы')
+              .schemaType('principle')
+              .child(S.documentTypeList('principle').title('Принципы')),
             S.listItem()
               .title('Как проходят занятия (шаги)')
               .schemaType('processStep')
               .child(S.documentTypeList('processStep').title('Шаги процесса')),
-            S.divider(),
-            S.listItem()
-              .title('Отзывы')
-              .schemaType('review')
-              .child(S.documentTypeList('review').title('Отзывы')),
           ]),
     }),
     visionTool(),
   ],
   schema: {
-    types: schemaTypes,
+    types: schemaTypes as any,
   },
   document: {
     newDocumentOptions: (prev, {creationContext}) => {

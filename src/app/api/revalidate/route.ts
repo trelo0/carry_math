@@ -22,9 +22,8 @@ export async function POST(request: Request) {
     revalidateTag('sanity:siteSettings')
     revalidateTag('sanity:homePage')
     revalidateTag('sanity:teacher')
-    revalidateTag('sanity:course')
-    revalidateTag('sanity:problem')
-    revalidateTag('sanity:methodStep')
+    revalidateTag('sanity:stat')
+    revalidateTag('sanity:principle')
     revalidateTag('sanity:processStep')
 
     return NextResponse.json({ revalidated: true, tags: 'all' })

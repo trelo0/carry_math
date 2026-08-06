@@ -1,6 +1,6 @@
-// src/lib/sanityData.ts
+// src/lib/studio/sanityData.ts
 import { groq } from 'next-sanity';
-import { Course, MethodStep, Problem, ProcessStep, Teacher, Review } from '@/data/types';
+import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
 import { getSanityClient } from './sanityClient';
 
 type FetchOptions = {
@@ -31,27 +31,28 @@ export type SiteSettings = {
   title: string;
   footerDescription?: string;
   instagramUrl?: string;
-  privacyPolicyUrl?: string;
   headerButtonText?: string;
   heroButtonText?: string;
   teacherCardButtonText?: string;
+  modalTitle?: string;
+  modalSubmitButtonText?: string;
 };
 
 export type HomePageContent = {
+  heroEyebrow?: string;
   heroTitle?: string;
   heroDescription?: string;
-  signupTitle?: string;
-  signupDescription?: string;
   sectionTeachersTitle?: string;
-  sectionCoursesTitle?: string;
-  sectionProblemsTitle?: string;
-  sectionMethodTitle?: string;
-  sectionProcessTitle?: string;
   sectionTeachersSubtitle?: string;
-  sectionCoursesSubtitle?: string;
-  sectionProblemsSubtitle?: string;
-  sectionMethodSubtitle?: string;
+  sectionPrinciplesTitle?: string;
+  sectionPrinciplesSubtitle?: string;
+  sectionProcessTitle?: string;
   sectionProcessSubtitle?: string;
+  diagnosticEyebrow?: string;
+  diagnosticTitle?: string;
+  diagnosticText?: string;
+  diagnosticButtonText?: string;
+  diagnosticSteps?: { _key: string; title: string; text: string }[];
 };
 
 export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<SiteSettings | null> {
@@ -61,10 +62,11 @@ export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<S
       title,
       footerDescription,
       instagramUrl,
-      privacyPolicyUrl,
       headerButtonText,
       heroButtonText,
-      teacherCardButtonText
+      teacherCardButtonText,
+      modalTitle,
+      modalSubmitButtonText
     }`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:siteSettings'])
@@ -75,27 +77,26 @@ export async function getHomePage({ preview }: FetchOptions = {}): Promise<HomeP
   const client = getClient({ preview });
   return client.fetch(
     groq`*[_type == "homePage"] | order(_updatedAt desc)[0]{
+      heroEyebrow,
       heroTitle,
       heroDescription,
-      signupTitle,
-      signupDescription,
       sectionTeachersTitle,
-      sectionCoursesTitle,
-      sectionProblemsTitle,
-      sectionMethodTitle,
-      sectionProcessTitle,
       sectionTeachersSubtitle,
-      sectionCoursesSubtitle,
-      sectionProblemsSubtitle,
-      sectionMethodSubtitle,
-      sectionProcessSubtitle
+      sectionPrinciplesTitle,
+      sectionPrinciplesSubtitle,
+      sectionProcessTitle,
+      sectionProcessSubtitle,
+      diagnosticEyebrow,
+      diagnosticTitle,
+      diagnosticText,
+      diagnosticButtonText,
+      diagnosticSteps[]{ _key, title, text }
     }`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:homePage'])
   );
 }
 
-// Получить всех преподавателей
 export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teacher[]> => {
   const client = getClient({ preview });
 
@@ -123,37 +124,34 @@ export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teach
   return teachers;
 };
 
-// Получить курсы
-export async function getCourses({ preview }: FetchOptions = {}): Promise<Course[]> {
+export async function getStats({ preview }: FetchOptions = {}): Promise<Stat[]> {
   const client = getClient({ preview });
   return client.fetch(
-    groq`*[_type == "course"]{
+    groq`*[_type == "stat"]{
       _id,
-      icon,
+      value,
+      label,
+      order
+    } | order(coalesce(order, 9999) asc, _createdAt asc)`,
+    {},
+    getSanityFetchOptions({ preview }, ['sanity:stat'])
+  );
+}
+
+export async function getPrinciples({ preview }: FetchOptions = {}): Promise<Principle[]> {
+  const client = getClient({ preview });
+  return client.fetch(
+    groq`*[_type == "principle"]{
+      _id,
       title,
       description,
       order
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:course'])
+    getSanityFetchOptions({ preview }, ['sanity:principle'])
   );
 }
 
-// Получить шаги методики
-export async function getMethodSteps({ preview }: FetchOptions = {}): Promise<MethodStep[]> {
-  const client = getClient({ preview });
-  return client.fetch(
-    groq`*[_type == "methodStep"]{
-      _id,
-      title,
-      description
-    } | order(coalesce(order, 9999) asc, _createdAt asc)`,
-    {},
-    getSanityFetchOptions({ preview }, ['sanity:methodStep'])
-  );
-}
-
-// Получить шаги процесса
 export async function getProcessSteps({ preview }: FetchOptions = {}): Promise<ProcessStep[]> {
   const client = getClient({ preview });
   return client.fetch(
@@ -164,34 +162,5 @@ export async function getProcessSteps({ preview }: FetchOptions = {}): Promise<P
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:processStep'])
-  );
-}
-
-// Получить проблемы
-export async function getProblems({ preview }: FetchOptions = {}): Promise<Problem[]> {
-  const client = getClient({ preview });
-  return client.fetch(
-    groq`*[_type == "problem"]{
-      _id,
-      title,
-      description
-    } | order(coalesce(order, 9999) asc, _createdAt asc)`,
-    {},
-    getSanityFetchOptions({ preview }, ['sanity:problem'])
-  );
-}
-
-// Получить отзывы
-export async function getReviews({ preview }: FetchOptions = {}): Promise<Review[]> {
-  const client = getClient({ preview });
-  return client.fetch(
-    groq`*[_type == "review"]{
-      _id,
-      image,
-      caption,
-      teacherName
-    } | order(_createdAt desc)`,
-    {},
-    getSanityFetchOptions({ preview }, ['sanity:review'])
   );
 }

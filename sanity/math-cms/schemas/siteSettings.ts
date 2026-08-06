@@ -8,6 +8,7 @@ export default defineType({
     defineField({
       name: 'title',
       title: 'Название (логотип)',
+      description: 'Например: District',
       type: 'string',
       validation: (Rule) => Rule.required(),
     }),
@@ -19,11 +20,6 @@ export default defineType({
     defineField({
       name: 'instagramUrl',
       title: 'Instagram URL',
-      type: 'url',
-    }),
-    defineField({
-      name: 'privacyPolicyUrl',
-      title: 'Ссылка на политику конфиденциальности',
       type: 'url',
     }),
     defineField({
@@ -43,6 +39,18 @@ export default defineType({
       title: 'Текст кнопки в карточке преподавателя',
       type: 'string',
       initialValue: 'Записаться на пробное занятие',
+    }),
+    defineField({
+      name: 'modalTitle',
+      title: 'Заголовок модального окна записи',
+      type: 'string',
+      initialValue: 'Запись на занятие',
+    }),
+    defineField({
+      name: 'modalSubmitButtonText',
+      title: 'Текст кнопки отправки в модальном окне',
+      type: 'string',
+      initialValue: 'Отправить заявку',
     }),
   ],
 })

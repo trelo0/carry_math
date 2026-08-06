@@ -1,1 +1,1 @@
-export type { Teacher, Course, MethodStep, ProcessStep, Problem } from './types';
+export type { Teacher, Stat, Principle, ProcessStep } from './types';

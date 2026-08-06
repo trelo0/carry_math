@@ -3,10 +3,10 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
-import { Review, TeacherReview } from '@/data/types';
+import { TeacherReview } from '@/data/types';
 import { urlFor } from '@/lib/sanity';
 
-type ReviewWithTeacher = (Review | TeacherReview) & { teacherName?: string };
+type ReviewWithTeacher = TeacherReview & { teacherName?: string };
 
 interface ReviewsSliderProps {
   reviews: ReviewWithTeacher[];
@@ -153,7 +153,7 @@ export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
             const studentName = (review.caption || '').trim() || 'Отзыв';
             return (
               <div
-                key={('_id' in review ? review._id : review._key)}
+                key={review._key}
                 className="review-card"
                 onClick={() => openLightbox(index)}
                 role="button"

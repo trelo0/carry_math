@@ -1,30 +1,58 @@
 "use client";
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TeacherCard } from '@/components';
 import TeacherReviewsBlock from '@/components/ui/TeacherReviewsBlock';
-import { Course, MethodStep, Problem, ProcessStep, Teacher } from '@/data/types';
+import DiagnosticSection from '@/components/ui/DiagnosticSection';
+import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
 import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
+import { normalizeBrandName } from '@/lib/brand';
 
-function useParallaxShapes() {
-  useEffect(() => {
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    if (reduceMotion) return;
+const ROMAN_NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 
-    const shapes = document.querySelectorAll<HTMLElement>('.shape-sphere');
+function renderHeroHeadline(title: string) {
+  const accentPattern = /(победител[а-яё]*\.?)/gi;
 
-    const handleParallax = () => {
-      const scrollY = window.scrollY;
-      shapes.forEach((shape) => {
-        const speed = parseFloat(shape.dataset.speed || '0.5');
-        const yPos = -(scrollY * speed);
-        shape.style.transform = `translate3d(0, ${yPos}px, 0)`;
-      });
-    };
+  return title.split('\n').map((line, idx) => {
+    if (!accentPattern.test(line)) {
+      return (
+        <span key={idx}>
+          {line}
+          <br />
+        </span>
+      );
+    }
 
-    window.addEventListener('scroll', handleParallax);
-    return () => window.removeEventListener('scroll', handleParallax);
-  }, []);
+    const parts = line.split(accentPattern);
+    return (
+      <span key={idx}>
+        {parts.map((part, pidx) =>
+          /победител[а-яё]*\.?/i.test(part) ? (
+            <span key={pidx} className="accent">
+              {part}
+            </span>
+          ) : (
+            <span key={pidx}>{part}</span>
+          ),
+        )}
+        <br />
+      </span>
+    );
+  });
+}
+
+function renderTitleWithAccent(title: string) {
+  const parts = title.split(/(наставники)/i);
+
+  return parts.map((part, idx) =>
+    /наставники/i.test(part) ? (
+      <span key={idx} className="accent">
+        {part}
+      </span>
+    ) : (
+      <span key={idx}>{part}</span>
+    ),
+  );
 }
 
 function useRevealOnIntersect() {
@@ -43,11 +71,9 @@ function useRevealOnIntersect() {
       { threshold: 0.2, rootMargin: '0px 0px -100px 0px' },
     );
 
-    const processItems = document.querySelectorAll('.process-step-alt');
-    processItems.forEach((item) => observer.observe(item));
-
-    const problemItems = document.querySelectorAll('.problem-card-new');
-    problemItems.forEach((item) => observer.observe(item));
+    document.querySelectorAll('.process-step-alt, .principle-item').forEach((item) => {
+      observer.observe(item);
+    });
 
     return () => observer.disconnect();
   }, []);
@@ -55,115 +81,163 @@ function useRevealOnIntersect() {
 
 export default function HomePageClient({
   home,
-  courses,
   teachers,
-  methodSteps,
+  stats,
+  principles,
   processSteps,
-  problems,
   siteSettings,
 }: {
   home: HomePageContent | null;
-  courses: Course[];
   teachers: Teacher[];
-  methodSteps: MethodStep[];
+  stats: Stat[];
+  principles: Principle[];
   processSteps: ProcessStep[];
-  problems: Problem[];
   siteSettings?: SiteSettings | null;
 }) {
-  useParallaxShapes();
   useRevealOnIntersect();
+
+  const [expandedTeacherId, setExpandedTeacherId] = useState<string | null>(null);
+  const teachersGridRef = useRef<HTMLDivElement>(null);
+  const syncTimeoutRef = useRef<number | null>(null);
+
+  const measureTeacherCards = () => {
+    const grid = teachersGridRef.current;
+    if (!grid) return;
+    // never measure while a card is expanded — it would skew the shared height
+    if (grid.querySelector('.teacher-card--expanded')) return;
+    const cards = Array.from(grid.querySelectorAll<HTMLElement>('.teacher-card'));
+    if (!cards.length) return;
+    grid.style.removeProperty('--teacher-card-min-h');
+    const maxHeight = Math.max(...cards.map((card) => card.getBoundingClientRect().height));
+    grid.style.setProperty('--teacher-card-min-h', `${Math.ceil(maxHeight)}px`);
+  };
+
+  useEffect(() => {
+    measureTeacherCards();
+    document.fonts?.ready.then(() => measureTeacherCards()).catch(() => {});
+    window.addEventListener('resize', measureTeacherCards);
+    return () => {
+      window.removeEventListener('resize', measureTeacherCards);
+      if (syncTimeoutRef.current) window.clearTimeout(syncTimeoutRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTeacherToggle = (teacherId: string, value: boolean) => {
+    if (syncTimeoutRef.current) {
+      window.clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
+    }
+    setExpandedTeacherId(value ? teacherId : null);
+    if (!value) {
+      // re-measure only after the collapse animation finishes
+      syncTimeoutRef.current = window.setTimeout(measureTeacherCards, 400);
+    }
+  };
 
   if (!home) {
     throw new Error('Missing homePage content');
   }
 
-  const heroTitle = home.heroTitle ?? '';
+  const heroEyebrow = home.heroEyebrow ?? 'Онлайн-школа District';
+  const siteTitle = normalizeBrandName(siteSettings?.title);
+  const stripSuffix = (text: string, suffix: string) =>
+    text.toLowerCase().endsWith(suffix.toLowerCase())
+      ? text.slice(0, -suffix.length).trim()
+      : text;
+  let eyebrowLine = stripSuffix(heroEyebrow, siteTitle);
+  eyebrowLine = stripSuffix(eyebrowLine, 'district');
+  eyebrowLine = stripSuffix(eyebrowLine, 'distrikt');
+  const heroTitle = home.heroTitle ?? 'Готовим победителей.\nНе выживших.';
   const heroDescription = home.heroDescription ?? '';
-  const heroButtonText = siteSettings?.heroButtonText ?? 'Записаться на занятие';
+  const heroButtonText = siteSettings?.heroButtonText ?? 'Наши наставники';
 
-  const problemsTitle = home.sectionProblemsTitle ?? '';
-  const problemsSubtitle = home.sectionProblemsSubtitle ?? '';
+  const rawTeachersTitle = home.sectionTeachersTitle ?? 'Наши наставники';
+  const teachersTitle = rawTeachersTitle.toLowerCase().includes('выбери')
+    ? 'Наши наставники'
+    : rawTeachersTitle;
+  const teachersSubtitle =
+    home.sectionTeachersSubtitle?.trim() || 'Выбери своего и начни побеждать.';
 
-  const methodTitle = home.sectionMethodTitle ?? '';
-  const methodSubtitle = home.sectionMethodSubtitle ?? '';
-
-  const coursesTitle = home.sectionCoursesTitle ?? '';
-  const coursesSubtitle = home.sectionCoursesSubtitle ?? '';
-
-  const teachersTitle = home.sectionTeachersTitle ?? '';
-  const teachersSubtitle = home.sectionTeachersSubtitle ?? '';
+  const principlesTitle = home.sectionPrinciplesTitle ?? '';
+  const principlesSubtitle = home.sectionPrinciplesSubtitle ?? '';
 
   const processTitle = home.sectionProcessTitle ?? '';
   const processSubtitle = home.sectionProcessSubtitle ?? '';
 
   return (
     <>
+      <div className="city-backdrop" aria-hidden="true" />
       <section className="hero" id="hero">
-        <div className="hero-shapes">
-          <div className="shape shape-sphere shape-powder" data-speed="0.3"></div>
-          <div className="shape shape-sphere shape-mint" data-speed="0.5"></div>
-          <div className="shape shape-sphere shape-sand" data-speed="0.2"></div>
-          <div className="shape shape-sphere shape-lavender" data-speed="0.7"></div>
-        </div>
-
-        <div className="hero-content">
-          <h1>
-            {heroTitle.split('\n').map((line, idx) => (
-              <span key={idx}>
-                {line}
-                <br />
-              </span>
-            ))}
+        <div className="hero-bg" aria-hidden="true" />
+        <div className="container hero-content">
+          <p className="hero-eyebrow">{eyebrowLine}</p>
+          <div className="hero-brand">{siteTitle}</div>
+          <h1 className="hero-headline">
+            {renderHeroHeadline(heroTitle)}
           </h1>
-          <p className="hero-description">{heroDescription}</p>
-          <div className="hero-buttons">
-            <a href="#teachers" className="btn btn-primary">
+          <div className="hero-bottom">
+            <p className="hero-description">{heroDescription}</p>
+            <a href="#teachers" className="btn btn-primary hero-cta">
               {heroButtonText}
             </a>
           </div>
         </div>
       </section>
 
-      <div className="hero-connector">
-        <div className="connector-circle"></div>
-      </div>
-
       <main className="site-main">
-        <section className="section-secondary problems-method-section" id="problems-method">
-          <div className="problems-method-container">
-            <div className="problems-method-header">
-              <h2>{problemsTitle}</h2>
-              <p>{problemsSubtitle}</p>
+        <section className="section section-teachers" id="teachers">
+          <div className="container">
+            <div className="section-title">
+              <h2>{renderTitleWithAccent(teachersTitle)}</h2>
+              {teachersSubtitle ? <p>{teachersSubtitle}</p> : null}
             </div>
 
-            <div className="problems-cards-row">
-              {problems.map((problem, index) => (
-                <div key={problem._id} className="problem-card-new">
-                  <div className="problem-number">{String(index + 1).padStart(2, '0')}</div>
-                  <div className="problem-content">
-                    <h4>{problem.title}</h4>
-                    <p>{problem.description}</p>
-                  </div>
+            <div
+              ref={teachersGridRef}
+              className={`teachers-grid teachers-${teachers.length}`}
+            >
+              {teachers.map((teacher) => (
+                <div key={teacher._id} className="teacher-column">
+                  <TeacherCard
+                    teacher={teacher}
+                    buttonText={siteSettings?.teacherCardButtonText}
+                    expanded={expandedTeacherId === teacher._id}
+                    onToggle={(value) => handleTeacherToggle(teacher._id, value)}
+                  />
+                  <TeacherReviewsBlock teacher={teacher} />
                 </div>
               ))}
             </div>
+          </div>
+        </section>
 
-            <div className="method-bottom-wrapper">
-              <div className="method-left-header">
-                <h3>{methodTitle}</h3>
-                <p>{methodSubtitle}</p>
+        <section className="section section-principles" id="principles">
+          <div className="container">
+            {stats.length > 0 && (
+              <div className="stats-ribbon">
+                {stats.map((stat) => (
+                  <div key={stat._id} className="stat-card">
+                    <span className="stat-value">{stat.value}</span>
+                    <span className="stat-label">{stat.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="principles-layout">
+              <div className="principles-header">
+                <h2>{principlesTitle}</h2>
+                {principlesSubtitle ? <p>{principlesSubtitle}</p> : null}
               </div>
 
-              <div className="method-steps-connected">
-                {methodSteps.map((step, index) => (
-                  <div key={step._id} className="method-step-connected">
-                    <div className="step-connector">
-                      <span className="step-num">{index + 1}</span>
-                      {index < methodSteps.length - 1 && <div className="connector-line"></div>}
-                    </div>
-                    <div className="step-details">
-                      <h4>{step.title}</h4>
-                      <p>{step.description}</p>
+              <div className="principles-list">
+                {principles.map((principle, index) => (
+                  <div key={principle._id} className="principle-item">
+                    <span className="principle-numeral">{ROMAN_NUMERALS[index] ?? index + 1}</span>
+                    <div className="principle-content">
+                      <h3>{principle.title}</h3>
+                      <p>{principle.description}</p>
                     </div>
                   </div>
                 ))}
@@ -172,91 +246,12 @@ export default function HomePageClient({
           </div>
         </section>
 
-        <section className="section" id="teachers">
-          <div className="container">
-            <div className="section-title">
-              <h2>{teachersTitle}</h2>
-              <p>{teachersSubtitle}</p>
-            </div>
-
-            <div className={`teachers-grid teachers-${teachers.length}`}>
-              {teachers.map((teacher) => (
-                <TeacherCard key={teacher._id} teacher={teacher} buttonText={siteSettings?.teacherCardButtonText} />
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="section" id="reviews">
-          <div className="container">
-            <div className="section-title">
-              <h2>Отзывы</h2>
-              <p>Они просто скрины, но зато настоящие 🙂</p>
-            </div>
-            <div className="teachers-reviews-grid">
-              {teachers.map((teacher) => (
-                <TeacherReviewsBlock key={`reviews-${teacher._id}`} teacher={teacher} />
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="section" id="courses">
-          <div className="container">
-            <div className="section-title">
-              <h2>{coursesTitle}</h2>
-              <p>{coursesSubtitle}</p>
-            </div>
-
-            <div className={`courses-description courses-${courses.length}`}>
-              {courses.map((course) => (
-                <div 
-                  key={course._id} 
-                  className="course-desc-item"
-                  onMouseMove={(e) => {
-                    const card = e.currentTarget;
-                    const icon = card.querySelector('.course-desc-icon') as HTMLElement;
-                    if (!icon) return;
-                    
-                    const rect = card.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const cardWidth = rect.width;
-                    const isLeftSide = x < cardWidth / 2;
-                    
-                    icon.style.transform = isLeftSide 
-                      ? 'scale(1.1) rotate(-8deg)' 
-                      : 'scale(1.1) rotate(8deg)';
-                  }}
-                  onMouseLeave={(e) => {
-                    const icon = e.currentTarget.querySelector('.course-desc-icon') as HTMLElement;
-                    if (icon) icon.style.transform = '';
-                  }}
-                >
-                  <div className="course-desc-icon">{course.icon}</div>
-                  <div className="course-desc-text">
-                    <h3>{course.title}</h3>
-                    <p>{course.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         <section className="section section-process" id="process">
           <div className="process-section-wrapper">
-            <div className="process-shapes">
-              <div className="process-shape process-shape-1"></div>
-              <div className="process-shape process-shape-2"></div>
-              <div className="process-shape process-shape-3"></div>
-              <div className="process-shape process-shape-4"></div>
-              <div className="process-shape process-shape-5"></div>
-            </div>
-
             <div className="container">
               <div className="process-header-new">
                 <h2>{processTitle}</h2>
-                <p>{processSubtitle}</p>
+                {processSubtitle ? <p>{processSubtitle}</p> : null}
               </div>
 
               <div className="process-timeline-alt">
@@ -282,6 +277,14 @@ export default function HomePageClient({
             </div>
           </div>
         </section>
+
+        <DiagnosticSection
+          eyebrow={home.diagnosticEyebrow}
+          title={home.diagnosticTitle}
+          text={home.diagnosticText}
+          buttonText={home.diagnosticButtonText}
+          steps={home.diagnosticSteps}
+        />
       </main>
     </>
   );
