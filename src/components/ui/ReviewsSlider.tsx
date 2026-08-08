@@ -10,9 +10,10 @@ type ReviewWithTeacher = TeacherReview & { teacherName?: string };
 
 interface ReviewsSliderProps {
   reviews: ReviewWithTeacher[];
+  variant?: string;
 }
 
-export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
+export default function ReviewsSlider({ reviews, variant }: ReviewsSliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [startX, setStartX] = useState(0);
@@ -132,7 +133,7 @@ export default function ReviewsSlider({ reviews }: ReviewsSliderProps) {
 
   return (
     <>
-      <div className="reviews-slider">
+      <div className={`reviews-slider${variant ? ` reviews-slider--${variant}` : ''}`}>
         <div
           className={`reviews-track${isDragging ? ' dragging' : ''}`}
           ref={trackRef}
