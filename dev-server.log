@@ -204,3 +204,6 @@ Persisting failed: Another write batch or compaction is already active (Only a s
  GET / 200 in 630ms (compile: 56ms, proxy.ts: 7ms, render: 567ms)
 Persisting failed: Another write batch or compaction is already active (Only a single write operations is allowed at a time)
 Persisting failed: Another write batch or compaction is already active (Only a single write operations is allowed at a time)
+Persisting failed: Another write batch or compaction is already active (Only a single write operations is allowed at a time)
+Persisting failed: Another write batch or compaction is already active (Only a single write operations is allowed at a time)
+Persisting failed: Another write batch or compaction is already active (Only a single write operations is allowed at a time)

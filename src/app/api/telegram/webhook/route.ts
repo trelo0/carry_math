@@ -54,10 +54,10 @@ export async function POST(request: Request) {
       } else {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
-          text: `👋 Добро пожаловать в Math School! 
-          Это официальный бот онлайн-школы.
-          Чтобы использовать Telegram для входа в личный кабинет, необходимо подключить аккаунт.
-          Привязать этот Telegram к номеру ${maskPhone(row.phone)}?`,
+          text: `👋 Добро пожаловать в онлайн-школу математики District! 
+    Это официальный бот онлайн-школы.
+    Чтобы использовать Telegram для входа в личный кабинет, необходимо подключить аккаунт.
+    Привязать этот Telegram к номеру ${maskPhone(row.phone)}?`,
           reply_markup: {
             inline_keyboard: [
               [{ text: '✅ Подключить аккаунт', callback_data: `link:${token}` }],
