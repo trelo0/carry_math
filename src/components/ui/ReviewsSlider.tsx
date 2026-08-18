@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import { TeacherReview } from '@/data/types';
-import { urlFor } from '@/lib/sanity';
+import { urlFor } from '@/lib/studio/sanityImage';
 
 type ReviewWithTeacher = TeacherReview & { teacherName?: string };
 

@@ -1,20 +1,33 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 type NavigationItem = {
   label: string;
   href: string;
   stub?: boolean;
+  home?: boolean;
 };
 
-const SECTION_IDS = ["hero", "teachers", "principles", "process"] as const;
+const SECTION_IDS = ["hero", "teachers", "formats", "signup", "process"] as const;
+const MAIN_SECTION_IDS = ["hero", "teacher", "program", "reviews", "faq", "paths"] as const;
 
 const NAV_ITEMS: NavigationItem[] = [
-  { label: "Наставники", href: "#teachers" },
-  { label: "Принципы", href: "#principles" },
-  { label: "Как проходят занятия", href: "#process" },
-  { label: "Вакансии", href: "#", stub: true },
+  { label: "Главная", href: "/", home: true },
+  { label: "Наставник", href: "#teachers" },
+  { label: "Варианты", href: "#formats" },
+  { label: "Запись", href: "#signup" },
+  { label: "Уроки", href: "#process" },
+];
+
+// Навигация главной: якоря секций страницы.
+const MAIN_NAV_ITEMS: NavigationItem[] = [
+  { label: "Наставник", href: "#teacher" },
+  { label: "Программа", href: "#program" },
+  { label: "Отзывы", href: "#reviews" },
+  { label: "FAQ", href: "#faq" },
+  { label: "Другой путь", href: "#paths" },
 ];
 
 export function Header({
@@ -24,18 +37,29 @@ export function Header({
   siteTitle?: string;
   headerButtonText?: string;
 }) {
+  const pathname = usePathname();
+  const isMainPage = pathname === "/";
+  const navItems = isMainPage ? MAIN_NAV_ITEMS : NAV_ITEMS;
+  const sectionIds = isMainPage ? MAIN_SECTION_IDS : SECTION_IDS;
+  // Кнопка шапки ведёт на экран входа.
+  const ctaHref = "/login";
+  const ctaLabel = "Войти";
+
   const [scrolled, setScrolled] = useState(false);
+  const [xp, setXp] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
-  const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>("hero");
+  const [activeSection, setActiveSection] = useState<string>("hero");
 
   useEffect(() => {
     const onScroll = () => {
       setScrolled(window.scrollY > 10);
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      setXp(max > 0 ? Math.min(100, Math.round((window.scrollY / max) * 100)) : 0);
     };
 
     onScroll();
-    window.addEventListener("scroll", onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
@@ -62,40 +86,29 @@ export function Header({
   useEffect(() => {
     const body = document.body;
     const html = document.documentElement;
-    const prevOverflow = body.style.overflow;
-    const prevHtmlOverflow = html.style.overflow;
-    const scrollY = window.scrollY;
 
+    // Блокируем только прокрутку (position:fixed не используем —
+    // он ломает переход по якорям после закрытия меню).
     if (menuOpen) {
       body.style.overflow = "hidden";
       html.style.overflow = "hidden";
-      body.style.position = "fixed";
-      body.style.top = `-${scrollY}px`;
-      body.style.width = "100%";
     } else {
-      body.style.overflow = prevOverflow;
-      html.style.overflow = prevHtmlOverflow;
-      body.style.position = "";
-      body.style.top = "";
-      body.style.width = "";
-      window.scrollTo(0, scrollY);
+      body.style.overflow = "";
+      html.style.overflow = "";
     }
 
     return () => {
-      body.style.overflow = prevOverflow;
-      html.style.overflow = prevHtmlOverflow;
-      body.style.position = "";
-      body.style.top = "";
-      body.style.width = "";
+      body.style.overflow = "";
+      html.style.overflow = "";
     };
   }, [menuOpen]);
 
   useEffect(() => {
     const onScroll = () => {
       const offset = 90;
-      let current: (typeof SECTION_IDS)[number] = "hero";
+      let current: string = sectionIds[0];
 
-      SECTION_IDS.forEach((id) => {
+      sectionIds.forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
         const rect = el.getBoundingClientRect();
@@ -110,7 +123,7 @@ export function Header({
     onScroll();
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [sectionIds]);
 
   const handleNavClick = (item: NavigationItem, e: React.MouseEvent) => {
     if (item.stub) {
@@ -122,22 +135,28 @@ export function Header({
 
   return (
     <header className={`site-header${scrolled ? " scrolled" : ""}`}>
-      <a href="#hero" className="site-logo">
+      <div className="header-xp" aria-hidden="true">
+        <div className="header-xp-fill" style={{ width: `${xp}%` }} />
+        <span className="header-xp-label">XP {xp}%</span>
+      </div>
+      <a href={isMainPage ? "#hero" : "/"} className="site-logo">
         <span className="logo-icon" aria-hidden="true" />
         {siteTitle ?? "District"}
       </a>
       <nav className="main-navigation" aria-label="Основная навигация">
         <ul>
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <li key={item.label}>
               <a
                 href={item.href}
                 className={
-                  !item.stub && activeSection === item.href.replace("#", "")
+                  !item.stub && !item.home && activeSection === item.href.replace("#", "")
                     ? "active"
                     : item.stub
                       ? "nav-stub"
-                      : undefined
+                      : item.home
+                        ? "nav-home"
+                        : undefined
                 }
                 onClick={(e) => handleNavClick(item, e)}
                 aria-disabled={item.stub ? true : undefined}
@@ -165,8 +184,11 @@ export function Header({
       </button>
 
       {isDesktop ? (
-        <a href="#teachers" className={`header-cta btn btn-primary${scrolled ? " visible" : ""}`}>
-          {headerButtonText || "Записаться"}
+        <a
+          href={ctaHref}
+          className={`header-cta btn btn-gold${scrolled ? " visible" : ""}`}
+        >
+          {ctaLabel}
         </a>
       ) : null}
 
@@ -184,7 +206,7 @@ export function Header({
         >
           <div className="mobile-menu-top">
             <a
-              href="#hero"
+              href={isMainPage ? "#hero" : "/"}
               className="mobile-menu-logo"
               onClick={() => setMenuOpen(false)}
             >
@@ -201,7 +223,7 @@ export function Header({
             </button>
           </div>
           <nav className="mobile-navigation" aria-label="Мобильная навигация">
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <a
                 key={item.label}
                 href={item.href}
@@ -214,11 +236,11 @@ export function Header({
             ))}
           </nav>
           <a
-            href="#teachers"
-            className="btn btn-primary mobile-menu-cta"
+            href={ctaHref}
+            className="btn btn-gold mobile-menu-cta"
             onClick={() => setMenuOpen(false)}
           >
-            {headerButtonText || "Записаться"}
+            {ctaLabel}
           </a>
         </div>
       </div>

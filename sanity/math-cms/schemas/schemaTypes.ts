@@ -4,6 +4,7 @@ import stat from './stat'
 import principle from './principle'
 import homePage from './homePage'
 import siteSettings from './siteSettings'
+import review from './review'
 
 export default [
   teacher,
@@ -12,4 +13,5 @@ export default [
   principle,
   homePage,
   siteSettings,
+  review,
 ]

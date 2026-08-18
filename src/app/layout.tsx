@@ -5,7 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
 import { Header, ModalPopup, BackToTop } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
-import { getSiteSettings } from "@/lib/sanity";
+import { getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
 import { buildSiteMetadata } from "@/lib/siteMetadata";
 import { getBaseUrlString } from "@/lib/siteUrl";

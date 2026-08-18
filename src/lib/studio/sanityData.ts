@@ -152,6 +152,27 @@ export async function getPrinciples({ preview }: FetchOptions = {}): Promise<Pri
   );
 }
 
+export type MainPageReview = {
+  _id: string;
+  name: string;
+  result: string;
+  text: string;
+};
+
+export async function getMainPageReviews({ preview }: FetchOptions = {}): Promise<MainPageReview[]> {
+  const client = getClient({ preview });
+  return client.fetch(
+    groq`*[_type == "review"]{
+      _id,
+      name,
+      result,
+      text
+    } | order(coalesce(order, 9999) asc, _createdAt asc)`,
+    {},
+    getSanityFetchOptions({ preview }, ['sanity:review'])
+  );
+}
+
 export async function getProcessSteps({ preview }: FetchOptions = {}): Promise<ProcessStep[]> {
   const client = getClient({ preview });
   return client.fetch(

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { getHomePage, getSiteSettings } from "@/lib/sanity";
+import { getHomePage, getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
 import { getMetadataBaseUrl } from "@/lib/siteUrl";
 

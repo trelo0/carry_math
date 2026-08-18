@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { useEffect, useRef } from 'react';
 import { useForm } from '@/contexts/FormContext';
 import { Teacher } from '@/data/types';
-import { urlFor } from '@/lib/sanity';
+import { urlFor } from '@/lib/studio/sanityImage';
 
 interface TeacherCardProps {
   teacher: Teacher;

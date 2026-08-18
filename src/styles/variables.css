@@ -1,28 +1,33 @@
 :root {
-  /* Hunger Games — dark arena palette */
-  --bg-primary: #050608;
-  --bg-secondary: #0a0c10;
-  --bg-card: #e8e6dc;
-  --bg-card-dark: #111318;
-  --bg-elevated: #1a2230;
+  /* Математическая гильдия — тёмно-синяя ночь + электрик-синий + золото */
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0d1526;
+  --bg-card: #e9edf5;
+  --bg-card-dark: #0d1526;
+  --bg-elevated: #101828;
 
-  --accent: #d98b2b;
-  --accent-hover: #f0a03c;
-  --accent-muted: rgba(217, 139, 43, 0.12);
+  --accent: #00a8ff;
+  --accent-hover: #33bdff;
+  --accent-muted: rgba(0, 168, 255, 0.12);
 
-  --text-primary: #f0f0e8;
-  --text-secondary: #8a919f;
-  --text-light: #5a6270;
-  --text-on-card: #0f1014;
-  --text-on-card-muted: #6a6c74;
+  --gold: #e8952c;
+  --gold-hover: #ffae42;
+  --gold-muted: rgba(232, 149, 44, 0.14);
+  --ember: #ffab40;
 
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  --text-primary: #f5f8ff;
+  --text-secondary: #8fa3c0;
+  --text-light: #5f7292;
+  --text-on-card: #0f1524;
+  --text-on-card-muted: #5a6c88;
 
-  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-soft-lg: 0 16px 48px rgba(0, 0, 0, 0.45);
-  --shadow-soft-sm: 0 4px 12px rgba(0, 0, 0, 0.25);
-  --shadow-card: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --border: rgba(148, 190, 255, 0.1);
+  --border-strong: rgba(148, 190, 255, 0.2);
+
+  --shadow-soft: 0 8px 24px rgba(2, 6, 18, 0.35);
+  --shadow-soft-lg: 0 16px 48px rgba(2, 6, 18, 0.45);
+  --shadow-soft-sm: 0 4px 12px rgba(2, 6, 18, 0.25);
+  --shadow-card: 0 12px 32px rgba(2, 6, 18, 0.4);
 
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -34,29 +39,29 @@
   --container-pad: clamp(16px, 4vw, 50px);
   --header-h: 76px;
 
-  /* Divergent-style sky → ground gradient (full page) */
-  --site-bg-base: #050608;
+  /* Небо над гильдией: сумерки → глубокая ночь */
+  --site-bg-base: #0a0e1a;
   --site-bg-gradient: linear-gradient(
     180deg,
-    #55627a 0%,
-    #4f5c72 12%,
-    #47536a 24%,
-    #3c4759 36%,
-    #2f3a4c 50%,
-    #273143 64%,
-    #202a3b 78%,
-    #1a2332 90%,
-    #141c2a 100%
+    #2c4a7c 0%,
+    #243d69 12%,
+    #1d335b 24%,
+    #182b4e 36%,
+    #142443 50%,
+    #111e3a 64%,
+    #0e1a32 78%,
+    #0c162c 90%,
+    #0a1224 100%
   );
   --site-bg-glow: radial-gradient(
     ellipse 120% 32% at 50% 0%,
-    rgba(148, 163, 190, 0.12) 0%,
-    rgba(148, 163, 190, 0.05) 28%,
+    rgba(0, 168, 255, 0.12) 0%,
+    rgba(0, 168, 255, 0.05) 28%,
     transparent 52%
   );
   --site-bg-accent: radial-gradient(
     ellipse 36% 22% at 84% 6%,
-    rgba(217, 139, 43, 0.14) 0%,
+    rgba(212, 175, 55, 0.12) 0%,
     transparent 100%
   );
 }

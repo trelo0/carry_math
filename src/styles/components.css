@@ -4,7 +4,7 @@
   top: 0;
   left: 0;
   width: 100%;
-  padding: 16px var(--container-pad);
+  padding: 22px var(--container-pad);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -16,11 +16,40 @@
 }
 
 .site-header.scrolled {
-  padding: 12px var(--container-pad);
-  background: rgba(13, 16, 22, 0.55);
+  padding: 16px var(--container-pad);
+  background: rgba(10, 14, 26, 0.6);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 10px 30px rgba(2, 6, 18, 0.25);
+}
+
+/* XP-бар прогресса скролла */
+.header-xp {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(148, 190, 255, 0.08);
+  pointer-events: none;
+}
+
+.header-xp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0077cc, var(--accent) 70%, #7fd0ff);
+  box-shadow: 0 0 8px rgba(0, 168, 255, 0.7);
+  transition: width 0.08s linear;
+}
+
+.header-xp-label {
+  position: absolute;
+  right: 0;
+  top: 5px;
+  font-family: "Courier New", monospace;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(143, 163, 192, 0.75);
 }
 
 .site-header.scrolled .site-logo {
@@ -40,7 +69,7 @@
   font-family: var(--font-heading, inherit);
   font-size: 26px;
   font-weight: 700;
-  color: #1a2432;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
   gap: 0;
@@ -163,11 +192,13 @@
 .mobile-menu-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(8, 12, 18, 0.6);
+  background: rgba(3, 6, 13, 0.55);
+  -webkit-backdrop-filter: blur(9px) saturate(0.55) brightness(0.45);
+  backdrop-filter: blur(9px) saturate(0.55) brightness(0.45);
   z-index: 9999;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.25s ease;
 }
 
 .mobile-menu-overlay.open {
@@ -182,11 +213,16 @@
   right: 0;
   width: 100%;
   max-height: min(88vh, 520px);
-  background: #2a3547;
-  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(0, 168, 255, 0.05), transparent 46px),
+    linear-gradient(180deg, #101c33, #0a1220);
+  border-bottom: 2px solid rgba(232, 149, 44, 0.55);
+  box-shadow:
+    0 0 34px rgba(232, 149, 44, 0.16),
+    0 26px 60px rgba(2, 6, 18, 0.65);
   padding: 18px;
   transform: translateY(-110%);
-  transition: transform 0.22s ease;
+  transition: transform 0.26s cubic-bezier(0.2, 0.7, 0.2, 1);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -220,10 +256,11 @@
 .mobile-menu-close {
   width: 40px;
   height: 40px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(232, 149, 44, 0.5);
+  border-radius: 8px;
   cursor: pointer;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
+  background: rgba(232, 149, 44, 0.08);
+  color: var(--gold);
   font-size: 24px;
   display: inline-flex;
   align-items: center;
@@ -238,13 +275,26 @@
 }
 
 .mobile-navigation a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 14px 8px;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(148, 190, 255, 0.12);
   font-size: 12px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.mobile-navigation a::before {
+  content: "◆";
+  font-size: 8px;
+  color: var(--gold);
+}
+
+.mobile-navigation a.nav-stub::before {
+  color: var(--text-secondary);
 }
 
 .mobile-navigation a.nav-stub {
@@ -309,6 +359,23 @@
 .btn-primary:hover:not(:disabled) {
   background-color: var(--accent-hover);
   transform: translateY(-2px);
+}
+
+.btn-gold {
+  background: linear-gradient(180deg, var(--gold-hover), var(--gold));
+  color: #0a0e1a;
+  border-radius: 12px;
+  box-shadow:
+    0 0 28px rgba(232, 149, 44, 0.45),
+    0 6px 18px rgba(2, 6, 18, 0.4);
+}
+
+.btn-gold:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffc065, var(--gold-hover));
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 40px rgba(255, 171, 64, 0.6),
+    0 8px 22px rgba(2, 6, 18, 0.45);
 }
 
 .btn-secondary {
@@ -382,7 +449,7 @@
 .site-header .logo-icon {
   width: calc(1.15em + 2px);
   height: calc(1.15em + 2px);
-  color: #1a2432;
+  color: var(--text-primary);
 }
 
 .site-header.scrolled .logo-icon {
@@ -421,14 +488,14 @@
   line-height: 0.95;
   letter-spacing: 0.01em;
   text-transform: uppercase;
-  color: #162840;
+  color: #dce7f8;
   margin-bottom: 9px;
 }
 
 @supports (-webkit-text-stroke: 1px #000) {
   .hero-brand {
-    color: rgba(220, 231, 248, 0.18);
-    -webkit-text-stroke: 2px #162840;
+    color: rgba(220, 231, 248, 0.14);
+    -webkit-text-stroke: 2px rgba(158, 197, 255, 0.85);
   }
 }
 
@@ -437,7 +504,7 @@
   font-size: clamp(54px, 10vw, 136px);
   font-weight: 700;
   line-height: 0.9;
-  margin-bottom: clamp(32px, 4.5vw, 56px);
+  margin-bottom: clamp(20px, 3vw, 36px);
   color: var(--text-primary);
   letter-spacing: 0.01em;
   text-transform: uppercase;
