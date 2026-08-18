@@ -54,8 +54,8 @@ export async function POST(request: Request) {
       } else {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
-          text: `👋 Добро пожаловать в онлайн-школу математики District! 
-    Это официальный бот онлайн-школы.
+          text: '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +   
+          'Это официальный бот онлайн-школы.\n\n' +
     Чтобы использовать Telegram для входа в личный кабинет, необходимо подключить аккаунт.
     Привязать этот Telegram к номеру ${maskPhone(row.phone)}?`,
           reply_markup: {
