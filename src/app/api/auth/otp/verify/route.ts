@@ -88,16 +88,20 @@ export async function POST(request: NextRequest) {
 
     // Создаём (или находим) пользователя Supabase и выдаём настоящую сессию.
     // Пароль — случайный, одноразовый, существует только на сервере.
+    // Phone-провайдер в Supabase выключен (ему нужен Twilio), поэтому
+    // аккаунт живёт под синтетическим email, а телефон храним в metadata.
     const tempPassword = randomBytes(32).toString('base64url');
+    const syntheticEmail = `u${phone.replace(/\D/g, '')}@auth.district.school`;
     const { data: listed, error: listError } = await admin.auth.admin.listUsers({ page: 1 });
     if (listError) throw listError;
 
-    let userId = (listed.users ?? []).find((u) => u.phone === phone)?.id;
+    let userId = (listed.users ?? []).find((u) => u.email === syntheticEmail)?.id;
     if (!userId) {
       const { data: created, error: createError } = await admin.auth.admin.createUser({
-        phone,
+        email: syntheticEmail,
         password: tempPassword,
-        phone_confirm: true,
+        email_confirm: true,
+        user_metadata: { phone },
       });
       if (createError || !created.user) throw createError ?? new Error('user not created');
       userId = created.user.id;
@@ -125,7 +129,7 @@ export async function POST(request: NextRequest) {
       },
     );
     const { error: signInError } = await supabase.auth.signInWithPassword({
-      phone,
+      email: syntheticEmail,
       password: tempPassword,
     });
     if (signInError) {

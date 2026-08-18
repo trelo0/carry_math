@@ -53,36 +53,69 @@ export default function HomePageClient({
 
   useEffect(() => {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-
     const targets = Array.from(
-      document.querySelectorAll('[data-reveal], .principle-item, .process-step-alt'),
+      document.querySelectorAll<HTMLElement>(
+        '[data-reveal], [data-scroll-reveal], .principle-item, .process-step-alt',
+      ),
     );
     if (targets.length === 0) return;
 
+    const revealTarget = (target: HTMLElement, animate: boolean) => {
+      const isStagedReveal = target.hasAttribute('data-scroll-reveal');
+      const wasAnimated = target.dataset.scrollRevealPlayed === 'true';
+
+      target.classList.add('revealed');
+      target.classList.add('visible');
+      if (isStagedReveal) target.classList.add('scroll-revealed');
+
+      if (!animate || !isStagedReveal || wasAnimated || typeof target.animate !== 'function') {
+        return;
+      }
+
+      target.dataset.scrollRevealPlayed = 'true';
+      const direction = target.dataset.revealDirection;
+      const origin =
+        direction === 'left'
+          ? 'translate3d(-22px, 0, 0)'
+          : direction === 'right'
+            ? 'translate3d(22px, 0, 0)'
+            : 'translate3d(0, 22px, 0)';
+      const order = Number.parseInt(target.dataset.revealDelay || '0', 10);
+      const delay = Number.isFinite(order) ? Math.max(0, order) * 80 : 0;
+
+      target.animate(
+        [
+          { opacity: 0, transform: origin },
+          { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+        ],
+        {
+          duration: 620,
+          delay,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        },
+      );
+    };
+
     if (reduceMotion) {
-      targets.forEach((el) => {
-        el.classList.add('revealed');
-        el.classList.add('visible');
-      });
+      targets.forEach((target) => revealTarget(target, false));
       return;
     }
 
     const observer = new IntersectionObserver(
-      (entries) => {
+      (entries, currentObserver) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            entry.target.classList.add('revealed');
-            entry.target.classList.add('visible');
-            observer.unobserve(entry.target);
+            revealTarget(entry.target as HTMLElement, true);
+            currentObserver.unobserve(entry.target);
           }
         });
       },
-      { threshold: 0.15 },
+      { threshold: 0.12, rootMargin: '0px 0px -6% 0px' },
     );
 
-    targets.forEach((el) => observer.observe(el));
+    targets.forEach((target) => observer.observe(target));
     return () => observer.disconnect();
-  }, []);
+  }, [format]);
 
   if (!home) {
     throw new Error('Missing homePage content');
@@ -163,7 +196,13 @@ export default function HomePageClient({
 
             <div className="teacher-rows">
               {teachers.map((teacher, index) => (
-                <article className="teacher-row" key={teacher._id}>
+                <article
+                  className="teacher-row"
+                  key={teacher._id}
+                  data-scroll-reveal
+                  data-reveal-direction={index % 2 === 0 ? 'left' : 'right'}
+                  data-reveal-delay={String(index)}
+                >
                   <div className="teacher-row-photo">
                     
                     {teacher.photo ? (
@@ -244,6 +283,8 @@ export default function HomePageClient({
             >
               <div
                 className="vs-side vs-side--solo"
+                data-scroll-reveal
+                data-reveal-direction="left"
                 id="formats-solo"
                 onMouseEnter={() => setVsFocus('solo')}
                 onMouseLeave={() => setVsFocus(null)}
@@ -274,6 +315,9 @@ export default function HomePageClient({
 
               <div
                 className="vs-side vs-side--group"
+                data-scroll-reveal
+                data-reveal-direction="right"
+                data-reveal-delay="1"
                 id="formats-group"
                 onMouseEnter={() => setVsFocus('group')}
                 onMouseLeave={() => setVsFocus(null)}
@@ -347,7 +391,6 @@ export default function HomePageClient({
 
         {/* ---------- Запись: таб формата + цены ---------- */}
         <section className="main-init ind-signup" id="signup" data-reveal data-format={format}>
-          <span className="watermark watermark--left" aria-hidden="true">START</span>
           <div className="container">
             <span className="section-kicker section-kicker--center">
               КВЕСТ 05 // ЗАПИСЬ :: START QUEST
@@ -379,6 +422,7 @@ export default function HomePageClient({
               {teacherServices.map(({ teacher, soloServices, groupServices }) => (
                 <article
                   className={'booking-format-card booking-format-card--' + format}
+                  data-scroll-reveal
                   key={teacher._id}
                 >
                   {format === 'solo' ? (
@@ -569,7 +613,11 @@ export default function HomePageClient({
               ))}
               </div>
             <div className="booking-permanent-info">
-              <section className="booking-trial-guide" aria-label="О пробном занятии">
+              <section
+                className="booking-trial-guide"
+                aria-label="О пробном занятии"
+                data-scroll-reveal
+              >
                 <span className="booking-trial-guide-icon" aria-hidden="true">i</span>
                 <div className="booking-trial-guide-copy">
                   <h3>Пробное занятие — первый шаг</h3>
@@ -587,19 +635,19 @@ export default function HomePageClient({
                 </svg>
               </section>
               <section className="booking-benefits" aria-label="Преимущества обучения">
-                <article className="booking-benefit">
+                <article className="booking-benefit" data-scroll-reveal>
                   <span className="booking-benefit-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.6"/><path d="M8.6 12l2.1 2.1 4.8-5" stroke="currentColor" strokeWidth="1.6"/></svg>
                   </span>
                   <div><h3>Профессиональные</h3><p>опытные преподаватели</p></div>
                 </article>
-                <article className="booking-benefit">
+                <article className="booking-benefit" data-scroll-reveal>
                   <span className="booking-benefit-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.5"/><circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="1.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9L7 7m10 10l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" strokeWidth="1.3"/></svg>
                   </span>
                   <div><h3>Индивидуальный подход</h3><p>программа под ваши цели</p></div>
                 </article>
-                <article className="booking-benefit">
+                <article className="booking-benefit" data-scroll-reveal>
                   <span className="booking-benefit-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7.5 3v5m9-5v5M3.5 10h17M8 14h2m4 0h2M8 17h2m4 0h2" stroke="currentColor" strokeWidth="1.35"/></svg>
                   </span>

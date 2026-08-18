@@ -4105,3 +4105,131 @@ button:focus-visible {
   .booking-benefit h3 { font-size: 10px; }
   .booking-benefit p { font-size: 10px; }
 }
+
+
+/* ===== Booking: remove solo amber background ===== */
+/* Remove the broad amber fill entirely. Only the existing narrow card rail remains as a structural accent. */
+.booking-format-card--solo {
+  background: linear-gradient(103deg, #091a31 0%, #07162a 64%, #061427 100%) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 9px 20px rgba(0, 0, 0, 0.13) !important;
+}
+
+
+
+
+/* ===== Individual page: remove global amber decor ===== */
+/* Remove the actual global sources of amber decoration on /individual; no overlay or mask is used. */
+.main-page.sub-page .city-backdrop,
+.main-page.sub-page .bg-shape--amber,
+.main-page.sub-page .deco-sym--accent {
+  display: none !important;
+}
+/* The x² watermark visible beside the booking cards is the tenth global math glyph. */
+.main-page.sub-page .page-deco .deco-sym:nth-child(10) {
+  display: none !important;
+}
+
+
+/* ===== Booking: remove identified signup radial amber ===== */
+/* Diagnostic confirmed this exact radial background on .ind-signup as the remaining amber glow source. */
+#signup.ind-signup {
+  background: none !important;
+}
+
+
+/* ===== VS layering, full ticker and booking hover states ===== */
+/* Keep the diamond entirely above both VS panels; grid paint order previously hid its group-side corner. */
+.vs-split { position: relative; isolation: isolate; }
+.vs-side { position: relative; z-index: 1; }
+.vs-axis { z-index: 3; }
+.vs-badge { z-index: 4; }
+
+/* The ticker intentionally bleeds from viewport edge to viewport edge, independently of nearby containers. */
+.data-strip {
+  position: relative;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+}
+
+/* Gentle tactile feedback for lesson cards, without moving content out of the grid. */
+.booking-format-card {
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+}
+.booking-format-card:hover,
+.booking-format-card:focus-within {
+  transform: translateY(-3px);
+}
+.booking-format-card--solo:hover,
+.booking-format-card--solo:focus-within {
+  border-color: rgba(255, 180, 57, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 14px 30px rgba(0,0,0,.22) !important;
+}
+.booking-format-card--group:hover,
+.booking-format-card--group:focus-within {
+  border-color: rgba(94, 193, 255, 0.67);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 14px 30px rgba(0,72,145,.20) !important;
+}
+.booking-trial-guide,
+.booking-benefit {
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+}
+.booking-trial-guide:hover {
+  transform: translateY(-2px);
+  border-color: rgba(105, 204, 255, .84);
+  box-shadow: inset 0 0 25px rgba(17, 151, 240, .16), 0 10px 22px rgba(0, 58, 119, .16);
+}
+.booking-benefit:hover {
+  transform: translateY(-2px);
+  background: rgba(18, 65, 112, .34);
+  box-shadow: inset 0 0 17px rgba(41, 150, 229, .12);
+}
+.booking-benefit:hover .booking-benefit-icon,
+.booking-benefit:hover h3 { color: #9bddff; }
+@media (prefers-reduced-motion: reduce) {
+  .booking-format-card,
+  .booking-trial-guide,
+  .booking-benefit { transition: none; }
+  .booking-format-card:hover,
+  .booking-format-card:focus-within,
+  .booking-trial-guide:hover,
+  .booking-benefit:hover { transform: none; }
+}
+
+
+/* ===== Individual page: staged scroll reveal and mobile guardrails ===== */
+/* Inner elements enter only after their section reaches the viewport. The effect is scoped to markup used by /individual. */
+.main-page.sub-page [data-scroll-reveal]:not(.scroll-revealed) {
+  opacity: 0;
+  transform: translate3d(0, 22px, 0);
+  will-change: opacity, transform;
+}
+.main-page.sub-page [data-scroll-reveal][data-reveal-direction="left"]:not(.scroll-revealed) {
+  transform: translate3d(-22px, 0, 0);
+}
+.main-page.sub-page [data-scroll-reveal][data-reveal-direction="right"]:not(.scroll-revealed) {
+  transform: translate3d(22px, 0, 0);
+}
+
+/* Extra guardrails keep long CMS values contained on narrow screens without changing the format switcher. */
+@media (max-width: 640px) {
+  #signup.ind-signup .booking-offer-copy,
+  #signup.ind-signup .booking-trial-copy,
+  #signup.ind-signup .booking-trial-guide-copy {
+    min-width: 0;
+  }
+  #signup.ind-signup .booking-offer-meta {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-page.sub-page [data-scroll-reveal],
+  .main-page.sub-page [data-scroll-reveal]:not(.scroll-revealed) {
+    opacity: 1;
+    transform: none;
+    will-change: auto;
+  }
+}

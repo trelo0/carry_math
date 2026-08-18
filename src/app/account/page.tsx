@@ -18,7 +18,9 @@ export default async function AccountPage() {
     <div className="auth-page">
       <div className="container">
         <AccountPanel
-          phone={data.user.phone ?? data.user.email ?? ''}
+          phone={
+            (data.user.user_metadata?.phone as string) ?? data.user.phone ?? ''
+          }
           createdAt={data.user.created_at}
         />
       </div>
