@@ -14,3 +14,6 @@ create table if not exists public.bot_members (
 
 alter table public.bot_members enable row level security;
 -- Политик нет: читает и пишет только сервер через service_role.
+
+-- Маска для роли test: позволяет владельцу смотреть бот глазами любой роли.
+alter table public.bot_members add column if not exists view_role text;

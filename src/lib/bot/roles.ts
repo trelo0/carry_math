@@ -2,16 +2,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Роли бота District. Храним роль текстом, чтобы новые роли
 // (пункт «потом добавим») добавлялись без миграций схемы.
-export type BotRole = 'guest' | 'student' | 'curator' | 'admin';
+export type BotRole = 'guest' | 'student' | 'curator' | 'admin' | 'test';
 
-export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'admin'];
+export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'admin', 'test'];
 
 export const ROLE_LABELS: Record<BotRole, string> = {
   guest: 'гость',
   student: 'ученик',
   curator: 'куратор',
   admin: 'админ',
+  test: 'тестер',
 };
+
+export type MemberInfo = { role: BotRole; viewRole: BotRole | null };
 
 // Первый админ задаётся списком ID в env, чтобы не бутстрапить через БД.
 export function isAdminEnv(telegramId: number): boolean {
@@ -32,10 +35,10 @@ export async function ensureMember(
   admin: SupabaseClient,
   telegramId: number,
   patch?: { phone?: string; full_name?: string },
-): Promise<BotRole> {
+): Promise<MemberInfo> {
   const { data } = await admin
     .from('bot_members')
-    .select('role')
+    .select('role, view_role')
     .eq('telegram_id', telegramId)
     .maybeSingle();
 
@@ -50,14 +53,31 @@ export async function ensureMember(
         .update({ ...cleanPatch, updated_at: new Date().toISOString() })
         .eq('telegram_id', telegramId);
     }
-    return isBotRole(data.role) ? data.role : 'guest';
+    return {
+      role: isBotRole(data.role) ? data.role : 'guest',
+      viewRole: isBotRole(data.view_role) ? data.view_role : null,
+    };
   }
 
-  const role: BotRole = isAdminEnv(telegramId) ? 'admin' : 'guest';
+  // Владелец (ID из ADMIN_TELEGRAM_IDS) сразу получает роль test.
+  const role: BotRole = isAdminEnv(telegramId) ? 'test' : 'guest';
   await admin
     .from('bot_members')
     .insert({ telegram_id: telegramId, role, ...cleanPatch });
-  return role;
+  return { role, viewRole: null };
+}
+
+// Включает/сбрасывает тест-маску (только для роли test).
+export async function setViewRole(
+  admin: SupabaseClient,
+  telegramId: number,
+  view: BotRole | null,
+): Promise<void> {
+  const { error } = await admin
+    .from('bot_members')
+    .update({ view_role: view, updated_at: new Date().toISOString() })
+    .eq('telegram_id', telegramId);
+  if (error) throw error;
 }
 
 export async function setRole(

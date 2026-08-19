@@ -9,6 +9,7 @@ import {
   isBotRole,
   listMembers,
   setRole,
+  setViewRole,
   ROLE_LABELS,
   type BotRole,
 } from '@/lib/bot/roles';
@@ -157,8 +158,31 @@ export async function POST(request: Request) {
     // Просто /start — приветствие по роли.
     if (update.message?.text === '/start' && update.message.chat && update.message.from) {
       const from = update.message.from;
-      const role = await ensureMember(admin, from.id, { full_name: fullName(from) });
+      const member = await ensureMember(admin, from.id, { full_name: fullName(from) });
       const site = getBaseUrlString();
+      const masked =
+        member.role === 'test' && member.viewRole && member.viewRole !== 'test'
+          ? member.viewRole
+          : null;
+      const role: BotRole = masked ?? member.role;
+      const testFooter = masked
+        ? `\n\n🧪 Тест-маска: ${ROLE_LABELS[masked]}. Сброс — /as reset.`
+        : '';
+
+      // Тестер без маски — отдельное меню.
+      if (member.role === 'test' && !masked) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text:
+            '🧪 Привет! Ты тестер District.\n\n' +
+            '/as <роль> — посмотреть бот глазами роли (guest, student, curator, admin)\n' +
+            '/as reset — сбросить маску\n' +
+            '/users — список участников\n' +
+            '/role <id> <роль> — сменить роль\n' +
+            '/id — твой Telegram ID',
+        });
+        return NextResponse.json({ ok: true });
+      }
 
       if (role === 'admin') {
         await telegramSend('sendMessage', {
@@ -167,12 +191,13 @@ export async function POST(request: Request) {
             '👋 Привет! Ты админ бота District.\n\n' +
             '/users — список участников\n' +
             '/role <id> <роль> — сменить роль (или ответом на сообщение)\n' +
-            '/id — узнать свой Telegram ID',
+            '/id — узнать свой Telegram ID' +
+            testFooter,
         });
       } else if (role === 'curator') {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
-          text: '👋 Привет! Ты куратор District.\nИнструменты куратора появятся здесь совсем скоро.',
+          text: '👋 Привет! Ты куратор District.\nИнструменты куратора появятся здесь совсем скоро.' + testFooter,
         });
       } else if (role === 'student') {
         await telegramSend('sendMessage', {
@@ -180,7 +205,7 @@ export async function POST(request: Request) {
           text:
             '👋 Привет! Ты ученик District.\n' +
             '🔑 Коды для входа приходят сюда.\n' +
-            'Домашки и расписание — скоро.',
+            'Домашки и расписание — скоро.' + testFooter,
         });
       } else {
         await telegramSend('sendMessage', {
@@ -191,7 +216,7 @@ export async function POST(request: Request) {
             'Как подключить вход:\n' +
             '1. На сайте нажми «Войти» и введи свой номер телефона.\n' +
             '2. Вернись в бота и нажми «Подключить аккаунт».\n' +
-            '3. Готово — коды для входа будут приходить сюда.',
+            '3. Готово — коды для входа будут приходить сюда.' + testFooter,
           reply_markup: {
             inline_keyboard: [
               [{ text: '🔐 Войти на сайт', url: `${site}/login` }],
@@ -215,7 +240,7 @@ export async function POST(request: Request) {
     // /users — список участников (только админ).
     if (update.message?.text === '/users' && update.message.chat && update.message.from) {
       const caller = await ensureMember(admin, update.message.from.id, {});
-      if (caller !== 'admin' && !isAdminEnv(update.message.from.id)) {
+      if (caller.role !== 'admin' && caller.role !== 'test' && !isAdminEnv(update.message.from.id)) {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
           text: 'Недостаточно прав.',
@@ -237,7 +262,7 @@ export async function POST(request: Request) {
     // /role <id> <роль> или ответом на сообщение: /role <роль> (только админ).
     if (update.message?.text?.startsWith('/role') && update.message.chat && update.message.from) {
       const caller = await ensureMember(admin, update.message.from.id, {});
-      if (caller !== 'admin' && !isAdminEnv(update.message.from.id)) {
+      if (caller.role !== 'admin' && caller.role !== 'test' && !isAdminEnv(update.message.from.id)) {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
           text: 'Недостаточно прав.',
@@ -264,12 +289,58 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      // Роль test — только для владельца из ADMIN_TELEGRAM_IDS.
+      if (roleArg === 'test' && !isAdminEnv(update.message.from.id)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Роль test назначается только владельцу.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       const found = await setRole(admin, targetId, roleArg);
       await telegramSend('sendMessage', {
         chat_id: update.message.chat.id,
         text: found
           ? `✅ Роль «${ROLE_LABELS[roleArg as BotRole]}» установлена для ${targetId}.`
           : 'Такого участника нет — пусть сначала напишет боту.',
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    // /as <роль> — тест-маска: посмотреть бот глазами роли (только роль test).
+    if (update.message?.text?.startsWith('/as') && update.message.chat && update.message.from) {
+      const member = await ensureMember(admin, update.message.from.id, {});
+      if (member.role !== 'test' && !isAdminEnv(update.message.from.id)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Недостаточно прав.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const arg = update.message.text.slice('/as'.length).trim();
+      if (arg === 'reset' || arg === '') {
+        await setViewRole(admin, update.message.from.id, null);
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: '🧪 Маска сброшена — ты снова тестер.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      if (!isBotRole(arg)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: `Формат: /as <роль> или /as reset. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      await setViewRole(admin, update.message.from.id, arg);
+      await telegramSend('sendMessage', {
+        chat_id: update.message.chat.id,
+        text: `🧪 Включена маска «${ROLE_LABELS[arg as BotRole]}». Напиши /start — увидишь бот глазами этой роли.`,
       });
       return NextResponse.json({ ok: true });
     }
