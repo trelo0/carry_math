@@ -2,6 +2,28 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
+import { getBaseUrlString } from '@/lib/siteUrl';
+import {
+  ensureMember,
+  isAdminEnv,
+  isBotRole,
+  listMembers,
+  setRole,
+  ROLE_LABELS,
+  type BotRole,
+} from '@/lib/bot/roles';
+
+type TgFrom = {
+  id: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+};
+
+function fullName(from: TgFrom): string | undefined {
+  const name = [from.first_name, from.last_name].filter(Boolean).join(' ');
+  return name || (from.username ? `@${from.username}` : undefined);
+}
 
 // Вебхук Telegram-бота: привязка Telegram к номеру телефона.
 // Telegram ID принимается только из update от самого Telegram
@@ -19,12 +41,13 @@ export async function POST(request: Request) {
     message?: {
       text?: string;
       chat?: { id: number };
-      from?: { id: number };
+      from?: TgFrom;
+      reply_to_message?: { from?: TgFrom };
     };
     callback_query?: {
       id?: string;
       data?: string;
-      from?: { id: number };
+      from?: TgFrom;
       message?: { chat?: { id: number }; message_id?: number };
     };
   } | null;
@@ -37,6 +60,11 @@ export async function POST(request: Request) {
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     if (update.message?.text?.startsWith('/start ') && update.message.chat) {
       const token = update.message.text.slice('/start '.length).trim();
+      if (update.message.from) {
+        await ensureMember(admin, update.message.from.id, {
+          full_name: fullName(update.message.from),
+        });
+      }
       const { data: row } = await admin
         .from('telegram_link_tokens')
         .select('phone, used_at, expires_at')
@@ -97,6 +125,12 @@ export async function POST(request: Request) {
             .from('telegram_link_tokens')
             .update({ used_at: new Date().toISOString() })
             .eq('token', token);
+          await ensureMember(admin, telegramId, {
+            phone: row.phone,
+            full_name: update.callback_query.from
+              ? fullName(update.callback_query.from)
+              : undefined,
+          });
 
           await telegramSend('answerCallbackQuery', {
             callback_query_id: update.callback_query.id,
@@ -120,12 +154,124 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // Просто /start — приветствие.
-    if (update.message?.text === '/start' && update.message.chat) {
+    // Просто /start — приветствие по роли.
+    if (update.message?.text === '/start' && update.message.chat && update.message.from) {
+      const from = update.message.from;
+      const role = await ensureMember(admin, from.id, { full_name: fullName(from) });
+      const site = getBaseUrlString();
+
+      if (role === 'admin') {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text:
+            '👋 Привет! Ты админ бота District.\n\n' +
+            '/users — список участников\n' +
+            '/role <id> <роль> — сменить роль (или ответом на сообщение)\n' +
+            '/id — узнать свой Telegram ID',
+        });
+      } else if (role === 'curator') {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: '👋 Привет! Ты куратор District.\nИнструменты куратора появятся здесь совсем скоро.',
+        });
+      } else if (role === 'student') {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text:
+            '👋 Привет! Ты ученик District.\n' +
+            '🔑 Коды для входа приходят сюда.\n' +
+            'Домашки и расписание — скоро.',
+        });
+      } else {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text:
+            '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +
+            '🔑 Этот бот присылает коды для входа в личный кабинет — быстро и без паролей.\n\n' +
+            'Как подключить вход:\n' +
+            '1. На сайте нажми «Войти» и введи свой номер телефона.\n' +
+            '2. Вернись в бота и нажми «Подключить аккаунт».\n' +
+            '3. Готово — коды для входа будут приходить сюда.',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔐 Войти на сайт', url: `${site}/login` }],
+              [{ text: '📚 О курсе', url: site }],
+            ],
+          },
+        });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // /id — показать свой Telegram ID (удобно для назначения ролей).
+    if (update.message?.text === '/id' && update.message.chat && update.message.from) {
       await telegramSend('sendMessage', {
         chat_id: update.message.chat.id,
-        text: 'Это бот Math School. Здесь ты получаешь коды для входа на сайт. Подключи Telegram к аккаунту через кнопку на сайте.',
+        text: `Твой Telegram ID: ${update.message.from.id}`,
       });
+      return NextResponse.json({ ok: true });
+    }
+
+    // /users — список участников (только админ).
+    if (update.message?.text === '/users' && update.message.chat && update.message.from) {
+      const caller = await ensureMember(admin, update.message.from.id, {});
+      if (caller !== 'admin' && !isAdminEnv(update.message.from.id)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Недостаточно прав.',
+        });
+      } else {
+        const members = await listMembers(admin);
+        const lines = members.map(
+          (m) =>
+            `${m.telegram_id} · ${ROLE_LABELS[m.role as BotRole] ?? m.role} · ${m.phone ?? m.full_name ?? ''}`,
+        );
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: lines.length > 0 ? lines.join('\n') : 'Пока никого нет.',
+        });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // /role <id> <роль> или ответом на сообщение: /role <роль> (только админ).
+    if (update.message?.text?.startsWith('/role') && update.message.chat && update.message.from) {
+      const caller = await ensureMember(admin, update.message.from.id, {});
+      if (caller !== 'admin' && !isAdminEnv(update.message.from.id)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Недостаточно прав.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const args = update.message.text.slice('/role'.length).trim().split(/\s+/).filter(Boolean);
+      let targetId: number | null = null;
+      let roleArg = '';
+      if (args.length >= 2 && /^\d+$/.test(args[0])) {
+        targetId = Number(args[0]);
+        roleArg = args[1];
+      } else if (args.length === 1) {
+        targetId = update.message.reply_to_message?.from?.id ?? null;
+        roleArg = args[0];
+      }
+
+      if (!targetId || !isBotRole(roleArg)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: `Формат: /role <id> <роль>. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const found = await setRole(admin, targetId, roleArg);
+      await telegramSend('sendMessage', {
+        chat_id: update.message.chat.id,
+        text: found
+          ? `✅ Роль «${ROLE_LABELS[roleArg as BotRole]}» установлена для ${targetId}.`
+          : 'Такого участника нет — пусть сначала напишет боту.',
+      });
+      return NextResponse.json({ ok: true });
     }
   } catch (error) {
     console.error('Telegram webhook error:', error);
