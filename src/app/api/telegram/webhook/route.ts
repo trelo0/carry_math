@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
-import { guestStart, handleGuestCallback } from '@/lib/bot/guestFlow';
+import { guestStart, handleGuestCallback, handleGuestTextMessage } from '@/lib/bot/guestFlow';
 import {
   handleAdminWebinarCallback,
   handleAdminWebinarMessage,
@@ -63,11 +63,7 @@ export async function POST(request: Request) {
       id?: string;
       data?: string;
       from?: TgFrom;
-            message?: {
-        chat?: { id: number };
-        message_id?: number;
-        document?: { file_id?: string };
-      };
+            message?: { chat?: { id: number }; message_id?: number };
 
     };
   } | null;
@@ -247,8 +243,50 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-        // Текстовые ответы для пошагового создания и редактирования вебинара.
-    if (update.message?.text && update.message.chat && update.message.from) {
+        // /as имеет приоритет над любыми диалоговыми состояниями: тестер всегда может сбросить маску.
+    if (update.message?.text?.startsWith('/as') && update.message.chat && update.message.from) {
+      const member = await ensureMember(admin, update.message.from.id, {});
+      if (member.role !== 'test' && !isAdminEnv(update.message.from.id)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Недостаточно прав.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const arg = update.message.text.slice('/as'.length).trim();
+      if (arg === 'reset' || arg === '') {
+        await setViewRole(admin, update.message.from.id, null);
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: '🧪 Маска сброшена — ты снова тестер.',
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      if (!isBotRole(arg)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: `Формат: /as <роль> или /as reset. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      await setViewRole(admin, update.message.from.id, arg);
+      await telegramSend('sendMessage', {
+        chat_id: update.message.chat.id,
+        text: `🧪 Включена маска «${ROLE_LABELS[arg as BotRole]}». Напиши /start — увидишь бот глазами этой роли.`,
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    // Текстовые ответы для пошагового создания и редактирования вебинара.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
       const handled = await handleAdminWebinarMessage(
         admin,
         update.message.from.id,
@@ -286,7 +324,6 @@ export async function POST(request: Request) {
         messageId,
         from.id,
         id,
-        Boolean(callbackMessage.document?.file_id),
       );
       if (guestHandled) return NextResponse.json({ ok: true });
     }
@@ -372,42 +409,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // /as <роль> — тест-маска: посмотреть бот глазами роли (только роль test).
-    if (update.message?.text?.startsWith('/as') && update.message.chat && update.message.from) {
-      const member = await ensureMember(admin, update.message.from.id, {});
-      if (member.role !== 'test' && !isAdminEnv(update.message.from.id)) {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text: 'Недостаточно прав.',
-        });
-        return NextResponse.json({ ok: true });
+        // Обычный текст гостя не запускает новый сценарий: старые кнопки деактивируются.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const member = await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      const guestView = member.role === 'guest' || (member.role === 'test' && member.viewRole === 'guest');
+      if (guestView) {
+        const handled = await handleGuestTextMessage(update.message.chat.id);
+        if (handled) return NextResponse.json({ ok: true });
       }
-
-      const arg = update.message.text.slice('/as'.length).trim();
-      if (arg === 'reset' || arg === '') {
-        await setViewRole(admin, update.message.from.id, null);
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text: '🧪 Маска сброшена — ты снова тестер.',
-        });
-        return NextResponse.json({ ok: true });
-      }
-
-      if (!isBotRole(arg)) {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text: `Формат: /as <роль> или /as reset. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
-        });
-        return NextResponse.json({ ok: true });
-      }
-
-      await setViewRole(admin, update.message.from.id, arg);
-      await telegramSend('sendMessage', {
-        chat_id: update.message.chat.id,
-        text: `🧪 Включена маска «${ROLE_LABELS[arg as BotRole]}». Напиши /start — увидишь бот глазами этой роли.`,
-      });
-      return NextResponse.json({ ok: true });
     }
+
   } catch (error) {
     console.error('Telegram webhook error:', error);
   }

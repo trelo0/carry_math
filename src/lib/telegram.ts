@@ -1,6 +1,10 @@
 const API = 'https://api.telegram.org';
 
-type TelegramResponse = { ok: boolean; description?: string };
+type TelegramResponse = {
+  ok: boolean;
+  description?: string;
+  result?: { message_id?: number };
+};
 
 function getTelegramToken(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;

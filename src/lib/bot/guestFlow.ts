@@ -25,7 +25,12 @@ export type ActiveWebinar = {
 type GuestMessage = {
   chatId: number;
   messageId: number;
-  isDocument?: boolean;
+};
+
+type TemporaryPdfMessage = {
+  chat_id: number;
+  menu_message_id: number;
+  pdf_message_id: number;
 };
 
 type InlineKeyboard = {
@@ -68,14 +73,12 @@ async function editGuestMessage(
   text: string,
   replyMarkup: InlineKeyboard,
 ): Promise<void> {
-  const payload = {
+  const result = await telegramSend('editMessageText', {
     chat_id: message.chatId,
     message_id: message.messageId,
+    text,
     reply_markup: replyMarkup,
-  };
-  const result = message.isDocument
-    ? await telegramSend('editMessageCaption', { ...payload, caption: text })
-    : await telegramSend('editMessageText', { ...payload, text });
+  });
 
   // Telegram возвращает ошибку, когда экран уже содержит те же текст и кнопки.
   if (!result.ok && !result.description?.includes('message is not modified')) {
@@ -149,6 +152,94 @@ async function markCheatsheetReceived(admin: SupabaseClient, telegramId: number)
   if (error) throw error;
 }
 
+async function saveTemporaryPdfMessage(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  menuMessageId: number,
+  pdfMessageId: number,
+): Promise<void> {
+  const { error } = await admin.from('bot_temporary_pdf_messages').upsert(
+    {
+      telegram_id: telegramId,
+      chat_id: chatId,
+      menu_message_id: menuMessageId,
+      pdf_message_id: pdfMessageId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'telegram_id' },
+  );
+  if (error) throw error;
+}
+
+async function getTemporaryPdfMessage(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<TemporaryPdfMessage | null> {
+  const { data, error } = await admin
+    .from('bot_temporary_pdf_messages')
+    .select('chat_id, menu_message_id, pdf_message_id')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? (data as TemporaryPdfMessage) : null;
+}
+
+async function clearTemporaryPdfMessage(admin: SupabaseClient, telegramId: number): Promise<void> {
+  const { error } = await admin
+    .from('bot_temporary_pdf_messages')
+    .delete()
+    .eq('telegram_id', telegramId);
+  if (error) throw error;
+}
+
+async function removeTemporaryPdfMessage(
+  temporary: TemporaryPdfMessage,
+): Promise<void> {
+  try {
+    const deleted = await telegramSend('deleteMessage', {
+      chat_id: temporary.chat_id,
+      message_id: temporary.pdf_message_id,
+    });
+    if (deleted.ok) return;
+
+    console.error('Не удалось удалить временное PDF-сообщение:', deleted.description);
+    // Если удаление запрещено Telegram, хотя бы отключаем кнопки у старого PDF.
+    const disabled = await telegramSend('editMessageReplyMarkup', {
+      chat_id: temporary.chat_id,
+      message_id: temporary.pdf_message_id,
+      reply_markup: { inline_keyboard: [] },
+    });
+    if (!disabled.ok) {
+      console.error('Не удалось отключить кнопки временного PDF-сообщения:', disabled.description);
+    }
+  } catch (error) {
+    console.error('Ошибка удаления временного PDF-сообщения:', error);
+  }
+}
+
+async function resolveMenuMessage(
+  admin: SupabaseClient,
+  telegramId: number,
+  currentMessage: GuestMessage,
+): Promise<GuestMessage> {
+  const temporary = await getTemporaryPdfMessage(admin, telegramId);
+  if (!temporary || temporary.chat_id !== currentMessage.chatId) {
+    return currentMessage;
+  }
+
+  await removeTemporaryPdfMessage(temporary);
+  await clearTemporaryPdfMessage(admin, telegramId);
+  if (temporary.pdf_message_id !== currentMessage.messageId) {
+    return currentMessage;
+  }
+
+  return {
+    chatId: temporary.chat_id,
+    messageId: temporary.menu_message_id,
+  };
+}
+
 async function isRegisteredForWebinar(
   admin: SupabaseClient,
   telegramId: number,
@@ -178,20 +269,24 @@ export async function renderMainMenu(
   chatId: number,
   testFooter = '',
   messageId?: number,
-  isDocument = false,
 ): Promise<void> {
   const text = GUEST_WELCOME_TEXT + testFooter;
   if (messageId) {
-    await editGuestMessage({ chatId, messageId, isDocument }, text, mainMenuKeyboard());
-    return;
+    try {
+      await editGuestMessage({ chatId, messageId }, text, mainMenuKeyboard());
+      return;
+    } catch (error) {
+      console.error('Не удалось отредактировать главное меню, создаю новое:', error);
+    }
   }
 
-  // Только /start создаёт начальное сообщение меню.
-  await telegramSend('sendMessage', {
+  // /start или редкий fallback после ошибки редактирования создаёт текстовое меню.
+  const result = await telegramSend('sendMessage', {
     chat_id: chatId,
     text,
     reply_markup: mainMenuKeyboard(),
   });
+  if (!result.ok) throw new Error(result.description ?? 'Не удалось показать главное меню.');
 }
 
 // /start использует это имя, чтобы не менять уже работающий маршрут webhook.
@@ -227,6 +322,20 @@ async function sendCheatsheet(
   });
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
 
+  const pdfMessageId = result.result?.message_id;
+  if (!pdfMessageId) {
+    const error = new Error('Telegram did not return PDF message_id');
+    console.error(error.message);
+    throw error;
+  }
+
+  await saveTemporaryPdfMessage(
+    admin,
+    telegramId,
+    message.chatId,
+    message.messageId,
+    pdfMessageId,
+  );
   await markCheatsheetReceived(admin, telegramId);
 }
 
@@ -333,6 +442,17 @@ async function showChannel(message: GuestMessage): Promise<void> {
   });
 }
 
+// Обрабатывает произвольный текст, не нарушая текущую навигацию кнопками.
+export async function handleGuestTextMessage(chatId: number): Promise<boolean> {
+  const result = await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: 'Для навигации по боту используйте кнопки.',
+    reply_markup: { inline_keyboard: [[mainMenuButton()]] },
+  });
+  if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить навигационное сообщение.');
+  return true;
+}
+
 // Обработка callback-кнопок гостевого меню. Возвращает true для известных сценариев.
 export async function handleGuestCallback(
   admin: SupabaseClient,
@@ -341,62 +461,68 @@ export async function handleGuestCallback(
   messageId: number,
   telegramId: number,
   callbackQueryId?: string,
-  isDocument = false,
 ): Promise<boolean> {
   const ack = (text?: string) =>
     callbackQueryId
       ? telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
       : Promise.resolve({ ok: true });
-  const message = { chatId, messageId, isDocument };
+  const currentMessage = { chatId, messageId };
 
   if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
     await ack();
-    await renderMainMenu(chatId, '', messageId, isDocument);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await renderMainMenu(menuMessage.chatId, '', menuMessage.messageId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheet) {
     await ack();
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
     if (await hasReceivedCheatsheet(admin, telegramId)) {
-      await editGuestMessage(message, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
+      await editGuestMessage(menuMessage, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
         inline_keyboard: [
           [{ text: '📕 Получить ещё раз', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
           [mainMenuButton()],
         ],
       });
     } else {
-      await sendCheatsheet(admin, message, telegramId);
+      await sendCheatsheet(admin, menuMessage, telegramId);
     }
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheetAgain) {
     await ack();
-    await sendCheatsheet(admin, message, telegramId);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await sendCheatsheet(admin, menuMessage, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinar) {
     await ack();
-    await renderWebinarFlow(admin, message, telegramId);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await renderWebinarFlow(admin, menuMessage, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinarRegister) {
     await ack();
-    await registerForWebinar(admin, message, telegramId);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await registerForWebinar(admin, menuMessage, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.when) {
     await ack();
-    await showWebinarDate(admin, message);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await showWebinarDate(admin, menuMessage);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.channel) {
     await ack();
-    await showChannel(message);
+    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
+    await showChannel(menuMessage);
     return true;
   }
 
