@@ -109,6 +109,14 @@ async function editAdminMessage(
   }
 }
 
+async function renderConversationStateMigrationMessage(message: AdminMessage): Promise<void> {
+  await editAdminMessage(
+    message,
+    '⚠️ Для создания и редактирования вебинаров нужно применить SQL-миграцию `supabase/bot_conversation_states.sql` в Supabase SQL Editor.',
+    { inline_keyboard: [[managementButton()], [homeButton()]] },
+  );
+}
+
 async function getMemberRole(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   const { data, error } = await admin
     .from('bot_members')
@@ -121,6 +129,11 @@ async function getMemberRole(admin: SupabaseClient, telegramId: number): Promise
 
 async function isAdmin(admin: SupabaseClient, telegramId: number): Promise<boolean> {
   return (await getMemberRole(admin, telegramId)) === 'admin';
+}
+
+function isConversationStateTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('bot_conversation_states') || message.includes('relation') && message.includes('does not exist');
 }
 
 async function getState(admin: SupabaseClient, telegramId: number): Promise<ConversationState | null> {
@@ -518,7 +531,13 @@ export async function handleAdminWebinarMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
-  const state = await getState(admin, telegramId);
+  let state: ConversationState | null;
+  try {
+    state = await getState(admin, telegramId);
+  } catch (error) {
+    if (isConversationStateTableError(error)) return false;
+    throw error;
+  }
   if (!state || state.chat_id !== chatId) return false;
 
   if (!(await isAdmin(admin, telegramId))) {
@@ -648,13 +667,18 @@ export async function handleAdminWebinarCallback(
   }
 
   if (data === ADMIN_WEBINAR_CALLBACKS.menu) {
-    await clearState(admin, telegramId);
+    // Само меню не зависит от состояния диалога и должно открываться даже до применения миграции.
     await editAdminMessage(message, '📅 Управление вебинарами', managementKeyboard());
     return true;
   }
 
   if (data === ADMIN_WEBINAR_CALLBACKS.create) {
-    await startCreate(admin, telegramId, message);
+    try {
+      await startCreate(admin, telegramId, message);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await renderConversationStateMigrationMessage(message);
+    }
     return true;
   }
 
@@ -708,7 +732,6 @@ export async function handleAdminWebinarCallback(
   }
 
   if (data === ADMIN_WEBINAR_CALLBACKS.list) {
-    await clearState(admin, telegramId);
     await renderWebinarList(admin, message);
     return true;
   }
@@ -717,13 +740,11 @@ export async function handleAdminWebinarCallback(
   if (!view) return true;
 
   if (view.action === 'open') {
-    await clearState(admin, telegramId);
     await renderWebinarDetail(admin, message, view.webinarId);
     return true;
   }
 
   if (view.action === 'edit') {
-    await clearState(admin, telegramId);
     await renderEditChoices(message, view.webinarId);
     return true;
   }
