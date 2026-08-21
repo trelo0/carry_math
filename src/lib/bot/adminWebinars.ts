@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
+import { adminReminderMenuButton } from '@/lib/bot/adminReminderTests';
 
 export const ADMIN_WEBINAR_CALLBACKS = {
   home: 'admin:home',
@@ -66,7 +67,10 @@ const ADMIN_HOME_TEXT =
 
 function adminHomeKeyboard(): InlineKeyboard {
   return {
-    inline_keyboard: [[{ text: '📅 Вебинары', callback_data: ADMIN_WEBINAR_CALLBACKS.menu }]],
+    inline_keyboard: [
+      [{ text: '📅 Вебинары', callback_data: ADMIN_WEBINAR_CALLBACKS.menu }],
+      [adminReminderMenuButton()],
+    ],
   };
 }
 

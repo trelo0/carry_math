@@ -8,6 +8,7 @@ import {
   handleAdminWebinarMessage,
   sendAdminStart,
 } from '@/lib/bot/adminWebinars';
+import { handleAdminReminderTestCallback } from '@/lib/bot/adminReminderTests';
 
 import {
   ensureMember,
@@ -308,6 +309,15 @@ export async function POST(request: Request) {
       const { data, from, id } = callbackQuery;
       const chatId = callbackMessage.chat.id;
       const messageId = callbackMessage.message_id;
+      const adminReminderHandled = await handleAdminReminderTestCallback(
+        admin,
+        data,
+        { chatId, messageId },
+        from.id,
+        id,
+      );
+      if (adminReminderHandled) return NextResponse.json({ ok: true });
+
       const adminHandled = await handleAdminWebinarCallback(
         admin,
         data,
