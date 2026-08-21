@@ -21,7 +21,7 @@ type InlineKeyboard = {
 };
 
 type ReminderTypeOption = {
-  key: '3d' | '1d' | '3h' | '15m';
+  key: '3d' | '1d' | '6h' | '15m';
   type: ReminderType;
   label: string;
 };
@@ -29,7 +29,7 @@ type ReminderTypeOption = {
 const REMINDER_TYPES: ReminderTypeOption[] = [
   { key: '3d', type: '3_days', label: '🔔 За 3 дня' },
   { key: '1d', type: '1_day', label: '🔔 За 1 день' },
-  { key: '3h', type: '3_hours', label: '🔔 За 3 часа' },
+  { key: '6h', type: '6_hours', label: '🔔 За 6 часов' },
   { key: '15m', type: '15_minutes', label: '🔔 За 15 минут' },
 ];
 

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 
-export type ReminderType = '3_days' | '1_day' | '3_hours' | '15_minutes';
+export type ReminderType = '3_days' | '1_day' | '6_hours' | '15_minutes';
 
 export type ReminderWebinar = {
   id: string | number;
@@ -43,7 +43,7 @@ export type ReminderRunSummary = {
 export const REMINDER_DEFINITIONS: ReminderDefinition[] = [
   { type: '3_days', offsetMs: 3 * 24 * 60 * 60 * 1000 },
   { type: '1_day', offsetMs: 24 * 60 * 60 * 1000 },
-  { type: '3_hours', offsetMs: 3 * 60 * 60 * 1000 },
+  { type: '6_hours', offsetMs: 6 * 60 * 60 * 1000 },
   { type: '15_minutes', offsetMs: 15 * 60 * 1000 },
 ];
 
@@ -85,27 +85,50 @@ export function formatWebinarDateTime(raw: string): { date: string; time: string
 }
 
 export function reminderText(webinar: ReminderWebinar, reminderType: ReminderType): string {
-  const { date, time } = formatWebinarDateTime(webinar.webinar_date);
+  const { time } = formatWebinarDateTime(webinar.webinar_date);
 
   if (reminderType === '3_days') {
-    return `🔔 Напоминание о вебинаре\n\nЧерез 3 дня состоится бесплатный вебинар «${webinar.title}».\n\n📅 ${date}\n🕐 ${time}`;
+    return (
+      'Внимание всем секторам!\n\n' +
+      'Проверка систем жизнеобеспечения. До нашего большого бесплатного онлайн-интенсива осталось ровно 3 дня. ' +
+      'Мы покажем тебе, как устроен «District» изнутри, и разберём реальные ловушки ЦТ из части Б, на которых валятся все школьники.'
+    );
   }
 
   if (reminderType === '1_day') {
-    return `🔔 Уже завтра!\n\nЗавтра состоится бесплатный вебинар «${webinar.title}».\n\n📅 ${date}\n🕐 ${time}`;
+    return (
+      'Спонсорский парашют для веба!\n' +
+      'За 24 часа до старта\n\n' +
+      `Завтра в ${time} арена «District» официально активируется. ` +
+      'Чтобы ты пришёл на трансляцию заряженным, менторы приготовили для тебя микро-гайд: ' +
+      '«Формулы тригонометрии, которые спасут тебя на ЦТ». Просмотри его сегодня. ' +
+      'А завтра мы разберём, как эти формулы работают в реальном бою. Встречаемся завтра!'
+    );
   }
 
-  if (reminderType === '3_hours') {
-    return `🔔 Вебинар уже скоро!\n\nЧерез 3 часа начинается бесплатный вебинар «${webinar.title}».`;
+  if (reminderType === '6_hours') {
+    return (
+      'День ИКС настал, трибут. Сбор фракции объявлен!\n\n' +
+      `Сегодня в ${time} мы выходим на Арену. Готовь тетрадку, ручку и чай. ` +
+      'Лидия Владимировна проведёт разбор ловушек ЦТ, после которого ты начнёшь щёлкать тригонометрию как орехи. ' +
+      'Таймер запущен. Ровно через 6 часов в этом чате откроется прямой телепорт на вебинар. Будь на связи!'
+    );
   }
 
-  return '🔔 Вебинар начинается через 15 минут!';
+  return (
+    'Шлюзы Арены открыты!\n\n' +
+    'ТЕЛЕПОРТ АКТИВИРОВАН\n\n' +
+    'Все, Лидия Владимировна уже в эфире, менторы заняли свои позиции в чате поддержки. ' +
+    'Мы начинаем взлом ЦТ прямо сейчас. Залетай по кнопке ниже, пока система не ограничила доступ на этот поток! ' +
+    'Твои 80+ баллов начинаются здесь.'
+  );
 }
 
 export function webinarUrlKeyboard(
   url: string | null,
+  reminderType: ReminderType,
 ): { inline_keyboard: Array<Array<Record<string, string>>> } | undefined {
-  if (!url) return undefined;
+  if (reminderType !== '15_minutes' || !url) return undefined;
 
   try {
     const parsed = new URL(url);
@@ -115,8 +138,37 @@ export function webinarUrlKeyboard(
   }
 
   return {
-    inline_keyboard: [[{ text: '🔗 ОТКРЫТЬ СТРАНИЦУ ВЕБИНАРА', url }]],
+    inline_keyboard: [[{ text: 'ВХОД НА АРЕНУ DISTRICT', url }]],
   };
+}
+
+async function sendWebinarReminder(
+  chatId: number,
+  webinar: ReminderWebinar,
+  reminderType: ReminderType,
+): Promise<void> {
+  if (reminderType === '1_day') {
+    const guideFileId = process.env.WEBINAR_1_DAY_GUIDE_FILE_ID;
+    if (guideFileId) {
+      const guideResponse = await telegramSend('sendDocument', {
+        chat_id: chatId,
+        document: guideFileId,
+        caption: '📕 Микро-гайд: «Формулы тригонометрии, которые спасут тебя на ЦТ».',
+      });
+      if (!guideResponse.ok) {
+        throw new Error(guideResponse.description ?? 'Telegram не принял микро-гайд.');
+      }
+    } else {
+      console.warn('WEBINAR_1_DAY_GUIDE_FILE_ID не настроен: отправляю уведомление за сутки без файла.');
+    }
+  }
+
+  const response = await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: reminderText(webinar, reminderType),
+    reply_markup: webinarUrlKeyboard(webinar.registration_url, reminderType),
+  });
+  if (!response.ok) throw new Error(response.description ?? 'Telegram не принял напоминание.');
 }
 
 async function claimReminder(
@@ -253,12 +305,7 @@ export async function sendReminderPreviewToAdmin(
     throw new Error('У администратора не указан chat_id. Откройте личный чат с ботом и выполните /start.');
   }
 
-  const response = await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: reminderText(webinar, reminderType),
-    reply_markup: webinarUrlKeyboard(webinar.registration_url),
-  });
-  if (!response.ok) throw new Error(response.description ?? 'Telegram не принял тестовое напоминание.');
+  await sendWebinarReminder(chatId, webinar, reminderType);
 }
 
 export async function runWebinarReminderCheck(
@@ -340,12 +387,7 @@ export async function runWebinarReminderCheck(
           }
 
           try {
-            const response = await telegramSend('sendMessage', {
-              chat_id: recipient.chatId,
-              text: reminderText(webinar, definition.type),
-              reply_markup: webinarUrlKeyboard(webinar.registration_url),
-            });
-            if (!response.ok) throw new Error(response.description ?? 'Telegram не принял напоминание.');
+            await sendWebinarReminder(recipient.chatId, webinar, definition.type);
             summary.sent += 1;
           } catch (error) {
             await releaseReminderClaim(admin, String(webinar.id), recipient.telegramId, definition.type);

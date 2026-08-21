@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 
   if (forceParam && !forcedReminderType) {
     return NextResponse.json(
-      { error: 'force must be one of: 3_days, 1_day, 3_hours, 15_minutes' },
+      { error: 'force must be one of: 3_days, 1_day, 6_hours, 15_minutes' },
       { status: 400 },
     );
   }

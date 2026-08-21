@@ -58,7 +58,12 @@ export async function POST(request: Request) {
       chat?: { id: number };
             from?: TgFrom;
       reply_to_message?: { from?: TgFrom };
-
+      document?: {
+        file_id?: string;
+        file_name?: string;
+        mime_type?: string;
+      };
+	
     };
     callback_query?: {
       id?: string;
@@ -71,6 +76,16 @@ export async function POST(request: Request) {
 
   if (!update) return NextResponse.json({ ok: true });
 
+  // ВРЕМЕННО: после отправки PDF боту file_id появится в серверном логе.
+  // Файл не скачивается, не сохраняется и не влияет на сценарии или таблицы.
+  const incomingDocument = update.message?.document;
+  if (incomingDocument?.file_id && incomingDocument.mime_type === 'application/pdf') {
+    console.log('Telegram PDF received:', {
+      file_id: incomingDocument.file_id,
+      file_name: incomingDocument.file_name ?? '(без имени)',
+    });
+  }
+	
     try {
     const admin = createAdminClient();
 
