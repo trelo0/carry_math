@@ -32,34 +32,57 @@ type InlineKeyboard = {
 };
 
 const GUEST_WELCOME_TEXT =
-  '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +
-  'Здесь можно забрать спонсорскую помощь, записаться на бесплатный вебинар и следить за новостями школы.';
+  '🛰 ИДЕНТИФИКАЦИЯ ПРОЙДЕНА\n\n' +
+  'РАНГ: КАНДИДАТ АРЕНЫ DISTRICT\n\n' +
+  'Привет! 👋\n\n' +
+  'Система зафиксировала твой сигнал. Ты официально попал в закрытый бункер школы «District».\n\n' +
+  'Здесь мы не зубрим школьную теорию — мы учимся выживать на ЦТ/ЦЭ 2027 по математике. 🧠⚡\n\n' +
+  'Твой спонсорский подарок уже укомплектован и ждёт тебя.\n\n' +
+  '🎒 Нажимай кнопку ниже, чтобы забрать своё снаряжение.';
 
-const CHEATSHEET_SENDING_TEXT = '📕 Спонсорская помощь отправляется…';
+const CHEATSHEET_SENDING_TEXT =
+  '📦 СНАБЖЕНИЕ ДОСТАВЛЕНО\n\n' +
+  'Парашют от спонсоров приземлился! 🪂\n\n' +
+  'Держи свой главный чит-код:\n\n' +
+  '📕 «Траектория 80+: С нуля до максимума»\n\n' +
+  'Скачивай, изучай материал и помни:\n\n' +
+  'это лишь 1% того снаряжения, которое мы приготовили для тебя на Арене. ⚡';
 
-// Caption PDF: текст и действия находятся в одном сообщении с документом.
 const CHEATSHEET_AFTER_TEXT =
-  '📕 Спонсорская шпора уже у тебя!\n\nТеперь можешь записаться на бесплатный вебинар.';
+  '🎯 СНАРЯЖЕНИЕ ПОЛУЧЕНО\n\n' +
+  'Чтобы научиться обходить эти капканы в реальном бою, особенно в части Б, тебе нужен допуск к нашему главному испытанию.\n\n' +
+  '🔥 БЕСПЛАТНЫЙ ОНЛАЙН-ИНТЕНСИВ С ЛИДИЕЙ ВЛАДИМИРОВНОЙ\n\n' +
+  'Жми кнопку ниже и бронируй своё место в списке участников.\n\n' +
+  '🎟 Система автоматически пришлёт тебе ссылку на трансляцию в день старта.';
 
 const CHANNEL_TEXT =
-  '📢 Подписывайся на канал Лидии — там анонсы вебинаров, разборы задач и советы по математике.';
+  '📡 ДОСТУП К ОФЛАЙН-ТАЁЖНИКУ\n\n' +
+  'Канал Лидии Владимировны — это наша тусовка, где подготовка проходит на лёгком и расслабленном вайбе.\n\n' +
+  'Там тебя ждут:\n\n' +
+  '🎧 утренние DJ-сеты с формулами\n' +
+  '🧩 разборы задач\n' +
+  '🧠 тесты и полезные материалы\n' +
+  '⚡ темы, которые школьные учителя почему-то никогда не объясняют\n\n' +
+  'Жми кнопку ниже и присоединяйся к своей команде.';
 
 function getChannelUrl(): string {
-  return process.env.LIDIA_CHANNEL_URL ?? 'https://t.me/district_math';
+  const url = process.env.LIDIA_CHANNEL_URL;
+  if (!url) throw new Error('LIDIA_CHANNEL_URL is not configured');
+  return url;
 }
 
 function mainMenuKeyboard(): InlineKeyboard {
   return {
     inline_keyboard: [
-      [{ text: '📕 Забрать спонсорскую помощь', callback_data: GUEST_CALLBACKS.cheatsheet }],
-      [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
-      [{ text: '📢 Канал Лидии', callback_data: GUEST_CALLBACKS.channel }],
+      [{ text: '📦 ЗАБРАТЬ СПОНСОРСКУЮ ПОМОЩЬ', callback_data: GUEST_CALLBACKS.cheatsheet }],
+      [{ text: '📝 ЗАПИСАТЬСЯ НА БЕСПЛАТНЫЙ ВЕБИНАР', callback_data: GUEST_CALLBACKS.webinar }],
+      [{ text: '📡 КАНАЛ ЛИДИИ', callback_data: GUEST_CALLBACKS.channel }],
     ],
   };
 }
 
 function mainMenuButton() {
-  return { text: '🏠 Главное меню', callback_data: GUEST_CALLBACKS.main };
+  return { text: '🏠 ГЛАВНОЕ МЕНЮ', callback_data: GUEST_CALLBACKS.main };
 }
 
 async function editGuestMessage(
@@ -124,6 +147,28 @@ function formatTimeRemaining(webinarDate: Date): string {
   if (hours > 0 || parts.length === 0) parts.push(`${hours} ${plural(hours, 'час', 'часа', 'часов')}`);
 
   return `До начала осталось: ${parts.join(' ')}.`;
+}
+
+const ALREADY_REGISTERED_TEXT =
+  '✅ ПРОПУСК УЖЕ АКТИВИРОВАН\n\n' +
+  'Ты уже находишься в списке участников главного испытания.\n\n' +
+  'Система следит за расписанием и отправит ссылку на трансляцию прямо сюда.\n\n' +
+  '📡 Не отключай уведомления бота.';
+
+function successfulRegistrationText(webinar: ActiveWebinar): string {
+  const date = new Date(webinar.webinar_date);
+  const webinarDate = Number.isNaN(date.getTime())
+    ? 'дата уточняется'
+    : formatWebinarDate(date);
+
+  return (
+    '✅ ДОСТУП К ГЛАВНОМУ ИСПЫТАНИЮ ОТКРЫТ\n\n' +
+    `Ты успешно внесён в список участников Первого бесплатного онлайн-интенсива, который состоится ${webinarDate}.\n\n` +
+    '🎯 ЧТО ТЕБЯ ЖДЁТ:\n\n' +
+    'Лидия Владимировна в прямом эфире разберёт протоколы всех ловушек ЦТ и поделится новыми секретными материалами.\n\n' +
+    '📡 Ссылка на трансляцию прилетит прямо в этот чат за 15 минут до старта.\n\n' +
+    '⚠️ Не отключай уведомления бота — система должна доставить твой пропуск вовремя.'
+  );
 }
 
 async function getActiveWebinar(admin: SupabaseClient): Promise<ActiveWebinar | null> {
@@ -260,7 +305,7 @@ async function sendCheatsheet(
     text: CHEATSHEET_AFTER_TEXT,
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
+        [{ text: '🎟 ЗАПИСАТЬСЯ НА БЕСПЛАТНЫЙ ВЕБИНАР', callback_data: GUEST_CALLBACKS.webinar }],
         [mainMenuButton()],
       ],
     },
@@ -289,9 +334,9 @@ async function renderWebinarFlow(
   // Тестер в маске всегда видит чистый интерфейс и не получает статус реальной регистрации.
   const registered = isTestMode ? false : await isRegisteredForWebinar(admin, telegramId, webinar.id);
   if (registered) {
-    await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
+    await editGuestMessage(message, ALREADY_REGISTERED_TEXT, {
       inline_keyboard: [
-        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     });
@@ -300,11 +345,10 @@ async function renderWebinarFlow(
 
   await editGuestMessage(
     message,
-    '📝 Бесплатный вебинар поможет разобраться, как подтянуть математику без зубрёжки. Займи место по кнопке ниже.',
+    '🛰 ЗАПРОС ПРИНЯТ\n\nСистема DISTRICT начала обработку твоих данных.\n\nЧтобы подтвердить бронь места и запустить генерацию персонального пропуска на главное испытание, нажми кнопку ниже.\n\n⚠️ Мест не бесконечное количество.',
     {
       inline_keyboard: [
-        [{ text: '📝 Записаться на вебинар', callback_data: GUEST_CALLBACKS.webinarRegister }],
-        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [{ text: '🎟 АКТИВИРОВАТЬ ПРОПУСК', callback_data: GUEST_CALLBACKS.webinarRegister }],
         [mainMenuButton()],
       ],
     },
@@ -324,9 +368,9 @@ async function registerForWebinar(
   }
 
   if (!isTestMode && await isRegisteredForWebinar(admin, telegramId, webinar.id)) {
-    await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
+    await editGuestMessage(message, ALREADY_REGISTERED_TEXT, {
       inline_keyboard: [
-        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     });
@@ -334,9 +378,9 @@ async function registerForWebinar(
   }
 
   if (isTestMode) {
-    await editGuestMessage(message, '✅ Вы успешно записались на бесплатный вебинар!', {
+    await editGuestMessage(message, successfulRegistrationText(webinar), {
       inline_keyboard: [
-        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     });
@@ -354,11 +398,11 @@ async function registerForWebinar(
   await editGuestMessage(
     message,
     error?.code === '23505'
-      ? '✅ Вы уже записаны на бесплатный вебинар.'
-      : '✅ Вы успешно записались на бесплатный вебинар!',
+      ? ALREADY_REGISTERED_TEXT
+      : successfulRegistrationText(webinar),
     {
       inline_keyboard: [
-        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     },
@@ -374,8 +418,8 @@ async function showWebinarDate(admin: SupabaseClient, message: GuestMessage): Pr
 
   const date = new Date(webinar.webinar_date);
   const text = Number.isNaN(date.getTime())
-    ? '📅 Дата активного вебинара пока уточняется.'
-    : `📅 Вебинар состоится ${formatWebinarDate(date)}.\n${formatTimeRemaining(date)}`;
+    ? '📅 ДАТА АКТИВНОГО ВЕБИНАРА ПОКА УТОЧНЯЕТСЯ.'
+    : `📅 ВЕБИНАР СОСТОИТСЯ ${formatWebinarDate(date)}\n\n${formatTimeRemaining(date)}`;
 
   await editGuestMessage(message, text, { inline_keyboard: [[mainMenuButton()]] });
 }
@@ -384,7 +428,7 @@ async function showChannel(message: GuestMessage): Promise<void> {
   const url = getChannelUrl();
   await editGuestMessage(message, CHANNEL_TEXT, {
     inline_keyboard: [
-      [{ text: '🔗 Перейти в канал', url }],
+      [{ text: '🚀 ЗАЛЕТЕТЬ В ТГ-КАНАЛ', url }],
       [mainMenuButton()],
     ],
   });
@@ -427,9 +471,12 @@ export async function handleGuestCallback(
   if (data === GUEST_CALLBACKS.cheatsheet) {
     await ack();
     if (await hasReceivedCheatsheet(admin, telegramId, isTestMode)) {
-      await editGuestMessage(currentMessage, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
+      await editGuestMessage(
+        currentMessage,
+        '📦 СИСТЕМА УЖЕ ВЫДАВАЛА ЭТО СНАРЯЖЕНИЕ\n\nТы уже получил «Траектория 80+: С нуля до максимума».\n\nХочешь забрать его ещё раз?',
+        {
         inline_keyboard: [
-          [{ text: '📕 Получить ещё раз', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
+          [{ text: '📕 ПОЛУЧИТЬ ЕЩЁ РАЗ', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
           [mainMenuButton()],
         ],
       });
