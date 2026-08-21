@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { telegramSend } from '@/lib/telegram';
-import { getBaseUrlString } from '@/lib/siteUrl';
+import { telegramSend, telegramSendLocalDocument } from '@/lib/telegram';
 
 export const GUEST_CALLBACKS = {
   main: 'guest:main',
@@ -36,8 +35,8 @@ function getChannelUrl(): string {
   return process.env.LIDIA_CHANNEL_URL ?? 'https://t.me/district_math';
 }
 
-function getCheatsheetUrl(): string {
-  return process.env.GUEST_PDF_URL ?? `${getBaseUrlString()}/sponsor-shpora.pdf`;
+function getCheatsheetFileName(): string {
+  return process.env.GUEST_PDF_FILE_NAME ?? 'Traektoriya-80-S-nulya-do-maksimuma.pdf';
 }
 
 function mainMenuKeyboard() {
@@ -164,11 +163,11 @@ async function sendCheatsheet(
 ): Promise<void> {
   await telegramSend('sendMessage', { chat_id: chatId, text: CHEATSHEET_DELIVERY_TEXT });
 
-  const result = await telegramSend('sendDocument', {
-    chat_id: chatId,
-    document: getCheatsheetUrl(),
-    caption: '📄 Спонсорская помощь — онлайн-школа District',
-  });
+  const result = await telegramSendLocalDocument(
+    chatId,
+    getCheatsheetFileName(),
+    '📄 Спонсорская помощь — онлайн-школа District',
+  );
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
 
   await markCheatsheetReceived(admin, telegramId);
