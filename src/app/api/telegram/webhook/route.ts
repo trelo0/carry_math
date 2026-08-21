@@ -50,13 +50,9 @@ export async function POST(request: Request) {
     message?: {
             text?: string;
       chat?: { id: number };
-      from?: TgFrom;
-      document?: {
-        file_id: string;
-        file_name?: string;
-      };
-
+            from?: TgFrom;
       reply_to_message?: { from?: TgFrom };
+
     };
     callback_query?: {
       id?: string;
@@ -69,16 +65,6 @@ export async function POST(request: Request) {
   if (!update) return NextResponse.json({ ok: true });
 
     try {
-    // Временная диагностика: PDF из Telegram не скачивается и не сохраняется.
-    const document = update.message?.document;
-    if (document?.file_id) {
-      console.info('Telegram document received:', {
-        file_id: document.file_id,
-        file_name: document.file_name ?? '(без имени файла)',
-      });
-      return NextResponse.json({ ok: true });
-    }
-
     const admin = createAdminClient();
 
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
@@ -249,12 +235,14 @@ export async function POST(request: Request) {
     if (
       update.callback_query?.data &&
       update.callback_query.message?.chat?.id &&
+      update.callback_query.message?.message_id &&
       update.callback_query.from?.id
     ) {
       const handled = await handleGuestCallback(
         admin,
         update.callback_query.data,
         update.callback_query.message.chat.id,
+        update.callback_query.message.message_id,
         update.callback_query.from.id,
         update.callback_query.id,
       );

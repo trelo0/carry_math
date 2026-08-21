@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { telegramSend, telegramSendLocalDocument } from '@/lib/telegram';
+import { telegramSend } from '@/lib/telegram';
 
 export const GUEST_CALLBACKS = {
   main: 'guest:main',
@@ -16,6 +16,15 @@ export const GUEST_CALLBACKS = {
 type ActiveWebinar = {
   id: string | number;
   webinar_date: string;
+};
+
+type GuestMessage = {
+  chatId: number;
+  messageId: number;
+};
+
+type InlineKeyboard = {
+  inline_keyboard: Array<Array<Record<string, string>>>;
 };
 
 const GUEST_WELCOME_TEXT =
@@ -35,11 +44,7 @@ function getChannelUrl(): string {
   return process.env.LIDIA_CHANNEL_URL ?? 'https://t.me/district_math';
 }
 
-function getCheatsheetFileName(): string {
-  return process.env.GUEST_PDF_FILE_NAME ?? 'Traektoriya-80-S-nulya-do-maksimuma.pdf';
-}
-
-function mainMenuKeyboard() {
+function mainMenuKeyboard(): InlineKeyboard {
   return {
     inline_keyboard: [
       [{ text: '📕 Забрать спонсорскую помощь', callback_data: GUEST_CALLBACKS.cheatsheet }],
@@ -51,6 +56,24 @@ function mainMenuKeyboard() {
 
 function mainMenuButton() {
   return { text: '🏠 Главное меню', callback_data: GUEST_CALLBACKS.main };
+}
+
+async function editGuestMessage(
+  message: GuestMessage,
+  text: string,
+  replyMarkup: InlineKeyboard,
+): Promise<void> {
+  const result = await telegramSend('editMessageText', {
+    chat_id: message.chatId,
+    message_id: message.messageId,
+    text,
+    reply_markup: replyMarkup,
+  });
+
+  // Telegram возвращает ошибку, когда экран уже содержит те же текст и кнопки.
+  if (!result.ok && !result.description?.includes('message is not modified')) {
+    throw new Error(result.description ?? 'Не удалось обновить сообщение меню.');
+  }
 }
 
 function formatWebinarDate(date: Date): string {
@@ -134,19 +157,30 @@ async function isRegisteredForWebinar(
   return Boolean(data);
 }
 
-async function renderNoActiveWebinar(chatId: number): Promise<void> {
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.',
-    reply_markup: { inline_keyboard: [[mainMenuButton()]] },
-  });
+async function renderNoActiveWebinar(message: GuestMessage): Promise<void> {
+  await editGuestMessage(
+    message,
+    '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.',
+    { inline_keyboard: [[mainMenuButton()]] },
+  );
 }
 
 // Единая точка возврата во всех сценариях гостя.
-export async function renderMainMenu(chatId: number, testFooter = ''): Promise<void> {
+export async function renderMainMenu(
+  chatId: number,
+  testFooter = '',
+  messageId?: number,
+): Promise<void> {
+  const text = GUEST_WELCOME_TEXT + testFooter;
+  if (messageId) {
+    await editGuestMessage({ chatId, messageId }, text, mainMenuKeyboard());
+    return;
+  }
+
+  // Только /start создаёт начальное сообщение меню.
   await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: GUEST_WELCOME_TEXT + testFooter,
+    text,
     reply_markup: mainMenuKeyboard(),
   });
 }
@@ -158,91 +192,86 @@ export async function guestStart(chatId: number, testFooter = ''): Promise<void>
 
 async function sendCheatsheet(
   admin: SupabaseClient,
-  chatId: number,
+  message: GuestMessage,
   telegramId: number,
 ): Promise<void> {
-  await telegramSend('sendMessage', { chat_id: chatId, text: CHEATSHEET_DELIVERY_TEXT });
+  const fileId = process.env.GUEST_PDF_FILE_ID;
+  if (!fileId) throw new Error('GUEST_PDF_FILE_ID is not configured');
 
-  const result = await telegramSendLocalDocument(
-    chatId,
-    getCheatsheetFileName(),
-    '📄 Спонсорская помощь — онлайн-школа District',
+  await editGuestMessage(
+    message,
+    CHEATSHEET_DELIVERY_TEXT,
+    { inline_keyboard: [[mainMenuButton()]] },
   );
+
+  const result = await telegramSend('sendDocument', {
+    chat_id: message.chatId,
+    document: fileId,
+    caption: '📄 Спонсорская помощь — онлайн-школа District',
+  });
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
 
   await markCheatsheetReceived(admin, telegramId);
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: CHEATSHEET_AFTER_TEXT,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
-        [mainMenuButton()],
-      ],
-    },
+  await editGuestMessage(message, CHEATSHEET_AFTER_TEXT, {
+    inline_keyboard: [
+      [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
+      [mainMenuButton()],
+    ],
   });
 }
 
 async function renderWebinarFlow(
   admin: SupabaseClient,
-  chatId: number,
+  message: GuestMessage,
   telegramId: number,
 ): Promise<void> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
-    await renderNoActiveWebinar(chatId);
+    await renderNoActiveWebinar(message);
     return;
   }
 
   const registered = await isRegisteredForWebinar(admin, telegramId, webinar.id);
   if (registered) {
-    await telegramSend('sendMessage', {
-      chat_id: chatId,
-      text: '✅ Вы уже записаны на бесплатный вебинар.',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
-          [mainMenuButton()],
-        ],
-      },
+    await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
+      inline_keyboard: [
+        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [mainMenuButton()],
+      ],
     });
     return;
   }
 
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: '📝 Бесплатный вебинар поможет разобраться, как подтянуть математику без зубрёжки. Займи место по кнопке ниже.',
-    reply_markup: {
+  await editGuestMessage(
+    message,
+    '📝 Бесплатный вебинар поможет разобраться, как подтянуть математику без зубрёжки. Займи место по кнопке ниже.',
+    {
       inline_keyboard: [
         [{ text: '📝 Записаться на вебинар', callback_data: GUEST_CALLBACKS.webinarRegister }],
         [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     },
-  });
+  );
 }
 
 async function registerForWebinar(
   admin: SupabaseClient,
-  chatId: number,
+  message: GuestMessage,
   telegramId: number,
 ): Promise<void> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
-    await renderNoActiveWebinar(chatId);
+    await renderNoActiveWebinar(message);
     return;
   }
 
   if (await isRegisteredForWebinar(admin, telegramId, webinar.id)) {
-    await telegramSend('sendMessage', {
-      chat_id: chatId,
-      text: '✅ Вы уже записаны на бесплатный вебинар.',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
-          [mainMenuButton()],
-        ],
-      },
+    await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
+      inline_keyboard: [
+        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [mainMenuButton()],
+      ],
     });
     return;
   }
@@ -255,24 +284,24 @@ async function registerForWebinar(
 
   if (error && error.code !== '23505') throw error;
 
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: error?.code === '23505'
+  await editGuestMessage(
+    message,
+    error?.code === '23505'
       ? '✅ Вы уже записаны на бесплатный вебинар.'
       : '✅ Вы успешно записались на бесплатный вебинар!',
-    reply_markup: {
+    {
       inline_keyboard: [
         [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
       ],
     },
-  });
+  );
 }
 
-async function showWebinarDate(admin: SupabaseClient, chatId: number): Promise<void> {
+async function showWebinarDate(admin: SupabaseClient, message: GuestMessage): Promise<void> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
-    await renderNoActiveWebinar(chatId);
+    await renderNoActiveWebinar(message);
     return;
   }
 
@@ -281,24 +310,16 @@ async function showWebinarDate(admin: SupabaseClient, chatId: number): Promise<v
     ? '📅 Дата активного вебинара пока уточняется.'
     : `📅 Вебинар состоится ${formatWebinarDate(date)}.\n${formatTimeRemaining(date)}`;
 
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text,
-    reply_markup: { inline_keyboard: [[mainMenuButton()]] },
-  });
+  await editGuestMessage(message, text, { inline_keyboard: [[mainMenuButton()]] });
 }
 
-async function showChannel(chatId: number): Promise<void> {
+async function showChannel(message: GuestMessage): Promise<void> {
   const url = getChannelUrl();
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: CHANNEL_TEXT,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🔗 Перейти в канал', url }],
-        [mainMenuButton()],
-      ],
-    },
+  await editGuestMessage(message, CHANNEL_TEXT, {
+    inline_keyboard: [
+      [{ text: '🔗 Перейти в канал', url }],
+      [mainMenuButton()],
+    ],
   });
 }
 
@@ -307,6 +328,7 @@ export async function handleGuestCallback(
   admin: SupabaseClient,
   data: string,
   chatId: number,
+  messageId: number,
   telegramId: number,
   callbackQueryId?: string,
 ): Promise<boolean> {
@@ -314,59 +336,56 @@ export async function handleGuestCallback(
     callbackQueryId
       ? telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
       : Promise.resolve({ ok: true });
+  const message = { chatId, messageId };
 
   if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
     await ack();
-    await renderMainMenu(chatId);
+    await renderMainMenu(chatId, '', messageId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheet) {
     await ack();
     if (await hasReceivedCheatsheet(admin, telegramId)) {
-      await telegramSend('sendMessage', {
-        chat_id: chatId,
-        text: 'Вы уже получали спонсорскую помощь. Получить ещё раз?',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📕 Получить ещё раз', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
-            [mainMenuButton()],
-          ],
-        },
+      await editGuestMessage(message, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
+        inline_keyboard: [
+          [{ text: '📕 Получить ещё раз', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
+          [mainMenuButton()],
+        ],
       });
     } else {
-      await sendCheatsheet(admin, chatId, telegramId);
+      await sendCheatsheet(admin, message, telegramId);
     }
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheetAgain) {
     await ack();
-    await sendCheatsheet(admin, chatId, telegramId);
+    await sendCheatsheet(admin, message, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinar) {
     await ack();
-    await renderWebinarFlow(admin, chatId, telegramId);
+    await renderWebinarFlow(admin, message, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinarRegister) {
     await ack();
-    await registerForWebinar(admin, chatId, telegramId);
+    await registerForWebinar(admin, message, telegramId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.when) {
     await ack();
-    await showWebinarDate(admin, chatId);
+    await showWebinarDate(admin, message);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.channel) {
     await ack();
-    await showChannel(chatId);
+    await showChannel(message);
     return true;
   }
 
