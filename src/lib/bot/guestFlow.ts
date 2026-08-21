@@ -13,14 +13,19 @@ export const GUEST_CALLBACKS = {
   channel: 'guest:channel',
 } as const;
 
-type ActiveWebinar = {
+export type ActiveWebinar = {
   id: string | number;
+  title: string;
+  description: string | null;
   webinar_date: string;
+  registration_url: string | null;
+  is_active: boolean;
 };
 
 type GuestMessage = {
   chatId: number;
   messageId: number;
+  isDocument?: boolean;
 };
 
 type InlineKeyboard = {
@@ -31,11 +36,11 @@ const GUEST_WELCOME_TEXT =
   '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +
   'Здесь можно забрать спонсорскую помощь, записаться на бесплатный вебинар и следить за новостями школы.';
 
-const CHEATSHEET_DELIVERY_TEXT =
-  '📕 Отправляю спонсорскую помощь — она поможет быстро повторить самое важное.';
+const CHEATSHEET_SENDING_TEXT = '📕 Спонсорская помощь отправляется…';
 
+// Caption PDF: текст и действия находятся в одном сообщении с документом.
 const CHEATSHEET_AFTER_TEXT =
-  '📌 Спонсорская помощь уже у тебя. Теперь можно записаться на бесплатный вебинар.';
+  '📕 Спонсорская шпора уже у тебя!\n\nТеперь можешь записаться на бесплатный вебинар.';
 
 const CHANNEL_TEXT =
   '📢 Подписывайся на канал Лидии — там анонсы вебинаров, разборы задач и советы по математике.';
@@ -63,12 +68,14 @@ async function editGuestMessage(
   text: string,
   replyMarkup: InlineKeyboard,
 ): Promise<void> {
-  const result = await telegramSend('editMessageText', {
+  const payload = {
     chat_id: message.chatId,
     message_id: message.messageId,
-    text,
     reply_markup: replyMarkup,
-  });
+  };
+  const result = message.isDocument
+    ? await telegramSend('editMessageCaption', { ...payload, caption: text })
+    : await telegramSend('editMessageText', { ...payload, text });
 
   // Telegram возвращает ошибку, когда экран уже содержит те же текст и кнопки.
   if (!result.ok && !result.description?.includes('message is not modified')) {
@@ -112,8 +119,9 @@ function formatTimeRemaining(webinarDate: Date): string {
 async function getActiveWebinar(admin: SupabaseClient): Promise<ActiveWebinar | null> {
   const { data, error } = await admin
     .from('webinars')
-    .select('id, webinar_date')
+    .select('id, title, description, webinar_date, registration_url, is_active')
     .eq('is_active', true)
+    .gt('webinar_date', new Date().toISOString())
     .order('webinar_date', { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -170,10 +178,11 @@ export async function renderMainMenu(
   chatId: number,
   testFooter = '',
   messageId?: number,
+  isDocument = false,
 ): Promise<void> {
   const text = GUEST_WELCOME_TEXT + testFooter;
   if (messageId) {
-    await editGuestMessage({ chatId, messageId }, text, mainMenuKeyboard());
+    await editGuestMessage({ chatId, messageId, isDocument }, text, mainMenuKeyboard());
     return;
   }
 
@@ -196,28 +205,29 @@ async function sendCheatsheet(
   telegramId: number,
 ): Promise<void> {
   const fileId = process.env.GUEST_PDF_FILE_ID;
-  if (!fileId) throw new Error('GUEST_PDF_FILE_ID is not configured');
+  if (!fileId) {
+    const error = new Error('GUEST_PDF_FILE_ID is not configured');
+    console.error(error.message);
+    throw error;
+  }
 
-  await editGuestMessage(
-    message,
-    CHEATSHEET_DELIVERY_TEXT,
-    { inline_keyboard: [[mainMenuButton()]] },
-  );
+  // Деактивируем исходное меню до отправки файла, чтобы старые кнопки не оставались активными.
+  await editGuestMessage(message, CHEATSHEET_SENDING_TEXT, { inline_keyboard: [] });
 
   const result = await telegramSend('sendDocument', {
     chat_id: message.chatId,
     document: fileId,
-    caption: '📄 Спонсорская помощь — онлайн-школа District',
+    caption: CHEATSHEET_AFTER_TEXT,
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
+        [mainMenuButton()],
+      ],
+    },
   });
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
 
   await markCheatsheetReceived(admin, telegramId);
-  await editGuestMessage(message, CHEATSHEET_AFTER_TEXT, {
-    inline_keyboard: [
-      [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
-      [mainMenuButton()],
-    ],
-  });
 }
 
 async function renderWebinarFlow(
@@ -331,16 +341,17 @@ export async function handleGuestCallback(
   messageId: number,
   telegramId: number,
   callbackQueryId?: string,
+  isDocument = false,
 ): Promise<boolean> {
   const ack = (text?: string) =>
     callbackQueryId
       ? telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
       : Promise.resolve({ ok: true });
-  const message = { chatId, messageId };
+  const message = { chatId, messageId, isDocument };
 
   if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
     await ack();
-    await renderMainMenu(chatId, '', messageId);
+    await renderMainMenu(chatId, '', messageId, isDocument);
     return true;
   }
 

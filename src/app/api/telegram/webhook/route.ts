@@ -3,6 +3,11 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
 import { guestStart, handleGuestCallback } from '@/lib/bot/guestFlow';
+import {
+  handleAdminWebinarCallback,
+  handleAdminWebinarMessage,
+  sendAdminStart,
+} from '@/lib/bot/adminWebinars';
 
 import {
   ensureMember,
@@ -58,7 +63,12 @@ export async function POST(request: Request) {
       id?: string;
       data?: string;
       from?: TgFrom;
-      message?: { chat?: { id: number }; message_id?: number };
+            message?: {
+        chat?: { id: number };
+        message_id?: number;
+        document?: { file_id?: string };
+      };
+
     };
   } | null;
 
@@ -201,16 +211,22 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      if (role === 'admin') {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text:
-            '👋 Привет! Ты админ бота District.\n\n' +
-            '/users — список участников\n' +
-            '/role <id> <роль> — сменить роль (или ответом на сообщение)\n' +
-            '/id — узнать свой Telegram ID' +
-            testFooter,
-        });
+            if (role === 'admin') {
+        // Тестер в маске admin не получает доступ к операциям с вебинарами.
+        if (member.role === 'admin') {
+          await sendAdminStart(update.message.chat.id, testFooter);
+        } else {
+          await telegramSend('sendMessage', {
+            chat_id: update.message.chat.id,
+            text:
+              '👋 Привет! Ты админ бота District.\n\n' +
+              '/users — список участников\n' +
+              '/role <id> <роль> — сменить роль (или ответом на сообщение)\n' +
+              '/id — узнать свой Telegram ID' +
+              testFooter,
+          });
+        }
+
       } else if (role === 'curator') {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
@@ -231,22 +247,48 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-        // Кнопки гостевого меню и внутренних сценариев.
-    if (
-      update.callback_query?.data &&
-      update.callback_query.message?.chat?.id &&
-      update.callback_query.message?.message_id &&
-      update.callback_query.from?.id
-    ) {
-      const handled = await handleGuestCallback(
+        // Текстовые ответы для пошагового создания и редактирования вебинара.
+    if (update.message?.text && update.message.chat && update.message.from) {
+      const handled = await handleAdminWebinarMessage(
         admin,
-        update.callback_query.data,
-        update.callback_query.message.chat.id,
-        update.callback_query.message.message_id,
-        update.callback_query.from.id,
-        update.callback_query.id,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
       );
       if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Inline-кнопки админского и гостевого меню.
+    const callbackQuery = update.callback_query;
+    const callbackMessage = callbackQuery?.message;
+    if (
+      callbackQuery?.data &&
+      callbackMessage?.chat?.id &&
+      callbackMessage.message_id &&
+      callbackQuery.from?.id
+    ) {
+      const { data, from, id } = callbackQuery;
+      const chatId = callbackMessage.chat.id;
+      const messageId = callbackMessage.message_id;
+      const adminHandled = await handleAdminWebinarCallback(
+        admin,
+        data,
+        { chatId, messageId },
+        from.id,
+        id,
+      );
+      if (adminHandled) return NextResponse.json({ ok: true });
+
+      const guestHandled = await handleGuestCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+        Boolean(callbackMessage.document?.file_id),
+      );
+      if (guestHandled) return NextResponse.json({ ok: true });
     }
 
     // /id — показать свой Telegram ID (удобно для назначения ролей).
