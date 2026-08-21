@@ -27,12 +27,6 @@ type GuestMessage = {
   messageId: number;
 };
 
-type TemporaryPdfMessage = {
-  chat_id: number;
-  menu_message_id: number;
-  pdf_message_id: number;
-};
-
 type InlineKeyboard = {
   inline_keyboard: Array<Array<Record<string, string>>>;
 };
@@ -82,6 +76,19 @@ async function editGuestMessage(
 
   // Telegram возвращает ошибку, когда экран уже содержит те же текст и кнопки.
   if (!result.ok && !result.description?.includes('message is not modified')) {
+    // Документ нельзя превратить в текст через editMessageText. PDF остаётся в чате,
+    // поэтому для дальнейшей навигации создаём отдельный текстовый экран.
+    if (result.description?.includes('message to edit')) {
+      const fallback = await telegramSend('sendMessage', {
+        chat_id: message.chatId,
+        text,
+        reply_markup: replyMarkup,
+      });
+      if (!fallback.ok) {
+        throw new Error(fallback.description ?? 'Не удалось открыть экран навигации.');
+      }
+      return;
+    }
     throw new Error(result.description ?? 'Не удалось обновить сообщение меню.');
   }
 }
@@ -133,7 +140,25 @@ async function getActiveWebinar(admin: SupabaseClient): Promise<ActiveWebinar | 
   return data as ActiveWebinar | null;
 }
 
-async function hasReceivedCheatsheet(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+async function isTestMaskActive(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('role, view_role')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.role === 'test' && data.view_role !== null;
+}
+
+async function hasReceivedCheatsheet(
+  admin: SupabaseClient,
+  telegramId: number,
+  isTestMode: boolean,
+): Promise<boolean> {
+  // Тестовая маска всегда проходит выдачу с нуля и не читает бизнес-статус пользователя.
+  if (isTestMode) return false;
+
   const { data, error } = await admin
     .from('bot_member_actions')
     .select('cheat_sheet_received')
@@ -150,114 +175,6 @@ async function markCheatsheetReceived(admin: SupabaseClient, telegramId: number)
     .upsert({ telegram_id: telegramId, cheat_sheet_received: true }, { onConflict: 'telegram_id' });
 
   if (error) throw error;
-}
-
-function isTemporaryPdfStateTableError(error: unknown): boolean {
-  const details = error as { message?: unknown; code?: unknown } | null;
-  const message = String(details?.message ?? error);
-  const code = String(details?.code ?? '');
-  return code === 'PGRST205' || code === '42P01' || message.includes('bot_temporary_pdf_messages');
-}
-
-async function isTemporaryPdfStateAvailable(admin: SupabaseClient): Promise<boolean> {
-  const { error } = await admin
-    .from('bot_temporary_pdf_messages')
-    .select('telegram_id')
-    .limit(1);
-  if (!error) return true;
-  if (isTemporaryPdfStateTableError(error)) return false;
-  throw error;
-}
-
-async function saveTemporaryPdfMessage(
-  admin: SupabaseClient,
-  telegramId: number,
-  chatId: number,
-  menuMessageId: number,
-  pdfMessageId: number,
-): Promise<void> {
-  const { error } = await admin.from('bot_temporary_pdf_messages').upsert(
-    {
-      telegram_id: telegramId,
-      chat_id: chatId,
-      menu_message_id: menuMessageId,
-      pdf_message_id: pdfMessageId,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'telegram_id' },
-  );
-  if (error) throw error;
-}
-
-async function getTemporaryPdfMessage(
-  admin: SupabaseClient,
-  telegramId: number,
-): Promise<TemporaryPdfMessage | null> {
-  const { data, error } = await admin
-    .from('bot_temporary_pdf_messages')
-    .select('chat_id, menu_message_id, pdf_message_id')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  if (error) {
-    if (isTemporaryPdfStateTableError(error)) return null;
-    throw error;
-  }
-  return data ? (data as TemporaryPdfMessage) : null;
-}
-
-async function clearTemporaryPdfMessage(admin: SupabaseClient, telegramId: number): Promise<void> {
-  const { error } = await admin
-    .from('bot_temporary_pdf_messages')
-    .delete()
-    .eq('telegram_id', telegramId);
-  if (error && !isTemporaryPdfStateTableError(error)) throw error;
-}
-
-async function removeTemporaryPdfMessage(
-  temporary: TemporaryPdfMessage,
-): Promise<void> {
-  try {
-    const deleted = await telegramSend('deleteMessage', {
-      chat_id: temporary.chat_id,
-      message_id: temporary.pdf_message_id,
-    });
-    if (deleted.ok) return;
-
-    console.error('Не удалось удалить временное PDF-сообщение:', deleted.description);
-    // Если удаление запрещено Telegram, хотя бы отключаем кнопки у старого PDF.
-    const disabled = await telegramSend('editMessageReplyMarkup', {
-      chat_id: temporary.chat_id,
-      message_id: temporary.pdf_message_id,
-      reply_markup: { inline_keyboard: [] },
-    });
-    if (!disabled.ok) {
-      console.error('Не удалось отключить кнопки временного PDF-сообщения:', disabled.description);
-    }
-  } catch (error) {
-    console.error('Ошибка удаления временного PDF-сообщения:', error);
-  }
-}
-
-async function resolveMenuMessage(
-  admin: SupabaseClient,
-  telegramId: number,
-  currentMessage: GuestMessage,
-): Promise<GuestMessage> {
-  const temporary = await getTemporaryPdfMessage(admin, telegramId);
-  if (!temporary || temporary.chat_id !== currentMessage.chatId) {
-    return currentMessage;
-  }
-
-  await removeTemporaryPdfMessage(temporary);
-  await clearTemporaryPdfMessage(admin, telegramId);
-  if (temporary.pdf_message_id !== currentMessage.messageId) {
-    return currentMessage;
-  }
-
-  return {
-    chatId: temporary.chat_id,
-    messageId: temporary.menu_message_id,
-  };
 }
 
 async function isRegisteredForWebinar(
@@ -318,21 +235,13 @@ async function sendCheatsheet(
   admin: SupabaseClient,
   message: GuestMessage,
   telegramId: number,
+  isTestMode: boolean,
 ): Promise<void> {
   const fileId = process.env.GUEST_PDF_FILE_ID;
   if (!fileId) {
     const error = new Error('GUEST_PDF_FILE_ID is not configured');
     console.error(error.message);
     throw error;
-  }
-
-  if (!(await isTemporaryPdfStateAvailable(admin))) {
-    await editGuestMessage(
-      message,
-      'Для выдачи спонсорской шпоры нужно применить SQL-миграцию bot_temporary_pdf_messages.',
-      { inline_keyboard: [[mainMenuButton()]] },
-    );
-    return;
   }
 
   // Деактивируем исходное меню до отправки файла, чтобы старые кнопки не оставались активными.
@@ -351,27 +260,16 @@ async function sendCheatsheet(
   });
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
 
-  const pdfMessageId = result.result?.message_id;
-  if (!pdfMessageId) {
-    const error = new Error('Telegram did not return PDF message_id');
-    console.error(error.message);
-    throw error;
+  if (!isTestMode) {
+    await markCheatsheetReceived(admin, telegramId);
   }
-
-  await saveTemporaryPdfMessage(
-    admin,
-    telegramId,
-    message.chatId,
-    message.messageId,
-    pdfMessageId,
-  );
-  await markCheatsheetReceived(admin, telegramId);
 }
 
 async function renderWebinarFlow(
   admin: SupabaseClient,
   message: GuestMessage,
   telegramId: number,
+  isTestMode: boolean,
 ): Promise<void> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
@@ -379,7 +277,8 @@ async function renderWebinarFlow(
     return;
   }
 
-  const registered = await isRegisteredForWebinar(admin, telegramId, webinar.id);
+  // Тестер в маске всегда видит чистый интерфейс и не получает статус реальной регистрации.
+  const registered = isTestMode ? false : await isRegisteredForWebinar(admin, telegramId, webinar.id);
   if (registered) {
     await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
       inline_keyboard: [
@@ -407,6 +306,7 @@ async function registerForWebinar(
   admin: SupabaseClient,
   message: GuestMessage,
   telegramId: number,
+  isTestMode: boolean,
 ): Promise<void> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
@@ -414,8 +314,18 @@ async function registerForWebinar(
     return;
   }
 
-  if (await isRegisteredForWebinar(admin, telegramId, webinar.id)) {
+  if (!isTestMode && await isRegisteredForWebinar(admin, telegramId, webinar.id)) {
     await editGuestMessage(message, '✅ Вы уже записаны на бесплатный вебинар.', {
+      inline_keyboard: [
+        [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
+        [mainMenuButton()],
+      ],
+    });
+    return;
+  }
+
+  if (isTestMode) {
+    await editGuestMessage(message, '✅ Вы успешно записались на бесплатный вебинар!', {
       inline_keyboard: [
         [{ text: '📅 Когда вебинар', callback_data: GUEST_CALLBACKS.when }],
         [mainMenuButton()],
@@ -496,62 +406,57 @@ export async function handleGuestCallback(
       ? telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
       : Promise.resolve({ ok: true });
   const currentMessage = { chatId, messageId };
+  // Значение определяется только по свежей серверной записи bot_members.
+  const isTestMode = await isTestMaskActive(admin, telegramId);
 
   if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await renderMainMenu(menuMessage.chatId, '', menuMessage.messageId);
+    await renderMainMenu(currentMessage.chatId, '', currentMessage.messageId);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheet) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    if (await hasReceivedCheatsheet(admin, telegramId)) {
-      await editGuestMessage(menuMessage, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
+    if (await hasReceivedCheatsheet(admin, telegramId, isTestMode)) {
+      await editGuestMessage(currentMessage, 'Вы уже получали спонсорскую помощь. Получить ещё раз?', {
         inline_keyboard: [
           [{ text: '📕 Получить ещё раз', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
           [mainMenuButton()],
         ],
       });
     } else {
-      await sendCheatsheet(admin, menuMessage, telegramId);
+      await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
     }
     return true;
   }
 
   if (data === GUEST_CALLBACKS.cheatsheetAgain) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await sendCheatsheet(admin, menuMessage, telegramId);
+    await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinar) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await renderWebinarFlow(admin, menuMessage, telegramId);
+    await renderWebinarFlow(admin, currentMessage, telegramId, isTestMode);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.webinarRegister) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await registerForWebinar(admin, menuMessage, telegramId);
+    await registerForWebinar(admin, currentMessage, telegramId, isTestMode);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.when) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await showWebinarDate(admin, menuMessage);
+    await showWebinarDate(admin, currentMessage);
     return true;
   }
 
   if (data === GUEST_CALLBACKS.channel) {
     await ack();
-    const menuMessage = await resolveMenuMessage(admin, telegramId, currentMessage);
-    await showChannel(menuMessage);
+    await showChannel(currentMessage);
     return true;
   }
 
