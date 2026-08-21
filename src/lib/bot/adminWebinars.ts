@@ -132,8 +132,14 @@ async function isAdmin(admin: SupabaseClient, telegramId: number): Promise<boole
 }
 
 function isConversationStateTableError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('bot_conversation_states') || message.includes('relation') && message.includes('does not exist');
+  const details = error as { message?: unknown; code?: unknown } | null;
+  const message = String(details?.message ?? error);
+  const code = String(details?.code ?? '');
+  return (
+    code === '42P01' ||
+    message.includes('bot_conversation_states') ||
+    (message.includes('relation') && message.includes('does not exist'))
+  );
 }
 
 async function getState(admin: SupabaseClient, telegramId: number): Promise<ConversationState | null> {
@@ -170,6 +176,15 @@ async function saveState(
 async function clearState(admin: SupabaseClient, telegramId: number): Promise<void> {
   const { error } = await admin.from('bot_conversation_states').delete().eq('telegram_id', telegramId);
   if (error) throw error;
+}
+
+async function clearStateIfAvailable(admin: SupabaseClient, telegramId: number): Promise<void> {
+  try {
+    await clearState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    console.error('Таблица состояния диалогов не применена:', error);
+  }
 }
 
 function formatWebinarDate(raw: string): string {
@@ -661,7 +676,8 @@ export async function handleAdminWebinarCallback(
   await acknowledge();
 
   if (data === ADMIN_WEBINAR_CALLBACKS.home) {
-    await clearState(admin, telegramId);
+    // Возврат в меню не должен ломаться, даже если миграция состояния ещё не применена.
+    await clearStateIfAvailable(admin, telegramId);
     await showAdminHome(message);
     return true;
   }
@@ -676,14 +692,20 @@ export async function handleAdminWebinarCallback(
     try {
       await startCreate(admin, telegramId, message);
     } catch (error) {
-      if (!isConversationStateTableError(error)) throw error;
-      await renderConversationStateMigrationMessage(message);
+      console.error('Не удалось начать создание вебинара:', error);
+      if (isConversationStateTableError(error)) {
+        await renderConversationStateMigrationMessage(message);
+      } else {
+        await editAdminMessage(message, '⚠️ Не удалось открыть создание вебинара. Проверьте подключение к Supabase и повторите попытку.', {
+          inline_keyboard: [[managementButton()], [homeButton()]],
+        });
+      }
     }
     return true;
   }
 
   if (data === ADMIN_WEBINAR_CALLBACKS.createCancel) {
-    await clearState(admin, telegramId);
+    await clearStateIfAvailable(admin, telegramId);
     await editAdminMessage(message, 'Создание вебинара отменено.', managementKeyboard());
     return true;
   }
