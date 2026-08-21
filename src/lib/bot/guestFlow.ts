@@ -247,10 +247,17 @@ async function sendCheatsheet(
   // Деактивируем исходное меню до отправки файла, чтобы старые кнопки не оставались активными.
   await editGuestMessage(message, CHEATSHEET_SENDING_TEXT, { inline_keyboard: [] });
 
-  const result = await telegramSend('sendDocument', {
+  const documentResult = await telegramSend('sendDocument', {
     chat_id: message.chatId,
     document: fileId,
-    caption: CHEATSHEET_AFTER_TEXT,
+  });
+  if (!documentResult.ok) {
+    throw new Error(documentResult.description ?? 'Не удалось отправить PDF-файл.');
+  }
+
+  const confirmationResult = await telegramSend('sendMessage', {
+    chat_id: message.chatId,
+    text: CHEATSHEET_AFTER_TEXT,
     reply_markup: {
       inline_keyboard: [
         [{ text: '📝 Записаться на бесплатный вебинар', callback_data: GUEST_CALLBACKS.webinar }],
@@ -258,7 +265,9 @@ async function sendCheatsheet(
       ],
     },
   });
-  if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить PDF-файл.');
+  if (!confirmationResult.ok) {
+    throw new Error(confirmationResult.description ?? 'Не удалось показать подтверждение выдачи шпоры.');
+  }
 
   if (!isTestMode) {
     await markCheatsheetReceived(admin, telegramId);
