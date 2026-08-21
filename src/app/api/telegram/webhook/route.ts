@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
-import { getBaseUrlString } from '@/lib/siteUrl';
+import { guestStart, handleGuestCallback } from '@/lib/bot/guestFlow';
+
 import {
   ensureMember,
   isAdminEnv,
@@ -24,6 +25,13 @@ type TgFrom = {
 function fullName(from: TgFrom): string | undefined {
   const name = [from.first_name, from.last_name].filter(Boolean).join(' ');
   return name || (from.username ? `@${from.username}` : undefined);
+}
+
+function memberPatch(from: TgFrom, chatId: number) {
+  return {
+    chat_id: chatId,
+    full_name: fullName(from),
+  };
 }
 
 // Вебхук Telegram-бота: привязка Telegram к номеру телефона.
@@ -61,11 +69,14 @@ export async function POST(request: Request) {
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     if (update.message?.text?.startsWith('/start ') && update.message.chat) {
       const token = update.message.text.slice('/start '.length).trim();
-      if (update.message.from) {
-        await ensureMember(admin, update.message.from.id, {
-          full_name: fullName(update.message.from),
-        });
+            if (update.message.from) {
+        await ensureMember(
+          admin,
+          update.message.from.id,
+          memberPatch(update.message.from, update.message.chat.id),
+        );
       }
+
       const { data: row } = await admin
         .from('telegram_link_tokens')
         .select('phone, used_at, expires_at')
@@ -128,9 +139,9 @@ export async function POST(request: Request) {
             .eq('token', token);
           await ensureMember(admin, telegramId, {
             phone: row.phone,
-            full_name: update.callback_query.from
-              ? fullName(update.callback_query.from)
-              : undefined,
+            ...(update.callback_query.from && chatId
+              ? memberPatch(update.callback_query.from, chatId)
+              : {}),
           });
 
           await telegramSend('answerCallbackQuery', {
@@ -155,11 +166,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // Просто /start — приветствие по роли.
+        // Просто /start — регистрация/обновление участника и меню по роли.
     if (update.message?.text === '/start' && update.message.chat && update.message.from) {
       const from = update.message.from;
-      const member = await ensureMember(admin, from.id, { full_name: fullName(from) });
-      const site = getBaseUrlString();
+      const member = await ensureMember(
+        admin,
+        from.id,
+        memberPatch(from, update.message.chat.id),
+      );
+
       const masked =
         member.role === 'test' && member.viewRole && member.viewRole !== 'test'
           ? member.viewRole
@@ -207,28 +222,31 @@ export async function POST(request: Request) {
             '🔑 Коды для входа приходят сюда.\n' +
             'Домашки и расписание — скоро.' + testFooter,
         });
-      } else {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text:
-            '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +
-            '🔑 Этот бот присылает коды для входа в личный кабинет — быстро и без паролей.\n\n' +
-            'Как подключить вход:\n' +
-            '1. На сайте нажми «Войти» и введи свой номер телефона.\n' +
-            '2. Вернись в бота и нажми «Подключить аккаунт».\n' +
-            '3. Готово — коды для входа будут приходить сюда.' + testFooter,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔐 Войти на сайт', url: `${site}/login` }],
-              [{ text: '📚 О курсе', url: site }],
-            ],
-          },
-        });
+            } else {
+        await guestStart(update.message.chat.id, testFooter);
       }
+
       return NextResponse.json({ ok: true });
     }
 
+        // Кнопки гостевого меню и внутренних сценариев.
+    if (
+      update.callback_query?.data &&
+      update.callback_query.message?.chat?.id &&
+      update.callback_query.from?.id
+    ) {
+      const handled = await handleGuestCallback(
+        admin,
+        update.callback_query.data,
+        update.callback_query.message.chat.id,
+        update.callback_query.from.id,
+        update.callback_query.id,
+      );
+      if (handled) return NextResponse.json({ ok: true });
+    }
+
     // /id — показать свой Telegram ID (удобно для назначения ролей).
+
     if (update.message?.text === '/id' && update.message.chat && update.message.from) {
       await telegramSend('sendMessage', {
         chat_id: update.message.chat.id,

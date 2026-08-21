@@ -16,6 +16,12 @@ export const ROLE_LABELS: Record<BotRole, string> = {
 
 export type MemberInfo = { role: BotRole; viewRole: BotRole | null };
 
+export type MemberPatch = {
+  phone?: string;
+  chat_id?: number;
+  full_name?: string;
+};
+
 // Первый админ задаётся списком ID в env, чтобы не бутстрапить через БД.
 export function isAdminEnv(telegramId: number): boolean {
   return (process.env.ADMIN_TELEGRAM_IDS ?? '')
@@ -30,41 +36,47 @@ export function isBotRole(value: string): value is BotRole {
 }
 
 // Регистрирует участника при первом контакте с ботом.
-// Существующую роль НЕ трогает — обновляет только телефон/имя, если переданы.
+// Существующую роль не трогает, а доступные данные Telegram обновляет.
+
 export async function ensureMember(
   admin: SupabaseClient,
   telegramId: number,
-  patch?: { phone?: string; full_name?: string },
+  patch?: MemberPatch,
+  initialRole: BotRole = 'guest',
 ): Promise<MemberInfo> {
-  const { data } = await admin
+  const { data, error: findError } = await admin
     .from('bot_members')
     .select('role, view_role')
     .eq('telegram_id', telegramId)
     .maybeSingle();
+  if (findError) throw findError;
 
   const cleanPatch = patch
-    ? Object.fromEntries(Object.entries(patch).filter(([, v]) => Boolean(v)))
+    ? Object.fromEntries(
+        Object.entries(patch).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+      )
     : {};
 
   if (data) {
-    if (Object.keys(cleanPatch).length > 0) {
-      await admin
+        if (Object.keys(cleanPatch).length > 0) {
+      const { error: updateError } = await admin
         .from('bot_members')
         .update({ ...cleanPatch, updated_at: new Date().toISOString() })
         .eq('telegram_id', telegramId);
+      if (updateError) throw updateError;
     }
+
     return {
       role: isBotRole(data.role) ? data.role : 'guest',
       viewRole: isBotRole(data.view_role) ? data.view_role : null,
     };
   }
 
-  // Владелец (ID из ADMIN_TELEGRAM_IDS) сразу получает роль test.
-  const role: BotRole = isAdminEnv(telegramId) ? 'test' : 'guest';
-  await admin
+  const { error: insertError } = await admin
     .from('bot_members')
-    .insert({ telegram_id: telegramId, role, ...cleanPatch });
-  return { role, viewRole: null };
+    .insert({ telegram_id: telegramId, role: initialRole, ...cleanPatch });
+  if (insertError) throw insertError;
+  return { role: initialRole, viewRole: null };
 }
 
 // Включает/сбрасывает тест-маску (только для роли test).
