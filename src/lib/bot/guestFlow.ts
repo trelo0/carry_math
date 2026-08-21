@@ -152,6 +152,23 @@ async function markCheatsheetReceived(admin: SupabaseClient, telegramId: number)
   if (error) throw error;
 }
 
+function isTemporaryPdfStateTableError(error: unknown): boolean {
+  const details = error as { message?: unknown; code?: unknown } | null;
+  const message = String(details?.message ?? error);
+  const code = String(details?.code ?? '');
+  return code === 'PGRST205' || code === '42P01' || message.includes('bot_temporary_pdf_messages');
+}
+
+async function isTemporaryPdfStateAvailable(admin: SupabaseClient): Promise<boolean> {
+  const { error } = await admin
+    .from('bot_temporary_pdf_messages')
+    .select('telegram_id')
+    .limit(1);
+  if (!error) return true;
+  if (isTemporaryPdfStateTableError(error)) return false;
+  throw error;
+}
+
 async function saveTemporaryPdfMessage(
   admin: SupabaseClient,
   telegramId: number,
@@ -181,7 +198,10 @@ async function getTemporaryPdfMessage(
     .select('chat_id, menu_message_id, pdf_message_id')
     .eq('telegram_id', telegramId)
     .maybeSingle();
-  if (error) throw error;
+  if (error) {
+    if (isTemporaryPdfStateTableError(error)) return null;
+    throw error;
+  }
   return data ? (data as TemporaryPdfMessage) : null;
 }
 
@@ -190,7 +210,7 @@ async function clearTemporaryPdfMessage(admin: SupabaseClient, telegramId: numbe
     .from('bot_temporary_pdf_messages')
     .delete()
     .eq('telegram_id', telegramId);
-  if (error) throw error;
+  if (error && !isTemporaryPdfStateTableError(error)) throw error;
 }
 
 async function removeTemporaryPdfMessage(
@@ -304,6 +324,15 @@ async function sendCheatsheet(
     const error = new Error('GUEST_PDF_FILE_ID is not configured');
     console.error(error.message);
     throw error;
+  }
+
+  if (!(await isTemporaryPdfStateAvailable(admin))) {
+    await editGuestMessage(
+      message,
+      'Для выдачи спонсорской шпоры нужно применить SQL-миграцию bot_temporary_pdf_messages.',
+      { inline_keyboard: [[mainMenuButton()]] },
+    );
+    return;
   }
 
   // Деактивируем исходное меню до отправки файла, чтобы старые кнопки не оставались активными.
