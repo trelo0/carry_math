@@ -152,6 +152,13 @@ async function sendWebinarReminder(
   webinar: ReminderWebinar,
   reminderType: ReminderType,
 ): Promise<void> {
+  const response = await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: reminderText(webinar, reminderType),
+    reply_markup: webinarUrlKeyboard(webinar.registration_url, reminderType),
+  });
+  if (!response.ok) throw new Error(response.description ?? 'Telegram не принял напоминание.');
+
   if (reminderType === '1_day') {
     const guideFileId = process.env.WEBINAR_1_DAY_GUIDE_FILE_ID;
     if (guideFileId) {
@@ -167,13 +174,6 @@ async function sendWebinarReminder(
       console.warn('WEBINAR_1_DAY_GUIDE_FILE_ID не настроен: отправляю уведомление за сутки без файла.');
     }
   }
-
-  const response = await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: reminderText(webinar, reminderType),
-    reply_markup: webinarUrlKeyboard(webinar.registration_url, reminderType),
-  });
-  if (!response.ok) throw new Error(response.description ?? 'Telegram не принял напоминание.');
 }
 
 async function claimReminder(
