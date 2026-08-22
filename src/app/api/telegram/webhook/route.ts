@@ -12,8 +12,16 @@ import {
   handleAdminDocument,
   handleAdminMessage,
   sendAdminStart,
-} from '@/lib/bot/adminFlow';
+} from '@/lib/bot/admin';
 import { analyzeUserMessage, enforceModerationRestrictions } from '@/lib/bot/moderation';
+import { handleStudentMessage, sendStudentStart } from '@/lib/bot/studentFlow';
+import { handleTeacherCallback, handleTeacherMessage, sendTeacherStart } from '@/lib/bot/teacher';
+import {
+  handleCuratorAttachment,
+  handleCuratorCallback,
+  handleCuratorMessage,
+  sendCuratorStart,
+} from '@/lib/bot/curator';
 
 import {
   ensureMember,
@@ -75,6 +83,8 @@ export async function POST(request: Request) {
       };
       // Массив размеров фото; последний элемент — максимальный размер.
       photo?: Array<{ file_id?: string }>;
+      // Голосовое сообщение (комментарий ментора при отклонении ДЗ, mock).
+      voice?: { file_id?: string };
 	
     };
     callback_query?: {
@@ -274,18 +284,15 @@ export async function POST(request: Request) {
         }
 
       } else if (role === 'curator') {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text: '👋 Привет! Ты куратор District.\nИнструменты куратора появятся здесь совсем скоро.' + testFooter,
-        });
+        // Кабинет ментора: Reply Keyboard + inline-экраны на MOCK-данных.
+        await sendCuratorStart(update.message.chat.id, testFooter);
       } else if (role === 'student') {
-        await telegramSend('sendMessage', {
-          chat_id: update.message.chat.id,
-          text:
-            '👋 Привет! Ты ученик District.\n' +
-            '🔑 Коды для входа приходят сюда.\n' +
-            'Домашки и расписание — скоро.' + testFooter,
-        });
+        // Динамическое меню ученика: разделы строятся из активных
+        // продуктовых доступов (user_accesses), а не из роли.
+        await sendStudentStart(admin, from.id, update.message.chat.id, testFooter);
+      } else if (role === 'teacher') {
+        // Кабинет преподавателя: Reply Keyboard + inline-экраны на MOCK-данных.
+        await sendTeacherStart(update.message.chat.id, testFooter);
             } else {
         await renderMainMenu(update.message.chat.id, testFooter);
       }
@@ -361,6 +368,24 @@ export async function POST(request: Request) {
       }
     }
 
+    // Вложения ментора (голосовое или фото): комментарий при отклонении ДЗ
+    // в mock-режиме. Стоит после админских вложений (админ в приоритете),
+    // ученику ничего не отправляется.
+    if (
+      (update.message?.voice?.file_id || update.message?.photo?.length) &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const largest = update.message.photo?.[update.message.photo.length - 1];
+      const curatorHandled = await handleCuratorAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.voice?.file_id ? 'voice' : largest?.file_id ? 'photo' : 'photo',
+      );
+      if (curatorHandled) return NextResponse.json({ ok: true });
+    }
+
     // Текстовые ответы для шаблонов уведомлений и пошагового создания/редактирования вебинара.
     if (
       update.message?.text &&
@@ -369,6 +394,59 @@ export async function POST(request: Request) {
       update.message.from
     ) {
       const handled = await handleAdminMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Кнопки Reply Keyboard ученика: обрабатываются до контроля переписки,
+    // чтобы нажатия разделов не анализировались детектором.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const handled = await handleStudentMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Reply Keyboard преподавателя: разделы меню и ввод «сообщения ученику».
+    // Стоит до контроля переписки, чтобы нажатия кнопок и черновики
+    // сообщений не анализировались детектором.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const handled = await handleTeacherMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Reply Keyboard ментора: разделы меню и текстовый комментарий
+    // при отклонении ДЗ. До контроля переписки, чтобы черновики
+    // комментариев не анализировались детектором.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const handled = await handleCuratorMessage(
         admin,
         update.message.from.id,
         update.message.chat.id,
@@ -430,6 +508,28 @@ export async function POST(request: Request) {
         id,
       );
       if (guestHandled) return NextResponse.json({ ok: true });
+
+      // Inline-навигация кабинета преподавателя (префикс t:).
+      const teacherHandled = await handleTeacherCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (teacherHandled) return NextResponse.json({ ok: true });
+
+      // Inline-навигация кабинета ментора (префикс c:).
+      const curatorHandled = await handleCuratorCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (curatorHandled) return NextResponse.json({ ok: true });
     }
 
     // /id — показать свой Telegram ID (удобно для назначения ролей).
