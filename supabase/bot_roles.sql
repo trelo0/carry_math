@@ -1,7 +1,7 @@
 -- Роли участников Telegram-бота District.
 -- guest   — зашёл в бота, курс не куплен
 -- student — купил курс
--- curator — куратор курса
+-- curator — куратор/ментор курса (mentor — устаревший синоним curator)
 -- admin   — админ (первый админ задаётся через env ADMIN_TELEGRAM_IDS)
 create table if not exists public.bot_members (
   telegram_id bigint not null,

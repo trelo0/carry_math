@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Роли бота District. Храним роль текстом, чтобы новые роли
 // (пункт «потом добавим») добавлялись без миграций схемы.
+// 'mentor' — легаси-запись из старых данных: curator и mentor — одна роль,
+// назначается и отображается только curator.
 export type BotRole = 'guest' | 'student' | 'curator' | 'teacher' | 'mentor' | 'admin' | 'test';
 
 export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin', 'test'];
@@ -11,10 +13,16 @@ export const ROLE_LABELS: Record<BotRole, string> = {
   student: 'ученик',
   curator: 'куратор',
   teacher: 'преподаватель',
-  mentor: 'наставник',
+  mentor: 'куратор',
   admin: 'админ',
   test: 'тестер',
 };
+
+// Подпись роли для интерфейса: легаси-роль mentor показываем как куратора.
+export function roleLabel(role: string): string {
+  const normalized: BotRole = role === 'mentor' ? 'curator' : isBotRole(role) ? role : 'guest';
+  return ROLE_LABELS[normalized];
+}
 
 export type MemberInfo = { role: BotRole; viewRole: BotRole | null };
 
@@ -169,28 +177,33 @@ export async function searchMembers(
   return (data ?? []) as MemberRow[];
 }
 
-export async function listMembersByRole(
+// Страница пользователей по набору ролей с общим количеством.
+// count: 'exact' возвращает total в заголовке ответа PostgREST.
+export async function listMembersInRoles(
   admin: SupabaseClient,
-  role: BotRole,
-  limit = 50,
-): Promise<MemberRow[]> {
-  const { data, error } = await admin
+  roles: string[],
+  page: number,
+  perPage: number,
+): Promise<{ members: MemberRow[]; total: number }> {
+  const from = page * perPage;
+  const { data, error, count } = await admin
     .from('bot_members')
-    .select(MEMBER_COLUMNS)
-    .eq('role', role)
-    .order('created_at', { ascending: true })
-    .limit(limit);
+    .select(MEMBER_COLUMNS, { count: 'exact' })
+    .in('role', roles)
+    .order('created_at', { ascending: false })
+    .range(from, from + perPage - 1);
   if (error) throw error;
-  return (data ?? []) as MemberRow[];
+  return { members: (data ?? []) as MemberRow[], total: count ?? 0 };
 }
 
-export async function countMembersByRole(admin: SupabaseClient): Promise<Record<string, number>> {
-  const { data, error } = await admin.from('bot_members').select('role').limit(1000);
+// Заявки с сайта, где контакт совпадает с телефоном участника.
+export async function countLeadsByPhone(admin: SupabaseClient, phone: string): Promise<number> {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 5) return 0;
+  const { data, error } = await admin
+    .from('leads')
+    .select('id')
+    .ilike('contact', `%${digits}%`);
   if (error) throw error;
-
-  const counts: Record<string, number> = {};
-  for (const row of data ?? []) {
-    counts[row.role] = (counts[row.role] ?? 0) + 1;
-  }
-  return counts;
+  return (data ?? []).length;
 }

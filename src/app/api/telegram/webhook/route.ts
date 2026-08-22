@@ -44,6 +44,9 @@ function memberPatch(from: TgFrom, chatId: number) {
   };
 }
 
+// mentor — устаревший синоним curator: в подсказках команд его не предлагаем.
+const ASSIGNABLE_ROLE_NAMES = Object.keys(ROLE_LABELS).filter((role) => role !== 'mentor');
+
 // Вебхук Telegram-бота: привязка Telegram к номеру телефона.
 // Telegram ID принимается только из update от самого Telegram
 // (вебхук защищён secret-заголовком), никогда из клиентских запросов.
@@ -288,18 +291,20 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      if (!isBotRole(arg)) {
+      // mentor — устаревший синоним curator: включаем маску куратора.
+      const maskRole = arg === 'mentor' ? 'curator' : arg;
+      if (!isBotRole(maskRole)) {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
-          text: `Формат: /as <роль> или /as reset. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
+          text: `Формат: /as <роль> или /as reset. Роли: ${ASSIGNABLE_ROLE_NAMES.join(', ')}.`,
         });
         return NextResponse.json({ ok: true });
       }
 
-      await setViewRole(admin, update.message.from.id, arg);
+      await setViewRole(admin, update.message.from.id, maskRole);
       await telegramSend('sendMessage', {
         chat_id: update.message.chat.id,
-        text: `🧪 Включена маска «${ROLE_LABELS[arg as BotRole]}». Напиши /start — увидишь бот глазами этой роли.`,
+        text: `🧪 Включена маска «${ROLE_LABELS[maskRole]}». Напиши /start — увидишь бот глазами этой роли.`,
       });
       return NextResponse.json({ ok: true });
     }
@@ -421,10 +426,13 @@ export async function POST(request: Request) {
         roleArg = args[0];
       }
 
+      // mentor — устаревший синоним curator: назначаем куратора.
+      if (roleArg === 'mentor') roleArg = 'curator';
+
       if (!targetId || !isBotRole(roleArg)) {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
-          text: `Формат: /role <id> <роль>. Роли: ${Object.keys(ROLE_LABELS).join(', ')}.`,
+          text: `Формат: /role <id> <роль>. Роли: ${ASSIGNABLE_ROLE_NAMES.join(', ')}.`,
         });
         return NextResponse.json({ ok: true });
       }

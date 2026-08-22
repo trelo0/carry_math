@@ -3,13 +3,12 @@ import { telegramSend } from '@/lib/telegram';
 import {
   type BotRole,
   type MemberRow,
-  BOT_ROLES,
-  ROLE_LABELS,
-  countMembersByRole,
+  countLeadsByPhone,
   getMember,
   isAdminEnv,
   isBotRole,
-  listMembersByRole,
+  listMembersInRoles,
+  roleLabel,
   searchMembers,
   setRole,
 } from '@/lib/bot/roles';
@@ -58,6 +57,7 @@ type Webinar = {
 
 // Общий payload состояния диалога: черновик вебинара и/или контекст
 // редактируемого вебинара или настраиваемого шаблона уведомления.
+// category/page — контекст навигации по пользователям для кнопки «Назад».
 type AdminPayload = {
   title?: string;
   description?: string | null;
@@ -65,6 +65,8 @@ type AdminPayload = {
   registration_url?: string | null;
   webinarId?: string;
   reminderType?: ReminderType;
+  category?: string;
+  page?: number;
 };
 
 type ConversationStep =
@@ -220,7 +222,6 @@ function adminHomeKeyboard(): InlineKeyboard {
   return {
     inline_keyboard: [
       [{ text: '👥 Пользователи', callback_data: 'admin:users' }],
-      [{ text: '🎭 Роли', callback_data: 'admin:roles' }],
       [{ text: '📅 Вебинары', callback_data: 'admin:webinars' }],
       [{ text: '📢 Рассылки', callback_data: 'admin:broadcasts' }],
       [{ text: '📊 Статистика', callback_data: 'admin:stats' }],
@@ -1319,11 +1320,11 @@ async function handleNotificationTextStep(
 // Панель администратора: пользователи и роли
 // ---------------------------------------------------------------------------
 
-// Точные callback'и панели. admin:user:* и admin:role:* матчатся по префиксу.
+// Точные callback'и панели. admin:user:* и admin:cat:* матчатся по префиксу.
 const PANEL_CALLBACKS = [
   'admin:home',
   'admin:users',
-  'admin:roles',
+  'admin:users:search',
   'admin:broadcasts',
   'admin:stats',
   'admin:chat-control',
@@ -1333,17 +1334,43 @@ function isPanelAction(data: string): boolean {
   return (
     PANEL_CALLBACKS.includes(data) ||
     data.startsWith('admin:user:') ||
-    data.startsWith('admin:role:')
+    data.startsWith('admin:cat:')
   );
 }
 
 const STUB_SECTION_TEXT = '🚧 Раздел находится в разработке.';
 
 // Роли, которые админ назначает через панель. test — только владелец бота.
-const ASSIGNABLE_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin'];
+const ASSIGNABLE_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'admin'];
 
-function roleLabel(role: string): string {
-  return isBotRole(role) ? ROLE_LABELS[role] : role;
+// Размер страницы списка пользователей: в одно сообщение Telegram
+// помещается ограниченное число кнопок.
+const USERS_PER_PAGE = 5;
+
+// Категории пользователей. «Платные» и «Ученики» пока определяются ролью
+// student (в bot_members она означает «купил курс»): отдельных таблиц
+// оплат и доступов в проекте нет. «Кураторы» включают легаси-роль mentor.
+type UserCategoryId = 'all' | 'guest' | 'paid' | 'student' | 'curator' | 'teacher' | 'admin';
+
+type UserCategory = {
+  id: UserCategoryId;
+  buttonLabel: string;
+  title: string;
+  roles: string[];
+};
+
+const USER_CATEGORIES: UserCategory[] = [
+  { id: 'all', buttonLabel: '👥 Все пользователи', title: 'Все пользователи', roles: ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin', 'test'] },
+  { id: 'guest', buttonLabel: '❄️ Гости', title: 'Гости', roles: ['guest'] },
+  { id: 'paid', buttonLabel: '💳 Платные пользователи', title: 'Платные пользователи', roles: ['student'] },
+  { id: 'student', buttonLabel: '🎓 Ученики', title: 'Ученики', roles: ['student'] },
+  { id: 'curator', buttonLabel: '🟡 Кураторы', title: 'Кураторы / менторы', roles: ['curator', 'mentor'] },
+  { id: 'teacher', buttonLabel: '🟠 Преподаватели', title: 'Преподаватели', roles: ['teacher'] },
+  { id: 'admin', buttonLabel: '🔐 Администраторы', title: 'Администраторы', roles: ['admin'] },
+];
+
+function findCategory(id: string): UserCategory | undefined {
+  return USER_CATEGORIES.find((category) => category.id === id);
 }
 
 function memberDisplayName(member: MemberRow): string {
@@ -1364,7 +1391,24 @@ function homeOnlyKeyboard(): InlineKeyboard {
   return { inline_keyboard: [[homeButton()]] };
 }
 
-async function renderUsersMenu(
+async function renderUsersMenu(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
+  // Вне активного поиска текст админа не должен попадать в поиск.
+  await clearStateIfAvailable(admin, telegramId);
+  const keyboard: InlineButton[][] = [
+    [{ text: '🔎 Поиск пользователя', callback_data: 'admin:users:search' }],
+    ...USER_CATEGORIES.map((category) => [
+      { text: category.buttonLabel, callback_data: `admin:cat:${category.id}:0` },
+    ]),
+    [homeButton()],
+  ];
+  await editAdminMessage(
+    message,
+    '👥 Пользователи\n\nВыбери категорию или найди пользователя по имени и телефону.',
+    { inline_keyboard: keyboard },
+  );
+}
+
+async function renderUserSearchPrompt(
   admin: SupabaseClient,
   telegramId: number,
   message: AdminMessage,
@@ -1372,10 +1416,16 @@ async function renderUsersMenu(
   await saveState(admin, telegramId, message, 'users:search', {});
   await editAdminMessage(
     message,
-    '👥 Пользователи\n\n' +
-      'Отправь следующим сообщением имя, часть телефона или Telegram ID пользователя.\n\n' +
-      'Например: «Иван», «29» или «123456789».',
-    homeOnlyKeyboard(),
+    '🔎 Поиск пользователя\n\n' +
+      'Отправь следующим сообщением имя, часть имени или телефон.\n\n' +
+      'Например: «Иван», «29» или «37529».\n\n' +
+      'Email в системе не хранится, поэтому поиск по нему недоступен.',
+    {
+      inline_keyboard: [
+        [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
+        [homeButton()],
+      ],
+    },
   );
 }
 
@@ -1389,8 +1439,13 @@ async function renderUsersSearchResults(
   if (trimmed.length < 2) {
     await editAdminMessage(
       message,
-      '👥 Пользователи\n\nЗапрос слишком короткий — введи минимум 2 символа.',
-      homeOnlyKeyboard(),
+      '🔎 Поиск пользователя\n\nЗапрос слишком короткий — введи минимум 2 символа.',
+      {
+        inline_keyboard: [
+          [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
+          [homeButton()],
+        ],
+      },
     );
     return;
   }
@@ -1399,8 +1454,13 @@ async function renderUsersSearchResults(
   if (members.length === 0) {
     await editAdminMessage(
       message,
-      `🔎 Никого не нашли по запросу «${trimmed}».\n\nПопробуй другое имя, телефон или Telegram ID.`,
-      homeOnlyKeyboard(),
+      `🔎 Никого не нашли по запросу «${trimmed}».\n\nПопробуй другое имя или телефон. Новый запрос — просто отправь его сообщением.`,
+      {
+        inline_keyboard: [
+          [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
+          [homeButton()],
+        ],
+      },
     );
     return;
   }
@@ -1416,36 +1476,100 @@ async function renderUsersSearchResults(
   const keyboard: InlineButton[][] = members.map((member) => [
     {
       text: `👤 ${shorten(memberDisplayName(member), 40)}`,
-      callback_data: `admin:user:${member.telegram_id}`,
+      // Контекст не передаём: «Назад» из профиля после поиска ведёт в меню.
+      callback_data: `admin:user:${member.telegram_id}::`,
     },
   ]);
-  keyboard.push([homeButton()]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:users' }], [homeButton()]);
 
   await editAdminMessage(message, text, { inline_keyboard: keyboard });
 }
 
-async function renderUserProfile(message: AdminMessage, member: MemberRow): Promise<void> {
-  await editAdminMessage(message, memberCard(member), {
+// Страница списка пользователей категории с пагинацией.
+async function renderUserList(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  category: UserCategory,
+  page: number,
+): Promise<void> {
+  const { members, total } = await listMembersInRoles(admin, category.roles, page, USERS_PER_PAGE);
+  const pageCount = Math.max(1, Math.ceil(total / USERS_PER_PAGE));
+  const safePage = Math.min(page, pageCount - 1);
+
+  const keyboard: InlineButton[][] = members.map((member) => [
+    {
+      text: `👤 ${shorten(memberDisplayName(member), 40)}`,
+      callback_data: `admin:user:${member.telegram_id}::${category.id}:${safePage}`,
+    },
+  ]);
+
+  if (pageCount > 1) {
+    keyboard.push([
+      {
+        text: safePage > 0 ? '⬅️ Назад' : '·',
+        callback_data: safePage > 0 ? `admin:cat:${category.id}:${safePage - 1}` : 'noop',
+      },
+      { text: `${safePage + 1}/${pageCount}`, callback_data: 'noop' },
+      {
+        text: safePage < pageCount - 1 ? '➡️ Далее' : '·',
+        callback_data: safePage < pageCount - 1 ? `admin:cat:${category.id}:${safePage + 1}` : 'noop',
+      },
+    ]);
+  }
+  keyboard.push([{ text: '⬅️ К пользователям', callback_data: 'admin:users' }], [homeButton()]);
+
+  const text =
+    total === 0
+      ? `${category.title}: пока никого нет.`
+      : [
+          `${category.title}: всего ${total}`,
+          '',
+          ...members.map((member, index) => `${safePage * USERS_PER_PAGE + index + 1}. ${memberCard(member)}`),
+        ].join('\n\n');
+
+  await editAdminMessage(message, text, { inline_keyboard: keyboard });
+}
+
+// Карточка пользователя. Поля без данных в системе помечены «нет данных»,
+// чтобы не выдумывать сущности: таблиц оплат и занятий пока нет.
+async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, member: MemberRow): Promise<void> {
+  let leads = 0;
+  try {
+    if (member.phone) leads = await countLeadsByPhone(admin, member.phone);
+  } catch (error) {
+    // Заявки — дополнительная информация; без них карточка остаётся работоспособной.
+    console.error('Не удалось получить заявки пользователя:', error);
+  }
+
+  const lines = [
+    `👤 ${memberDisplayName(member)}`,
+    member.phone ? `📱 Телефон: ${member.phone}` : '📱 Телефон: не указан',
+    `✈️ Telegram: ${member.chat_id ? 'подключён' : 'не подключён'}`,
+    `🎭 Роль: ${roleLabel(member.role)}`,
+    `📚 Доступ к курсу: ${member.role === 'student' ? 'есть' : 'нет'}`,
+    '👨‍🏫 Индивидуальные занятия: нет данных (таблицы занятий нет)',
+    '👥 Групповые занятия: нет данных (таблицы занятий нет)',
+    '💳 Оплата: нет данных (таблицы оплат нет)',
+  ];
+  if (leads > 0) lines.push(`📝 Заявок с сайта: ${leads}`);
+
+  await editAdminMessage(message, lines.join('\n'), {
     inline_keyboard: [
-      [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role` }],
+      [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
       [homeButton()],
     ],
   });
 }
 
-async function renderRoleChoices(
-  message: AdminMessage,
-  member: MemberRow,
-  callerId: number,
-): Promise<void> {
+async function renderRoleChoices(message: AdminMessage, member: MemberRow, callerId: number): Promise<void> {
   const roles: BotRole[] = isAdminEnv(callerId) ? [...ASSIGNABLE_ROLES, 'test'] : ASSIGNABLE_ROLES;
   const keyboard: InlineButton[][] = roles.map((role) => [
     {
       text: `${member.role === role ? '✅ ' : ''}${roleLabel(role)}`,
-      callback_data: `admin:user:${member.telegram_id}:set:${role}`,
+      callback_data: `admin:user:${member.telegram_id}:set:${role}::`,
     },
   ]);
-  keyboard.push([{ text: '↩️ К профилю', callback_data: `admin:user:${member.telegram_id}` }]);
+  keyboard.push([{ text: '↩️ К профилю', callback_data: `admin:user:${member.telegram_id}::` }]);
 
   await editAdminMessage(
     message,
@@ -1454,18 +1578,14 @@ async function renderRoleChoices(
   );
 }
 
-async function renderRoleConfirm(
-  message: AdminMessage,
-  member: MemberRow,
-  role: BotRole,
-): Promise<void> {
+async function renderRoleConfirm(message: AdminMessage, member: MemberRow, role: BotRole): Promise<void> {
   await editAdminMessage(
     message,
     `Назначить роль «${roleLabel(role)}» пользователю ${memberDisplayName(member)}?`,
     {
       inline_keyboard: [
-        [{ text: '✅ Подтвердить', callback_data: `admin:user:${member.telegram_id}:confirm:${role}` }],
-        [{ text: '↩️ Отмена', callback_data: `admin:user:${member.telegram_id}:role` }],
+        [{ text: '✅ Подтвердить', callback_data: `admin:user:${member.telegram_id}:confirm:${role}::` }],
+        [{ text: '↩️ Отмена', callback_data: `admin:user:${member.telegram_id}:role::` }],
       ],
     },
   );
@@ -1480,7 +1600,7 @@ async function applyRoleChange(
 ): Promise<void> {
   if (role === 'test' && !isAdminEnv(callerId)) {
     await editAdminMessage(message, 'Роль test назначается только владельцу бота.', {
-      inline_keyboard: [[{ text: '↩️ К профилю', callback_data: `admin:user:${member.telegram_id}` }]],
+      inline_keyboard: [[{ text: '↩️ К профилю', callback_data: `admin:user:${member.telegram_id}::` }]],
     });
     return;
   }
@@ -1491,63 +1611,11 @@ async function applyRoleChange(
     ? `✅ Роль «${roleLabel(role)}» установлена для ${memberDisplayName(member)}.`
     : 'Пользователь не найден — возможно, запись уже удалена.';
   await editAdminMessage(message, text, {
-    inline_keyboard: [[{ text: '↩️ К профилю пользователя', callback_data: `admin:user:${member.telegram_id}` }]],
+    inline_keyboard: [[{ text: '↩️ К профилю пользователя', callback_data: `admin:user:${member.telegram_id}::` }]],
   });
 }
 
-async function renderRolesMenu(admin: SupabaseClient, message: AdminMessage): Promise<void> {
-  const counts = await countMembersByRole(admin);
-  const keyboard: InlineButton[][] = BOT_ROLES.map((role) => [
-    {
-      text: `🎭 ${ROLE_LABELS[role]} — ${counts[role] ?? 0}`,
-      callback_data: `admin:role:${role}`,
-    },
-  ]);
-  keyboard.push([homeButton()]);
-
-  await editAdminMessage(
-    message,
-    '🎭 Роли\n\nВыбери роль, чтобы посмотреть пользователей с этой ролью.',
-    { inline_keyboard: keyboard },
-  );
-}
-
-async function renderRoleMembers(
-  admin: SupabaseClient,
-  message: AdminMessage,
-  role: BotRole,
-): Promise<void> {
-  const members = await listMembersByRole(admin, role);
-  const backButtons: InlineButton[][] = [
-    [{ text: '↩️ К ролям', callback_data: 'admin:roles' }],
-    [homeButton()],
-  ];
-
-  if (members.length === 0) {
-    await editAdminMessage(message, `🎭 В роли «${ROLE_LABELS[role]}» пока никого нет.`, {
-      inline_keyboard: backButtons,
-    });
-    return;
-  }
-
-  const text = [
-    `🎭 Роль «${ROLE_LABELS[role]}»: ${members.length}`,
-    '',
-    ...members.map((member, index) => `${index + 1}. ${memberCard(member)}`),
-  ].join('\n\n');
-
-  const keyboard: InlineButton[][] = members.map((member) => [
-    {
-      text: `👤 ${shorten(memberDisplayName(member), 40)}`,
-      callback_data: `admin:user:${member.telegram_id}`,
-    },
-  ]);
-  keyboard.push(...backButtons);
-
-  await editAdminMessage(message, text, { inline_keyboard: keyboard });
-}
-
-// Callback-кнопки панели: пользователи, роли, заглушки и возврат домой.
+// Callback-кнопки панели: пользователи, категории, заглушки и возврат домой.
 // Всегда возвращает true.
 async function handlePanelAction(
   admin: SupabaseClient,
@@ -1562,17 +1630,17 @@ async function handlePanelAction(
   }
 
   if (data === 'admin:users') {
+    await renderUsersMenu(admin, telegramId, message);
+    return true;
+  }
+
+  if (data === 'admin:users:search') {
     try {
-      await renderUsersMenu(admin, telegramId, message);
+      await renderUserSearchPrompt(admin, telegramId, message);
     } catch (error) {
       if (!isConversationStateTableError(error)) throw error;
       await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
     }
-    return true;
-  }
-
-  if (data === 'admin:roles') {
-    await renderRolesMenu(admin, message);
     return true;
   }
 
@@ -1581,17 +1649,18 @@ async function handlePanelAction(
     return true;
   }
 
-  if (data.startsWith('admin:role:')) {
-    const role = data.split(':')[2];
-    if (isBotRole(role)) {
-      await renderRoleMembers(admin, message, role);
-    } else {
-      await renderRolesMenu(admin, message);
-    }
+  // admin:cat:<категория>:<страница>
+  if (data.startsWith('admin:cat:')) {
+    const [, , categoryId, pageRaw] = data.split(':');
+    const category = findCategory(categoryId);
+    const page = Math.max(0, Number(pageRaw) || 0);
+    if (category) await renderUserList(admin, message, category, page);
+    else await renderUsersMenu(admin, telegramId, message);
     return true;
   }
 
-  // admin:user:<telegram_id>[:role|set:<роль>|confirm:<роль>]
+  // admin:user:<telegram_id>:<действие>:<роль>:<категория>:<страница>
+  // Части категории и страницы могут быть пустыми (поиск, профиль без контекста).
   const parts = data.split(':');
   const targetId = Number(parts[2]);
   if (!Number.isSafeInteger(targetId) || targetId <= 0) {
@@ -1602,14 +1671,22 @@ async function handlePanelAction(
   const member = await getMember(admin, targetId);
   if (!member) {
     await editAdminMessage(message, 'Пользователь не найден.', {
-      inline_keyboard: [[{ text: '↩️ К поиску', callback_data: 'admin:users' }], [homeButton()]],
+      inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'admin:users' }], [homeButton()]],
     });
     return true;
   }
 
-  const action = parts[3];
-  if (!action) {
-    await renderUserProfile(message, member);
+  const action = parts[3] || '';
+  const role = parts[4];
+  const category = findCategory(parts[5] ?? '');
+  const page = Math.max(0, Number(parts[6]) || 0);
+  // «Назад»: в список категории либо в меню пользователей после поиска.
+  const back = category
+    ? { text: '⬅️ Назад', callback_data: `admin:cat:${category.id}:${page}` }
+    : { text: '⬅️ Назад', callback_data: 'admin:users' };
+
+  if (action === '' ) {
+    await renderUserProfile(admin, message, member);
     return true;
   }
 
@@ -1618,9 +1695,8 @@ async function handlePanelAction(
     return true;
   }
 
-  const role = parts[4];
   if (!isBotRole(role)) {
-    await renderUserProfile(message, member);
+    await renderUserProfile(admin, message, member);
     return true;
   }
 
@@ -1634,7 +1710,13 @@ async function handlePanelAction(
     return true;
   }
 
-  await renderUserProfile(message, member);
+  await editAdminMessage(message, memberCard(member), {
+    inline_keyboard: [
+      [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
+      [back],
+      [homeButton()],
+    ],
+  });
   return true;
 }
 
