@@ -4,7 +4,6 @@ import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
 import {
   guestStart,
-  guestWebinarDeepLink,
   handleGuestCallback,
   handleGuestTextMessage,
 } from '@/lib/bot/guestFlow';
@@ -89,7 +88,7 @@ export async function POST(request: Request) {
     try {
     const admin = createAdminClient();
 
-    // /start webinar — рекламный deep link. Параметр зарезервирован и никогда не проверяется как токен привязки.
+    // /start webinar — рекламный deep link. Параметр зарезервирован, никогда не проверяется как токен привязки и открывает гостевое главное меню.
     if (
       update.message?.text === '/start webinar' &&
       update.message.chat &&
@@ -100,7 +99,7 @@ export async function POST(request: Request) {
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await guestWebinarDeepLink(admin, update.message.chat.id, update.message.from.id);
+      await guestStart(update.message.chat.id);
       return NextResponse.json({ ok: true });
     }
 

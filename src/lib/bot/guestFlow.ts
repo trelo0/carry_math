@@ -374,25 +374,6 @@ async function renderWebinarFlow(
   await editGuestMessage(message, screen.text, screen.replyMarkup);
 }
 
-// Рекламный deep link /start webinar открывает тот же гостевой экран без проверки telegram_link_tokens.
-export async function guestWebinarDeepLink(
-  admin: SupabaseClient,
-  chatId: number,
-  telegramId: number,
-): Promise<void> {
-  const screen = await getWebinarFlowScreen(
-    admin,
-    telegramId,
-    await isTestMaskActive(admin, telegramId),
-  );
-  const result = await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: screen.text,
-    reply_markup: screen.replyMarkup,
-  });
-  if (!result.ok) throw new Error(result.description ?? 'Не удалось открыть сценарий вебинара.');
-}
-
 async function registerForWebinar(
   admin: SupabaseClient,
   message: GuestMessage,
