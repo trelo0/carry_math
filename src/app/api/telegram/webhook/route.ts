@@ -70,6 +70,8 @@ export async function POST(request: Request) {
         file_name?: string;
         mime_type?: string;
       };
+      // Массив размеров фото; последний элемент — максимальный размер.
+      photo?: Array<{ file_id?: string }>;
 	
     };
     callback_query?: {
@@ -309,7 +311,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // Вложение для шаблона уведомления: только реальный admin и только после нажатия «Прикрепить».
+    // Вложения админа (документ или фото): шаблон уведомления или рассылка.
     if (update.message?.document?.file_id && update.message.chat && update.message.from) {
       const handled = await handleAdminDocument(
         admin,
@@ -319,9 +321,23 @@ export async function POST(request: Request) {
           fileId: update.message.document.file_id,
           fileName: update.message.document.file_name,
           mimeType: update.message.document.mime_type,
+          kind: 'document',
         },
       );
       if (handled) return NextResponse.json({ ok: true });
+    }
+
+    if (update.message?.photo?.length && update.message.chat && update.message.from) {
+      const largest = update.message.photo[update.message.photo.length - 1];
+      if (largest?.file_id) {
+        const handled = await handleAdminDocument(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (handled) return NextResponse.json({ ok: true });
+      }
     }
 
     // Текстовые ответы для шаблонов уведомлений и пошагового создания/редактирования вебинара.

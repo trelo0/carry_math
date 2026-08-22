@@ -58,6 +58,7 @@ type Webinar = {
 // Общий payload состояния диалога: черновик вебинара и/или контекст
 // редактируемого вебинара или настраиваемого шаблона уведомления.
 // category/page — контекст навигации по пользователям для кнопки «Назад».
+// Поля broadcast:* — конструктор массовой рассылки.
 type AdminPayload = {
   title?: string;
   description?: string | null;
@@ -67,6 +68,15 @@ type AdminPayload = {
   reminderType?: ReminderType;
   category?: string;
   page?: number;
+  audience?: string;
+  broadcastText?: string;
+  attachmentKind?: BroadcastAttachmentKind;
+  fileId?: string;
+  fileName?: string;
+  buttonText?: string;
+  buttonUrl?: string;
+  statsLine?: string;
+  broadcastErrors?: string[];
 };
 
 type ConversationStep =
@@ -86,7 +96,14 @@ type ConversationStep =
   | 'notification:custom-offset'
   | 'notification:text'
   | 'notification:file'
-  | 'users:search';
+  | 'users:search'
+  | 'broadcast:text'
+  | 'broadcast:compose'
+  | 'broadcast:button-text'
+  | 'broadcast:button-url'
+  | 'broadcast:preview'
+  | 'broadcast:confirm'
+  | 'broadcast:stats';
 
 type ConversationState = {
   telegram_id: number;
@@ -100,6 +117,8 @@ type IncomingDocument = {
   fileId: string;
   fileName?: string;
   mimeType?: string;
+  // document — файл/PDF, photo — изображение (file_id максимального размера).
+  kind?: 'document' | 'photo';
 };
 
 // ---------------------------------------------------------------------------
@@ -1325,7 +1344,6 @@ const PANEL_CALLBACKS = [
   'admin:home',
   'admin:users',
   'admin:users:search',
-  'admin:broadcasts',
   'admin:stats',
   'admin:chat-control',
 ];
@@ -1644,7 +1662,7 @@ async function handlePanelAction(
     return true;
   }
 
-  if (data === 'admin:broadcasts' || data === 'admin:stats' || data === 'admin:chat-control') {
+  if (data === 'admin:stats' || data === 'admin:chat-control') {
     await editAdminMessage(message, STUB_SECTION_TEXT, homeOnlyKeyboard());
     return true;
   }
@@ -1721,6 +1739,685 @@ async function handlePanelAction(
 }
 
 // ---------------------------------------------------------------------------
+// Массовая рассылка
+// ---------------------------------------------------------------------------
+
+// Аудитории рассылки строятся по существующим данным bot_members.
+// «Платные» определяются ролью student («купил курс»): отдельной таблицы
+// оплат в проекте пока нет — категория станет точнее, когда она появится.
+type BroadcastAudience = {
+  id: string;
+  buttonLabel: string;
+  title: string;
+  roles: string[];
+};
+
+const BROADCAST_AUDIENCES: BroadcastAudience[] = [
+  { id: 'all', buttonLabel: '👥 Все пользователи', title: 'Все пользователи', roles: ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin', 'test'] },
+  { id: 'guest', buttonLabel: '❄️ Гости', title: 'Гости', roles: ['guest'] },
+  { id: 'paid', buttonLabel: '💳 Платные пользователи', title: 'Платные пользователи', roles: ['student'] },
+  { id: 'student', buttonLabel: '🎓 Ученики', title: 'Ученики', roles: ['student'] },
+  { id: 'curator', buttonLabel: '🟡 Кураторы', title: 'Кураторы / менторы', roles: ['curator', 'mentor'] },
+  { id: 'teacher', buttonLabel: '🟠 Преподаватели', title: 'Преподаватели', roles: ['teacher'] },
+];
+
+type BroadcastAttachmentKind = 'document' | 'photo';
+
+// 4096 — лимит текста sendMessage, 1024 — лимит подписи к вложению.
+const BROADCAST_TEXT_LIMIT = 4096;
+const BROADCAST_CAPTION_LIMIT = 1024;
+// ~20 сообщений/с: с запасом под лимит Bot API ~30 сообщ/с на бота.
+const BROADCAST_DELAY_MS = 50;
+// Пагинация Supabase: больше 1000 строк за запрос получить нельзя.
+const BROADCAST_FETCH_PAGE = 1000;
+// Детали храним ограниченно, чтобы не раздувать память на больших рассылках.
+const BROADCAST_ERROR_CAP = 200;
+
+function findBroadcastAudience(id: string | undefined): BroadcastAudience | undefined {
+  if (!id) return undefined;
+  return BROADCAST_AUDIENCES.find((audience) => audience.id === id);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type BroadcastError = { name: string; reason: string };
+
+// Получатели рассылки: участники выбранных ролей с подключённым Telegram.
+async function getBroadcastRecipients(admin: SupabaseClient, roles: string[]): Promise<number[]> {
+  const chatIds: number[] = [];
+  for (let page = 0; ; page += 1) {
+    const from = page * BROADCAST_FETCH_PAGE;
+    const { data, error } = await admin
+      .from('bot_members')
+      .select('chat_id')
+      .in('role', roles)
+      .not('chat_id', 'is', null)
+      .range(from, from + BROADCAST_FETCH_PAGE - 1);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (row.chat_id) chatIds.push(row.chat_id);
+    }
+    if ((data ?? []).length < BROADCAST_FETCH_PAGE) break;
+  }
+  return chatIds;
+}
+
+async function renderBroadcastAudienceMenu(message: AdminMessage): Promise<void> {
+  const keyboard: InlineButton[][] = BROADCAST_AUDIENCES.map((audience) => [
+    { text: audience.buttonLabel, callback_data: `admin:bc:aud:${audience.id}` },
+  ]);
+  keyboard.push([homeButton()]);
+  await editAdminMessage(
+    message,
+    '📢 Массовая рассылка\n\nВыберите аудиторию:',
+    { inline_keyboard: keyboard },
+  );
+}
+
+async function startBroadcastText(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+  audience: BroadcastAudience,
+): Promise<void> {
+  await saveState(admin, telegramId, message, 'broadcast:text', {
+    audience: audience.id,
+  });
+  await editAdminMessage(
+    message,
+    `📢 Новая рассылка\n\nАудитория: ${audience.title}\n\nВведите текст сообщения следующим сообщением.`,
+    {
+      inline_keyboard: [
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        [homeButton()],
+      ],
+    },
+  );
+}
+
+function attachmentLine(payload: AdminPayload): string | null {
+  if (!payload.fileId || !payload.attachmentKind) return null;
+  const icon = payload.attachmentKind === 'photo' ? '🖼' : '📎';
+  return payload.fileName ? `${icon} ${payload.fileName}` : `${icon} вложение`;
+}
+
+function buttonLine(payload: AdminPayload): string | null {
+  return payload.buttonText && payload.buttonUrl ? `🔗 Кнопка: ${payload.buttonText}` : null;
+}
+
+async function renderBroadcastComposer(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const payload = state.payload ?? {};
+  const audience = findBroadcastAudience(payload.audience);
+  if (!audience || !payload.broadcastText) {
+    await clearState(admin, telegramId);
+    await renderBroadcastAudienceMenu({ chatId: state.chat_id, messageId: state.message_id });
+    return;
+  }
+
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const lines = [
+    '📢 Новая рассылка',
+    `Аудитория: ${audience.title}`,
+    '',
+    `Текст: ${shorten(payload.broadcastText.replace(/\n/g, ' '), 120)}`,
+  ];
+  const attachment = attachmentLine(payload);
+  if (attachment) lines.push(attachment);
+  const button = buttonLine(payload);
+  if (button) lines.push(button);
+  lines.push('', 'Можно прикрепить файл, добавить кнопку-ссылку или сразу перейти к предпросмотру.');
+
+  await saveState(admin, telegramId, message, 'broadcast:compose', payload);
+  await editAdminMessage(message, lines.join('\n'), {
+    inline_keyboard: [
+      [{ text: '📎 Прикрепить файл / фото', callback_data: 'admin:bc:attach' }],
+      [{ text: '🔗 Добавить кнопку', callback_data: 'admin:bc:button' }],
+      [{ text: '👁 Предпросмотр', callback_data: 'admin:bc:preview' }],
+      [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+    ],
+  });
+}
+
+async function renderBroadcastAttachPrompt(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const payload = state.payload ?? {};
+  if (payload.attachmentKind && payload.fileId) {
+    await renderBroadcastComposer(admin, telegramId, state);
+    return;
+  }
+  await saveState(admin, telegramId, { chatId: state.chat_id, messageId: state.message_id }, 'broadcast:compose', payload);
+  await editAdminMessage(
+    { chatId: state.chat_id, messageId: state.message_id },
+    '📎 Отправьте вложение следующим сообщением: PDF, документ или изображение.\n\n' +
+      'Бот получит file_id автоматически — вводить его вручную не нужно.',
+    {
+      inline_keyboard: [
+        [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+      ],
+    },
+  );
+}
+
+async function handleBroadcastAttachment(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+  document: IncomingDocument,
+): Promise<boolean> {
+  const payload = state.payload ?? {};
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const kind: BroadcastAttachmentKind = document.kind === 'photo' ? 'photo' : 'document';
+
+  // Лимит подписи у сообщений с вложением строже, чем у обычного текста.
+  if ((payload.broadcastText ?? '').length > BROADCAST_CAPTION_LIMIT) {
+    await editAdminMessage(
+      message,
+      `⚠️ Текст слишком длинный для сообщения с вложением (максимум ${BROADCAST_CAPTION_LIMIT} символов). Сократите текст и прикрепите файл ещё раз.`,
+      {
+        inline_keyboard: [
+          [{ text: '✏️ Изменить текст', callback_data: 'admin:bc:text' }],
+          [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        ],
+      },
+    );
+    return true;
+  }
+
+  await saveState(admin, telegramId, message, 'broadcast:compose', {
+    ...payload,
+    attachmentKind: kind,
+    fileId: document.fileId,
+    fileName: document.fileName,
+  });
+  await renderBroadcastComposer(admin, telegramId, {
+    ...state,
+    step: 'broadcast:compose',
+    payload: { ...payload, attachmentKind: kind, fileId: document.fileId, fileName: document.fileName },
+  });
+  return true;
+}
+
+async function renderBroadcastButtonText(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  await saveState(admin, telegramId, message, 'broadcast:button-text', state.payload ?? {});
+  await editAdminMessage(message, '🔗 Введите текст кнопки следующим сообщением.\n\nНапример: «Открыть вебинар».', {
+    inline_keyboard: [
+      [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
+      [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+    ],
+  });
+}
+
+async function renderBroadcastButtonUrl(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  await saveState(admin, telegramId, message, 'broadcast:button-url', state.payload ?? {});
+  await editAdminMessage(message, '🔗 Теперь отправьте URL кнопки.\n\nНапример: https://example.com/webinar', {
+    inline_keyboard: [
+      [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
+      [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+    ],
+  });
+}
+
+function broadcastUrlKeyboard(payload: AdminPayload): InlineKeyboard | undefined {
+  if (!payload.buttonText || !payload.buttonUrl) return undefined;
+  return { inline_keyboard: [[{ text: payload.buttonText, url: payload.buttonUrl }]] };
+}
+
+async function renderBroadcastPreview(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const payload = state.payload ?? {};
+  const audience = findBroadcastAudience(payload.audience);
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  if (!audience || !payload.broadcastText) {
+    await clearState(admin, telegramId);
+    await renderBroadcastAudienceMenu(message);
+    return;
+  }
+
+  // Предпросмотр максимально близок к реальному сообщению: файл/фото
+  // отправляются админу отдельным сообщением, как увидят получатели.
+  const urlKeyboard = broadcastUrlKeyboard(payload);
+  if (payload.fileId && payload.attachmentKind) {
+    const method = payload.attachmentKind === 'photo' ? 'sendPhoto' : 'sendDocument';
+    const body: Record<string, unknown> = {
+      chat_id: state.chat_id,
+      [payload.attachmentKind === 'photo' ? 'photo' : 'document']: payload.fileId,
+      caption: payload.broadcastText,
+    };
+    if (urlKeyboard) body.reply_markup = urlKeyboard;
+    await telegramSend(method, body);
+  } else {
+    const body: Record<string, unknown> = { chat_id: state.chat_id, text: payload.broadcastText };
+    if (urlKeyboard) body.reply_markup = urlKeyboard;
+    await telegramSend('sendMessage', body);
+  }
+
+  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  await saveState(admin, telegramId, message, 'broadcast:preview', payload);
+
+  const attachment = attachmentLine(payload);
+  const button = buttonLine(payload);
+  const lines = [
+    '📢 Предпросмотр отправлен выше — так сообщение увидят получатели.',
+    '',
+    shorten(payload.broadcastText, 300),
+  ];
+  if (attachment) lines.push(attachment);
+  if (button) lines.push(button);
+  lines.push('', `👥 Получателей: ${recipients.length}`);
+
+  await editAdminMessage(message, lines.join('\n'), {
+    inline_keyboard: [
+      [{ text: '✅ Отправить', callback_data: 'admin:bc:confirm' }],
+      [{ text: '✏️ Изменить', callback_data: 'admin:bc:menu' }],
+      [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+    ],
+  });
+}
+
+async function renderBroadcastConfirm(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const payload = state.payload ?? {};
+  const audience = findBroadcastAudience(payload.audience);
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  if (!audience || !payload.broadcastText) {
+    await clearState(admin, telegramId);
+    await renderBroadcastAudienceMenu(message);
+    return;
+  }
+
+  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  if (recipients.length === 0) {
+    await editAdminMessage(
+      message,
+      `⚠️ В аудитории «${audience.title}» нет пользователей с подключённым Telegram. Рассылка невозможна.`,
+      {
+        inline_keyboard: [
+          [{ text: '✏️ Изменить', callback_data: 'admin:bc:menu' }],
+          [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        ],
+      },
+    );
+    return;
+  }
+
+  await saveState(admin, telegramId, message, 'broadcast:confirm', payload);
+  await editAdminMessage(
+    message,
+    '📢 Вы собираетесь отправить сообщение:\n\n' +
+      `Аудитория: ${audience.title}\n` +
+      `Получателей: ${recipients.length}`,
+    {
+      inline_keyboard: [
+        [{ text: '✅ Да, отправить', callback_data: 'admin:bc:send' }],
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+      ],
+    },
+  );
+}
+
+// Отправляет одно сообщение рассылки: при 429 ждём retry_after и повторяем.
+async function sendBroadcastMessage(chatId: number, payload: AdminPayload): Promise<{ ok: boolean; reason?: string }> {
+  const urlKeyboard = broadcastUrlKeyboard(payload);
+  const attempts: Array<Record<string, unknown>> = [];
+  if (payload.fileId && payload.attachmentKind) {
+    attempts.push({
+      method: payload.attachmentKind === 'photo' ? 'sendPhoto' : 'sendDocument',
+      body: {
+        chat_id: chatId,
+        [payload.attachmentKind === 'photo' ? 'photo' : 'document']: payload.fileId,
+        caption: payload.broadcastText,
+        ...(urlKeyboard ? { reply_markup: urlKeyboard } : {}),
+      },
+    });
+  } else {
+    attempts.push({
+      method: 'sendMessage',
+      body: { chat_id: chatId, text: payload.broadcastText, ...(urlKeyboard ? { reply_markup: urlKeyboard } : {}) },
+    });
+  }
+
+  for (let attempt = 0; attempt < attempts.length; attempt += 1) {
+    const current = attempts[attempt];
+    const result = await telegramSend(current.method as string, current.body as Record<string, unknown>);
+    if (result.ok) return { ok: true };
+
+    const description = result.description ?? '';
+    // 429 — общий лимит Bot API: ждём и повторяем тот же вызов.
+    if (description.includes('Too Many Requests')) {
+      const retryAfter = result.parameters?.retry_after ?? 3;
+      await delay(retryAfter * 1000);
+      attempts.push(current);
+      continue;
+    }
+    if (description.includes('bot was blocked')) return { ok: false, reason: 'заблокировал бота' };
+    if (
+      description.includes('chat not found') ||
+      description.includes('user is deactivated') ||
+      description.includes('PEER_ID_INVALID')
+    ) {
+      return { ok: false, reason: 'недействительный chat_id' };
+    }
+    return { ok: false, reason: description };
+  }
+  return { ok: false, reason: 'превышено число попыток (429)' };
+}
+
+async function renderBroadcastStats(message: AdminMessage, line: string, hasErrors: boolean): Promise<void> {
+  const keyboard: InlineButton[][] = [];
+  if (hasErrors) keyboard.push([{ text: '📋 Ошибки', callback_data: 'admin:bc:errors' }]);
+  keyboard.push([homeButton()]);
+  await editAdminMessage(message, `📢 Рассылка завершена\n\n${line}`, { inline_keyboard: keyboard });
+}
+
+async function executeBroadcast(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+): Promise<void> {
+  const payload = state.payload ?? {};
+  const audience = findBroadcastAudience(payload.audience);
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  if (!audience || !payload.broadcastText) {
+    await clearState(admin, telegramId);
+    await renderBroadcastAudienceMenu(message);
+    return;
+  }
+
+  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  await editAdminMessage(
+    message,
+    `📢 Отправляем рассылку: получателей ${recipients.length}. Это может занять время — не закрывайте чат.`,
+    homeOnlyKeyboard(),
+  );
+
+  let delivered = 0;
+  let failed = 0;
+  const errors: BroadcastError[] = [];
+
+  // Ошибка на одном получателе не останавливает всю рассылку.
+  for (const chatId of recipients) {
+    let result: { ok: boolean; reason?: string } = { ok: false, reason: 'сбой отправки' };
+    try {
+      result = await sendBroadcastMessage(chatId, payload);
+    } catch (error) {
+      result = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+    if (result.ok) {
+      delivered += 1;
+    } else {
+      failed += 1;
+      if (errors.length < BROADCAST_ERROR_CAP) {
+        errors.push({ name: `chat ${chatId}`, reason: result.reason ?? 'неизвестная ошибка' });
+      }
+    }
+    await delay(BROADCAST_DELAY_MS);
+  }
+
+  const statsLine =
+    `👥 Получателей: ${recipients.length}\n✅ Доставлено: ${delivered}\n❌ Не доставлено: ${failed}`;
+  // Состояние рассылки очищаем, но статистику и первые ошибки сохраняем
+  // до выхода домой, чтобы кнопка «📋 Ошибки» работала после отправки.
+  await saveState(admin, telegramId, message, 'broadcast:stats', {
+    statsLine,
+    broadcastErrors: errors.slice(0, 20).map((item) => `${item.name} — ${item.reason}`),
+  });
+  await renderBroadcastStats(message, statsLine, errors.length > 0);
+
+  if (errors.length > 0) {
+    console.error('Ошибки рассылки:', errors.slice(0, 20));
+  }
+}
+
+async function renderBroadcastErrors(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
+  let state: ConversationState | null = null;
+  try {
+    state = await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+  const payload = state?.payload ?? {};
+  if (!payload.statsLine) {
+    await showAdminHome(message);
+    return;
+  }
+  const errors = payload.broadcastErrors ?? [];
+  const text = [
+    '📋 Недоставленные сообщения:',
+    '',
+    errors.length > 0
+      ? errors.map((line, index) => `${index + 1}. ${line}`).join('\n')
+      : 'Список пуст.',
+  ];
+  if (errors.length >= 20) text.push('', 'Показаны первые 20 ошибок; полный список — в серверных логах.');
+  await editAdminMessage(message, text.join('\n'), {
+    inline_keyboard: [
+      [{ text: '↩️ К статистике', callback_data: 'admin:bc:stats' }],
+      [homeButton()],
+    ],
+  });
+}
+
+async function renderBroadcastStatsFromState(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+): Promise<void> {
+  let state: ConversationState | null = null;
+  try {
+    state = await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+  const statsLine = state?.payload?.statsLine;
+  if (!statsLine) {
+    await showAdminHome(message);
+    return;
+  }
+  await renderBroadcastStats(message, statsLine, true);
+}
+
+async function cancelBroadcast(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+): Promise<void> {
+  await clearStateIfAvailable(admin, telegramId);
+  await editAdminMessage(message, '📢 Рассылка отменена.', homeOnlyKeyboard());
+  await showAdminHome(message);
+}
+
+// Текстовые шаги рассылки: текст сообщения, текст и URL кнопки.
+async function handleBroadcastTextStep(
+  admin: SupabaseClient,
+  telegramId: number,
+  state: ConversationState,
+  text: string,
+): Promise<boolean> {
+  const payload = state.payload ?? {};
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const input = text.trim();
+
+  if (state.step === 'broadcast:text') {
+    if (!input) return true;
+    if (input.length > BROADCAST_TEXT_LIMIT) {
+      await editAdminMessage(
+        message,
+        `⚠️ Слишком длинный текст: максимум ${BROADCAST_TEXT_LIMIT} символов. Отправьте сокращённый вариант.`,
+        {
+          inline_keyboard: [
+            [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+            [homeButton()],
+          ],
+        },
+      );
+      return true;
+    }
+    await saveState(admin, telegramId, message, 'broadcast:compose', { ...payload, broadcastText: input });
+    await renderBroadcastComposer(admin, telegramId, {
+      ...state,
+      step: 'broadcast:compose',
+      payload: { ...payload, broadcastText: input },
+    });
+    return true;
+  }
+
+  if (state.step === 'broadcast:button-text') {
+    if (!input) return true;
+    await saveState(admin, telegramId, message, 'broadcast:button-url', { ...payload, buttonText: shorten(input, 40) });
+    await renderBroadcastButtonUrl(admin, telegramId, {
+      ...state,
+      step: 'broadcast:button-url',
+      payload: { ...payload, buttonText: shorten(input, 40) },
+    });
+    return true;
+  }
+
+  if (state.step === 'broadcast:button-url') {
+    if (!isValidHttpUrl(input)) {
+      await editAdminMessage(message, '⚠️ Это не похоже на ссылку. Отправьте URL вида https://example.com', {
+        inline_keyboard: [
+          [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
+          [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        ],
+      });
+      return true;
+    }
+    await saveState(admin, telegramId, message, 'broadcast:compose', { ...payload, buttonUrl: input });
+    await renderBroadcastComposer(admin, telegramId, {
+      ...state,
+      step: 'broadcast:compose',
+      payload: { ...payload, buttonUrl: input },
+    });
+    return true;
+  }
+
+  return false;
+}
+
+// Callback-кнопки рассылки (admin:broadcasts и admin:bc:*). Всегда возвращает true.
+async function handleBroadcastAction(
+  admin: SupabaseClient,
+  data: string,
+  message: AdminMessage,
+  telegramId: number,
+): Promise<boolean> {
+  if (data === 'admin:broadcasts') {
+    await clearStateIfAvailable(admin, telegramId);
+    await renderBroadcastAudienceMenu(message);
+    return true;
+  }
+
+  let state: ConversationState | null = null;
+  try {
+    state = await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+
+  if (data === 'admin:bc:cancel') {
+    await cancelBroadcast(admin, telegramId, message);
+    return true;
+  }
+
+  const payload = state?.payload ?? {};
+  const audience = findBroadcastAudience(payload.audience);
+
+  if (data.startsWith('admin:bc:aud:')) {
+    const selected = findBroadcastAudience(data.split(':')[3]);
+    if (!selected) {
+      await renderBroadcastAudienceMenu(message);
+      return true;
+    }
+    try {
+      await startBroadcastText(admin, telegramId, message, selected);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  if (!state || state.chat_id !== message.chatId || !audience || !payload.broadcastText) {
+    // Состояние потеряно (например, истекло) — возвращаем в начало сценария.
+    await clearStateIfAvailable(admin, telegramId);
+    await renderBroadcastAudienceMenu(message);
+    return true;
+  }
+
+  const action = data === 'admin:bc:menu' ? 'menu' : data.split(':')[2] ?? '';
+
+  switch (action) {
+    case 'text': {
+      await saveState(admin, telegramId, message, 'broadcast:text', payload);
+      await editAdminMessage(
+        message,
+        `📢 Новая рассылка\n\nАудитория: ${audience.title}\n\nОтправьте новый текст сообщения.`,
+        {
+          inline_keyboard: [
+            [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+            [homeButton()],
+          ],
+        },
+      );
+      return true;
+    }
+    case 'menu':
+      await renderBroadcastComposer(admin, telegramId, state);
+      return true;
+    case 'attach':
+      await renderBroadcastAttachPrompt(admin, telegramId, state);
+      return true;
+    case 'button':
+      await renderBroadcastButtonText(admin, telegramId, state);
+      return true;
+    case 'preview':
+      await renderBroadcastPreview(admin, telegramId, state);
+      return true;
+    case 'confirm':
+      await renderBroadcastConfirm(admin, telegramId, state);
+      return true;
+    case 'send':
+      await executeBroadcast(admin, telegramId, state);
+      return true;
+    case 'stats':
+      await renderBroadcastStatsFromState(admin, telegramId, message);
+      return true;
+    case 'errors':
+      await renderBroadcastErrors(admin, telegramId, message);
+      return true;
+    default:
+      await renderBroadcastComposer(admin, telegramId, state);
+      return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Единые точки входа для webhook
 // ---------------------------------------------------------------------------
 
@@ -1757,6 +2454,9 @@ export async function handleAdminCallback(
   try {
     if (isReminder) return await handleReminderAction(admin, data, message, telegramId);
     if (isTemplate) return await handleTemplateAction(admin, data, message, telegramId);
+    if (data === 'admin:broadcasts' || data.startsWith('admin:bc:')) {
+      return await handleBroadcastAction(admin, data, message, telegramId);
+    }
     if (isPanelAction(data)) return await handlePanelAction(admin, data, message, telegramId);
     return await handleWebinarAction(admin, data, message, telegramId);
   } catch (error) {
@@ -1792,6 +2492,11 @@ export async function handleAdminMessage(
     return true;
   }
 
+  // Шаги конструктора рассылки, ожидающие текст.
+  if (state.step === 'broadcast:text' || state.step === 'broadcast:button-text' || state.step === 'broadcast:button-url') {
+    return handleBroadcastTextStep(admin, telegramId, state, text);
+  }
+
   if (state.step.startsWith('notification:')) {
     return handleNotificationTextStep(admin, telegramId, state, text);
   }
@@ -1811,7 +2516,8 @@ export async function handleAdminMessage(
   return false;
 }
 
-// Документы админа: вложение для шаблона уведомления после нажатия «Прикрепить».
+// Документы и фото админа: вложение для шаблона уведомления
+// или вложение для рассылки после нажатия «Прикрепить файл / фото».
 export async function handleAdminDocument(
   admin: SupabaseClient,
   telegramId: number,
@@ -1827,7 +2533,14 @@ export async function handleAdminDocument(
     if (isConversationStateTableError(error)) return false;
     throw error;
   }
-  if (state?.step !== 'notification:file' || state.chat_id !== chatId) return false;
+  if (!state || state.chat_id !== chatId) return false;
+
+  // Вложение рассылки: файл или фото, отправленные на шаге конструктора.
+  if (state.step.startsWith('broadcast:')) {
+    return handleBroadcastAttachment(admin, telegramId, state, document);
+  }
+
+  if (state.step !== 'notification:file') return false;
 
   const payload = state.payload ?? {};
   const webinarId = payload.webinarId;

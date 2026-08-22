@@ -3,6 +3,8 @@ const API = 'https://api.telegram.org';
 type TelegramResponse = {
   ok: boolean;
   description?: string;
+  // parameters приходят, например, при 429 (retry_after).
+  parameters?: { retry_after?: number };
   result?: { message_id?: number };
 };
 
