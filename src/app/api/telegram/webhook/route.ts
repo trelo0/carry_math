@@ -13,7 +13,7 @@ import {
   handleAdminMessage,
   sendAdminStart,
 } from '@/lib/bot/adminFlow';
-import { analyzeUserMessage } from '@/lib/bot/moderation';
+import { analyzeUserMessage, enforceModerationRestrictions } from '@/lib/bot/moderation';
 
 import {
   ensureMember,
@@ -90,6 +90,17 @@ export async function POST(request: Request) {
 
     try {
     const admin = createAdminClient();
+
+    // Контроль доступа (§20): заблокированные и ограниченные пользователи
+    // не получают доступ ни через сообщения, ни через команды, ни через
+    // кнопки. Проверка стоит ДО всех веток, чтобы блокировку нельзя было
+    // обойти. Администраторы исключены — они управляют панелью.
+    const enforced = await enforceModerationRestrictions(admin, {
+      telegramId: update.message?.from?.id ?? update.callback_query?.from?.id,
+      chatId: update.message?.chat?.id ?? update.callback_query?.message?.chat?.id,
+      callbackQueryId: update.callback_query?.id,
+    });
+    if (enforced) return NextResponse.json({ ok: true });
 
     // /start webinar — рекламный deep link. Параметр зарезервирован, никогда не проверяется как токен привязки и открывает гостевое главное меню.
     if (
@@ -206,8 +217,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-        // Просто /start — регистрация/обновление участника и меню по роли.
-    if (update.message?.text === '/start' && update.message.chat && update.message.from) {
+        // /start, /menu и /admin — регистрация/обновление участника и актуальное
+    // главное меню по роли (с Reply Keyboard у админа).
+    if (
+      (update.message?.text === '/start' ||
+        update.message?.text === '/menu' ||
+        update.message?.text === '/admin') &&
+      update.message.chat &&
+      update.message.from
+    ) {
       const from = update.message.from;
       const member = await ensureMember(
         admin,
@@ -359,9 +377,9 @@ export async function POST(request: Request) {
       if (handled) return NextResponse.json({ ok: true });
     }
 
-    // Контроль переписки: наблюдаем за текстом не-админов и ищем попытки
-    // обмена личными Telegram-контактами. Ничего не блокируем — только
-    // сохраняем событие и при высоком риске уведомляем администраторов.
+    // Контроль переписки (§1): текст не-админов проверяется ДО дальнейшей
+    // обработки. HIGH-сообщение не передаётся дальше: создаётся событие,
+    // отправитель получает отказ, администраторы — уведомление.
     // Сообщения админов, команды (/...) и callback_query не анализируем.
     if (
       update.message?.text &&
@@ -371,13 +389,14 @@ export async function POST(request: Request) {
     ) {
       const sender = await getMember(admin, update.message.from.id);
       if (sender?.role !== 'admin') {
-        await analyzeUserMessage(admin, {
+        const analysis = await analyzeUserMessage(admin, {
           telegramId: update.message.from.id,
           chatId: update.message.chat.id,
           messageId: update.message.message_id ?? 0,
           text: update.message.text,
           fallbackName: fullName(update.message.from),
         });
+        if (analysis.blocked) return NextResponse.json({ ok: true });
       }
     }
 

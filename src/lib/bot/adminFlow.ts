@@ -5,11 +5,14 @@ import {
   type MemberRow,
   countLeadsByPhone,
   getMember,
+  getModerationInfo,
   isAdminEnv,
   isBotRole,
+  listMembersByModeration,
   listMembersInRoles,
   roleLabel,
   searchMembers,
+  setModerationStatus,
   setRole,
 } from '@/lib/bot/roles';
 import {
@@ -38,10 +41,14 @@ import {
   formatViolationDateShort,
   formatViolationDateTime,
   getViolation,
+  getUserViolationStats,
+  isModerationColumnError,
   isViolationTableError,
   listViolations,
   reviewViolation,
+  sendWarningToUser,
   violationSenderName,
+  type UserViolationStats,
   type ViolationRisk,
   type ViolationRow,
 } from '@/lib/bot/moderation';
@@ -244,37 +251,129 @@ function homeButton(): InlineButton {
 }
 
 // ---------------------------------------------------------------------------
+// Архитектура интерфейса админа:
+// • Reply Keyboard — постоянное главное меню под полем ввода;
+// • Inline Keyboard — действия внутри раздела (навигация по нажатию кнопок
+//   идёт через editMessageText — локальное обновление текущего блока);
+// • новое сообщение — всегда, когда результатом является ответ на текстовый
+//   или файловый ввод админа (чтобы не заставлять листать чат вверх).
+// ---------------------------------------------------------------------------
+
+type Deliver = (text: string, keyboard?: InlineKeyboard) => Promise<number | null>;
+
+// Локальная навигация по inline-кнопкам: редактируем текущее сообщение.
+function editDeliver(message: AdminMessage): Deliver {
+  return async (text, keyboard) => {
+    await editAdminMessage(message, text, keyboard ?? { inline_keyboard: [[homeButton()]] });
+    return message.messageId;
+  };
+}
+
+// Ответ на текстовый/файловый ввод админа: всегда новое сообщение, чтобы
+// результат появлялся сразу под сообщением администратора.
+// Возвращает message_id отправленного сообщения (для saveState).
+async function sendAdminMessage(
+  chatId: number,
+  text: string,
+  keyboard?: InlineKeyboard,
+): Promise<number | null> {
+  const result = await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text,
+    ...(keyboard ? { reply_markup: keyboard } : {}),
+  });
+  if (!result.ok) {
+    throw new Error(result.description ?? 'Не удалось отправить административное сообщение.');
+  }
+  return result.result?.message_id ?? null;
+}
+
+function sendDeliver(chatId: number): Deliver {
+  return (text, keyboard) => sendAdminMessage(chatId, text, keyboard);
+}
+
+// Постоянное главное меню: Reply Keyboard находится под полем ввода и не
+// теряется в истории чата (§2, §12).
+type ReplyKeyboard = { keyboard: Array<Array<{ text: string }>>; resize_keyboard: boolean };
+
+function adminReplyKeyboard(): ReplyKeyboard {
+  return {
+    keyboard: [
+      [{ text: '👥 Пользователи' }, { text: '📢 Рассылки' }],
+      [{ text: '📊 Статистика' }, { text: '🚨 Контроль' }],
+      [{ text: '📅 Вебинары' }, { text: '⚙️ Настройки' }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
+// Нажатие Reply-кнопки приходит как обычный текст с точным названием.
+const ADMIN_REPLY_LABELS = {
+  users: '👥 Пользователи',
+  broadcasts: '📢 Рассылки',
+  stats: '📊 Статистика',
+  moderation: '🚨 Контроль',
+  webinars: '📅 Вебинары',
+  settings: '⚙️ Настройки',
+} as const;
+
+const ADMIN_REPLY_LABEL_SET = new Set<string>(Object.values(ADMIN_REPLY_LABELS));
+
+const ADMIN_UNKNOWN_TEXT =
+  'Я не понял это сообщение.\n\nРазделы панели — на кнопках меню под полем ввода.';
+
+// ---------------------------------------------------------------------------
 // Главное меню админа
 // ---------------------------------------------------------------------------
 
 const ADMIN_HOME_TEXT =
-  '🔐 Панель администратора\n\n' +
-  'Выбери раздел. Разделы в разработке помечены заглушкой.';
+  '🔐 Панель администратора District\n\n' +
+  'Разделы — на кнопках меню под полем ввода. Оно всегда на месте, листать историю не нужно.';
 
-function adminHomeKeyboard(): InlineKeyboard {
-  return {
-    inline_keyboard: [
-      [{ text: '👥 Пользователи', callback_data: 'admin:users' }],
-      [{ text: '📅 Вебинары', callback_data: 'admin:webinars' }],
-      [{ text: '📢 Рассылки', callback_data: 'admin:broadcasts' }],
-      [{ text: '📊 Статистика', callback_data: 'admin:stats' }],
-      [{ text: '🚨 Контроль переписки', callback_data: 'admin:chat-control' }],
-      [{ text: '🔔 Уведомления', callback_data: 'an:menu' }],
-      [{ text: '🧪 Тест уведомлений', callback_data: 'ar:menu' }],
-    ],
-  };
-}
+const ADMIN_HOME_POINTER_TEXT =
+  '🏠 Главное меню администратора\n\nКнопки разделов — на постоянной клавиатуре под полем ввода.';
 
 async function showAdminHome(message: AdminMessage): Promise<void> {
-  await editAdminMessage(message, ADMIN_HOME_TEXT, adminHomeKeyboard());
+  await editAdminMessage(message, ADMIN_HOME_POINTER_TEXT, { inline_keyboard: [] });
 }
 
-// Отправляет начальный экран роли admin после /start.
+// Отправляет начальный экран роли admin после /start: текст + Reply Keyboard.
 export async function sendAdminStart(chatId: number, testFooter = ''): Promise<void> {
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: ADMIN_HOME_TEXT + testFooter,
-    reply_markup: adminHomeKeyboard(),
+    reply_markup: adminReplyKeyboard(),
+  });
+}
+
+// Разделы, открываемые кнопками Reply Keyboard. Каждый раздел — новое
+// сообщение с inline-кнопками (§3): результат всегда ниже ввода админа.
+async function openUsersSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
+  await renderUsersMenu(admin, telegramId, sendDeliver(chatId));
+}
+
+async function openBroadcastsSection(chatId: number): Promise<void> {
+  await renderBroadcastMenu(sendDeliver(chatId));
+}
+
+async function openStatsSection(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderStatsOverview(admin, sendDeliver(chatId), '7d');
+}
+
+async function openModerationSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
+  await renderModerationMenu(admin, telegramId, sendDeliver(chatId));
+}
+
+async function openWebinarsSection(chatId: number): Promise<void> {
+  await sendDeliver(chatId)('📅 Управление вебинарами', managementKeyboard());
+}
+
+async function openSettingsSection(chatId: number): Promise<void> {
+  await sendDeliver(chatId)('⚙️ Настройки', {
+    inline_keyboard: [
+      [{ text: '🔔 Уведомления о вебинарах', callback_data: 'an:menu' }],
+      [{ text: '🧪 Тест уведомлений', callback_data: 'ar:menu' }],
+    ],
   });
 }
 
@@ -492,14 +591,15 @@ function previewKeyboard(): InlineKeyboard {
   };
 }
 
+// Предпросмотр — результат текстового ввода: новое сообщение ниже ввода.
 async function showCreatePreview(
   admin: SupabaseClient,
   telegramId: number,
-  message: AdminMessage,
+  chatId: number,
   draft: AdminPayload,
 ): Promise<void> {
-  await saveState(admin, telegramId, message, 'create:preview', draft);
-  await editAdminMessage(message, createPreviewText(draft), previewKeyboard());
+  const messageId = await sendAdminMessage(chatId, createPreviewText(draft), previewKeyboard());
+  await saveState(admin, telegramId, { chatId, messageId: messageId ?? 0 }, 'create:preview', draft);
 }
 
 async function startCreate(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
@@ -562,27 +662,29 @@ const EDIT_FIELD_STEPS: Record<string, ConversationStep> = {
   url: 'edit:url',
 };
 
+// Ответ на каждый шаг мастера — новое сообщение (§15): админ ввёл текст,
+// следующий шаг появляется сразу под его сообщением.
 async function renderCreationStep(
   admin: SupabaseClient,
   telegramId: number,
   state: ConversationState,
   input: string,
 ): Promise<void> {
-  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const chatId = state.chat_id;
   const payload = { ...(state.payload ?? {}) } as AdminPayload;
   const isFieldEdit = state.step.startsWith('create:edit:');
 
   if (state.step === 'create:title' || state.step === 'create:edit:title') {
     if (!input) {
-      await editAdminMessage(message, 'Название не может быть пустым. Введите название вебинара:', createCancelKeyboard());
+      await sendAdminMessage(chatId, 'Название не может быть пустым. Введите название вебинара:', createCancelKeyboard());
       return;
     }
     payload.title = input;
     if (isFieldEdit) {
-      await showCreatePreview(admin, telegramId, message, payload);
+      await showCreatePreview(admin, telegramId, chatId, payload);
     } else {
-      await saveState(admin, telegramId, message, 'create:description', payload);
-      await editAdminMessage(message, 'Введите описание вебинара. Отправьте «-», если описание не нужно:', createCancelKeyboard());
+      const messageId = await sendAdminMessage(chatId, 'Введите описание вебинара. Отправьте «-», если описание не нужно:', createCancelKeyboard());
+      await saveState(admin, telegramId, { chatId, messageId: messageId ?? 0 }, 'create:description', payload);
     }
     return;
   }
@@ -590,10 +692,10 @@ async function renderCreationStep(
   if (state.step === 'create:description' || state.step === 'create:edit:description') {
     payload.description = normalizeOptional(input);
     if (isFieldEdit) {
-      await showCreatePreview(admin, telegramId, message, payload);
+      await showCreatePreview(admin, telegramId, chatId, payload);
     } else {
-      await saveState(admin, telegramId, message, 'create:date', payload);
-      await editAdminMessage(message, 'Введите дату и время вебинара в формате:\n15.09.2026 19:00', createCancelKeyboard());
+      const messageId = await sendAdminMessage(chatId, 'Введите дату и время вебинара в формате:\n15.09.2026 19:00', createCancelKeyboard());
+      await saveState(admin, telegramId, { chatId, messageId: messageId ?? 0 }, 'create:date', payload);
     }
     return;
   }
@@ -601,15 +703,15 @@ async function renderCreationStep(
   if (state.step === 'create:date' || state.step === 'create:edit:date') {
     const date = parseWebinarDate(input);
     if (!date) {
-      await editAdminMessage(message, 'Неверный формат. Введите дату и время так:\n15.09.2026 19:00', createCancelKeyboard());
+      await sendAdminMessage(chatId, 'Неверный формат. Введите дату и время так:\n15.09.2026 19:00', createCancelKeyboard());
       return;
     }
     payload.webinar_date = date;
     if (isFieldEdit) {
-      await showCreatePreview(admin, telegramId, message, payload);
+      await showCreatePreview(admin, telegramId, chatId, payload);
     } else {
-      await saveState(admin, telegramId, message, 'create:url', payload);
-      await editAdminMessage(message, 'Введите ссылку на регистрацию. Отправьте «-», если ссылка не нужна:', createCancelKeyboard());
+      const messageId = await sendAdminMessage(chatId, 'Введите ссылку на регистрацию. Отправьте «-», если ссылка не нужна:', createCancelKeyboard());
+      await saveState(admin, telegramId, { chatId, messageId: messageId ?? 0 }, 'create:url', payload);
     }
     return;
   }
@@ -617,11 +719,11 @@ async function renderCreationStep(
   if (state.step === 'create:url' || state.step === 'create:edit:url') {
     const url = normalizeOptional(input);
     if (url && !isValidHttpUrl(url)) {
-      await editAdminMessage(message, 'Укажите корректную ссылку с http:// или https://, либо отправьте «-».', createCancelKeyboard());
+      await sendAdminMessage(chatId, 'Укажите корректную ссылку с http:// или https://, либо отправьте «-».', createCancelKeyboard());
       return;
     }
     payload.registration_url = url;
-    await showCreatePreview(admin, telegramId, message, payload);
+    await showCreatePreview(admin, telegramId, chatId, payload);
   }
 }
 
@@ -631,11 +733,11 @@ async function renderExistingEditStep(
   state: ConversationState,
   input: string,
 ): Promise<void> {
-  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const chatId = state.chat_id;
   const webinarId = String(state.payload?.webinarId ?? '');
   if (!webinarId) {
     await clearState(admin, telegramId);
-    await editAdminMessage(message, 'Состояние редактирования устарело. Откройте вебинар заново.', {
+    await sendAdminMessage(chatId, 'Состояние редактирования устарело. Откройте вебинар заново.', {
       inline_keyboard: [[managementButton()]],
     });
     return;
@@ -644,7 +746,7 @@ async function renderExistingEditStep(
   let patch: Record<string, string | null> | null = null;
   if (state.step === 'edit:title') {
     if (!input) {
-      await editAdminMessage(message, 'Название не может быть пустым. Введите название вебинара:', backToWebinarKeyboard(webinarId));
+      await sendAdminMessage(chatId, 'Название не может быть пустым. Введите название вебинара:', backToWebinarKeyboard(webinarId));
       return;
     }
     patch = { title: input };
@@ -653,7 +755,7 @@ async function renderExistingEditStep(
   if (state.step === 'edit:date') {
     const date = parseWebinarDate(input);
     if (!date) {
-      await editAdminMessage(message, 'Неверный формат. Введите дату и время так:\n15.09.2026 19:00', backToWebinarKeyboard(webinarId));
+      await sendAdminMessage(chatId, 'Неверный формат. Введите дату и время так:\n15.09.2026 19:00', backToWebinarKeyboard(webinarId));
       return;
     }
     patch = { webinar_date: date };
@@ -661,7 +763,7 @@ async function renderExistingEditStep(
   if (state.step === 'edit:url') {
     const url = normalizeOptional(input);
     if (url && !isValidHttpUrl(url)) {
-      await editAdminMessage(message, 'Укажите корректную ссылку с http:// или https://, либо отправьте «-».', backToWebinarKeyboard(webinarId));
+      await sendAdminMessage(chatId, 'Укажите корректную ссылку с http:// или https://, либо отправьте «-».', backToWebinarKeyboard(webinarId));
       return;
     }
     patch = { registration_url: url };
@@ -674,7 +776,38 @@ async function renderExistingEditStep(
     .eq('id', webinarId);
   if (error) throw error;
   await clearState(admin, telegramId);
-  await renderWebinarDetail(admin, message, webinarId, '✅ Вебинар обновлён.');
+  // Результат ввода — новое сообщение под текстом админа (§5).
+  const webinar = await getWebinar(admin, webinarId);
+  if (!webinar) {
+    await sendAdminMessage(chatId, '✅ Вебинар обновлён.', { inline_keyboard: [[managementButton()]] });
+    return;
+  }
+  await sendAdminMessage(
+    chatId,
+    [
+      '✅ Вебинар обновлён.',
+      '',
+      `📅 ${webinar.title}`,
+      '',
+      `Описание: ${webinar.description ?? '—'}`,
+      `Дата: ${formatWebinarDate(webinar.webinar_date)}`,
+      `Ссылка: ${webinar.registration_url ?? '—'}`,
+      `Статус: ${webinarStatus(webinar)}`,
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [{ text: '✏️ Изменить', callback_data: webinarCallback('view', webinar.id, 'edit') }],
+        [
+          {
+            text: webinar.is_active ? '🔴 Деактивировать' : '🟢 Активировать',
+            callback_data: webinarCallback('view', webinar.id, 'toggle'),
+          },
+        ],
+        [managementButton()],
+        [homeButton()],
+      ],
+    },
+  );
 }
 
 function parseViewCallback(data: string): { webinarId: string; action: string; field?: string } | null {
@@ -759,7 +892,7 @@ async function handleWebinarAction(
   telegramId: number,
 ): Promise<boolean> {
   if (data === ADMIN_WEBINAR_CALLBACKS.menu) {
-    await editAdminMessage(message, '📅 Управление вебинарами', managementKeyboard());
+    await editDeliver(message)('📅 Управление вебинарами', managementKeyboard());
     return true;
   }
 
@@ -1132,15 +1265,18 @@ async function renderTemplateTypes(
   );
 }
 
+// deliver позволяет показать карточку и в ответ на callback (edit),
+// и новым сообщением после текстового/файлового ввода (§5).
 async function renderTemplateDetail(
   admin: SupabaseClient,
-  message: AdminMessage,
+  deliver: Deliver,
   webinarId: string,
   reminderType: ReminderType,
+  notice = '',
 ): Promise<void> {
   const webinar = await getReminderTestWebinar(admin, webinarId);
   if (!webinar) {
-    await editAdminMessage(message, 'Вебинар не найден. Выберите его заново.', {
+    await deliver('Вебинар не найден. Выберите его заново.', {
       inline_keyboard: [[{ text: '📅 Выбрать вебинар', callback_data: 'an:menu' }], [homeButton()]],
     });
     return;
@@ -1165,9 +1301,19 @@ async function renderTemplateDetail(
   }
   keyboard.push([{ text: '↩️ К типам уведомлений', callback_data: `an:w:${webinar.id}` }], [homeButton()]);
 
-  await editAdminMessage(
-    message,
-    `🔔 ${label}\n\nВебинар: ${webinar.title}\n\nТекст:\n${textPreview}\n\nФайл: ${fileStatus}\n\nТекст и файл сохраняются отдельно. Файл необязателен.`,
+  await deliver(
+    `${notice ? `${notice}
+
+` : ''}🔔 ${label}
+
+Вебинар: ${webinar.title}
+
+Текст:
+${textPreview}
+
+Файл: ${fileStatus}
+
+Текст и файл сохраняются отдельно. Файл необязателен.`,
     { inline_keyboard: keyboard },
   );
 }
@@ -1249,7 +1395,7 @@ async function handleTemplateAction(
 
   if (action === 't') {
     await clearStateIfAvailable(admin, telegramId);
-    await renderTemplateDetail(admin, message, target.webinarId, target.reminderType);
+    await renderTemplateDetail(admin, editDeliver(message), target.webinarId, target.reminderType);
     return true;
   }
 
@@ -1287,7 +1433,7 @@ async function handleTemplateAction(
 
   if (action === 'd' || action === 'n') {
     await removeWebinarNotificationTemplateFile(admin, target.webinarId, target.reminderType);
-    await renderTemplateDetail(admin, message, target.webinarId, target.reminderType);
+    await renderTemplateDetail(admin, editDeliver(message), target.webinarId, target.reminderType);
     return true;
   }
 
@@ -1322,7 +1468,8 @@ async function handleNotificationTextStep(
       }
       const template = await createCustomWebinarNotificationTemplate(admin, webinarId, minutes);
       await clearState(admin, telegramId);
-      await renderTemplateDetail(admin, message, webinarId, template.reminder_type);
+      // Результат текстового ввода — новое сообщение (§5).
+      await renderTemplateDetail(admin, sendDeliver(state.chat_id), webinarId, template.reminder_type, '✅ Шаблон создан.');
       return true;
     }
 
@@ -1334,7 +1481,7 @@ async function handleNotificationTextStep(
       messageText: text.trim(),
     });
     await clearState(admin, telegramId);
-    await renderTemplateDetail(admin, message, webinarId, reminderType);
+    await renderTemplateDetail(admin, sendDeliver(state.chat_id), webinarId, reminderType, '✅ Текст шаблона сохранён.');
     return true;
   } catch (error) {
     if (isTemplateTableError(error)) {
@@ -1365,11 +1512,10 @@ function isPanelAction(data: string): boolean {
   return (
     PANEL_CALLBACKS.includes(data) ||
     data.startsWith('admin:user:') ||
-    data.startsWith('admin:cat:')
+    data.startsWith('admin:cat:') ||
+    data.startsWith('admin:stats:')
   );
 }
-
-const STUB_SECTION_TEXT = '🚧 Раздел находится в разработке.';
 
 // Роли, которые админ назначает через панель. test — только владелец бота.
 const ASSIGNABLE_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'admin'];
@@ -1422,7 +1568,9 @@ function homeOnlyKeyboard(): InlineKeyboard {
   return { inline_keyboard: [[homeButton()]] };
 }
 
-async function renderUsersMenu(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
+// Меню раздела: из Reply Keyboard приходит новым сообщением,
+// из inline-навигации — редактирует текущий блок.
+async function renderUsersMenu(admin: SupabaseClient, telegramId: number, deliver: Deliver): Promise<void> {
   // Вне активного поиска текст админа не должен попадать в поиск.
   await clearStateIfAvailable(admin, telegramId);
   const keyboard: InlineButton[][] = [
@@ -1432,8 +1580,7 @@ async function renderUsersMenu(admin: SupabaseClient, telegramId: number, messag
     ]),
     [homeButton()],
   ];
-  await editAdminMessage(
-    message,
+  await deliver(
     '👥 Пользователи\n\nВыбери категорию или найди пользователя по имени и телефону.',
     { inline_keyboard: keyboard },
   );
@@ -1460,16 +1607,18 @@ async function renderUserSearchPrompt(
   );
 }
 
+// Результаты поиска — ответ на текстовый ввод: всегда новое сообщение,
+// чтобы результат появлялся сразу под запросом админа (§3, §5).
 async function renderUsersSearchResults(
   admin: SupabaseClient,
   state: ConversationState,
   query: string,
 ): Promise<void> {
-  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const chatId = state.chat_id;
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    await editAdminMessage(
-      message,
+    await sendAdminMessage(
+      chatId,
       '🔎 Поиск пользователя\n\nЗапрос слишком короткий — введи минимум 2 символа.',
       {
         inline_keyboard: [
@@ -1483,8 +1632,8 @@ async function renderUsersSearchResults(
 
   const members = await searchMembers(admin, trimmed);
   if (members.length === 0) {
-    await editAdminMessage(
-      message,
+    await sendAdminMessage(
+      chatId,
       `🔎 Никого не нашли по запросу «${trimmed}».\n\nПопробуй другое имя или телефон. Новый запрос — просто отправь его сообщением.`,
       {
         inline_keyboard: [
@@ -1513,7 +1662,7 @@ async function renderUsersSearchResults(
   ]);
   keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:users' }], [homeButton()]);
 
-  await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  await sendAdminMessage(chatId, text, { inline_keyboard: keyboard });
 }
 
 // Страница списка пользователей категории с пагинацией.
@@ -1572,6 +1721,23 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
     console.error('Не удалось получить заявки пользователя:', error);
   }
 
+  // Данные контроля переписки: до применения bot_moderation.sql колонок
+  // ещё нет — тогда блок модерации просто не показывается.
+  let moderationStatus: string | null = null;
+  try {
+    const info = await getModerationInfo(admin, member.telegram_id);
+    moderationStatus = info?.moderationStatus ?? null;
+  } catch (error) {
+    if (!isModerationColumnError(error)) console.error('Не удалось получить статус модерации:', error);
+  }
+
+  let stats: UserViolationStats | null = null;
+  try {
+    stats = await getUserViolationStats(admin, member.telegram_id);
+  } catch (error) {
+    if (!isViolationTableError(error)) console.error('Не удалось получить счётчики нарушений:', error);
+  }
+
   const lines = [
     `👤 ${memberDisplayName(member)}`,
     member.phone ? `📱 Телефон: ${member.phone}` : '📱 Телефон: не указан',
@@ -1583,13 +1749,34 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
     '💳 Оплата: нет данных (таблицы оплат нет)',
   ];
   if (leads > 0) lines.push(`📝 Заявок с сайта: ${leads}`);
+  if (moderationStatus === 'blocked') lines.push('🔒 Статус доступа: заблокирован');
+  if (moderationStatus === 'restricted') lines.push('🚫 Статус доступа: ограничен');
+  if (stats && stats.total > 0) {
+    lines.push(
+      '',
+      '🚨 Контроль переписки:',
+      `🚨 Нарушений: ${stats.total}`,
+      `⚠️ Предупреждений: ${stats.warnings}`,
+      `🚫 Ограничений: ${stats.restrictions}`,
+      `🔒 Блокировок: ${stats.blocks}`,
+    );
+  }
 
-  await editAdminMessage(message, lines.join('\n'), {
-    inline_keyboard: [
-      [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
-      [homeButton()],
-    ],
-  });
+  const keyboard: InlineButton[][] = [
+    [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
+  ];
+  if (stats) {
+    keyboard.push([{ text: '📋 История нарушений', callback_data: `admin:mod:usr:${member.telegram_id}:0` }]);
+  }
+  if (moderationStatus === 'blocked') {
+    keyboard.push([{ text: '🔓 Разблокировать', callback_data: `admin:mod:unblock:${member.telegram_id}` }]);
+  }
+  if (moderationStatus === 'restricted') {
+    keyboard.push([{ text: '🔓 Снять ограничение', callback_data: `admin:mod:unrestrict:${member.telegram_id}` }]);
+  }
+  keyboard.push([homeButton()]);
+
+  await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
 }
 
 async function renderRoleChoices(message: AdminMessage, member: MemberRow, callerId: number): Promise<void> {
@@ -1661,7 +1848,7 @@ async function handlePanelAction(
   }
 
   if (data === 'admin:users') {
-    await renderUsersMenu(admin, telegramId, message);
+    await renderUsersMenu(admin, telegramId, editDeliver(message));
     return true;
   }
 
@@ -1675,9 +1862,8 @@ async function handlePanelAction(
     return true;
   }
 
-  if (data === 'admin:stats') {
-    await editAdminMessage(message, STUB_SECTION_TEXT, homeOnlyKeyboard());
-    return true;
+  if (data === 'admin:stats' || data.startsWith('admin:stats:')) {
+    return await handleStatsAction(admin, data, message);
   }
 
   // admin:cat:<категория>:<страница>
@@ -1686,7 +1872,7 @@ async function handlePanelAction(
     const category = findCategory(categoryId);
     const page = Math.max(0, Number(pageRaw) || 0);
     if (category) await renderUserList(admin, message, category, page);
-    else await renderUsersMenu(admin, telegramId, message);
+    else await renderUsersMenu(admin, telegramId, editDeliver(message));
     return true;
   }
 
@@ -1755,13 +1941,14 @@ async function handlePanelAction(
 // Контроль переписки
 // ---------------------------------------------------------------------------
 
-// Первая версия: обнаружение, учёт и ручная обработка. Автоматических
-// блокировок нет — кнопка «Заблокировать» меняет только статус события.
+// Обнаружение, учёт и ручная обработка событий. Автоматических санкций
+// нет: предупреждение, ограничение и блокировку применяет администратор.
+// Блокировка реальная и обратимая — статус в bot_members.moderation_status.
 
 // Откуда открыта карточка события: n — новые, a — все, u — нарушения
-// пользователя, x — уведомление в чате администратора.
+// пользователя, w — предупреждения, x — уведомление в чате администратора.
 type ModerationContext = {
-  origin: 'n' | 'a' | 'u' | 'x';
+  origin: 'n' | 'a' | 'u' | 'w' | 'x';
   filter: string;
   telegramId: number;
   page: number;
@@ -1783,7 +1970,7 @@ function normalizeRiskFilter(raw?: string): string {
 }
 
 async function renderModerationMigrationMessage(message: AdminMessage): Promise<void> {
-  await editAdminMessage(message, migrationText('bot_violations.sql'), homeOnlyKeyboard());
+  await editAdminMessage(message, migrationText('bot_moderation.sql'), homeOnlyKeyboard());
 }
 
 // Строка списка событий: риск, имя, роль и время.
@@ -1792,6 +1979,20 @@ function violationItemText(row: ViolationRow): string {
     `${RISK_EMOJI[row.risk_level]} ${violationSenderName(row)}`,
     `🎭 ${roleLabel(row.sender_role)}`,
     `🕐 ${formatViolationDateShort(row.created_at)}`,
+  ].join('\n');
+}
+
+// Строка истории нарушений пользователя (§12): риск, дата, причина, статус.
+function violationHistoryItemText(row: ViolationRow): string {
+  return [
+    `${RISK_EMOJI[row.risk_level]} ${RISK_TITLE[row.risk_level]}`,
+    formatViolationDateShort(row.created_at),
+    '',
+    'Причина:',
+    row.reason,
+    '',
+    'Статус:',
+    STATUS_LABEL[row.status],
   ].join('\n');
 }
 
@@ -1818,6 +2019,7 @@ function moderationPaginationRow(
 function serializeModerationContext(context: ModerationContext): string {
   if (context.origin === 'a') return `a:${context.filter}:${context.page}`;
   if (context.origin === 'u') return `u:${context.telegramId}:${context.page}`;
+  if (context.origin === 'w') return `w:${context.page}`;
   if (context.origin === 'x') return 'x';
   return `n:${context.page}`;
 }
@@ -1830,6 +2032,9 @@ function parseModerationContext(parts: string[]): ModerationContext {
   if (origin === 'u') {
     return { origin: 'u', filter: 'all', telegramId: Number(parts[1]) || 0, page: toModerationPage(parts[2]) };
   }
+  if (origin === 'w') {
+    return { origin: 'w', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
+  }
   if (origin === 'x') return { origin: 'x', filter: 'all', telegramId: 0, page: 0 };
   return { origin: 'n', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
 }
@@ -1841,16 +2046,20 @@ function moderationBackButton(context: ModerationContext): InlineButton {
   if (context.origin === 'u') {
     return { text: '⬅️ Назад', callback_data: `admin:mod:usr:${context.telegramId}:${context.page}` };
   }
+  if (context.origin === 'w') {
+    return { text: '⬅️ Назад', callback_data: `admin:mod:warned:${context.page}` };
+  }
   if (context.origin === 'x') {
     return { text: '⬅️ Назад', callback_data: 'admin:chat-control' };
   }
   return { text: '⬅️ Назад', callback_data: `admin:mod:new:${context.page}` };
 }
 
+// Меню контроля: из Reply Keyboard — новое сообщение, из inline-навигации — edit.
 async function renderModerationMenu(
   admin: SupabaseClient,
   telegramId: number,
-  message: AdminMessage,
+  deliver: Deliver,
 ): Promise<void> {
   // Вне активного поиска текст админа не должен попадать в поиск нарушителей.
   await clearStateIfAvailable(admin, telegramId);
@@ -1861,18 +2070,19 @@ async function renderModerationMenu(
       '',
       pending > 0 ? `🔴 Ожидают обработки: ${pending}` : '✅ Новых нарушений нет.',
     ].join('\n');
-    await editAdminMessage(message, text, {
+    await deliver(text, {
       inline_keyboard: [
         [{ text: '🔴 Новые нарушения', callback_data: 'admin:mod:new:0' }],
         [{ text: '📋 Все нарушения', callback_data: 'admin:mod:all:all:0' }],
-        [{ text: '👤 Нарушения пользователей', callback_data: 'admin:mod:users' }],
-        [{ text: '⚙️ Настройки фильтра', callback_data: 'admin:mod:settings' }],
+        [{ text: '👤 Пользователи под контролем', callback_data: 'admin:mod:users' }],
+        [{ text: '⚠️ Предупреждения', callback_data: 'admin:mod:warned:0' }],
+        [{ text: '🔒 Заблокированные', callback_data: 'admin:mod:blocked:0' }],
         [homeButton()],
       ],
     });
   } catch (error) {
     if (!isViolationTableError(error)) throw error;
-    await renderModerationMigrationMessage(message);
+    await deliver(migrationText('bot_moderation.sql'), homeOnlyKeyboard());
   }
 }
 
@@ -1950,7 +2160,7 @@ async function renderModerationAll(
   }
 }
 
-// Шаг «Нарушения пользователей»: запрос имени/телефона.
+// Шаг «Пользователи под контролем»: запрос имени/телефона.
 async function renderModerationUsersPrompt(
   admin: SupabaseClient,
   telegramId: number,
@@ -1965,7 +2175,7 @@ async function renderModerationUsersPrompt(
   }
   await editAdminMessage(
     message,
-    '👤 Нарушения пользователей\n\nОтправь следующим сообщением имя, часть имени или телефон пользователя — покажу его события.',
+    '👤 Пользователи под контролем\n\nОтправь следующим сообщением имя, часть имени или телефон пользователя — покажу его счётчики и историю событий.',
     {
       inline_keyboard: [
         [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
@@ -1975,12 +2185,13 @@ async function renderModerationUsersPrompt(
   );
 }
 
+// Результаты поиска — ответ на текстовый ввод: всегда новое сообщение (§3).
 async function renderModerationSearchResults(
   admin: SupabaseClient,
   state: ConversationState,
   query: string,
 ): Promise<void> {
-  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const chatId = state.chat_id;
   const backKeyboard: InlineButton[][] = [
     [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
     [homeButton()],
@@ -1988,9 +2199,9 @@ async function renderModerationSearchResults(
 
   const trimmed = query.trim();
   if (trimmed.length < 2) {
-    await editAdminMessage(
-      message,
-      '👤 Нарушения пользователей\n\nЗапрос слишком короткий — введи минимум 2 символа.',
+    await sendAdminMessage(
+      chatId,
+      '👤 Пользователи под контролем\n\nЗапрос слишком короткий — введи минимум 2 символа.',
       { inline_keyboard: backKeyboard },
     );
     return;
@@ -1998,8 +2209,8 @@ async function renderModerationSearchResults(
 
   const members = await searchMembers(admin, trimmed, 10);
   if (members.length === 0) {
-    await editAdminMessage(
-      message,
+    await sendAdminMessage(
+      chatId,
       `👤 Никого не нашли по запросу «${trimmed}». Новый запрос — просто отправь его сообщением.`,
       { inline_keyboard: backKeyboard },
     );
@@ -2014,14 +2225,14 @@ async function renderModerationSearchResults(
   ]);
   keyboard.push(...backKeyboard);
 
-  await editAdminMessage(
-    message,
+  await sendAdminMessage(
+    chatId,
     `👤 Результаты по запросу «${trimmed}»: ${members.length}\n\nВыбери пользователя, чтобы посмотреть его события. Новый запрос — просто отправь его сообщением.`,
     { inline_keyboard: keyboard },
   );
 }
 
-// Все события конкретного пользователя.
+// Все события конкретного пользователя + счётчики (§11, §12).
 async function renderUserViolations(
   admin: SupabaseClient,
   message: AdminMessage,
@@ -2034,9 +2245,35 @@ async function renderUserViolations(
     const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
     const safePage = Math.min(page, pageCount - 1);
 
-    const header = member
-      ? `${memberCard(member)}\n📌 Событий: ${total}`
-      : `👤 ID ${targetId}\n📌 Событий: ${total}`;
+    // Счётчики считаются по истории bot_violations (§15).
+    let stats: UserViolationStats | null = null;
+    try {
+      stats = await getUserViolationStats(admin, targetId);
+    } catch (statsError) {
+      if (!isViolationTableError(statsError)) throw statsError;
+    }
+
+    let moderationStatus = 'active';
+    try {
+      const info = await getModerationInfo(admin, targetId);
+      moderationStatus = info?.moderationStatus ?? 'active';
+    } catch (statusError) {
+      if (!isModerationColumnError(statusError)) throw statusError;
+    }
+
+    const headerLines = [member ? memberCard(member) : `👤 ID ${targetId}`];
+    if (stats) {
+      headerLines.push(
+        `🚨 Нарушений: ${stats.total}`,
+        `⚠️ Предупреждений: ${stats.warnings}`,
+        `🚫 Ограничений: ${stats.restrictions}`,
+        `🔒 Блокировок: ${stats.blocks}`,
+      );
+    } else {
+      headerLines.push(`📌 Событий: ${total}`);
+    }
+    if (moderationStatus === 'blocked') headerLines.push('', '🔒 Пользователь заблокирован.');
+    if (moderationStatus === 'restricted') headerLines.push('', '🚫 Пользователь ограничен.');
 
     const keyboard: InlineButton[][] = rows.map((row) => [
       {
@@ -2044,14 +2281,20 @@ async function renderUserViolations(
         callback_data: `admin:mod:v:${row.id}:u:${targetId}:${safePage}`,
       },
     ]);
+    if (moderationStatus === 'blocked') {
+      keyboard.push([{ text: '🔓 Разблокировать', callback_data: `admin:mod:unblock:${targetId}` }]);
+    }
+    if (moderationStatus === 'restricted') {
+      keyboard.push([{ text: '🔓 Снять ограничение', callback_data: `admin:mod:unrestrict:${targetId}` }]);
+    }
     const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:usr:${targetId}:${p}`);
     if (pagination) keyboard.push(pagination);
     keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:mod:users' }], [homeButton()]);
 
     const text =
       rows.length === 0
-        ? ['👤 Нарушения пользователя', '', header, '', 'Событий пока нет.'].join('\n\n')
-        : ['👤 Нарушения пользователя', '', header, '', ...rows.map(violationItemText)].join('\n\n');
+        ? ['📋 История нарушений', '', headerLines.join('\n'), '', 'Событий пока нет.'].join('\n\n')
+        : ['📋 История нарушений', '', headerLines.join('\n'), '', ...rows.map(violationHistoryItemText)].join('\n\n');
 
     await editAdminMessage(message, text, { inline_keyboard: keyboard });
   } catch (error) {
@@ -2102,24 +2345,31 @@ async function renderViolationDetail(
       STATUS_LABEL[row.status],
     ];
 
-    if (row.status !== 'pending' && row.reviewed_at) {
+    if (row.status !== 'pending' && row.action_at) {
       lines.push(
         '',
-        `Обработал: администратор ${row.reviewed_by ?? '—'} · ${formatViolationDateTime(row.reviewed_at)}`,
+        `Обработал: администратор ${row.action_by ?? '—'} · ${formatViolationDateTime(row.action_at)}`,
       );
     }
+    if (row.status === 'warned') {
+      lines.push('', '⚠️ Пользователю отправлено предупреждение.');
+    }
+    if (row.status === 'restricted') {
+      lines.push('', '🚫 Пользователь ограничен.');
+    }
     if (row.status === 'blocked') {
-      lines.push(
-        '',
-        'ℹ️ Фактическая блокировка Telegram-аккаунта не выполнялась: механизма блокировки в боте пока нет — изменён только статус события.',
-      );
+      lines.push('', '🔒 Пользователь заблокирован.');
     }
 
     const keyboard: InlineButton[][] = [];
     if (row.status === 'pending') {
       const contextSuffix = serializeModerationContext(context);
       keyboard.push(
-        [{ text: '⚠️ Заблокировать', callback_data: `admin:mod:act:block:${row.id}:${contextSuffix}` }],
+        [{ text: '⚠️ Предупредить', callback_data: `admin:mod:act:warn:${row.id}:${contextSuffix}` }],
+        [
+          { text: '🚫 Ограничить', callback_data: `admin:mod:act:restrict:${row.id}:${contextSuffix}` },
+          { text: '🔒 Заблокировать', callback_data: `admin:mod:act:block:${row.id}:${contextSuffix}` },
+        ],
         [{ text: '✅ Игнорировать', callback_data: `admin:mod:act:ignore:${row.id}:${contextSuffix}` }],
       );
     }
@@ -2132,12 +2382,55 @@ async function renderViolationDetail(
   }
 }
 
-// Обработка события: ignore → ignored, block → blocked (только статус).
+// Подтверждение блокировки (§9): счётчики берутся из истории нарушений.
+async function renderBlockConfirm(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  row: ViolationRow,
+  context: ModerationContext,
+): Promise<void> {
+  let stats: UserViolationStats | null = null;
+  try {
+    stats = await getUserViolationStats(admin, row.telegram_id);
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+  }
+
+  const contextSuffix = serializeModerationContext(context);
+  await editAdminMessage(
+    message,
+    [
+      '🔒 Заблокировать пользователя?',
+      '',
+      `👤 ${violationSenderName(row)}`,
+      `🎭 ${roleLabel(row.sender_role)}`,
+      '',
+      `Нарушений: ${stats?.total ?? 0}`,
+      `Предупреждений: ${stats?.warnings ?? 0}`,
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [{ text: '🔒 Да, заблокировать', callback_data: `admin:mod:act:blockyes:${row.id}:${contextSuffix}` }],
+        [moderationBackButton(context)],
+        [homeButton()],
+      ],
+    },
+  );
+}
+
+type ModerationAction = 'warn' | 'restrict' | 'block' | 'blockyes' | 'ignore';
+
+const MODERATION_ACTIONS: ModerationAction[] = ['warn', 'restrict', 'block', 'blockyes', 'ignore'];
+
+// Обработка события администратором:
+// warn → warned + сообщение пользователю, restrict → restricted + статус в
+// bot_members, block → подтверждение, blockyes → blocked + статус, ignore →
+// ignored без санкций.
 async function applyModerationAction(
   admin: SupabaseClient,
   message: AdminMessage,
   adminTelegramId: number,
-  action: string,
+  action: ModerationAction,
   violationId: number,
   context: ModerationContext,
 ): Promise<void> {
@@ -2150,35 +2443,182 @@ async function applyModerationAction(
       return;
     }
 
-    // Повторное нажатие по уже обработанному событию ничего не меняет.
-    if (row.status === 'pending') {
-      await reviewViolation(
-        admin,
-        violationId,
-        action === 'ignore' ? 'ignored' : 'blocked',
-        adminTelegramId,
-      );
+    // Перед блокировкой всегда показываем подтверждение со счётчиками (§9).
+    if (action === 'block') {
+      await renderBlockConfirm(admin, message, row, context);
+      return;
     }
 
-    // Действие из уведомления в чате: подтверждаем прямо в этом сообщении.
+    // Повторное нажатие по уже обработанному событию ничего не меняет.
+    let extraNote = '';
+    if (row.status === 'pending') {
+      if (action === 'warn') {
+        await reviewViolation(admin, violationId, 'warned', adminTelegramId);
+        try {
+          const stats = await getUserViolationStats(admin, row.telegram_id);
+          await sendWarningToUser(row.chat_id, stats.warnings);
+          extraNote = '⚠️ Пользователю отправлено предупреждение.';
+        } catch (noticeError) {
+          console.error('Контроль переписки: не удалось отправить предупреждение:', noticeError);
+          extraNote = '⚠️ Предупреждение сохранено, но сообщение пользователю не доставлено.';
+        }
+      } else if (action === 'restrict') {
+        await reviewViolation(admin, violationId, 'restricted', adminTelegramId);
+        await setModerationStatus(admin, row.telegram_id, 'restricted', adminTelegramId);
+        extraNote = '🚫 Пользователь ограничен.';
+      } else if (action === 'blockyes') {
+        await reviewViolation(admin, violationId, 'blocked', adminTelegramId);
+        await setModerationStatus(admin, row.telegram_id, 'blocked', adminTelegramId);
+        extraNote = '🔒 Пользователь заблокирован.';
+      } else {
+        await reviewViolation(admin, violationId, 'ignored', adminTelegramId);
+        extraNote = '✅ Нарушение закрыто без санкций.';
+      }
+    }
+
+    const newStatus =
+      action === 'warn' ? 'warned' : action === 'restrict' ? 'restricted' : action === 'blockyes' ? 'blocked' : 'ignored';
+
+    // Действие из уведомления в чате: подтверждаем прямо в этом сообщении,
+    // администратор не должен неожиданно оказываться в другом разделе.
     if (context.origin === 'x') {
-      const newStatus = action === 'ignore' ? 'ignored' : 'blocked';
-      await editAdminMessage(
-        message,
-        `✅ Событие #${violationId} обработано.\n\nСтатус: ${STATUS_LABEL[newStatus]}\n\nПодробности — в разделе «Контроль переписки».`,
-        {
-          inline_keyboard: [
-            [{ text: '🚨 К контролю переписки', callback_data: 'admin:chat-control' }],
-            [homeButton()],
-          ],
-        },
-      );
+      const lines = [`✅ Событие #${violationId} обработано.`, '', `Статус: ${STATUS_LABEL[newStatus]}`];
+      if (extraNote) lines.push('', extraNote);
+      lines.push('', 'Подробности — в разделе «Контроль переписки».');
+      await editAdminMessage(message, lines.join('\n'), {
+        inline_keyboard: [
+          [{ text: '🚨 К контролю переписки', callback_data: 'admin:chat-control' }],
+          [homeButton()],
+        ],
+      });
       return;
     }
 
     await renderViolationDetail(admin, message, violationId, context);
   } catch (error) {
+    if (!isModerationColumnError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// События, по которым администратор отправил предупреждение (§23).
+async function renderModerationWarned(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  try {
+    const { rows, total } = await listViolations(admin, { status: 'warned' }, page);
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${RISK_EMOJI[row.risk_level]} ${shorten(violationSenderName(row), 28)}`,
+        callback_data: `admin:mod:v:${row.id}:w:${safePage}`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:warned:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? '⚠️ Предупреждения\n\nСобытий с предупреждениями нет.'
+        : ['⚠️ Предупреждения', '', ...rows.map(violationItemText)].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
     if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Пользователи со статусом blocked (§23). Данные берутся из bot_members.
+async function renderModerationBlocked(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  try {
+    const { members, total } = await listMembersByModeration(admin, 'blocked', page, USERS_PER_PAGE);
+    const pageCount = Math.max(1, Math.ceil(total / USERS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = members.map((member) => [
+      {
+        text: `👤 ${shorten(memberDisplayName(member), 28)} · ${roleLabel(member.role)}`,
+        callback_data: `admin:mod:usr:${member.telegram_id}:0`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:blocked:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const items = members.map((member) =>
+      [
+        `👤 ${memberDisplayName(member)}`,
+        `🎭 ${roleLabel(member.role)}`,
+        member.blocked_at ? `🕐 ${formatViolationDateTime(member.blocked_at)}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+    const text =
+      members.length === 0
+        ? '🔒 Заблокированные\n\nЗаблокированных пользователей нет.'
+        : ['🔒 Заблокированные', '', ...items].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isModerationColumnError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Разблокировка и снятие ограничения (§20): статус возвращается в active,
+// служебные отметки очищаются, пользователь получает уведомление.
+async function applyModerationRestore(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  adminTelegramId: number,
+  targetId: number,
+  kind: 'unblock' | 'unrestrict',
+): Promise<void> {
+  try {
+    const restored = await setModerationStatus(admin, targetId, 'active', adminTelegramId);
+    const member = restored ? await getMember(admin, targetId) : null;
+    if (member?.chat_id) {
+      try {
+        await telegramSend('sendMessage', {
+          chat_id: member.chat_id,
+          text:
+            kind === 'unblock'
+              ? '🔓 Доступ к боту District восстановлен.'
+              : '🔓 Ограничения на общение в боте District сняты.',
+        });
+      } catch (noticeError) {
+        console.error('Контроль переписки: не удалось отправить уведомление о разблокировке:', noticeError);
+      }
+    }
+    const name = member ? memberDisplayName(member) : `ID ${targetId}`;
+    await editAdminMessage(
+      message,
+      restored
+        ? kind === 'unblock'
+          ? `🔓 Пользователь ${name} разблокирован. Статус возвращён в active.`
+          : `🔓 Ограничение снято: ${name} снова может пользоваться ботом в полном объёме.`
+        : 'Пользователь не найден.',
+      {
+        inline_keyboard: [
+          [{ text: '👤 К карточке пользователя', callback_data: `admin:mod:usr:${targetId}:0` }],
+          [{ text: '🔒 Заблокированные', callback_data: 'admin:mod:blocked:0' }],
+          [homeButton()],
+        ],
+      },
+    );
+  } catch (error) {
+    if (!isModerationColumnError(error)) throw error;
     await renderModerationMigrationMessage(message);
   }
 }
@@ -2191,7 +2631,7 @@ async function handleModerationAction(
 ): Promise<boolean> {
   try {
     if (data === 'admin:chat-control' || data === 'admin:mod') {
-      await renderModerationMenu(admin, telegramId, message);
+      await renderModerationMenu(admin, telegramId, editDeliver(message));
       return true;
     }
 
@@ -2210,17 +2650,21 @@ async function handleModerationAction(
       await renderModerationUsersPrompt(admin, telegramId, message);
       return true;
     }
-    if (section === 'settings') {
-      await editAdminMessage(
-        message,
-        '⚙️ Настройки фильтра\n\n🚧 Тонкая настройка правил обнаружения появится в следующих версиях. Сейчас события можно фильтровать по уровню риска в списке «Все нарушения».',
-        {
-          inline_keyboard: [
-            [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
-            [homeButton()],
-          ],
-        },
-      );
+    if (section === 'warned') {
+      await renderModerationWarned(admin, message, toModerationPage(parts[3]));
+      return true;
+    }
+    if (section === 'blocked') {
+      await renderModerationBlocked(admin, message, toModerationPage(parts[3]));
+      return true;
+    }
+    if (section === 'unblock' || section === 'unrestrict') {
+      const targetId = Number(parts[3]) || 0;
+      if (targetId > 0) {
+        await applyModerationRestore(admin, message, telegramId, targetId, section);
+      } else {
+        await renderModerationMenu(admin, telegramId, editDeliver(message));
+      }
       return true;
     }
     if (section === 'usr') {
@@ -2228,7 +2672,7 @@ async function handleModerationAction(
       if (targetId > 0) {
         await renderUserViolations(admin, message, targetId, toModerationPage(parts[4]));
       } else {
-        await renderModerationMenu(admin, telegramId, message);
+        await renderModerationMenu(admin, telegramId, editDeliver(message));
       }
       return true;
     }
@@ -2238,12 +2682,12 @@ async function handleModerationAction(
     }
     if (section === 'act') {
       const action = parts[3];
-      if (action === 'ignore' || action === 'block') {
+      if (MODERATION_ACTIONS.includes(action as ModerationAction)) {
         await applyModerationAction(
           admin,
           message,
           telegramId,
-          action,
+          action as ModerationAction,
           Number(parts[4]) || 0,
           parseModerationContext(parts.slice(5)),
         );
@@ -2251,13 +2695,503 @@ async function handleModerationAction(
       return true;
     }
 
-    await renderModerationMenu(admin, telegramId, message);
+    await renderModerationMenu(admin, telegramId, editDeliver(message));
     return true;
   } catch (error) {
-    if (!isViolationTableError(error)) throw error;
+    if (!isModerationColumnError(error)) throw error;
     await renderModerationMigrationMessage(message);
     return true;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Статистика
+// ---------------------------------------------------------------------------
+
+// Все показатели считаются из существующих таблиц Supabase при каждом
+// открытии экрана: bot_members (роли), webinars + webinar_registrations,
+// bot_broadcasts (история рассылок), bot_violations (контроль переписки).
+// Новых таблиц нет; метрики, для которых в базе нет данных, не показываются.
+
+type StatsPeriod = 'today' | '7d' | '30d' | 'all';
+
+const STATS_PERIODS: Array<{ id: StatsPeriod; label: string }> = [
+  { id: 'today', label: 'Сегодня' },
+  { id: '7d', label: '7 дней' },
+  { id: '30d', label: '30 дней' },
+  { id: 'all', label: 'Всё время' },
+];
+
+function normalizeStatsPeriod(raw: string | undefined): StatsPeriod {
+  return STATS_PERIODS.some((item) => item.id === raw) ? (raw as StatsPeriod) : '7d';
+}
+
+// «Сегодня» — от полуночи по Москве (UTC+3), остальные периоды — скользящие.
+function statsPeriodStart(period: StatsPeriod): string | null {
+  const now = Date.now();
+  if (period === 'today') return new Date(now - ((now + 3 * 3600 * 1000) % 86400000)).toISOString();
+  if (period === '7d') return new Date(now - 7 * 86400000).toISOString();
+  if (period === '30d') return new Date(now - 30 * 86400000).toISOString();
+  return null;
+}
+
+// Серверный COUNT (head + count:'exact') — строки на клиент не выгружаются.
+async function countMembersByRoles(admin: SupabaseClient, roles: string[]): Promise<number> {
+  let query = admin.from('bot_members').select('telegram_id', { count: 'exact', head: true });
+  if (roles.length === 1) query = query.eq('role', roles[0]);
+  if (roles.length > 1) query = query.in('role', roles);
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+async function countMembersSince(admin: SupabaseClient, since: string | null): Promise<number> {
+  if (!since) return 0;
+  const { count, error } = await admin
+    .from('bot_members')
+    .select('telegram_id', { count: 'exact', head: true })
+    .gte('created_at', since);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+type WebinarStatsSummary = {
+  total: number;
+  finished: number;
+  active: Webinar[];
+  nearest: Webinar | null;
+};
+
+// Активен = is_active и дата в будущем — та же логика, что в webinarStatus.
+async function collectWebinarStats(admin: SupabaseClient): Promise<WebinarStatsSummary> {
+  const { data, error } = await admin
+    .from('webinars')
+    .select('id, title, description, webinar_date, registration_url, is_active')
+    .order('webinar_date', { ascending: true })
+    .limit(100);
+  if (error) throw error;
+  const webinars = (data ?? []) as Webinar[];
+  const now = Date.now();
+  const active = webinars.filter((webinar) => {
+    const time = new Date(webinar.webinar_date).getTime();
+    return webinar.is_active && !Number.isNaN(time) && time > now;
+  });
+  const finished = webinars.filter((webinar) => {
+    const time = new Date(webinar.webinar_date).getTime();
+    return !Number.isNaN(time) && time <= now;
+  }).length;
+  return { total: webinars.length, finished, active, nearest: active[0] ?? null };
+}
+
+async function countRegistrations(
+  admin: SupabaseClient,
+  webinarId?: string,
+  since?: string | null,
+): Promise<number> {
+  let query = admin.from('webinar_registrations').select('telegram_id', { count: 'exact', head: true });
+  if (webinarId) query = query.eq('webinar_id', webinarId);
+  if (since) query = query.gte('registered_at', since);
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+type ViolationStatsSummary = {
+  total: number;
+  high: number;
+  medium: number;
+  low: number;
+  warned: number;
+  restricted: number;
+  blocked: number;
+  fromTeachers: number;
+  fromCurators: number;
+  fromStudents: number;
+  usersWithWarnings: number;
+};
+
+// Одна выгрузка вместо десятка COUNT: событий модерации немного (лимит 5000).
+async function summarizeViolationStats(admin: SupabaseClient): Promise<ViolationStatsSummary | null> {
+  const { data, error } = await admin
+    .from('bot_violations')
+    .select('risk_level, status, sender_role, telegram_id')
+    .limit(5000);
+  if (error) {
+    if (isModerationColumnError(error)) return null;
+    throw error;
+  }
+  const rows = (data ?? []) as Array<{ risk_level: string; status: string; sender_role: string; telegram_id: number }>;
+  const warnedUsers = new Set(rows.filter((row) => row.status === 'warned').map((row) => row.telegram_id));
+  return {
+    total: rows.length,
+    high: rows.filter((row) => row.risk_level === 'high').length,
+    medium: rows.filter((row) => row.risk_level === 'medium').length,
+    low: rows.filter((row) => row.risk_level === 'low').length,
+    warned: rows.filter((row) => row.status === 'warned').length,
+    restricted: rows.filter((row) => row.status === 'restricted').length,
+    blocked: rows.filter((row) => row.status === 'blocked').length,
+    fromTeachers: rows.filter((row) => row.sender_role === 'teacher').length,
+    fromCurators: rows.filter((row) => row.sender_role === 'curator' || row.sender_role === 'mentor').length,
+    fromStudents: rows.filter((row) => row.sender_role === 'student').length,
+    usersWithWarnings: warnedUsers.size,
+  };
+}
+
+async function countBlockedMembers(admin: SupabaseClient): Promise<number | null> {
+  const { count, error } = await admin
+    .from('bot_members')
+    .select('telegram_id', { count: 'exact', head: true })
+    .eq('moderation_status', 'blocked');
+  if (error) {
+    if (isModerationColumnError(error)) return null;
+    throw error;
+  }
+  return count ?? 0;
+}
+
+async function countViolationsSince(admin: SupabaseClient, since: string | null): Promise<number | null> {
+  if (!since) return null;
+  const { count, error } = await admin
+    .from('bot_violations')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', since);
+  if (error) {
+    if (isModerationColumnError(error)) return null;
+    throw error;
+  }
+  return count ?? 0;
+}
+
+async function countBroadcastsSince(admin: SupabaseClient, since: string | null): Promise<number | null> {
+  if (!since) return null;
+  const { count, error } = await admin
+    .from('bot_broadcasts')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', since);
+  if (error) {
+    if (isBroadcastTableError(error)) return null;
+    throw error;
+  }
+  return count ?? 0;
+}
+
+type BroadcastSummary = {
+  mailings: number;
+  messages: number;
+  delivered: number;
+  failed: number;
+  toUsers: number;
+  toAdmins: number;
+};
+
+async function getBroadcastSummary(admin: SupabaseClient): Promise<BroadcastSummary | null> {
+  try {
+    return await summarizeBroadcastHistory(admin);
+  } catch (error) {
+    if (isBroadcastTableError(error)) return null;
+    throw error;
+  }
+}
+
+function statsKeyboard(period: StatsPeriod): InlineKeyboard {
+  return {
+    inline_keyboard: [
+      [{ text: '👥 Пользователи', callback_data: 'admin:stats:users' }],
+      [{ text: '💳 Оплаты', callback_data: 'admin:stats:paid' }],
+      [{ text: '🎓 Ученики', callback_data: 'admin:stats:students' }],
+      [{ text: '👨‍🏫 Команда', callback_data: 'admin:stats:team' }],
+      [{ text: '📅 Вебинары', callback_data: 'admin:stats:webinars' }],
+      [{ text: '📢 Рассылки', callback_data: 'admin:stats:broadcasts' }],
+      [{ text: '🚨 Контроль переписки', callback_data: 'admin:stats:moderation' }],
+      STATS_PERIODS.map((item) => ({
+        text: item.id === period ? `✅ ${item.label}` : item.label,
+        callback_data: `admin:stats:home:${item.id}`,
+      })),
+      [{ text: '🔄 Обновить', callback_data: `admin:stats:home:${period}` }],
+      [homeButton()],
+    ],
+  };
+}
+
+function statsSubKeyboard(): InlineKeyboard {
+  return {
+    inline_keyboard: [
+      [{ text: '⬅️ Назад к статистике', callback_data: 'admin:stats' }],
+      [homeButton()],
+    ],
+  };
+}
+
+async function renderStatsOverview(admin: SupabaseClient, deliver: Deliver, period: StatsPeriod): Promise<void> {
+  const since = statsPeriodStart(period);
+
+  const [
+    totalMembers, guests, students, teachers, curators, newMembers,
+    webinarStats, registrationsTotal, registrationsPeriod,
+    broadcastSummary, broadcastsPeriod,
+    violationStats, violationsPeriod, blockedMembers,
+  ] = await Promise.all([
+    countMembersByRoles(admin, []),
+    countMembersByRoles(admin, ['guest']),
+    countMembersByRoles(admin, ['student']),
+    countMembersByRoles(admin, ['teacher']),
+    countMembersByRoles(admin, ['curator', 'mentor']),
+    countMembersSince(admin, since),
+    collectWebinarStats(admin),
+    countRegistrations(admin),
+    countRegistrations(admin, undefined, since),
+    getBroadcastSummary(admin),
+    countBroadcastsSince(admin, since),
+    summarizeViolationStats(admin),
+    countViolationsSince(admin, since),
+    countBlockedMembers(admin),
+  ]);
+
+  const periodName = STATS_PERIODS.find((item) => item.id === period)?.label ?? '';
+  const lines: string[] = ['📊 Общая статистика', ''];
+
+  lines.push('👥 ПОЛЬЗОВАТЕЛИ');
+  lines.push(`Всего: ${totalMembers}`);
+  lines.push(`❄️ Гости: ${guests} · 💳 Платные: ${students} · 👨‍🏫 Команда: ${teachers + curators}`);
+  if (since) lines.push(`Новых пользователей за период: ${newMembers}`);
+  lines.push('');
+
+  lines.push('📅 ВЕБИНАРЫ');
+  lines.push(`Активных: ${webinarStats.active.length}`);
+  lines.push(`Всего регистраций: ${registrationsTotal}`);
+  if (since) lines.push(`Регистраций за период: ${registrationsPeriod}`);
+  lines.push('');
+
+  lines.push('📢 РАССЫЛКИ');
+  if (broadcastSummary) {
+    lines.push(`Всего рассылок: ${broadcastSummary.mailings}`);
+    lines.push(`Сообщений отправлено: ${broadcastSummary.messages} · ✅ ${broadcastSummary.delivered} · ❌ ${broadcastSummary.failed}`);
+    if (broadcastsPeriod !== null) lines.push(`Рассылок за период: ${broadcastsPeriod}`);
+  } else {
+    lines.push('История рассылок недоступна (нет таблицы bot_broadcasts).');
+  }
+  lines.push('');
+
+  lines.push('🚨 КОНТРОЛЬ');
+  if (violationStats) {
+    lines.push(`Нарушений: ${violationStats.total}`);
+    lines.push(`Предупреждений: ${violationStats.warned} · Ограничений: ${violationStats.restricted} · Заблокировано: ${blockedMembers ?? violationStats.blocked}`);
+    if (violationsPeriod !== null) lines.push(`Нарушений за период: ${violationsPeriod}`);
+  } else {
+    lines.push('Контроль переписки недоступен (не применена миграция bot_moderation.sql).');
+  }
+  lines.push('');
+  lines.push(`📊 Период: ${periodName}`);
+
+  await deliver(lines.join('\n'), statsKeyboard(period));
+}
+
+async function renderStatsUsers(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const [total, guests, students, teachers, curators, admins, testers] = await Promise.all([
+    countMembersByRoles(admin, []),
+    countMembersByRoles(admin, ['guest']),
+    countMembersByRoles(admin, ['student']),
+    countMembersByRoles(admin, ['teacher']),
+    countMembersByRoles(admin, ['curator', 'mentor']),
+    countMembersByRoles(admin, ['admin']),
+    countMembersByRoles(admin, ['test']),
+  ]);
+
+  const text = [
+    '👥 Пользователи',
+    '',
+    `Всего пользователей: ${total}`,
+    '',
+    `❄️ Гости: ${guests}`,
+    `💳 Платные пользователи: ${students}`,
+    `🎓 Ученики: ${students}`,
+    `👨‍🏫 Преподаватели: ${teachers}`,
+    `🟡 Кураторы (curator + mentor): ${curators}`,
+    `🛠 Тестеры: ${testers}`,
+    `👑 Администраторы: ${admins}`,
+    '',
+    'ℹ️ В боте у пользователя одна роль, категории не пересекаются и в сумме дают общее число.',
+  ].join('\n');
+  await deliver(text, statsSubKeyboard());
+}
+
+async function renderStatsPaid(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const students = await countMembersByRoles(admin, ['student']);
+  const text = [
+    '💳 Оплаты',
+    '',
+    `💳 Всего платных пользователей: ${students}`,
+    '',
+    'ℹ️ Платный пользователь = роль student (действующее правило системы).',
+    '',
+    '⚠️ Таблицы платежей в базе нет: даты, суммы и статусы оплат не хранятся, поэтому «новые оплаты за период» показать невозможно.',
+  ].join('\n');
+  await deliver(text, statsSubKeyboard());
+}
+
+async function renderStatsStudents(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const students = await countMembersByRoles(admin, ['student']);
+  const text = [
+    '🎓 Ученики',
+    '',
+    `Всего учеников: ${students}`,
+    '',
+    '⚠️ Критериев «активный/неактивный/требует внимания» в системе нет: занятия, посещаемость и сроки оплаты не хранятся, поэтому такое деление не показывается.',
+  ].join('\n');
+  await deliver(text, statsSubKeyboard());
+}
+
+async function renderStatsTeam(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const [teachers, curators] = await Promise.all([
+    countMembersByRoles(admin, ['teacher']),
+    countMembersByRoles(admin, ['curator', 'mentor']),
+  ]);
+  const text = [
+    '👨‍🏫 Команда',
+    '',
+    `👨‍🏫 Преподаватели: ${teachers}`,
+    `🟡 Кураторы (curator + mentor): ${curators}`,
+    '',
+    '⚠️ Онлайн-статус и активность команды не отслеживаются, поэтому «активны сейчас» определить невозможно.',
+  ].join('\n');
+  await deliver(text, statsSubKeyboard());
+}
+
+async function renderStatsWebinars(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const summary = await collectWebinarStats(admin);
+  const registrationsTotal = await countRegistrations(admin);
+
+  const lines: string[] = [
+    '📅 Вебинары',
+    '',
+    `📅 Активных вебинаров: ${summary.active.length}`,
+    `Всего проведено: ${summary.finished}`,
+    `Всего регистраций: ${registrationsTotal}`,
+    '',
+  ];
+
+  if (summary.nearest) {
+    const nearest = summary.nearest;
+    const registered = await countRegistrations(admin, String(nearest.id));
+    const when = formatWebinarDateTime(nearest.webinar_date);
+    lines.push('Ближайший активный вебинар:');
+    lines.push(`Название: ${nearest.title}`);
+    lines.push(`Дата: ${when.date}`);
+    lines.push(`Время: ${when.time} (МСК)`);
+    lines.push(`👥 Зарегистрировано: ${registered}`);
+  } else {
+    lines.push('Ближайших активных вебинаров нет.');
+  }
+
+  await deliver(lines.join('\n'), statsSubKeyboard());
+}
+
+async function renderStatsBroadcasts(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  let summary: BroadcastSummary | null;
+  let recent: BroadcastHistoryRow[] = [];
+  try {
+    summary = await summarizeBroadcastHistory(admin);
+    recent = (await listBroadcastHistory(admin, 0)).rows;
+  } catch (error) {
+    if (!isBroadcastTableError(error)) throw error;
+    summary = null;
+  }
+
+  if (!summary) {
+    await deliver(migrationText('bot_broadcasts.sql'), statsSubKeyboard());
+    return;
+  }
+
+  const lines: string[] = [
+    '📢 Рассылки',
+    '',
+    `📢 Всего рассылок: ${summary.mailings}`,
+    `👥 Всего сообщений: ${summary.messages}`,
+    `✅ Доставлено: ${summary.delivered}`,
+    `❌ Ошибок: ${summary.failed}`,
+    `👥 Пользователям: ${summary.toUsers} · 👨‍💼 Администраторам: ${summary.toAdmins}`,
+    '',
+  ];
+
+  if (recent.length > 0) {
+    lines.push('Последние рассылки:');
+    for (const row of recent.slice(0, 3)) {
+      lines.push(`#${row.id} · ${formatBroadcastDate(row.created_at)} · ${row.audience_title}${row.to_admins ? ' (админам)' : ''} · 👥 ${row.delivered}/${row.recipients} · ❌ ${row.failed}`);
+    }
+  } else {
+    lines.push('Рассылок ещё не было.');
+  }
+
+  await deliver(lines.join('\n'), statsSubKeyboard());
+}
+
+async function renderStatsModeration(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const [summary, blockedMembers] = await Promise.all([
+    summarizeViolationStats(admin),
+    countBlockedMembers(admin),
+  ]);
+
+  if (!summary) {
+    await deliver(migrationText('bot_moderation.sql'), statsSubKeyboard());
+    return;
+  }
+
+  const text = [
+    '🚨 Контроль переписки',
+    '',
+    `🚨 Всего нарушений: ${summary.total}`,
+    `🔴 HIGH: ${summary.high} · 🟠 MEDIUM: ${summary.medium} · 🟡 LOW: ${summary.low}`,
+    '',
+    `⚠️ Предупреждений: ${summary.warned}`,
+    `🚫 Ограничений: ${summary.restricted}`,
+    `🔒 Заблокировано пользователей: ${blockedMembers ?? summary.blocked}`,
+    '',
+    'По отправителям:',
+    `👨‍🏫 От преподавателей: ${summary.fromTeachers}`,
+    `🟡 От кураторов: ${summary.fromCurators}`,
+    `🎓 От учеников: ${summary.fromStudents}`,
+    '',
+    `Пользователей с предупреждениями: ${summary.usersWithWarnings}`,
+    'ℹ️ Автоматического правила «на грани блокировки» в системе нет — санкции назначает администратор вручную.',
+  ].join('\n');
+  await deliver(text, statsSubKeyboard());
+}
+
+// Экраны раздела «📊 Статистика». Всегда возвращает true.
+async function handleStatsAction(admin: SupabaseClient, data: string, message: AdminMessage): Promise<boolean> {
+  const section = data.split(':')[2] ?? '';
+  const deliver = editDeliver(message);
+  try {
+    if (section === '' ) {
+      await renderStatsOverview(admin, deliver, '7d');
+    } else if (section === 'home') {
+      await renderStatsOverview(admin, deliver, normalizeStatsPeriod(data.split(':')[3]));
+    } else if (section === 'users') {
+      await renderStatsUsers(admin, deliver);
+    } else if (section === 'paid') {
+      await renderStatsPaid(admin, deliver);
+    } else if (section === 'students') {
+      await renderStatsStudents(admin, deliver);
+    } else if (section === 'team') {
+      await renderStatsTeam(admin, deliver);
+    } else if (section === 'webinars') {
+      await renderStatsWebinars(admin, deliver);
+    } else if (section === 'broadcasts') {
+      await renderStatsBroadcasts(admin, deliver);
+    } else if (section === 'moderation') {
+      await renderStatsModeration(admin, deliver);
+    } else {
+      await renderStatsOverview(admin, deliver, '7d');
+    }
+  } catch (error) {
+    if (!isModerationColumnError(error) && !isBroadcastTableError(error)) throw error;
+    await editAdminMessage(
+      message,
+      'Не удалось собрать статистику: не применены миграции Supabase (bot_moderation.sql / bot_broadcasts.sql).',
+      statsSubKeyboard(),
+    );
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2453,8 +3387,10 @@ async function renderBroadcastMigrationMessage(message: AdminMessage): Promise<v
 }
 
 // Главное меню раздела «Рассылки».
-async function renderBroadcastMenu(message: AdminMessage): Promise<void> {
-  await editAdminMessage(message, '📢 Рассылки', {
+// Меню раздела: из Reply Keyboard приходит новым сообщением,
+// из inline-навигации — редактирует текущий блок.
+async function renderBroadcastMenu(deliver: Deliver): Promise<void> {
+  await deliver('📢 Рассылки', {
     inline_keyboard: [
       [{ text: '✉️ Новая рассылка', callback_data: 'admin:bc:new' }],
       [{ text: '👥 Отправить администраторам', callback_data: 'admin:bc:admins' }],
@@ -2507,21 +3443,27 @@ function buttonLine(payload: AdminPayload): string | null {
   return payload.buttonText && payload.buttonUrl ? `🔗 Кнопка: ${payload.buttonText}` : null;
 }
 
+// Конструктор рассылки: после текстового/файлового ввода — новое сообщение,
+// при навигации кнопками — редактирование текущего блока.
 async function renderBroadcastComposer(
   admin: SupabaseClient,
   telegramId: number,
   state: ConversationState,
+  deliver: Deliver,
+  notice = '',
 ): Promise<void> {
   const payload = state.payload ?? {};
   const audience = findBroadcastAudience(payload.audience);
   if (!audience || !payload.broadcastText) {
     await clearState(admin, telegramId);
-    await renderBroadcastAudienceMenu({ chatId: state.chat_id, messageId: state.message_id });
+    await deliver('Черновик рассылки не найден. Начните заново.', {
+      inline_keyboard: [[{ text: '📢 К рассылкам', callback_data: 'admin:broadcasts' }]],
+    });
     return;
   }
 
-  const message = { chatId: state.chat_id, messageId: state.message_id };
   const lines = [
+    ...(notice ? [notice, ''] : []),
     '📢 Новая рассылка',
     `Аудитория: ${audience.title}`,
     '',
@@ -2533,8 +3475,7 @@ async function renderBroadcastComposer(
   if (button) lines.push(button);
   lines.push('', 'Можно прикрепить файл, добавить кнопку-ссылку или сразу перейти к предпросмотру.');
 
-  await saveState(admin, telegramId, message, 'broadcast:compose', payload);
-  await editAdminMessage(message, lines.join('\n'), {
+  const messageId = await deliver(lines.join('\n'), {
     inline_keyboard: [
       [{ text: '📎 Прикрепить файл / фото', callback_data: 'admin:bc:attach' }],
       [{ text: '🔗 Добавить кнопку', callback_data: 'admin:bc:button' }],
@@ -2542,6 +3483,13 @@ async function renderBroadcastComposer(
       [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
     ],
   });
+  await saveState(
+    admin,
+    telegramId,
+    { chatId: state.chat_id, messageId: messageId ?? state.message_id },
+    'broadcast:compose',
+    payload,
+  );
 }
 
 async function renderBroadcastAttachPrompt(
@@ -2551,7 +3499,7 @@ async function renderBroadcastAttachPrompt(
 ): Promise<void> {
   const payload = state.payload ?? {};
   if (payload.attachmentKind && payload.fileId) {
-    await renderBroadcastComposer(admin, telegramId, state);
+    await renderBroadcastComposer(admin, telegramId, state, editDeliver({ chatId: state.chat_id, messageId: state.message_id }));
     return;
   }
   await saveState(admin, telegramId, { chatId: state.chat_id, messageId: state.message_id }, 'broadcast:compose', payload);
@@ -2575,13 +3523,12 @@ async function handleBroadcastAttachment(
   document: IncomingDocument,
 ): Promise<boolean> {
   const payload = state.payload ?? {};
-  const message = { chatId: state.chat_id, messageId: state.message_id };
   const kind: BroadcastAttachmentKind = document.kind === 'photo' ? 'photo' : 'document';
 
   // Лимит подписи у сообщений с вложением строже, чем у обычного текста.
   if ((payload.broadcastText ?? '').length > BROADCAST_CAPTION_LIMIT) {
-    await editAdminMessage(
-      message,
+    await sendAdminMessage(
+      state.chat_id,
       `⚠️ Текст слишком длинный для сообщения с вложением (максимум ${BROADCAST_CAPTION_LIMIT} символов). Сократите текст и прикрепите файл ещё раз.`,
       {
         inline_keyboard: [
@@ -2593,17 +3540,18 @@ async function handleBroadcastAttachment(
     return true;
   }
 
-  await saveState(admin, telegramId, message, 'broadcast:compose', {
-    ...payload,
-    attachmentKind: kind,
-    fileId: document.fileId,
-    fileName: document.fileName,
-  });
-  await renderBroadcastComposer(admin, telegramId, {
-    ...state,
-    step: 'broadcast:compose',
-    payload: { ...payload, attachmentKind: kind, fileId: document.fileId, fileName: document.fileName },
-  });
+  // Файл — ввод админа: конструктор показываем новым сообщением (§16).
+  await renderBroadcastComposer(
+    admin,
+    telegramId,
+    {
+      ...state,
+      step: 'broadcast:compose',
+      payload: { ...payload, attachmentKind: kind, fileId: document.fileId, fileName: document.fileName },
+    },
+    sendDeliver(state.chat_id),
+    `📎 Файл получен${document.fileName ? `: ${document.fileName}` : ''}.\nСтатус: ✅ Сохранён`,
+  );
   return true;
 }
 
@@ -2615,21 +3563,6 @@ async function renderBroadcastButtonText(
   const message = { chatId: state.chat_id, messageId: state.message_id };
   await saveState(admin, telegramId, message, 'broadcast:button-text', state.payload ?? {});
   await editAdminMessage(message, '🔗 Введите текст кнопки следующим сообщением.\n\nНапример: «Открыть вебинар».', {
-    inline_keyboard: [
-      [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
-      [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
-    ],
-  });
-}
-
-async function renderBroadcastButtonUrl(
-  admin: SupabaseClient,
-  telegramId: number,
-  state: ConversationState,
-): Promise<void> {
-  const message = { chatId: state.chat_id, messageId: state.message_id };
-  await saveState(admin, telegramId, message, 'broadcast:button-url', state.payload ?? {});
-  await editAdminMessage(message, '🔗 Теперь отправьте URL кнопки.\n\nНапример: https://example.com/webinar', {
     inline_keyboard: [
       [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
       [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
@@ -3100,14 +4033,15 @@ async function handleBroadcastTextStep(
   text: string,
 ): Promise<boolean> {
   const payload = state.payload ?? {};
-  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const chatId = state.chat_id;
   const input = text.trim();
 
   if (state.step === 'broadcast:text') {
     if (!input) return true;
     if (input.length > BROADCAST_TEXT_LIMIT) {
-      await editAdminMessage(
-        message,
+      // Результат ввода — новое сообщение (§5).
+      await sendAdminMessage(
+        chatId,
         `⚠️ Слишком длинный текст: максимум ${BROADCAST_TEXT_LIMIT} символов. Отправьте сокращённый вариант.`,
         {
           inline_keyboard: [
@@ -3118,29 +4052,37 @@ async function handleBroadcastTextStep(
       );
       return true;
     }
-    await saveState(admin, telegramId, message, 'broadcast:compose', { ...payload, broadcastText: input });
-    await renderBroadcastComposer(admin, telegramId, {
-      ...state,
-      step: 'broadcast:compose',
-      payload: { ...payload, broadcastText: input },
-    });
+    await renderBroadcastComposer(
+      admin,
+      telegramId,
+      { ...state, step: 'broadcast:compose', payload: { ...payload, broadcastText: input } },
+      sendDeliver(chatId),
+      '✅ Текст сохранён.',
+    );
     return true;
   }
 
   if (state.step === 'broadcast:button-text') {
     if (!input) return true;
-    await saveState(admin, telegramId, message, 'broadcast:button-url', { ...payload, buttonText: shorten(input, 40) });
-    await renderBroadcastButtonUrl(admin, telegramId, {
-      ...state,
-      step: 'broadcast:button-url',
-      payload: { ...payload, buttonText: shorten(input, 40) },
+    const messageId = await sendAdminMessage(chatId, '🔗 Теперь отправьте URL кнопки.\n\nНапример: https://example.com/webinar', {
+      inline_keyboard: [
+        [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+      ],
     });
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: messageId ?? state.message_id },
+      'broadcast:button-url',
+      { ...payload, buttonText: shorten(input, 40) },
+    );
     return true;
   }
 
   if (state.step === 'broadcast:button-url') {
     if (!isValidHttpUrl(input)) {
-      await editAdminMessage(message, '⚠️ Это не похоже на ссылку. Отправьте URL вида https://example.com', {
+      await sendAdminMessage(chatId, '⚠️ Это не похоже на ссылку. Отправьте URL вида https://example.com', {
         inline_keyboard: [
           [{ text: '↩️ Назад', callback_data: 'admin:bc:menu' }],
           [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
@@ -3148,12 +4090,13 @@ async function handleBroadcastTextStep(
       });
       return true;
     }
-    await saveState(admin, telegramId, message, 'broadcast:compose', { ...payload, buttonUrl: input });
-    await renderBroadcastComposer(admin, telegramId, {
-      ...state,
-      step: 'broadcast:compose',
-      payload: { ...payload, buttonUrl: input },
-    });
+    await renderBroadcastComposer(
+      admin,
+      telegramId,
+      { ...state, step: 'broadcast:compose', payload: { ...payload, buttonUrl: input } },
+      sendDeliver(chatId),
+      '✅ Кнопка сохранена.',
+    );
     return true;
   }
 
@@ -3169,7 +4112,7 @@ async function handleBroadcastAction(
 ): Promise<boolean> {
   if (data === 'admin:broadcasts') {
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastMenu(message);
+    await renderBroadcastMenu(editDeliver(message));
     return true;
   }
 
@@ -3258,7 +4201,7 @@ async function handleBroadcastAction(
   if (!state || state.chat_id !== message.chatId || !audience || !payload.broadcastText) {
     // Состояние потеряно (например, истекло) — возвращаем в начало сценария.
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastMenu(message);
+    await renderBroadcastMenu(editDeliver(message));
     return true;
   }
 
@@ -3280,7 +4223,7 @@ async function handleBroadcastAction(
       return true;
     }
     case 'menu':
-      await renderBroadcastComposer(admin, telegramId, state);
+      await renderBroadcastComposer(admin, telegramId, state, editDeliver(message));
       return true;
     case 'attach':
       await renderBroadcastAttachPrompt(admin, telegramId, state);
@@ -3298,7 +4241,7 @@ async function handleBroadcastAction(
       await executeBroadcast(admin, telegramId, state);
       return true;
     default:
-      await renderBroadcastComposer(admin, telegramId, state);
+      await renderBroadcastComposer(admin, telegramId, state, editDeliver(message));
       return true;
   }
 }
@@ -3366,6 +4309,19 @@ export async function handleAdminMessage(
 ): Promise<boolean> {
   if (!(await isAdmin(admin, telegramId))) return false;
 
+  // Кнопки Reply Keyboard приходят точным текстом: раздел открывается новым
+  // сообщением, активный сценарий сбрасывается (§2, §12).
+  if (ADMIN_REPLY_LABEL_SET.has(text)) {
+    await clearStateIfAvailable(admin, telegramId);
+    if (text === ADMIN_REPLY_LABELS.users) await openUsersSection(admin, telegramId, chatId);
+    else if (text === ADMIN_REPLY_LABELS.broadcasts) await openBroadcastsSection(chatId);
+    else if (text === ADMIN_REPLY_LABELS.stats) await openStatsSection(admin, chatId);
+    else if (text === ADMIN_REPLY_LABELS.moderation) await openModerationSection(admin, telegramId, chatId);
+    else if (text === ADMIN_REPLY_LABELS.webinars) await openWebinarsSection(chatId);
+    else await openSettingsSection(chatId);
+    return true;
+  }
+
   let state: ConversationState | null;
   try {
     state = await getState(admin, telegramId);
@@ -3373,7 +4329,12 @@ export async function handleAdminMessage(
     if (isConversationStateTableError(error)) return false;
     throw error;
   }
-  if (!state || state.chat_id !== chatId) return false;
+  if (!state || state.chat_id !== chatId) {
+    // Текст вне активного сценария (§10, тест 10): навигацию не ломаем,
+    // подсказку показываем новым сообщением под текстом админа.
+    await sendAdminMessage(chatId, ADMIN_UNKNOWN_TEXT);
+    return true;
+  }
 
   // Поиск пользователей: шаг остаётся активным, пока админ не уйдёт домой.
   if (state.step === 'users:search') {
@@ -3454,7 +4415,14 @@ export async function handleAdminDocument(
       fileType: document.mimeType ?? document.fileName ?? 'document',
     });
     await clearState(admin, telegramId);
-    await renderTemplateDetail(admin, message, webinarId, reminderType);
+    // Файл — ввод админа: ответ новым сообщением (§16).
+    await renderTemplateDetail(
+      admin,
+      sendDeliver(state.chat_id),
+      webinarId,
+      reminderType,
+      `📎 Файл получен.${document.fileName ? `\nИмя: ${document.fileName}` : ''}\nСтатус: ✅ Сохранён`,
+    );
     return true;
   } catch (error) {
     if (isTemplateTableError(error)) {

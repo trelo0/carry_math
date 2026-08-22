@@ -135,6 +135,10 @@ export type MemberRow = {
   phone: string | null;
   full_name: string | null;
   chat_id: number | null;
+  // active — обычный доступ, restricted — общение ограничено, blocked — заблокирован.
+  // Поле заполняют только запросы, которые явно его выбирают: до применения
+  // bot_moderation.sql колонки в таблице ещё нет.
+  moderation_status?: string;
 };
 
 const MEMBER_COLUMNS = 'telegram_id, role, phone, full_name, chat_id';
@@ -206,4 +210,83 @@ export async function countLeadsByPhone(admin: SupabaseClient, phone: string): P
     .ilike('contact', `%${digits}%`);
   if (error) throw error;
   return (data ?? []).length;
+}
+
+// ---------------------------------------------------------------------------
+// Модерация: статус доступа пользователя (bot_moderation.sql)
+// ---------------------------------------------------------------------------
+
+export type ModerationStatus = 'active' | 'restricted' | 'blocked';
+
+// Роль и статус доступа одним лёгким запросом. До применения миграции
+// bot_moderation.sql колонки нет — ошибку обрабатывает вызывающий код.
+export async function getModerationInfo(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<{ role: string; moderationStatus: ModerationStatus } | null> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('role, moderation_status')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as { role: string; moderation_status: string | null };
+  const moderationStatus: ModerationStatus =
+    row.moderation_status === 'blocked' || row.moderation_status === 'restricted'
+      ? row.moderation_status
+      : 'active';
+  return { role: row.role, moderationStatus };
+}
+
+// Смена статуса доступа. Для active снимает служебные отметки, чтобы
+// разблокировка возвращала пользователя в исходное состояние.
+export async function setModerationStatus(
+  admin: SupabaseClient,
+  telegramId: number,
+  status: ModerationStatus,
+  adminTelegramId: number,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    moderation_status: status,
+    updated_at: now,
+  };
+  if (status === 'blocked') {
+    patch.blocked_at = now;
+    patch.blocked_by = adminTelegramId;
+  } else if (status === 'restricted') {
+    patch.restricted_at = now;
+    patch.restricted_by = adminTelegramId;
+  } else {
+    patch.blocked_at = null;
+    patch.blocked_by = null;
+    patch.restricted_at = null;
+    patch.restricted_by = null;
+  }
+  const { data, error } = await admin
+    .from('bot_members')
+    .update(patch)
+    .eq('telegram_id', telegramId)
+    .select('telegram_id');
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+// Список пользователей со статусом модерации (для «Заблокированные»).
+export async function listMembersByModeration(
+  admin: SupabaseClient,
+  status: ModerationStatus,
+  page: number,
+  perPage: number,
+): Promise<{ members: Array<MemberRow & { blocked_at?: string | null }>; total: number }> {
+  const from = page * perPage;
+  const { data, error, count } = await admin
+    .from('bot_members')
+    .select(`${MEMBER_COLUMNS}, moderation_status, blocked_at, restricted_at`, { count: 'exact' })
+    .eq('moderation_status', status)
+    .order('updated_at', { ascending: false })
+    .range(from, from + perPage - 1);
+  if (error) throw error;
+  return { members: (data ?? []) as Array<MemberRow & { blocked_at?: string | null }>, total: count ?? 0 };
 }
