@@ -13,13 +13,11 @@ export const GUEST_CALLBACKS = {
   channel: 'guest:channel',
 } as const;
 
+// В гостевом сценарии нужны только эти поля вебинара.
 export type ActiveWebinar = {
   id: string | number;
   title: string;
-  description: string | null;
   webinar_date: string;
-  registration_url: string | null;
-  is_active: boolean;
 };
 
 type GuestMessage = {
@@ -65,10 +63,11 @@ const CHANNEL_TEXT =
   '⚡ темы, которые школьные учителя почему-то никогда не объясняют\n\n' +
   'Жми кнопку ниже и присоединяйся к своей команде.';
 
-function getChannelUrl(): string {
-  const url = process.env.LIDIA_CHANNEL_URL;
-  if (!url) throw new Error('LIDIA_CHANNEL_URL is not configured');
-  return url;
+const CONFIG_ERROR_TEXT =
+  '⚠️ Технические неполадки: раздел временно недоступен. Попробуй чуть позже.';
+
+function getChannelUrl(): string | null {
+  return process.env.LIDIA_CHANNEL_URL ?? null;
 }
 
 function mainMenuKeyboard(): InlineKeyboard {
@@ -83,6 +82,20 @@ function mainMenuKeyboard(): InlineKeyboard {
 
 function mainMenuButton() {
   return { text: '🏠 ГЛАВНОЕ МЕНЮ', callback_data: GUEST_CALLBACKS.main };
+}
+
+function mainMenuOnlyKeyboard(): InlineKeyboard {
+  return { inline_keyboard: [[mainMenuButton()]] };
+}
+
+// Единая клавиатура экранов после регистрации на вебинар.
+function webinarRegisteredKeyboard(): InlineKeyboard {
+  return {
+    inline_keyboard: [
+      [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
+      [mainMenuButton()],
+    ],
+  };
 }
 
 async function editGuestMessage(
@@ -127,12 +140,17 @@ function formatWebinarDate(date: Date): string {
   }).format(date);
 }
 
+const russianPlural = new Intl.PluralRules('ru-RU');
+
 function plural(value: number, one: string, few: string, many: string): string {
-  const mod10 = value % 10;
-  const mod100 = value % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
+  switch (russianPlural.select(value)) {
+    case 'one':
+      return one;
+    case 'few':
+      return few;
+    default:
+      return many;
+  }
 }
 
 function formatTimeRemaining(webinarDate: Date): string {
@@ -158,13 +176,13 @@ const ALREADY_REGISTERED_TEXT =
 
 function successfulRegistrationText(webinar: ActiveWebinar): string {
   const date = new Date(webinar.webinar_date);
-  const webinarDate = Number.isNaN(date.getTime())
-    ? 'дата уточняется'
-    : formatWebinarDate(date);
+  const dateLine = Number.isNaN(date.getTime())
+    ? 'Дата проведения пока уточняется.'
+    : `Состоится ${formatWebinarDate(date)}.`;
 
   return (
     '✅ ДОСТУП К ГЛАВНОМУ ИСПЫТАНИЮ ОТКРЫТ\n\n' +
-    `Ты успешно внесён в список участников Первого бесплатного онлайн-интенсива, который состоится ${webinarDate}.\n\n` +
+    `Ты успешно внесён в список участников «${webinar.title}». ${dateLine}\n\n` +
     '🎯 ЧТО ТЕБЯ ЖДЁТ:\n\n' +
     'Лидия Владимировна в прямом эфире разберёт протоколы всех ловушек ЦТ и поделится новыми секретными материалами.\n\n' +
     '📡 Ссылка на трансляцию прилетит прямо в этот чат за 15 минут до старта.\n\n' +
@@ -175,7 +193,7 @@ function successfulRegistrationText(webinar: ActiveWebinar): string {
 async function getActiveWebinar(admin: SupabaseClient): Promise<ActiveWebinar | null> {
   const { data, error } = await admin
     .from('webinars')
-    .select('id, title, description, webinar_date, registration_url, is_active')
+    .select('id, title, webinar_date')
     .eq('is_active', true)
     .gt('webinar_date', new Date().toISOString())
     .order('webinar_date', { ascending: true })
@@ -239,12 +257,11 @@ async function isRegisteredForWebinar(
   return Boolean(data);
 }
 
+const NO_ACTIVE_WEBINAR_TEXT =
+  '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.';
+
 async function renderNoActiveWebinar(message: GuestMessage): Promise<void> {
-  await editGuestMessage(
-    message,
-    '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.',
-    { inline_keyboard: [[mainMenuButton()]] },
-  );
+  await editGuestMessage(message, NO_ACTIVE_WEBINAR_TEXT, mainMenuOnlyKeyboard());
 }
 
 // Единая точка возврата во всех сценариях гостя.
@@ -272,22 +289,18 @@ export async function renderMainMenu(
   if (!result.ok) throw new Error(result.description ?? 'Не удалось показать главное меню.');
 }
 
-// /start использует это имя, чтобы не менять уже работающий маршрут webhook.
-export async function guestStart(chatId: number, testFooter = ''): Promise<void> {
-  await renderMainMenu(chatId, testFooter);
-}
-
 async function sendCheatsheet(
   admin: SupabaseClient,
   message: GuestMessage,
   telegramId: number,
   isTestMode: boolean,
 ): Promise<void> {
+  // Без file_id показываем понятную ошибку вместо тихого throw в лог.
   const fileId = process.env.GUEST_PDF_FILE_ID;
   if (!fileId) {
-    const error = new Error('GUEST_PDF_FILE_ID is not configured');
-    console.error(error.message);
-    throw error;
+    console.error('GUEST_PDF_FILE_ID is not configured');
+    await editGuestMessage(message, CONFIG_ERROR_TEXT, mainMenuOnlyKeyboard());
+    return;
   }
 
   // Деактивируем исходное меню до отправки файла, чтобы старые кнопки не оставались активными.
@@ -332,24 +345,13 @@ async function getWebinarFlowScreen(
 ): Promise<GuestScreen> {
   const webinar = await getActiveWebinar(admin);
   if (!webinar) {
-    return {
-      text: '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.',
-      replyMarkup: { inline_keyboard: [[mainMenuButton()]] },
-    };
+    return { text: NO_ACTIVE_WEBINAR_TEXT, replyMarkup: mainMenuOnlyKeyboard() };
   }
 
   // Тестер в маске всегда видит чистый интерфейс и не получает статус реальной регистрации.
   const registered = isTestMode ? false : await isRegisteredForWebinar(admin, telegramId, webinar.id);
   if (registered) {
-    return {
-      text: ALREADY_REGISTERED_TEXT,
-      replyMarkup: {
-        inline_keyboard: [
-          [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
-          [mainMenuButton()],
-        ],
-      },
-    };
+    return { text: ALREADY_REGISTERED_TEXT, replyMarkup: webinarRegisteredKeyboard() };
   }
 
   return {
@@ -386,46 +388,24 @@ async function registerForWebinar(
     return;
   }
 
-  if (!isTestMode && await isRegisteredForWebinar(admin, telegramId, webinar.id)) {
-    await editGuestMessage(message, ALREADY_REGISTERED_TEXT, {
-      inline_keyboard: [
-        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
-        [mainMenuButton()],
-      ],
+  // Тест-маска регистрируется виртуально, не трогая реальные записи.
+  if (!isTestMode) {
+    const { error } = await admin.from('webinar_registrations').insert({
+      webinar_id: webinar.id,
+      telegram_id: telegramId,
+      registered_at: new Date().toISOString(),
     });
-    return;
+
+    // 23505 — повторная регистрация: unique-индекс сам защищает от дублей,
+    // отдельный предпроверочный select не нужен.
+    if (error && error.code !== '23505') throw error;
+    if (error?.code === '23505') {
+      await editGuestMessage(message, ALREADY_REGISTERED_TEXT, webinarRegisteredKeyboard());
+      return;
+    }
   }
 
-  if (isTestMode) {
-    await editGuestMessage(message, successfulRegistrationText(webinar), {
-      inline_keyboard: [
-        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
-        [mainMenuButton()],
-      ],
-    });
-    return;
-  }
-
-  const { error } = await admin.from('webinar_registrations').insert({
-    webinar_id: webinar.id,
-    telegram_id: telegramId,
-    registered_at: new Date().toISOString(),
-  });
-
-  if (error && error.code !== '23505') throw error;
-
-  await editGuestMessage(
-    message,
-    error?.code === '23505'
-      ? ALREADY_REGISTERED_TEXT
-      : successfulRegistrationText(webinar),
-    {
-      inline_keyboard: [
-        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
-        [mainMenuButton()],
-      ],
-    },
-  );
+  await editGuestMessage(message, successfulRegistrationText(webinar), webinarRegisteredKeyboard());
 }
 
 async function showWebinarDate(admin: SupabaseClient, message: GuestMessage): Promise<void> {
@@ -440,11 +420,17 @@ async function showWebinarDate(admin: SupabaseClient, message: GuestMessage): Pr
     ? '📅 ДАТА АКТИВНОГО ВЕБИНАРА ПОКА УТОЧНЯЕТСЯ.'
     : `📅 ВЕБИНАР СОСТОИТСЯ ${formatWebinarDate(date)}\n\n${formatTimeRemaining(date)}`;
 
-  await editGuestMessage(message, text, { inline_keyboard: [[mainMenuButton()]] });
+  await editGuestMessage(message, text, mainMenuOnlyKeyboard());
 }
 
 async function showChannel(message: GuestMessage): Promise<void> {
   const url = getChannelUrl();
+  if (!url) {
+    console.error('LIDIA_CHANNEL_URL is not configured');
+    await editGuestMessage(message, CONFIG_ERROR_TEXT, mainMenuOnlyKeyboard());
+    return;
+  }
+
   await editGuestMessage(message, CHANNEL_TEXT, {
     inline_keyboard: [
       [{ text: '🚀 ЗАЛЕТЕТЬ В ТГ-КАНАЛ', url }],
@@ -454,14 +440,13 @@ async function showChannel(message: GuestMessage): Promise<void> {
 }
 
 // Обрабатывает произвольный текст, не нарушая текущую навигацию кнопками.
-export async function handleGuestTextMessage(chatId: number): Promise<boolean> {
+export async function handleGuestTextMessage(chatId: number): Promise<void> {
   const result = await telegramSend('sendMessage', {
     chat_id: chatId,
     text: 'Для навигации по боту используйте кнопки.',
-    reply_markup: { inline_keyboard: [[mainMenuButton()]] },
+    reply_markup: mainMenuOnlyKeyboard(),
   });
   if (!result.ok) throw new Error(result.description ?? 'Не удалось отправить навигационное сообщение.');
-  return true;
 }
 
 // Обработка callback-кнопок гостевого меню. Возвращает true для известных сценариев.
@@ -478,62 +463,78 @@ export async function handleGuestCallback(
       ? telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId, text })
       : Promise.resolve({ ok: true });
   const currentMessage = { chatId, messageId };
-  // Значение определяется только по свежей серверной записи bot_members.
-  const isTestMode = await isTestMaskActive(admin, telegramId);
 
-  if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
-    await ack();
-    await renderMainMenu(currentMessage.chatId, '', currentMessage.messageId);
-    return true;
-  }
-
-  if (data === GUEST_CALLBACKS.cheatsheet) {
-    await ack();
-    if (await hasReceivedCheatsheet(admin, telegramId, isTestMode)) {
-      await editGuestMessage(
-        currentMessage,
-        '📦 СИСТЕМА УЖЕ ВЫДАВАЛА ЭТО СНАРЯЖЕНИЕ\n\nТы уже получил «Траектория 80+: С нуля до максимума».\n\nХочешь забрать его ещё раз?',
-        {
-        inline_keyboard: [
-          [{ text: '📕 ПОЛУЧИТЬ ЕЩЁ РАЗ', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
-          [mainMenuButton()],
-        ],
-      });
-    } else {
-      await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
+  // Любая ошибка внутри сценария (БД, Telegram API) не должна оставлять
+  // пользователя без ответа — показываем запасной экран с главным меню.
+  // return false достижим только для неизвестных callback, где запросов нет.
+  try {
+    if (data === GUEST_CALLBACKS.main || data === GUEST_CALLBACKS.begin) {
+      await ack();
+      await renderMainMenu(chatId, '', messageId);
+      return true;
     }
+
+    if (data === GUEST_CALLBACKS.when) {
+      await ack();
+      await showWebinarDate(admin, currentMessage);
+      return true;
+    }
+
+    if (data === GUEST_CALLBACKS.channel) {
+      await ack();
+      await showChannel(currentMessage);
+      return true;
+    }
+
+    // Остальные сценарии зависят от тест-маски — читаем её только для них,
+    // чтобы не гонять запрос к bot_members на каждый клик по меню.
+    const isTestMode = await isTestMaskActive(admin, telegramId);
+
+    if (data === GUEST_CALLBACKS.cheatsheet) {
+      await ack();
+      if (await hasReceivedCheatsheet(admin, telegramId, isTestMode)) {
+        await editGuestMessage(
+          currentMessage,
+          '📦 СИСТЕМА УЖЕ ВЫДАВАЛА ЭТО СНАРЯЖЕНИЕ\n\nТы уже получил «Траектория 80+: С нуля до максимума».\n\nХочешь забрать его ещё раз?',
+          {
+            inline_keyboard: [
+              [{ text: '📕 ПОЛУЧИТЬ ЕЩЁ РАЗ', callback_data: GUEST_CALLBACKS.cheatsheetAgain }],
+              [mainMenuButton()],
+            ],
+          },
+        );
+      } else {
+        await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
+      }
+      return true;
+    }
+
+    if (data === GUEST_CALLBACKS.cheatsheetAgain) {
+      await ack();
+      await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
+      return true;
+    }
+
+    if (data === GUEST_CALLBACKS.webinar) {
+      await ack();
+      await renderWebinarFlow(admin, currentMessage, telegramId, isTestMode);
+      return true;
+    }
+
+    if (data === GUEST_CALLBACKS.webinarRegister) {
+      await ack();
+      await registerForWebinar(admin, currentMessage, telegramId, isTestMode);
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error('Guest callback failed:', error);
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: CONFIG_ERROR_TEXT,
+      reply_markup: mainMenuOnlyKeyboard(),
+    }).catch(() => {});
     return true;
   }
-
-  if (data === GUEST_CALLBACKS.cheatsheetAgain) {
-    await ack();
-    await sendCheatsheet(admin, currentMessage, telegramId, isTestMode);
-    return true;
-  }
-
-  if (data === GUEST_CALLBACKS.webinar) {
-    await ack();
-    await renderWebinarFlow(admin, currentMessage, telegramId, isTestMode);
-    return true;
-  }
-
-  if (data === GUEST_CALLBACKS.webinarRegister) {
-    await ack();
-    await registerForWebinar(admin, currentMessage, telegramId, isTestMode);
-    return true;
-  }
-
-  if (data === GUEST_CALLBACKS.when) {
-    await ack();
-    await showWebinarDate(admin, currentMessage);
-    return true;
-  }
-
-  if (data === GUEST_CALLBACKS.channel) {
-    await ack();
-    await showChannel(currentMessage);
-    return true;
-  }
-
-  return false;
 }

@@ -3,21 +3,16 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
 import {
-  guestStart,
+  renderMainMenu,
   handleGuestCallback,
   handleGuestTextMessage,
 } from '@/lib/bot/guestFlow';
 import {
-  handleAdminWebinarCallback,
-  handleAdminWebinarMessage,
+  handleAdminCallback,
+  handleAdminDocument,
+  handleAdminMessage,
   sendAdminStart,
-} from '@/lib/bot/adminWebinars';
-import { handleAdminReminderTestCallback } from '@/lib/bot/adminReminderTests';
-import {
-  handleAdminNotificationTemplateCallback,
-  handleAdminNotificationTemplateDocument,
-  handleAdminNotificationTemplateText,
-} from '@/lib/bot/adminNotificationTemplates';
+} from '@/lib/bot/adminFlow';
 
 import {
   ensureMember,
@@ -99,7 +94,7 @@ export async function POST(request: Request) {
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await guestStart(update.message.chat.id);
+      await renderMainMenu(update.message.chat.id);
       return NextResponse.json({ ok: true });
     }
 
@@ -266,7 +261,7 @@ export async function POST(request: Request) {
             'Домашки и расписание — скоро.' + testFooter,
         });
             } else {
-        await guestStart(update.message.chat.id, testFooter);
+        await renderMainMenu(update.message.chat.id, testFooter);
       }
 
       return NextResponse.json({ ok: true });
@@ -311,7 +306,7 @@ export async function POST(request: Request) {
 
     // Вложение для шаблона уведомления: только реальный admin и только после нажатия «Прикрепить».
     if (update.message?.document?.file_id && update.message.chat && update.message.from) {
-      const handled = await handleAdminNotificationTemplateDocument(
+      const handled = await handleAdminDocument(
         admin,
         update.message.from.id,
         update.message.chat.id,
@@ -331,15 +326,7 @@ export async function POST(request: Request) {
       update.message.chat &&
       update.message.from
     ) {
-      const notificationHandled = await handleAdminNotificationTemplateText(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (notificationHandled) return NextResponse.json({ ok: true });
-
-      const handled = await handleAdminWebinarMessage(
+      const handled = await handleAdminMessage(
         admin,
         update.message.from.id,
         update.message.chat.id,
@@ -360,25 +347,7 @@ export async function POST(request: Request) {
       const { data, from, id } = callbackQuery;
       const chatId = callbackMessage.chat.id;
       const messageId = callbackMessage.message_id;
-      const adminNotificationHandled = await handleAdminNotificationTemplateCallback(
-        admin,
-        data,
-        { chatId, messageId },
-        from.id,
-        id,
-      );
-      if (adminNotificationHandled) return NextResponse.json({ ok: true });
-
-      const adminReminderHandled = await handleAdminReminderTestCallback(
-        admin,
-        data,
-        { chatId, messageId },
-        from.id,
-        id,
-      );
-      if (adminReminderHandled) return NextResponse.json({ ok: true });
-
-      const adminHandled = await handleAdminWebinarCallback(
+      const adminHandled = await handleAdminCallback(
         admin,
         data,
         { chatId, messageId },
@@ -493,8 +462,8 @@ export async function POST(request: Request) {
       );
       const guestView = member.role === 'guest' || (member.role === 'test' && member.viewRole === 'guest');
       if (guestView) {
-        const handled = await handleGuestTextMessage(update.message.chat.id);
-        if (handled) return NextResponse.json({ ok: true });
+        await handleGuestTextMessage(update.message.chat.id);
+        return NextResponse.json({ ok: true });
       }
     }
 

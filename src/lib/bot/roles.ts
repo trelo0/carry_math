@@ -2,14 +2,16 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 // Роли бота District. Храним роль текстом, чтобы новые роли
 // (пункт «потом добавим») добавлялись без миграций схемы.
-export type BotRole = 'guest' | 'student' | 'curator' | 'admin' | 'test';
+export type BotRole = 'guest' | 'student' | 'curator' | 'teacher' | 'mentor' | 'admin' | 'test';
 
-export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'admin', 'test'];
+export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin', 'test'];
 
 export const ROLE_LABELS: Record<BotRole, string> = {
   guest: 'гость',
   student: 'ученик',
   curator: 'куратор',
+  teacher: 'преподаватель',
+  mentor: 'наставник',
   admin: 'админ',
   test: 'тестер',
 };
@@ -113,4 +115,82 @@ export async function listMembers(admin: SupabaseClient) {
     .order('created_at', { ascending: true })
     .limit(100);
   return data ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Запросы для админ-панели: поиск и профили пользователей
+// ---------------------------------------------------------------------------
+
+export type MemberRow = {
+  telegram_id: number;
+  role: string;
+  phone: string | null;
+  full_name: string | null;
+  chat_id: number | null;
+};
+
+const MEMBER_COLUMNS = 'telegram_id, role, phone, full_name, chat_id';
+
+export async function getMember(admin: SupabaseClient, telegramId: number): Promise<MemberRow | null> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select(MEMBER_COLUMNS)
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? (data as MemberRow) : null;
+}
+
+// Поиск по имени (частичное совпадение), телефону (цифры, частичное) и
+// точному Telegram ID, если запрос целиком числовой.
+export async function searchMembers(
+  admin: SupabaseClient,
+  query: string,
+  limit = 20,
+): Promise<MemberRow[]> {
+  // Запятая и скобки ломают синтаксис or-фильтра PostgREST.
+  const cleaned = query.trim().replace(/[,()]/g, '');
+  if (!cleaned) return [];
+
+  const digits = cleaned.replace(/\D/g, '');
+  const filters = [
+    `full_name.ilike.%${cleaned}%`,
+    `phone.ilike.%${digits || cleaned}%`,
+  ];
+  if (/^\d+$/.test(cleaned)) filters.push(`telegram_id.eq.${cleaned}`);
+
+  const { data, error } = await admin
+    .from('bot_members')
+    .select(MEMBER_COLUMNS)
+    .or(filters.join(','))
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as MemberRow[];
+}
+
+export async function listMembersByRole(
+  admin: SupabaseClient,
+  role: BotRole,
+  limit = 50,
+): Promise<MemberRow[]> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select(MEMBER_COLUMNS)
+    .eq('role', role)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as MemberRow[];
+}
+
+export async function countMembersByRole(admin: SupabaseClient): Promise<Record<string, number>> {
+  const { data, error } = await admin.from('bot_members').select('role').limit(1000);
+  if (error) throw error;
+
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    counts[row.role] = (counts[row.role] ?? 0) + 1;
+  }
+  return counts;
 }
