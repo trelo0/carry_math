@@ -29,6 +29,22 @@ import {
   saveWebinarNotificationTemplate,
   sendReminderPreviewToAdmin,
 } from '@/lib/webinarReminders';
+import {
+  RISK_EMOJI,
+  RISK_TITLE,
+  STATUS_LABEL,
+  VIOLATIONS_PER_PAGE,
+  countViolations,
+  formatViolationDateShort,
+  formatViolationDateTime,
+  getViolation,
+  isViolationTableError,
+  listViolations,
+  reviewViolation,
+  violationSenderName,
+  type ViolationRisk,
+  type ViolationRow,
+} from '@/lib/bot/moderation';
 
 // Единый сценарий админа: главное меню, управление вебинарами,
 // шаблоны уведомлений и тестовые отправки.
@@ -75,8 +91,6 @@ type AdminPayload = {
   fileName?: string;
   buttonText?: string;
   buttonUrl?: string;
-  statsLine?: string;
-  broadcastErrors?: string[];
 };
 
 type ConversationStep =
@@ -97,13 +111,13 @@ type ConversationStep =
   | 'notification:text'
   | 'notification:file'
   | 'users:search'
+  | 'moderation:search'
   | 'broadcast:text'
   | 'broadcast:compose'
   | 'broadcast:button-text'
   | 'broadcast:button-url'
   | 'broadcast:preview'
-  | 'broadcast:confirm'
-  | 'broadcast:stats';
+  | 'broadcast:confirm';
 
 type ConversationState = {
   telegram_id: number;
@@ -1345,7 +1359,6 @@ const PANEL_CALLBACKS = [
   'admin:users',
   'admin:users:search',
   'admin:stats',
-  'admin:chat-control',
 ];
 
 function isPanelAction(data: string): boolean {
@@ -1662,7 +1675,7 @@ async function handlePanelAction(
     return true;
   }
 
-  if (data === 'admin:stats' || data === 'admin:chat-control') {
+  if (data === 'admin:stats') {
     await editAdminMessage(message, STUB_SECTION_TEXT, homeOnlyKeyboard());
     return true;
   }
@@ -1739,6 +1752,515 @@ async function handlePanelAction(
 }
 
 // ---------------------------------------------------------------------------
+// Контроль переписки
+// ---------------------------------------------------------------------------
+
+// Первая версия: обнаружение, учёт и ручная обработка. Автоматических
+// блокировок нет — кнопка «Заблокировать» меняет только статус события.
+
+// Откуда открыта карточка события: n — новые, a — все, u — нарушения
+// пользователя, x — уведомление в чате администратора.
+type ModerationContext = {
+  origin: 'n' | 'a' | 'u' | 'x';
+  filter: string;
+  telegramId: number;
+  page: number;
+};
+
+const MODERATION_RISK_FILTERS: Array<{ id: string; label: string }> = [
+  { id: 'all', label: 'Все' },
+  { id: 'high', label: '🔴 HIGH' },
+  { id: 'medium', label: '🟠 MEDIUM' },
+  { id: 'low', label: '🟡 LOW' },
+];
+
+function toModerationPage(raw?: string): number {
+  return Math.max(0, Number(raw) || 0);
+}
+
+function normalizeRiskFilter(raw?: string): string {
+  return MODERATION_RISK_FILTERS.some((item) => item.id === raw) ? (raw as string) : 'all';
+}
+
+async function renderModerationMigrationMessage(message: AdminMessage): Promise<void> {
+  await editAdminMessage(message, migrationText('bot_violations.sql'), homeOnlyKeyboard());
+}
+
+// Строка списка событий: риск, имя, роль и время.
+function violationItemText(row: ViolationRow): string {
+  return [
+    `${RISK_EMOJI[row.risk_level]} ${violationSenderName(row)}`,
+    `🎭 ${roleLabel(row.sender_role)}`,
+    `🕐 ${formatViolationDateShort(row.created_at)}`,
+  ].join('\n');
+}
+
+// Единая строка пагинации [⬅️][N/M][➡️]; null, если страница одна.
+function moderationPaginationRow(
+  pageCount: number,
+  safePage: number,
+  buildCallback: (page: number) => string,
+): InlineButton[] | null {
+  if (pageCount <= 1) return null;
+  return [
+    {
+      text: safePage > 0 ? '⬅️' : '·',
+      callback_data: safePage > 0 ? buildCallback(safePage - 1) : 'noop',
+    },
+    { text: `${safePage + 1}/${pageCount}`, callback_data: 'noop' },
+    {
+      text: safePage < pageCount - 1 ? '➡️' : '·',
+      callback_data: safePage < pageCount - 1 ? buildCallback(safePage + 1) : 'noop',
+    },
+  ];
+}
+
+function serializeModerationContext(context: ModerationContext): string {
+  if (context.origin === 'a') return `a:${context.filter}:${context.page}`;
+  if (context.origin === 'u') return `u:${context.telegramId}:${context.page}`;
+  if (context.origin === 'x') return 'x';
+  return `n:${context.page}`;
+}
+
+function parseModerationContext(parts: string[]): ModerationContext {
+  const origin = parts[0] ?? 'n';
+  if (origin === 'a') {
+    return { origin: 'a', filter: normalizeRiskFilter(parts[1]), telegramId: 0, page: toModerationPage(parts[2]) };
+  }
+  if (origin === 'u') {
+    return { origin: 'u', filter: 'all', telegramId: Number(parts[1]) || 0, page: toModerationPage(parts[2]) };
+  }
+  if (origin === 'x') return { origin: 'x', filter: 'all', telegramId: 0, page: 0 };
+  return { origin: 'n', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
+}
+
+function moderationBackButton(context: ModerationContext): InlineButton {
+  if (context.origin === 'a') {
+    return { text: '⬅️ Назад', callback_data: `admin:mod:all:${context.filter}:${context.page}` };
+  }
+  if (context.origin === 'u') {
+    return { text: '⬅️ Назад', callback_data: `admin:mod:usr:${context.telegramId}:${context.page}` };
+  }
+  if (context.origin === 'x') {
+    return { text: '⬅️ Назад', callback_data: 'admin:chat-control' };
+  }
+  return { text: '⬅️ Назад', callback_data: `admin:mod:new:${context.page}` };
+}
+
+async function renderModerationMenu(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+): Promise<void> {
+  // Вне активного поиска текст админа не должен попадать в поиск нарушителей.
+  await clearStateIfAvailable(admin, telegramId);
+  try {
+    const pending = await countViolations(admin, { status: 'pending' });
+    const text = [
+      '🚨 Контроль переписки',
+      '',
+      pending > 0 ? `🔴 Ожидают обработки: ${pending}` : '✅ Новых нарушений нет.',
+    ].join('\n');
+    await editAdminMessage(message, text, {
+      inline_keyboard: [
+        [{ text: '🔴 Новые нарушения', callback_data: 'admin:mod:new:0' }],
+        [{ text: '📋 Все нарушения', callback_data: 'admin:mod:all:all:0' }],
+        [{ text: '👤 Нарушения пользователей', callback_data: 'admin:mod:users' }],
+        [{ text: '⚙️ Настройки фильтра', callback_data: 'admin:mod:settings' }],
+        [homeButton()],
+      ],
+    });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Только события со статусом pending.
+async function renderModerationNew(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  try {
+    const { rows, total } = await listViolations(admin, { status: 'pending' }, page);
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${RISK_EMOJI[row.risk_level]} ${shorten(violationSenderName(row), 28)}`,
+        callback_data: `admin:mod:v:${row.id}:n:${safePage}`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:new:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? '🚨 Новые нарушения\n\nНеобработанных событий нет.'
+        : ['🚨 Новые нарушения', '', ...rows.map(violationItemText)].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// История всех событий с фильтром по уровню риска.
+async function renderModerationAll(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  filter: string,
+  page: number,
+): Promise<void> {
+  try {
+    const violationFilter = filter === 'all' ? {} : { risk: filter as ViolationRisk };
+    const { rows, total } = await listViolations(admin, violationFilter, page);
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${RISK_EMOJI[row.risk_level]} ${shorten(violationSenderName(row), 22)} — ${RISK_TITLE[row.risk_level]}`,
+        callback_data: `admin:mod:v:${row.id}:a:${filter}:${safePage}`,
+      },
+    ]);
+    keyboard.push(
+      MODERATION_RISK_FILTERS.map((item) => ({
+        text: item.id === filter ? `✅ ${item.label}` : item.label,
+        callback_data: `admin:mod:all:${item.id}:0`,
+      })),
+    );
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:all:${filter}:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? '📋 Все нарушения\n\nСобытий не найдено.'
+        : ['📋 Все нарушения', '', ...rows.map(violationItemText)].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Шаг «Нарушения пользователей»: запрос имени/телефона.
+async function renderModerationUsersPrompt(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+): Promise<void> {
+  try {
+    await saveState(admin, telegramId, message, 'moderation:search', {});
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    return;
+  }
+  await editAdminMessage(
+    message,
+    '👤 Нарушения пользователей\n\nОтправь следующим сообщением имя, часть имени или телефон пользователя — покажу его события.',
+    {
+      inline_keyboard: [
+        [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
+        [homeButton()],
+      ],
+    },
+  );
+}
+
+async function renderModerationSearchResults(
+  admin: SupabaseClient,
+  state: ConversationState,
+  query: string,
+): Promise<void> {
+  const message = { chatId: state.chat_id, messageId: state.message_id };
+  const backKeyboard: InlineButton[][] = [
+    [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
+    [homeButton()],
+  ];
+
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    await editAdminMessage(
+      message,
+      '👤 Нарушения пользователей\n\nЗапрос слишком короткий — введи минимум 2 символа.',
+      { inline_keyboard: backKeyboard },
+    );
+    return;
+  }
+
+  const members = await searchMembers(admin, trimmed, 10);
+  if (members.length === 0) {
+    await editAdminMessage(
+      message,
+      `👤 Никого не нашли по запросу «${trimmed}». Новый запрос — просто отправь его сообщением.`,
+      { inline_keyboard: backKeyboard },
+    );
+    return;
+  }
+
+  const keyboard: InlineButton[][] = members.map((member) => [
+    {
+      text: `👤 ${shorten(memberDisplayName(member), 28)} · ${roleLabel(member.role)}`,
+      callback_data: `admin:mod:usr:${member.telegram_id}:0`,
+    },
+  ]);
+  keyboard.push(...backKeyboard);
+
+  await editAdminMessage(
+    message,
+    `👤 Результаты по запросу «${trimmed}»: ${members.length}\n\nВыбери пользователя, чтобы посмотреть его события. Новый запрос — просто отправь его сообщением.`,
+    { inline_keyboard: keyboard },
+  );
+}
+
+// Все события конкретного пользователя.
+async function renderUserViolations(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  targetId: number,
+  page: number,
+): Promise<void> {
+  try {
+    const member = await getMember(admin, targetId);
+    const { rows, total } = await listViolations(admin, { telegramId: targetId }, page);
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const header = member
+      ? `${memberCard(member)}\n📌 Событий: ${total}`
+      : `👤 ID ${targetId}\n📌 Событий: ${total}`;
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${RISK_EMOJI[row.risk_level]} ${RISK_TITLE[row.risk_level]} · ${formatViolationDateShort(row.created_at)}`,
+        callback_data: `admin:mod:v:${row.id}:u:${targetId}:${safePage}`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:usr:${targetId}:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:mod:users' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? ['👤 Нарушения пользователя', '', header, '', 'Событий пока нет.'].join('\n\n')
+        : ['👤 Нарушения пользователя', '', header, '', ...rows.map(violationItemText)].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Полная карточка события с кнопками обработки.
+async function renderViolationDetail(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  violationId: number,
+  context: ModerationContext,
+): Promise<void> {
+  try {
+    const row = await getViolation(admin, violationId);
+    if (!row) {
+      await editAdminMessage(message, `Нарушение #${violationId} не найдено.`, {
+        inline_keyboard: [[moderationBackButton(context)], [homeButton()]],
+      });
+      return;
+    }
+
+    const lines = [
+      `🚨 Нарушение #${row.id}`,
+      '',
+      '👤 Отправитель:',
+      `${violationSenderName(row)} (ID ${row.telegram_id})`,
+      '',
+      '🎭 Роль:',
+      roleLabel(row.sender_role),
+      '',
+      '👥 Получатель:',
+      'Бот District (личный чат)',
+      '',
+      '💬 Сообщение:',
+      `«${shorten(row.message_text, 2000)}»`,
+      '',
+      '🔎 Причина:',
+      row.reason,
+      '',
+      `${RISK_EMOJI[row.risk_level]} ${RISK_TITLE[row.risk_level]}`,
+      '',
+      `🕐 ${formatViolationDateTime(row.created_at)}`,
+      '',
+      'Статус:',
+      STATUS_LABEL[row.status],
+    ];
+
+    if (row.status !== 'pending' && row.reviewed_at) {
+      lines.push(
+        '',
+        `Обработал: администратор ${row.reviewed_by ?? '—'} · ${formatViolationDateTime(row.reviewed_at)}`,
+      );
+    }
+    if (row.status === 'blocked') {
+      lines.push(
+        '',
+        'ℹ️ Фактическая блокировка Telegram-аккаунта не выполнялась: механизма блокировки в боте пока нет — изменён только статус события.',
+      );
+    }
+
+    const keyboard: InlineButton[][] = [];
+    if (row.status === 'pending') {
+      const contextSuffix = serializeModerationContext(context);
+      keyboard.push(
+        [{ text: '⚠️ Заблокировать', callback_data: `admin:mod:act:block:${row.id}:${contextSuffix}` }],
+        [{ text: '✅ Игнорировать', callback_data: `admin:mod:act:ignore:${row.id}:${contextSuffix}` }],
+      );
+    }
+    keyboard.push([moderationBackButton(context)], [homeButton()]);
+
+    await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Обработка события: ignore → ignored, block → blocked (только статус).
+async function applyModerationAction(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  adminTelegramId: number,
+  action: string,
+  violationId: number,
+  context: ModerationContext,
+): Promise<void> {
+  try {
+    const row = await getViolation(admin, violationId);
+    if (!row) {
+      await editAdminMessage(message, `Нарушение #${violationId} не найдено.`, {
+        inline_keyboard: [[moderationBackButton(context)], [homeButton()]],
+      });
+      return;
+    }
+
+    // Повторное нажатие по уже обработанному событию ничего не меняет.
+    if (row.status === 'pending') {
+      await reviewViolation(
+        admin,
+        violationId,
+        action === 'ignore' ? 'ignored' : 'blocked',
+        adminTelegramId,
+      );
+    }
+
+    // Действие из уведомления в чате: подтверждаем прямо в этом сообщении.
+    if (context.origin === 'x') {
+      const newStatus = action === 'ignore' ? 'ignored' : 'blocked';
+      await editAdminMessage(
+        message,
+        `✅ Событие #${violationId} обработано.\n\nСтатус: ${STATUS_LABEL[newStatus]}\n\nПодробности — в разделе «Контроль переписки».`,
+        {
+          inline_keyboard: [
+            [{ text: '🚨 К контролю переписки', callback_data: 'admin:chat-control' }],
+            [homeButton()],
+          ],
+        },
+      );
+      return;
+    }
+
+    await renderViolationDetail(admin, message, violationId, context);
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+async function handleModerationAction(
+  admin: SupabaseClient,
+  data: string,
+  message: AdminMessage,
+  telegramId: number,
+): Promise<boolean> {
+  try {
+    if (data === 'admin:chat-control' || data === 'admin:mod') {
+      await renderModerationMenu(admin, telegramId, message);
+      return true;
+    }
+
+    const parts = data.split(':');
+    const section = parts[2] ?? '';
+
+    if (section === 'new') {
+      await renderModerationNew(admin, message, toModerationPage(parts[3]));
+      return true;
+    }
+    if (section === 'all') {
+      await renderModerationAll(admin, message, normalizeRiskFilter(parts[3]), toModerationPage(parts[4]));
+      return true;
+    }
+    if (section === 'users') {
+      await renderModerationUsersPrompt(admin, telegramId, message);
+      return true;
+    }
+    if (section === 'settings') {
+      await editAdminMessage(
+        message,
+        '⚙️ Настройки фильтра\n\n🚧 Тонкая настройка правил обнаружения появится в следующих версиях. Сейчас события можно фильтровать по уровню риска в списке «Все нарушения».',
+        {
+          inline_keyboard: [
+            [{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }],
+            [homeButton()],
+          ],
+        },
+      );
+      return true;
+    }
+    if (section === 'usr') {
+      const targetId = Number(parts[3]) || 0;
+      if (targetId > 0) {
+        await renderUserViolations(admin, message, targetId, toModerationPage(parts[4]));
+      } else {
+        await renderModerationMenu(admin, telegramId, message);
+      }
+      return true;
+    }
+    if (section === 'v') {
+      await renderViolationDetail(admin, message, Number(parts[3]) || 0, parseModerationContext(parts.slice(4)));
+      return true;
+    }
+    if (section === 'act') {
+      const action = parts[3];
+      if (action === 'ignore' || action === 'block') {
+        await applyModerationAction(
+          admin,
+          message,
+          telegramId,
+          action,
+          Number(parts[4]) || 0,
+          parseModerationContext(parts.slice(5)),
+        );
+      }
+      return true;
+    }
+
+    await renderModerationMenu(admin, telegramId, message);
+    return true;
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Массовая рассылка
 // ---------------------------------------------------------------------------
 
@@ -1761,6 +2283,15 @@ const BROADCAST_AUDIENCES: BroadcastAudience[] = [
   { id: 'teacher', buttonLabel: '🟠 Преподаватели', title: 'Преподаватели', roles: ['teacher'] },
 ];
 
+// Фиксированная аудитория сценария «Отправить администраторам»:
+// в меню выбора не показывается, задаётся автоматически.
+const BROADCAST_ADMINS_AUDIENCE: BroadcastAudience = {
+  id: 'admin',
+  buttonLabel: '',
+  title: 'Администраторы',
+  roles: ['admin'],
+};
+
 type BroadcastAttachmentKind = 'document' | 'photo';
 
 // 4096 — лимит текста sendMessage, 1024 — лимит подписи к вложению.
@@ -1770,11 +2301,15 @@ const BROADCAST_CAPTION_LIMIT = 1024;
 const BROADCAST_DELAY_MS = 50;
 // Пагинация Supabase: больше 1000 строк за запрос получить нельзя.
 const BROADCAST_FETCH_PAGE = 1000;
-// Детали храним ограниченно, чтобы не раздувать память на больших рассылках.
-const BROADCAST_ERROR_CAP = 200;
+// Ошибки храним ограниченно, чтобы не раздувать память и jsonb-строку.
+const BROADCAST_ERROR_CAP = 500;
+// Пагинация экранов истории и ошибок.
+const BROADCAST_HISTORY_PER_PAGE = 5;
+const BROADCAST_ERRORS_PER_PAGE = 10;
 
 function findBroadcastAudience(id: string | undefined): BroadcastAudience | undefined {
   if (!id) return undefined;
+  if (id === BROADCAST_ADMINS_AUDIENCE.id) return BROADCAST_ADMINS_AUDIENCE;
   return BROADCAST_AUDIENCES.find((audience) => audience.id === id);
 }
 
@@ -1804,11 +2339,136 @@ async function getBroadcastRecipients(admin: SupabaseClient, roles: string[]): P
   return chatIds;
 }
 
+// ---------------------------------------------------------------------------
+// История рассылок (bot_broadcasts): статистика и ошибки привязаны к id
+// ---------------------------------------------------------------------------
+
+type BroadcastRecord = {
+  id: number;
+  created_at: string;
+  admin_telegram_id: number;
+  audience_title: string;
+  to_admins: boolean;
+  text_preview: string;
+  has_attachment: boolean;
+  has_button: boolean;
+  recipients: number;
+  delivered: number;
+  failed: number;
+  errors: BroadcastError[];
+};
+
+// 42P01 — таблицы нет, PGRST205 — PostgREST ещё не подхватил схему.
+function isBroadcastTableError(error: unknown): boolean {
+  const details = error as { message?: unknown; code?: unknown } | null;
+  const message = String(details?.message ?? error);
+  const code = String(details?.code ?? '');
+  return code === '42P01' || code === 'PGRST205' || message.includes('bot_broadcasts');
+}
+
+type BroadcastHistoryRow = Pick<
+  BroadcastRecord,
+  'id' | 'created_at' | 'audience_title' | 'to_admins' | 'recipients' | 'delivered' | 'failed'
+>;
+
+// Возвращает id сохранённой рассылки либо null, если миграция не применена.
+async function saveBroadcastRecord(
+  admin: SupabaseClient,
+  row: Omit<BroadcastRecord, 'id' | 'created_at'>,
+): Promise<number | null> {
+  const { data, error } = await admin.from('bot_broadcasts').insert(row).select('id').single();
+  if (error) {
+    if (isBroadcastTableError(error)) {
+      console.error('Таблица истории рассылок не применена (supabase/bot_broadcasts.sql):', error);
+      return null;
+    }
+    throw error;
+  }
+  return (data as { id: number } | null)?.id ?? null;
+}
+
+async function listBroadcastHistory(
+  admin: SupabaseClient,
+  page: number,
+): Promise<{ rows: BroadcastHistoryRow[]; total: number }> {
+  const from = page * BROADCAST_HISTORY_PER_PAGE;
+  const { data, error, count } = await admin
+    .from('bot_broadcasts')
+    .select('id, created_at, audience_title, to_admins, recipients, delivered, failed', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(from, from + BROADCAST_HISTORY_PER_PAGE - 1);
+  if (error) throw error;
+  return { rows: (data ?? []) as BroadcastHistoryRow[], total: count ?? 0 };
+}
+
+async function getBroadcastRecord(admin: SupabaseClient, id: number): Promise<BroadcastRecord | null> {
+  const { data, error } = await admin.from('bot_broadcasts').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as Omit<BroadcastRecord, 'errors'> & { errors?: unknown };
+  return { ...row, errors: Array.isArray(row.errors) ? (row.errors as BroadcastError[]) : [] };
+}
+
+// Сводная статистика по всей истории (агрегируем на сервере, строк немного).
+async function summarizeBroadcastHistory(
+  admin: SupabaseClient,
+): Promise<{ mailings: number; messages: number; delivered: number; failed: number; toUsers: number; toAdmins: number }> {
+  let rows: BroadcastHistoryRow[] = [];
+  for (let page = 0; ; page += 1) {
+    const from = page * BROADCAST_FETCH_PAGE;
+    const { data, error } = await admin
+      .from('bot_broadcasts')
+      .select('id, created_at, audience_title, to_admins, recipients, delivered, failed')
+      .range(from, from + BROADCAST_FETCH_PAGE - 1);
+    if (error) throw error;
+    rows = rows.concat((data ?? []) as BroadcastHistoryRow[]);
+    if ((data ?? []).length < BROADCAST_FETCH_PAGE) break;
+  }
+
+  return {
+    mailings: rows.length,
+    messages: rows.reduce((sum, row) => sum + row.recipients, 0),
+    delivered: rows.reduce((sum, row) => sum + row.delivered, 0),
+    failed: rows.reduce((sum, row) => sum + row.failed, 0),
+    toUsers: rows.filter((row) => !row.to_admins).length,
+    toAdmins: rows.filter((row) => row.to_admins).length,
+  };
+}
+
+function formatBroadcastDate(raw: string): string {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return 'дата неизвестна';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Moscow',
+  }).format(date);
+}
+
+async function renderBroadcastMigrationMessage(message: AdminMessage): Promise<void> {
+  await editAdminMessage(message, migrationText('bot_broadcasts.sql'), homeOnlyKeyboard());
+}
+
+// Главное меню раздела «Рассылки».
+async function renderBroadcastMenu(message: AdminMessage): Promise<void> {
+  await editAdminMessage(message, '📢 Рассылки', {
+    inline_keyboard: [
+      [{ text: '✉️ Новая рассылка', callback_data: 'admin:bc:new' }],
+      [{ text: '👥 Отправить администраторам', callback_data: 'admin:bc:admins' }],
+      [{ text: '📊 Статистика рассылок', callback_data: 'admin:bc:statsmenu' }],
+      [homeButton()],
+    ],
+  });
+}
+
 async function renderBroadcastAudienceMenu(message: AdminMessage): Promise<void> {
   const keyboard: InlineButton[][] = BROADCAST_AUDIENCES.map((audience) => [
     { text: audience.buttonLabel, callback_data: `admin:bc:aud:${audience.id}` },
   ]);
-  keyboard.push([homeButton()]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:broadcasts' }], [homeButton()]);
   await editAdminMessage(
     message,
     '📢 Массовая рассылка\n\nВыберите аудиторию:',
@@ -2128,13 +2788,6 @@ async function sendBroadcastMessage(chatId: number, payload: AdminPayload): Prom
   return { ok: false, reason: 'превышено число попыток (429)' };
 }
 
-async function renderBroadcastStats(message: AdminMessage, line: string, hasErrors: boolean): Promise<void> {
-  const keyboard: InlineButton[][] = [];
-  if (hasErrors) keyboard.push([{ text: '📋 Ошибки', callback_data: 'admin:bc:errors' }]);
-  keyboard.push([homeButton()]);
-  await editAdminMessage(message, `📢 Рассылка завершена\n\n${line}`, { inline_keyboard: keyboard });
-}
-
 async function executeBroadcast(
   admin: SupabaseClient,
   telegramId: number,
@@ -2181,65 +2834,252 @@ async function executeBroadcast(
 
   const statsLine =
     `👥 Получателей: ${recipients.length}\n✅ Доставлено: ${delivered}\n❌ Не доставлено: ${failed}`;
-  // Состояние рассылки очищаем, но статистику и первые ошибки сохраняем
-  // до выхода домой, чтобы кнопка «📋 Ошибки» работала после отправки.
-  await saveState(admin, telegramId, message, 'broadcast:stats', {
-    statsLine,
-    broadcastErrors: errors.slice(0, 20).map((item) => `${item.name} — ${item.reason}`),
+  // История и ошибки сохраняются в bot_broadcasts и привязаны к id рассылки.
+  const broadcastId = await saveBroadcastRecord(admin, {
+    admin_telegram_id: telegramId,
+    audience_title: audience.title,
+    to_admins: audience.id === BROADCAST_ADMINS_AUDIENCE.id,
+    text_preview: shorten(payload.broadcastText.replace(/\n/g, ' '), 160),
+    has_attachment: Boolean(payload.fileId),
+    has_button: Boolean(payload.buttonText && payload.buttonUrl),
+    recipients: recipients.length,
+    delivered,
+    failed,
+    errors: errors.slice(0, BROADCAST_ERROR_CAP),
   });
-  await renderBroadcastStats(message, statsLine, errors.length > 0);
+
+  // Сценарий завершён: состояние очищаем, история уже в базе.
+  await clearStateIfAvailable(admin, telegramId);
+
+  if (broadcastId === null) {
+    // Без миграции истории показываем хотя бы итоги отправки.
+    await editAdminMessage(
+      message,
+      `📢 Рассылка завершена\n\n${statsLine}\n\n${migrationText('bot_broadcasts.sql')}`,
+      homeOnlyKeyboard(),
+    );
+    return;
+  }
+
+  await renderBroadcastResult(message, broadcastId, statsLine, errors.length > 0);
 
   if (errors.length > 0) {
-    console.error('Ошибки рассылки:', errors.slice(0, 20));
+    console.error(`Ошибки рассылки #${broadcastId}:`, errors.slice(0, 20));
   }
 }
 
-async function renderBroadcastErrors(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
-  let state: ConversationState | null = null;
-  try {
-    state = await getState(admin, telegramId);
-  } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
-  }
-  const payload = state?.payload ?? {};
-  if (!payload.statsLine) {
-    await showAdminHome(message);
-    return;
-  }
-  const errors = payload.broadcastErrors ?? [];
-  const text = [
-    '📋 Недоставленные сообщения:',
-    '',
-    errors.length > 0
-      ? errors.map((line, index) => `${index + 1}. ${line}`).join('\n')
-      : 'Список пуст.',
-  ];
-  if (errors.length >= 20) text.push('', 'Показаны первые 20 ошибок; полный список — в серверных логах.');
-  await editAdminMessage(message, text.join('\n'), {
-    inline_keyboard: [
-      [{ text: '↩️ К статистике', callback_data: 'admin:bc:stats' }],
-      [homeButton()],
-    ],
-  });
-}
-
-async function renderBroadcastStatsFromState(
-  admin: SupabaseClient,
-  telegramId: number,
+// Итог только что завершённой рассылки: кнопка ошибок ведёт на её id.
+async function renderBroadcastResult(
   message: AdminMessage,
+  broadcastId: number,
+  statsLine: string,
+  hasErrors: boolean,
 ): Promise<void> {
-  let state: ConversationState | null = null;
+  const keyboard: InlineButton[][] = [];
+  if (hasErrors) {
+    keyboard.push([{ text: '📋 Ошибки', callback_data: `admin:bc:err:${broadcastId}:0` }]);
+  }
+  keyboard.push([homeButton()]);
+  await editAdminMessage(message, `📢 Рассылка завершена\n\n${statsLine}`, { inline_keyboard: keyboard });
+}
+
+// Сводная статистика по всей истории рассылок.
+async function renderBroadcastSummary(admin: SupabaseClient, message: AdminMessage): Promise<void> {
   try {
-    state = await getState(admin, telegramId);
+    const summary = await summarizeBroadcastHistory(admin);
+    const deliveryRate =
+      summary.messages > 0 ? `${((summary.delivered / summary.messages) * 100).toFixed(1)}%` : '—';
+    const text = [
+      '📊 Статистика рассылок',
+      '',
+      `Всего рассылок: ${summary.mailings}`,
+      '',
+      `📨 Всего сообщений: ${summary.messages}`,
+      `✅ Доставлено: ${summary.delivered}`,
+      `❌ Ошибок: ${summary.failed}`,
+      '',
+      `📈 Доставляемость: ${deliveryRate}`,
+      '',
+      `👥 Пользователям: ${summary.toUsers}`,
+      `👨‍💼 Администраторам: ${summary.toAdmins}`,
+    ].join('\n');
+    await editAdminMessage(message, text, {
+      inline_keyboard: [
+        [{ text: '📋 История рассылок', callback_data: 'admin:bc:history:0' }],
+        [{ text: '⬅️ Назад', callback_data: 'admin:broadcasts' }],
+        [homeButton()],
+      ],
+    });
   } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
+    if (!isBroadcastTableError(error)) throw error;
+    await renderBroadcastMigrationMessage(message);
   }
-  const statsLine = state?.payload?.statsLine;
-  if (!statsLine) {
-    await showAdminHome(message);
-    return;
+}
+
+// История рассылок со страницами; каждая строка открывает детали по id.
+async function renderBroadcastHistory(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  try {
+    const { rows, total } = await listBroadcastHistory(admin, page);
+    const pageCount = Math.max(1, Math.ceil(total / BROADCAST_HISTORY_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      { text: `📢 Рассылка #${row.id}`, callback_data: `admin:bc:view:${row.id}` },
+    ]);
+
+    if (pageCount > 1) {
+      keyboard.push([
+        {
+          text: safePage > 0 ? '⬅️' : '·',
+          callback_data: safePage > 0 ? `admin:bc:history:${safePage - 1}` : 'noop',
+        },
+        { text: `${safePage + 1}/${pageCount}`, callback_data: 'noop' },
+        {
+          text: safePage < pageCount - 1 ? '➡️' : '·',
+          callback_data: safePage < pageCount - 1 ? `admin:bc:history:${safePage + 1}` : 'noop',
+        },
+      ]);
+    }
+    keyboard.push([{ text: '⬅️ К статистике', callback_data: 'admin:bc:statsmenu' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? '📋 История рассылок\n\nРассылок пока не было.'
+        : [
+            '📋 История рассылок',
+            '',
+            ...rows.map((row) =>
+              [
+                `📢 Рассылка #${row.id}`,
+                `Дата: ${formatBroadcastDate(row.created_at)} · Аудитория: ${row.audience_title}`,
+                `👥 ${row.recipients} · ✅ ${row.delivered} · ❌ ${row.failed}`,
+              ].join('\n'),
+            ),
+          ].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isBroadcastTableError(error)) throw error;
+    await renderBroadcastMigrationMessage(message);
   }
-  await renderBroadcastStats(message, statsLine, true);
+}
+
+// Подробная статистика конкретной рассылки по её id.
+async function renderBroadcastDetail(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  broadcastId: number,
+): Promise<void> {
+  try {
+    const record = await getBroadcastRecord(admin, broadcastId);
+    if (!record) {
+      await editAdminMessage(message, `Рассылка #${broadcastId} не найдена.`, {
+        inline_keyboard: [
+          [{ text: '⬅️ К истории', callback_data: 'admin:bc:history:0' }],
+          [homeButton()],
+        ],
+      });
+      return;
+    }
+
+    const marks = [
+      record.has_attachment ? '📎 вложение' : null,
+      record.has_button ? '🔗 кнопка' : null,
+    ].filter(Boolean);
+
+    const text = [
+      `📢 Рассылка #${record.id}`,
+      '',
+      'Дата:',
+      formatBroadcastDate(record.created_at),
+      '',
+      'Аудитория:',
+      record.audience_title,
+      '',
+      `👥 Получателей: ${record.recipients}`,
+      `✅ Доставлено: ${record.delivered}`,
+      `❌ Ошибок: ${record.failed}`,
+      ...(marks.length > 0 ? ['', marks.join(' · ')] : []),
+    ].join('\n');
+
+    const keyboard: InlineButton[][] = [];
+    if (record.failed > 0) {
+      keyboard.push([{ text: '📋 Ошибки', callback_data: `admin:bc:err:${record.id}:0` }]);
+    }
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:bc:history:0' }], [homeButton()]);
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isBroadcastTableError(error)) throw error;
+    await renderBroadcastMigrationMessage(message);
+  }
+}
+
+// Ошибки конкретной рассылки с пагинацией. id рассылки сидит в callback_data,
+// поэтому переходы «статистика → рассылка → ошибки» не теряют контекст.
+async function renderBroadcastErrorsPaged(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  broadcastId: number,
+  page: number,
+): Promise<void> {
+  try {
+    const record = await getBroadcastRecord(admin, broadcastId);
+    if (!record) {
+      await editAdminMessage(message, `Рассылка #${broadcastId} не найдена.`, {
+        inline_keyboard: [
+          [{ text: '⬅️ К статистике', callback_data: 'admin:bc:statsmenu' }],
+          [homeButton()],
+        ],
+      });
+      return;
+    }
+
+    const errors = record.errors;
+    const pageCount = Math.max(1, Math.ceil(errors.length / BROADCAST_ERRORS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+    const slice = errors.slice(safePage * BROADCAST_ERRORS_PER_PAGE, (safePage + 1) * BROADCAST_ERRORS_PER_PAGE);
+
+    const text =
+      errors.length === 0
+        ? `📋 Ошибки рассылки #${record.id}\n\nОшибок не было.`
+        : [
+            `📋 Ошибки рассылки #${record.id}`,
+            '',
+            ...slice.map((item) => `❌ ${item.name}\nПричина: ${item.reason}`),
+            ...(errors.length > BROADCAST_ERROR_CAP - 1
+              ? ['', `Показаны первые ${BROADCAST_ERROR_CAP} ошибок.`]
+              : []),
+          ].join('\n\n');
+
+    const keyboard: InlineButton[][] = [];
+    if (pageCount > 1) {
+      keyboard.push([
+        {
+          text: safePage > 0 ? '⬅️' : '·',
+          callback_data: safePage > 0 ? `admin:bc:err:${broadcastId}:${safePage - 1}` : 'noop',
+        },
+        { text: `${safePage + 1}/${pageCount}`, callback_data: 'noop' },
+        {
+          text: safePage < pageCount - 1 ? '➡️' : '·',
+          callback_data: safePage < pageCount - 1 ? `admin:bc:err:${broadcastId}:${safePage + 1}` : 'noop',
+        },
+      ]);
+    }
+    keyboard.push(
+      [{ text: '⬅️ Назад к статистике', callback_data: `admin:bc:view:${broadcastId}` }],
+      [homeButton()],
+    );
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isBroadcastTableError(error)) throw error;
+    await renderBroadcastMigrationMessage(message);
+  }
 }
 
 async function cancelBroadcast(
@@ -2329,7 +3169,59 @@ async function handleBroadcastAction(
 ): Promise<boolean> {
   if (data === 'admin:broadcasts') {
     await clearStateIfAvailable(admin, telegramId);
+    await renderBroadcastMenu(message);
+    return true;
+  }
+
+  if (data === 'admin:bc:new') {
+    await clearStateIfAvailable(admin, telegramId);
     await renderBroadcastAudienceMenu(message);
+    return true;
+  }
+
+  // «Отправить администраторам»: тот же конструктор, аудитория фиксированная.
+  if (data === 'admin:bc:admins') {
+    await clearStateIfAvailable(admin, telegramId);
+    try {
+      await startBroadcastText(admin, telegramId, message, BROADCAST_ADMINS_AUDIENCE);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  // admin:bc:stats — легаси-кнопка старых сообщений со статистикой.
+  if (data === 'admin:bc:statsmenu' || data === 'admin:bc:stats') {
+    await renderBroadcastSummary(admin, message);
+    return true;
+  }
+
+  if (data.startsWith('admin:bc:history:')) {
+    await renderBroadcastHistory(admin, message, Math.max(0, Number(data.split(':')[3]) || 0));
+    return true;
+  }
+
+  if (data.startsWith('admin:bc:view:')) {
+    await renderBroadcastDetail(admin, message, Number(data.split(':')[3]) || 0);
+    return true;
+  }
+
+  // admin:bc:err:<id рассылки>:<страница> — ошибки всегда привязаны к id.
+  if (data.startsWith('admin:bc:err:')) {
+    const parts = data.split(':');
+    await renderBroadcastErrorsPaged(
+      admin,
+      message,
+      Number(parts[3]) || 0,
+      Math.max(0, Number(parts[4]) || 0),
+    );
+    return true;
+  }
+
+  // admin:bc:errors — легаси-кнопка: теперь ошибки хранятся по id рассылки.
+  if (data === 'admin:bc:errors') {
+    await renderBroadcastSummary(admin, message);
     return true;
   }
 
@@ -2350,7 +3242,7 @@ async function handleBroadcastAction(
 
   if (data.startsWith('admin:bc:aud:')) {
     const selected = findBroadcastAudience(data.split(':')[3]);
-    if (!selected) {
+    if (!selected || selected.id === BROADCAST_ADMINS_AUDIENCE.id) {
       await renderBroadcastAudienceMenu(message);
       return true;
     }
@@ -2366,7 +3258,7 @@ async function handleBroadcastAction(
   if (!state || state.chat_id !== message.chatId || !audience || !payload.broadcastText) {
     // Состояние потеряно (например, истекло) — возвращаем в начало сценария.
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastAudienceMenu(message);
+    await renderBroadcastMenu(message);
     return true;
   }
 
@@ -2404,12 +3296,6 @@ async function handleBroadcastAction(
       return true;
     case 'send':
       await executeBroadcast(admin, telegramId, state);
-      return true;
-    case 'stats':
-      await renderBroadcastStatsFromState(admin, telegramId, message);
-      return true;
-    case 'errors':
-      await renderBroadcastErrors(admin, telegramId, message);
       return true;
     default:
       await renderBroadcastComposer(admin, telegramId, state);
@@ -2457,6 +3343,9 @@ export async function handleAdminCallback(
     if (data === 'admin:broadcasts' || data.startsWith('admin:bc:')) {
       return await handleBroadcastAction(admin, data, message, telegramId);
     }
+    if (data === 'admin:chat-control' || data.startsWith('admin:mod:')) {
+      return await handleModerationAction(admin, data, message, telegramId);
+    }
     if (isPanelAction(data)) return await handlePanelAction(admin, data, message, telegramId);
     return await handleWebinarAction(admin, data, message, telegramId);
   } catch (error) {
@@ -2489,6 +3378,12 @@ export async function handleAdminMessage(
   // Поиск пользователей: шаг остаётся активным, пока админ не уйдёт домой.
   if (state.step === 'users:search') {
     await renderUsersSearchResults(admin, state, text);
+    return true;
+  }
+
+  // Поиск пользователя для «Нарушения пользователей»: тот же принцип.
+  if (state.step === 'moderation:search') {
+    await renderModerationSearchResults(admin, state, text);
     return true;
   }
 

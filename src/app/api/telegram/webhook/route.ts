@@ -13,9 +13,11 @@ import {
   handleAdminMessage,
   sendAdminStart,
 } from '@/lib/bot/adminFlow';
+import { analyzeUserMessage } from '@/lib/bot/moderation';
 
 import {
   ensureMember,
+  getMember,
   isAdminEnv,
   isBotRole,
   listMembers,
@@ -63,6 +65,7 @@ export async function POST(request: Request) {
     message?: {
             text?: string;
       chat?: { id: number };
+      message_id?: number;
             from?: TgFrom;
       reply_to_message?: { from?: TgFrom };
       document?: {
@@ -354,6 +357,28 @@ export async function POST(request: Request) {
         update.message.text,
       );
       if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Контроль переписки: наблюдаем за текстом не-админов и ищем попытки
+    // обмена личными Telegram-контактами. Ничего не блокируем — только
+    // сохраняем событие и при высоком риске уведомляем администраторов.
+    // Сообщения админов, команды (/...) и callback_query не анализируем.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const sender = await getMember(admin, update.message.from.id);
+      if (sender?.role !== 'admin') {
+        await analyzeUserMessage(admin, {
+          telegramId: update.message.from.id,
+          chatId: update.message.chat.id,
+          messageId: update.message.message_id ?? 0,
+          text: update.message.text,
+          fallbackName: fullName(update.message.from),
+        });
+      }
     }
 
     // Inline-кнопки админского и гостевого меню.
