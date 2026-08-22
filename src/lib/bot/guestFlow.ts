@@ -320,40 +320,77 @@ async function sendCheatsheet(
   }
 }
 
+type GuestScreen = {
+  text: string;
+  replyMarkup: InlineKeyboard;
+};
+
+async function getWebinarFlowScreen(
+  admin: SupabaseClient,
+  telegramId: number,
+  isTestMode: boolean,
+): Promise<GuestScreen> {
+  const webinar = await getActiveWebinar(admin);
+  if (!webinar) {
+    return {
+      text: '📅 Сейчас нет активного вебинара. Следи за анонсами в канале Лидии.',
+      replyMarkup: { inline_keyboard: [[mainMenuButton()]] },
+    };
+  }
+
+  // Тестер в маске всегда видит чистый интерфейс и не получает статус реальной регистрации.
+  const registered = isTestMode ? false : await isRegisteredForWebinar(admin, telegramId, webinar.id);
+  if (registered) {
+    return {
+      text: ALREADY_REGISTERED_TEXT,
+      replyMarkup: {
+        inline_keyboard: [
+          [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
+          [mainMenuButton()],
+        ],
+      },
+    };
+  }
+
+  return {
+    text:
+      '🛰 ЗАПРОС ПРИНЯТ\n\nСистема DISTRICT начала обработку твоих данных.\n\nЧтобы подтвердить бронь места и запустить генерацию персонального пропуска на главное испытание, нажми кнопку ниже.\n\n⚠️ Мест не бесконечное количество.',
+    replyMarkup: {
+      inline_keyboard: [
+        [{ text: '🎟 АКТИВИРОВАТЬ ПРОПУСК', callback_data: GUEST_CALLBACKS.webinarRegister }],
+        [mainMenuButton()],
+      ],
+    },
+  };
+}
+
 async function renderWebinarFlow(
   admin: SupabaseClient,
   message: GuestMessage,
   telegramId: number,
   isTestMode: boolean,
 ): Promise<void> {
-  const webinar = await getActiveWebinar(admin);
-  if (!webinar) {
-    await renderNoActiveWebinar(message);
-    return;
-  }
+  const screen = await getWebinarFlowScreen(admin, telegramId, isTestMode);
+  await editGuestMessage(message, screen.text, screen.replyMarkup);
+}
 
-  // Тестер в маске всегда видит чистый интерфейс и не получает статус реальной регистрации.
-  const registered = isTestMode ? false : await isRegisteredForWebinar(admin, telegramId, webinar.id);
-  if (registered) {
-    await editGuestMessage(message, ALREADY_REGISTERED_TEXT, {
-      inline_keyboard: [
-        [{ text: '📅 КОГДА ВЕБИНАР', callback_data: GUEST_CALLBACKS.when }],
-        [mainMenuButton()],
-      ],
-    });
-    return;
-  }
-
-  await editGuestMessage(
-    message,
-    '🛰 ЗАПРОС ПРИНЯТ\n\nСистема DISTRICT начала обработку твоих данных.\n\nЧтобы подтвердить бронь места и запустить генерацию персонального пропуска на главное испытание, нажми кнопку ниже.\n\n⚠️ Мест не бесконечное количество.',
-    {
-      inline_keyboard: [
-        [{ text: '🎟 АКТИВИРОВАТЬ ПРОПУСК', callback_data: GUEST_CALLBACKS.webinarRegister }],
-        [mainMenuButton()],
-      ],
-    },
+// Рекламный deep link /start webinar открывает тот же гостевой экран без проверки telegram_link_tokens.
+export async function guestWebinarDeepLink(
+  admin: SupabaseClient,
+  chatId: number,
+  telegramId: number,
+): Promise<void> {
+  const screen = await getWebinarFlowScreen(
+    admin,
+    telegramId,
+    await isTestMaskActive(admin, telegramId),
   );
+  const result = await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: screen.text,
+    reply_markup: screen.replyMarkup,
+  });
+  if (!result.ok) throw new Error(result.description ?? 'Не удалось открыть сценарий вебинара.');
 }
 
 async function registerForWebinar(

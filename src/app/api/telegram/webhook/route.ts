@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
-import { guestStart, handleGuestCallback, handleGuestTextMessage } from '@/lib/bot/guestFlow';
+import {
+  guestStart,
+  guestWebinarDeepLink,
+  handleGuestCallback,
+  handleGuestTextMessage,
+} from '@/lib/bot/guestFlow';
 import {
   handleAdminWebinarCallback,
   handleAdminWebinarMessage,
@@ -84,11 +89,25 @@ export async function POST(request: Request) {
     try {
     const admin = createAdminClient();
 
-    // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
+    // /start webinar — рекламный deep link. Параметр зарезервирован и никогда не проверяется как токен привязки.
+    if (
+      update.message?.text === '/start webinar' &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await guestWebinarDeepLink(admin, update.message.chat.id, update.message.from.id);
+      return NextResponse.json({ ok: true });
+    }
 
+    // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     if (update.message?.text?.startsWith('/start ') && update.message.chat) {
       const token = update.message.text.slice('/start '.length).trim();
-            if (update.message.from) {
+      if (update.message.from) {
         await ensureMember(
           admin,
           update.message.from.id,
