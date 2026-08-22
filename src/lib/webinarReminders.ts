@@ -1,13 +1,26 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 
-export type ReminderType = '3_days' | '1_day' | '6_hours' | '15_minutes';
+export type FixedReminderType = '3_days' | '1_day' | '6_hours' | '15_minutes';
+export type ReminderType = FixedReminderType | `custom_${number}_minutes`;
 
 export type ReminderWebinar = {
   id: string | number;
   title: string;
   webinar_date: string;
   registration_url: string | null;
+};
+
+export type WebinarNotificationTemplate = {
+  id: number;
+  webinar_id: string;
+  reminder_type: ReminderType;
+  offset_minutes_before: number;
+  message_text: string;
+  file_id: string | null;
+  file_type: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 type Registration = {
@@ -17,11 +30,6 @@ type Registration = {
 type Member = {
   telegram_id: number | string;
   chat_id: number | string | null;
-};
-
-type ReminderDefinition = {
-  type: ReminderType;
-  offsetMs: number;
 };
 
 type Recipient = {
@@ -36,21 +44,42 @@ export type ReminderRunSummary = {
   planned: number;
   skippedAlreadySent: number;
   skippedInvalidRecipient: number;
+  skippedMissingTemplate: number;
   failed: number;
-  due: Array<{ webinarId: string; title: string; reminderType: ReminderType; recipients: number }>;
+  due: Array<{
+    webinarId: string;
+    title: string;
+    reminderType: ReminderType;
+    offsetMinutesBefore: number;
+    recipients: number;
+  }>;
 };
 
-export const REMINDER_DEFINITIONS: ReminderDefinition[] = [
-  { type: '3_days', offsetMs: 3 * 24 * 60 * 60 * 1000 },
-  { type: '1_day', offsetMs: 24 * 60 * 60 * 1000 },
-  { type: '6_hours', offsetMs: 6 * 60 * 60 * 1000 },
-  { type: '15_minutes', offsetMs: 15 * 60 * 1000 },
-];
+export const FIXED_REMINDER_OFFSETS: Record<FixedReminderType, number> = {
+  '3_days': 3 * 24 * 60,
+  '1_day': 24 * 60,
+  '6_hours': 6 * 60,
+  '15_minutes': 15,
+};
 
 const REMINDER_GRACE_PERIOD_MS = 15 * 60 * 1000;
 
-export function isReminderType(value: string | null): value is ReminderType {
-  return REMINDER_DEFINITIONS.some((definition) => definition.type === value);
+export function isReminderType(value: string | null | undefined): value is ReminderType {
+  return (
+    value === '3_days' ||
+    value === '1_day' ||
+    value === '6_hours' ||
+    value === '15_minutes' ||
+    /^custom_[1-9][0-9]*_minutes$/.test(value ?? '')
+  );
+}
+
+function isFixedReminderType(value: ReminderType): value is FixedReminderType {
+  return value in FIXED_REMINDER_OFFSETS;
+}
+
+export function customReminderType(offsetMinutesBefore: number): ReminderType {
+  return `custom_${offsetMinutesBefore}_minutes` as ReminderType;
 }
 
 function safePositiveInteger(value: unknown): number | null {
@@ -58,10 +87,64 @@ function safePositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function isDue(now: Date, webinarDate: Date, definition: ReminderDefinition): boolean {
-  const reminderAt = webinarDate.getTime() - definition.offsetMs;
+function plural(value: number, one: string, few: string, many: string): string {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
+export function formatReminderOffset(offsetMinutesBefore: number): string {
+  if (offsetMinutesBefore % (24 * 60) === 0) {
+    const days = offsetMinutesBefore / (24 * 60);
+    return `${days} ${plural(days, 'день', 'дня', 'дней')}`;
+  }
+  if (offsetMinutesBefore % 60 === 0) {
+    const hours = offsetMinutesBefore / 60;
+    return `${hours} ${plural(hours, 'час', 'часа', 'часов')}`;
+  }
+  return `${offsetMinutesBefore} ${plural(offsetMinutesBefore, 'минуту', 'минуты', 'минут')}`;
+}
+
+export function reminderTypeLabel(
+  reminderType: ReminderType,
+  offsetMinutesBefore?: number,
+): string {
+  const labels: Record<FixedReminderType, string> = {
+    '3_days': 'За 3 дня',
+    '1_day': 'За 1 день',
+    '6_hours': 'За 6 часов',
+    '15_minutes': 'За 15 минут',
+  };
+  if (isFixedReminderType(reminderType)) return labels[reminderType];
+
+  const offset = offsetMinutesBefore ?? Number(reminderType.match(/^custom_(\d+)_minutes$/)?.[1]);
+  return Number.isFinite(offset) && offset > 0 ? `За ${formatReminderOffset(offset)}` : 'Произвольное время';
+}
+
+function isDue(now: Date, webinarDate: Date, offsetMinutesBefore: number): boolean {
+  const reminderAt = webinarDate.getTime() - offsetMinutesBefore * 60 * 1000;
   const elapsedSinceReminder = now.getTime() - reminderAt;
   return elapsedSinceReminder >= 0 && elapsedSinceReminder < REMINDER_GRACE_PERIOD_MS;
+}
+
+function isTemplateTableError(error: unknown): boolean {
+  const details = error as { message?: unknown; code?: unknown } | null;
+  const message = String(details?.message ?? error);
+  const code = String(details?.code ?? '');
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    message.includes('webinar_notification_templates') ||
+    (message.includes('relation') && message.includes('does not exist'))
+  );
+}
+
+function templateMigrationError(): Error {
+  return new Error(
+    'Не применена SQL-миграция supabase/webinar_notification_templates.sql для шаблонов уведомлений.',
+  );
 }
 
 export function formatWebinarDateTime(raw: string): { date: string; time: string } {
@@ -84,49 +167,12 @@ export function formatWebinarDateTime(raw: string): { date: string; time: string
   };
 }
 
-export function reminderText(webinar: ReminderWebinar, reminderType: ReminderType): string {
-  const { time } = formatWebinarDateTime(webinar.webinar_date);
-
-  if (reminderType === '3_days') {
-    return (
-      '⚠️ ВНИМАНИЕ ВСЕМ СЕКТОРАМ!\n\n' +
-      'Проверка систем жизнеобеспечения завершена. До нашего большого бесплатного онлайн-интенсива осталось ровно 3 дня! 🚀\n\n' +
-      'Мы покажем тебе, как устроен District изнутри, и разберём реальные ловушки ЦТ из части Б, на которых теряют баллы даже сильные школьники. 🎯\n\n' +
-      'Готовься. Арена уже близко. 🔥'
-    );
-  }
-
-  if (reminderType === '1_day') {
-    return (
-      '🎒 СПОНСОРСКИЙ ПАРАШЮТ ДЛЯ ВЕБА!\n\n' +
-      'До старта осталось 24 часа.\n\n' +
-      `Завтра в ${time} Арена District официально активируется. ⚡️\n\n` +
-      'Чтобы ты пришёл на трансляцию заряженным, наши менторы приготовили для тебя микро-гайд:\n\n' +
-      '📕 «Формулы тригонометрии, которые спасут тебя на ЦТ»\n\n' +
-      'Забирай гайд уже сегодня и просмотри его до начала вебинара. 📚\n\n' +
-      'А завтра мы покажем, как эти формулы работают в реальном бою и где именно школьники чаще всего попадаются на ловушки ЦТ. 🎯\n\n' +
-      `До встречи на Арене. Завтра в ${time}! 🔥`
-    );
-  }
-
-  if (reminderType === '6_hours') {
-    return (
-      '⚡️ ДЕНЬ ИКС НАСТАЛ, ТРИБУТ!\n\n' +
-      `Сбор фракции объявлен. Сегодня в ${time} мы выходим на Арену District. 🏟️\n\n` +
-      'Готовь тетрадку, ручку и чай ☕️ — Лидия Владимировна проведёт разбор ловушек ЦТ, после которого ты начнёшь щёлкать тригонометрию как орехи. 🧠🔥\n\n' +
-      '⏱ Таймер запущен.\n\n' +
-      'Ровно через 6 часов в этом чате откроется прямой телепорт на вебинар.\n\n' +
-      'Будь на связи. 🚀'
-    );
-  }
-
-  return (
-    '⚡️ ТЕЛЕПОРТ АКТИВИРОВАН\n\n' +
-    'Лидия Владимировна уже в эфире, а менторы заняли свои позиции в чате поддержки. 🧑‍🏫🔥\n\n' +
-    'Мы начинаем взлом ЦТ прямо сейчас.\n\n' +
-    'Залетай на Арену по кнопке ниже, пока система не ограничила доступ! 👇\n\n' +
-    '🎯 Твои 80+ баллов начинаются здесь.'
-  );
+function renderTemplateText(templateText: string, webinar: ReminderWebinar): string {
+  const { date, time } = formatWebinarDateTime(webinar.webinar_date);
+  return templateText
+    .replaceAll('{{webinar_title}}', webinar.title)
+    .replaceAll('{{webinar_date}}', date)
+    .replaceAll('{{webinar_time}}', time);
 }
 
 export function webinarUrlKeyboard(
@@ -147,31 +193,143 @@ export function webinarUrlKeyboard(
   };
 }
 
+export async function listWebinarNotificationTemplates(
+  admin: SupabaseClient,
+  webinarId: string | number,
+): Promise<WebinarNotificationTemplate[]> {
+  const { data, error } = await admin
+    .from('webinar_notification_templates')
+    .select('id, webinar_id, reminder_type, offset_minutes_before, message_text, file_id, file_type, created_at, updated_at')
+    .eq('webinar_id', String(webinarId))
+    .order('offset_minutes_before', { ascending: false });
+  if (error) {
+    if (isTemplateTableError(error)) throw templateMigrationError();
+    throw error;
+  }
+  return (data ?? []) as WebinarNotificationTemplate[];
+}
+
+export async function getWebinarNotificationTemplate(
+  admin: SupabaseClient,
+  webinarId: string | number,
+  reminderType: ReminderType,
+): Promise<WebinarNotificationTemplate | null> {
+  const { data, error } = await admin
+    .from('webinar_notification_templates')
+    .select('id, webinar_id, reminder_type, offset_minutes_before, message_text, file_id, file_type, created_at, updated_at')
+    .eq('webinar_id', String(webinarId))
+    .eq('reminder_type', reminderType)
+    .maybeSingle();
+  if (error) {
+    if (isTemplateTableError(error)) throw templateMigrationError();
+    throw error;
+  }
+  return data ? (data as WebinarNotificationTemplate) : null;
+}
+
+export async function saveWebinarNotificationTemplate(
+  admin: SupabaseClient,
+  input: {
+    webinarId: string | number;
+    reminderType: ReminderType;
+    offsetMinutesBefore?: number;
+    messageText?: string;
+    fileId?: string | null;
+    fileType?: string | null;
+  },
+): Promise<void> {
+  const existing = await getWebinarNotificationTemplate(admin, input.webinarId, input.reminderType);
+  const offsetMinutesBefore =
+    input.offsetMinutesBefore ??
+    existing?.offset_minutes_before ??
+    (isFixedReminderType(input.reminderType) ? FIXED_REMINDER_OFFSETS[input.reminderType] : null);
+
+  if (!safePositiveInteger(offsetMinutesBefore)) {
+    throw new Error('Для уведомления нужно указать корректное количество минут до начала вебинара.');
+  }
+
+  const { error } = await admin.from('webinar_notification_templates').upsert(
+    {
+      webinar_id: String(input.webinarId),
+      reminder_type: input.reminderType,
+      offset_minutes_before: offsetMinutesBefore,
+      message_text: input.messageText ?? existing?.message_text ?? '',
+      file_id: input.fileId ?? existing?.file_id ?? null,
+      file_type: input.fileType ?? existing?.file_type ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'webinar_id,reminder_type' },
+  );
+  if (error) {
+    if (isTemplateTableError(error)) throw templateMigrationError();
+    if (error.code === '23505') {
+      throw new Error('У этого вебинара уже есть уведомление на такое время до начала.');
+    }
+    throw error;
+  }
+}
+
+export async function createCustomWebinarNotificationTemplate(
+  admin: SupabaseClient,
+  webinarId: string | number,
+  offsetMinutesBefore: number,
+): Promise<WebinarNotificationTemplate> {
+  const offset = safePositiveInteger(offsetMinutesBefore);
+  if (!offset) throw new Error('Введите целое положительное число минут до начала вебинара.');
+
+  const templates = await listWebinarNotificationTemplates(admin, webinarId);
+  if (templates.some((template) => template.offset_minutes_before === offset)) {
+    throw new Error('У этого вебинара уже есть уведомление на такое время до начала.');
+  }
+
+  const reminderType = customReminderType(offset);
+  await saveWebinarNotificationTemplate(admin, {
+    webinarId,
+    reminderType,
+    offsetMinutesBefore: offset,
+    messageText: '',
+  });
+
+  const template = await getWebinarNotificationTemplate(admin, webinarId, reminderType);
+  if (!template) throw new Error('Не удалось создать шаблон уведомления.');
+  return template;
+}
+
+export async function removeWebinarNotificationTemplateFile(
+  admin: SupabaseClient,
+  webinarId: string | number,
+  reminderType: ReminderType,
+): Promise<void> {
+  const { error } = await admin
+    .from('webinar_notification_templates')
+    .update({ file_id: null, file_type: null, updated_at: new Date().toISOString() })
+    .eq('webinar_id', String(webinarId))
+    .eq('reminder_type', reminderType);
+  if (error) {
+    if (isTemplateTableError(error)) throw templateMigrationError();
+    throw error;
+  }
+}
+
 async function sendWebinarReminder(
   chatId: number,
   webinar: ReminderWebinar,
-  reminderType: ReminderType,
+  template: WebinarNotificationTemplate,
 ): Promise<void> {
   const response = await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: reminderText(webinar, reminderType),
-    reply_markup: webinarUrlKeyboard(webinar.registration_url, reminderType),
+    text: renderTemplateText(template.message_text, webinar),
+    reply_markup: webinarUrlKeyboard(webinar.registration_url, template.reminder_type),
   });
   if (!response.ok) throw new Error(response.description ?? 'Telegram не принял напоминание.');
 
-  if (reminderType === '1_day') {
-    const guideFileId = process.env.WEBINAR_1_DAY_GUIDE_FILE_ID;
-    if (guideFileId) {
-      const guideResponse = await telegramSend('sendDocument', {
-        chat_id: chatId,
-        document: guideFileId,
-        caption: '📕 Микро-гайд: «Формулы тригонометрии, которые спасут тебя на ЦТ».',
-      });
-      if (!guideResponse.ok) {
-        throw new Error(guideResponse.description ?? 'Telegram не принял микро-гайд.');
-      }
-    } else {
-      console.warn('WEBINAR_1_DAY_GUIDE_FILE_ID не настроен: отправляю уведомление за сутки без файла.');
+  if (template.file_id) {
+    const fileResponse = await telegramSend('sendDocument', {
+      chat_id: chatId,
+      document: template.file_id,
+    });
+    if (!fileResponse.ok) {
+      throw new Error(fileResponse.description ?? 'Telegram не принял прикреплённый файл уведомления.');
     }
   }
 }
@@ -310,7 +468,12 @@ export async function sendReminderPreviewToAdmin(
     throw new Error('У администратора не указан chat_id. Откройте личный чат с ботом и выполните /start.');
   }
 
-  await sendWebinarReminder(chatId, webinar, reminderType);
+  const template = await getWebinarNotificationTemplate(admin, webinar.id, reminderType);
+  if (!template?.message_text.trim()) {
+    throw new Error('Для этого времени нет сохранённого текста. Откройте «🔔 Уведомления» и добавьте шаблон.');
+  }
+
+  await sendWebinarReminder(chatId, webinar, template);
 }
 
 export async function runWebinarReminderCheck(
@@ -341,6 +504,7 @@ export async function runWebinarReminderCheck(
     planned: 0,
     skippedAlreadySent: 0,
     skippedInvalidRecipient: 0,
+    skippedMissingTemplate: 0,
     failed: 0,
     due: [],
   };
@@ -352,26 +516,39 @@ export async function runWebinarReminderCheck(
       continue;
     }
 
-    const dueReminders = options.forcedReminderType
-      ? REMINDER_DEFINITIONS.filter((definition) => definition.type === options.forcedReminderType)
-      : REMINDER_DEFINITIONS.filter((definition) => isDue(now, webinarDate, definition));
-    if (dueReminders.length === 0) continue;
-
     try {
-      const { recipients, invalidCount } = await getRecipients(admin, webinar.id);
+      const [templates, recipientResult] = await Promise.all([
+        listWebinarNotificationTemplates(admin, webinar.id),
+        getRecipients(admin, webinar.id),
+      ]);
+      const { recipients, invalidCount } = recipientResult;
       summary.skippedInvalidRecipient += invalidCount;
 
-      for (const definition of dueReminders) {
+      const dueTemplates = options.forcedReminderType
+        ? templates.filter((template) => template.reminder_type === options.forcedReminderType)
+        : templates.filter((template) => isDue(now, webinarDate, template.offset_minutes_before));
+
+      for (const template of dueTemplates) {
+        if (!template.message_text.trim()) {
+          summary.skippedMissingTemplate += recipients.length;
+          console.warn('Пропущено напоминание без текста шаблона:', {
+            webinarId: webinar.id,
+            reminderType: template.reminder_type,
+          });
+          continue;
+        }
+
         summary.due.push({
           webinarId: String(webinar.id),
           title: webinar.title,
-          reminderType: definition.type,
+          reminderType: template.reminder_type,
+          offsetMinutesBefore: template.offset_minutes_before,
           recipients: recipients.length,
         });
 
         for (const recipient of recipients) {
           if (options.dryRun) {
-            if (await wasReminderSent(admin, String(webinar.id), recipient.telegramId, definition.type)) {
+            if (await wasReminderSent(admin, String(webinar.id), recipient.telegramId, template.reminder_type)) {
               summary.skippedAlreadySent += 1;
             } else {
               summary.planned += 1;
@@ -384,7 +561,7 @@ export async function runWebinarReminderCheck(
             admin,
             String(webinar.id),
             recipient.telegramId,
-            definition.type,
+            template.reminder_type,
           );
           if (!claimed) {
             summary.skippedAlreadySent += 1;
@@ -392,15 +569,15 @@ export async function runWebinarReminderCheck(
           }
 
           try {
-            await sendWebinarReminder(recipient.chatId, webinar, definition.type);
+            await sendWebinarReminder(recipient.chatId, webinar, template);
             summary.sent += 1;
           } catch (error) {
-            await releaseReminderClaim(admin, String(webinar.id), recipient.telegramId, definition.type);
+            await releaseReminderClaim(admin, String(webinar.id), recipient.telegramId, template.reminder_type);
             summary.failed += 1;
             console.error('Ошибка отправки напоминания пользователю:', {
               webinarId: webinar.id,
               telegramId: recipient.telegramId,
-              reminderType: definition.type,
+              reminderType: template.reminder_type,
               error,
             });
           }

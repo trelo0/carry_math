@@ -1,5 +1,5 @@
--- Примените этот файл, если supabase/webinar_reminder_sends.sql уже был выполнен ранее.
--- Заменяет устаревший тип 3_hours на 6_hours в ограничении reminder_type.
+-- Выполните этот файл после миграции webinar_reminder_sends.sql,
+-- чтобы журнал мог хранить произвольные reminder_type вида custom_<минуты>_minutes.
 
 alter table public.webinar_reminder_sends
   drop constraint if exists webinar_reminder_sends_reminder_type_check;

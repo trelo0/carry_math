@@ -8,6 +8,7 @@ create table if not exists public.webinar_reminder_sends (
   telegram_id bigint not null,
   reminder_type text not null check (
     reminder_type in ('3_days', '1_day', '6_hours', '15_minutes')
+    or reminder_type ~ '^custom_[1-9][0-9]*_minutes$'
   ),
   sent_at timestamp with time zone not null default now(),
   constraint webinar_reminder_sends_unique

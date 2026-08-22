@@ -9,6 +9,11 @@ import {
   sendAdminStart,
 } from '@/lib/bot/adminWebinars';
 import { handleAdminReminderTestCallback } from '@/lib/bot/adminReminderTests';
+import {
+  handleAdminNotificationTemplateCallback,
+  handleAdminNotificationTemplateDocument,
+  handleAdminNotificationTemplateText,
+} from '@/lib/bot/adminNotificationTemplates';
 
 import {
   ensureMember,
@@ -76,16 +81,6 @@ export async function POST(request: Request) {
 
   if (!update) return NextResponse.json({ ok: true });
 
-  // ВРЕМЕННО: после отправки PDF боту file_id появится в серверном логе.
-  // Файл не скачивается, не сохраняется и не влияет на сценарии или таблицы.
-  const incomingDocument = update.message?.document;
-  if (incomingDocument?.file_id && incomingDocument.mime_type === 'application/pdf') {
-    console.log('Telegram PDF received:', {
-      file_id: incomingDocument.file_id,
-      file_name: incomingDocument.file_name ?? '(без имени)',
-    });
-  }
-	
     try {
     const admin = createAdminClient();
 
@@ -296,13 +291,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // Текстовые ответы для пошагового создания и редактирования вебинара.
+    // Вложение для шаблона уведомления: только реальный admin и только после нажатия «Прикрепить».
+    if (update.message?.document?.file_id && update.message.chat && update.message.from) {
+      const handled = await handleAdminNotificationTemplateDocument(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        {
+          fileId: update.message.document.file_id,
+          fileName: update.message.document.file_name,
+          mimeType: update.message.document.mime_type,
+        },
+      );
+      if (handled) return NextResponse.json({ ok: true });
+    }
+
+    // Текстовые ответы для шаблонов уведомлений и пошагового создания/редактирования вебинара.
     if (
       update.message?.text &&
       !update.message.text.startsWith('/') &&
       update.message.chat &&
       update.message.from
     ) {
+      const notificationHandled = await handleAdminNotificationTemplateText(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (notificationHandled) return NextResponse.json({ ok: true });
+
       const handled = await handleAdminWebinarMessage(
         admin,
         update.message.from.id,
@@ -324,6 +342,15 @@ export async function POST(request: Request) {
       const { data, from, id } = callbackQuery;
       const chatId = callbackMessage.chat.id;
       const messageId = callbackMessage.message_id;
+      const adminNotificationHandled = await handleAdminNotificationTemplateCallback(
+        admin,
+        data,
+        { chatId, messageId },
+        from.id,
+        id,
+      );
+      if (adminNotificationHandled) return NextResponse.json({ ok: true });
+
       const adminReminderHandled = await handleAdminReminderTestCallback(
         admin,
         data,

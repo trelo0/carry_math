@@ -4,7 +4,10 @@ import {
   type ReminderType,
   formatWebinarDateTime,
   getReminderTestWebinar,
+  isReminderType,
   listReminderTestWebinars,
+  listWebinarNotificationTemplates,
+  reminderTypeLabel,
   runWebinarReminderCheck,
   sendReminderPreviewToAdmin,
 } from '@/lib/webinarReminders';
@@ -19,19 +22,6 @@ type AdminMessage = {
 type InlineKeyboard = {
   inline_keyboard: Array<Array<Record<string, string>>>;
 };
-
-type ReminderTypeOption = {
-  key: '3d' | '1d' | '6h' | '15m';
-  type: ReminderType;
-  label: string;
-};
-
-const REMINDER_TYPES: ReminderTypeOption[] = [
-  { key: '3d', type: '3_days', label: '🔔 За 3 дня' },
-  { key: '1d', type: '1_day', label: '🔔 За 1 день' },
-  { key: '6h', type: '6_hours', label: '🔔 За 6 часов' },
-  { key: '15m', type: '15_minutes', label: '🔔 За 15 минут' },
-];
 
 function shorten(value: string, maximum = 40): string {
   return value.length > maximum ? `${value.slice(0, maximum - 1)}…` : value;
@@ -82,10 +72,6 @@ async function isAdmin(admin: SupabaseClient, telegramId: number): Promise<boole
   return data?.role === 'admin';
 }
 
-function typeByKey(key: string): ReminderTypeOption | null {
-  return REMINDER_TYPES.find((option) => option.key === key) ?? null;
-}
-
 function formatCronCheckResult(
   summary: Awaited<ReturnType<typeof runWebinarReminderCheck>>,
 ): string {
@@ -96,14 +82,16 @@ function formatCronCheckResult(
     `Напоминаний к отправке сейчас: ${summary.planned}`,
     `Уже отправлено ранее: ${summary.skippedAlreadySent}`,
     `Пропущено некорректных получателей: ${summary.skippedInvalidRecipient}`,
+    `Пропущено без сохранённого шаблона: ${summary.skippedMissingTemplate}`,
     `Ошибок чтения: ${summary.failed}`,
   ];
 
   if (summary.due.length > 0) {
     lines.push('', 'Сработавшие контрольные точки:');
     for (const item of summary.due.slice(0, 10)) {
-      const option = REMINDER_TYPES.find((candidate) => candidate.type === item.reminderType);
-      lines.push(`• ${option?.label ?? item.reminderType}: ${shorten(item.title, 34)} — получателей ${item.recipients}`);
+      lines.push(
+        `• ${reminderTypeLabel(item.reminderType, item.offsetMinutesBefore)}: ${shorten(item.title, 34)} — получателей ${item.recipients}`,
+      );
     }
     if (summary.due.length > 10) lines.push(`… и ещё ${summary.due.length - 10}.`);
   } else {
@@ -154,22 +142,20 @@ async function renderReminderTypeSelection(
     return;
   }
 
+  const templates = await listWebinarNotificationTemplates(admin, webinar.id);
   const { date, time } = formatWebinarDateTime(webinar.webinar_date);
+  const keyboard: Array<Array<Record<string, string>>> = templates.map((template) => [
+    {
+      text: `${template.message_text.trim() ? '🔔' : '⚪'} ${reminderTypeLabel(template.reminder_type, template.offset_minutes_before)}`,
+      callback_data: `${CALLBACK_PREFIX}send:${webinar.id}:${template.reminder_type}`,
+    },
+  ]);
+  keyboard.push([{ text: '↩️ Выбрать другой вебинар', callback_data: `${CALLBACK_PREFIX}list` }], [mainButton()]);
+
   await editMessage(
     message,
-    `🧪 Тестовое уведомление\n\nВебинар: ${webinar.title}\nДата: ${date} ${time}\n\nВыберите шаблон. Сообщение получит только ваш Telegram-аккаунт.`,
-    {
-      inline_keyboard: [
-        ...REMINDER_TYPES.map((option) => [
-          {
-            text: option.label,
-            callback_data: `${CALLBACK_PREFIX}send:${webinar.id}:${option.key}`,
-          },
-        ]),
-        [{ text: '↩️ Выбрать другой вебинар', callback_data: `${CALLBACK_PREFIX}list` }],
-        [mainButton()],
-      ],
-    },
+    `🧪 Тестовое уведомление\n\nВебинар: ${webinar.title}\nДата: ${date} ${time}\n\nВыберите сохранённый шаблон. Сообщение получит только ваш Telegram-аккаунт.`,
+    { inline_keyboard: keyboard },
   );
 }
 
@@ -220,22 +206,27 @@ export async function handleAdminReminderTestCallback(
     return true;
   }
 
-  if (action === 'send' && parts[2] && parts[3]) {
-    const option = typeByKey(parts[3]);
+  if (action === 'send' && parts[2] && isReminderType(parts[3])) {
+    const reminderType = parts[3] as ReminderType;
     const webinar = await getReminderTestWebinar(admin, parts[2]);
-    if (!option || !webinar) {
+    if (!webinar) {
       await editMessage(message, 'Тестовый сценарий устарел. Выберите вебинар заново.', {
         inline_keyboard: [[{ text: '📨 Выбрать вебинар', callback_data: `${CALLBACK_PREFIX}list` }], [mainButton()]],
       });
       return true;
     }
 
-    await sendReminderPreviewToAdmin(admin, telegramId, webinar, option.type);
-    await editMessage(
-      message,
-      `✅ Тестовое уведомление «${option.label.replace('🔔 ', '')}» отправлено только вам.\n\nРегистрации, дата вебинара и webinar_reminder_sends не изменялись.`,
-      reminderMenuKeyboard(),
-    );
+    try {
+      await sendReminderPreviewToAdmin(admin, telegramId, webinar, reminderType);
+      await editMessage(
+        message,
+        `✅ Тестовое уведомление «${reminderTypeLabel(reminderType)}» отправлено только вам.\n\nРегистрации, дата вебинара и webinar_reminder_sends не изменялись.`,
+        reminderMenuKeyboard(),
+      );
+    } catch (error) {
+      const description = error instanceof Error ? error.message : 'Не удалось отправить тестовое уведомление.';
+      await editMessage(message, `⚠️ Тест не отправлен.\n\n${description}`, reminderMenuKeyboard());
+    }
     return true;
   }
 
