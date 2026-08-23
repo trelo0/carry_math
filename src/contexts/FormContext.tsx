@@ -3,11 +3,15 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
 
 interface FormData {
-  teacher: string;
-  service: string;
-  price: string;
+  teacher?: string;
+  service?: string;
+  price?: string;
   waitlist?: boolean;
   spotsStatus?: 'many' | 'few' | 'none';
+  // signup — обычная запись на занятие, webinar — запись на бесплатный вебинар.
+  variant?: 'signup' | 'webinar';
+  // Пояснение сверху формы (например, что платный курс пока недоступен).
+  notice?: string;
 }
 
 interface FormContextType {

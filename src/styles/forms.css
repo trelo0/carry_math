@@ -894,3 +894,299 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ---------- Попап записи на бесплатный вебинар ----------
+   В общем стиле сайта: скруглённые углы, тёмный фон,
+   золотые акценты; фирменные цвета мессенджеров — только в hover. */
+
+/* Шапка: значок DISTRICT, заголовок в две строки,
+   крестик прижат к углу. Линии разделения нет. */
+.webinar-panel-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 24px 14px;
+}
+
+.webinar-logo-badge {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 168, 255, 0.5);
+  background: radial-gradient(
+    120% 120% at 30% 20%,
+    rgba(0, 168, 255, 0.28),
+    rgba(0, 168, 255, 0.08)
+  );
+  box-shadow: 0 0 14px rgba(0, 168, 255, 0.22);
+}
+
+.webinar-logo-badge .logo-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+}
+
+.webinar-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* В варианте «Запись на курс» заголовок в одну строку —
+     центрируем его по высоте значка, а не прижимаем сверху. */
+  align-self: center;
+}
+
+.webinar-title-main {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+}
+
+.webinar-title-sub {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.webinar-reg-status {
+  margin-top: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ember);
+}
+
+.webinar-reg-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ember);
+  box-shadow: 0 0 8px rgba(255, 171, 64, 0.8);
+}
+
+/* Крестик — круглый, как в остальных модалках, но крупнее. */
+.webinar-close {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.webinar-close:hover {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.webinar-panel-body {
+  padding: 0 24px 20px;
+}
+
+.webinar-popup-sub {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.webinar-popup-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Карточки в общем стиле сайта: скругления, тонкая обводка. */
+.webinar-option {
+  display: block;
+  width: 100%;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.webinar-option-inner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.webinar-option:hover:not(:disabled) .webinar-option-inner {
+  background: rgba(255, 255, 255, 0.09);
+  transform: translateY(-1px);
+}
+
+/* Hover — свечение фирменным цветом мессенджера. */
+.webinar-option--telegram:hover:not(:disabled) .webinar-option-inner {
+  border-color: rgba(42, 171, 238, 0.85);
+  background: rgba(42, 171, 238, 0.12);
+  box-shadow: 0 0 18px rgba(42, 171, 238, 0.4);
+}
+
+.webinar-option--telegram:hover:not(:disabled) .webinar-option-line,
+.webinar-option--telegram:hover:not(:disabled) .webinar-option-arrow {
+  color: #4da8ff;
+}
+
+.webinar-option--viber:hover:not(:disabled) .webinar-option-inner {
+  border-color: rgba(115, 96, 242, 0.85);
+  background: rgba(115, 96, 242, 0.14);
+  box-shadow: 0 0 18px rgba(115, 96, 242, 0.4);
+}
+
+.webinar-option--viber:hover:not(:disabled) .webinar-option-line,
+.webinar-option--viber:hover:not(:disabled) .webinar-option-arrow {
+  color: #a08ffb;
+}
+
+.webinar-option-icon {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: #ffffff;
+}
+
+.webinar-option-icon--telegram {
+  background: linear-gradient(145deg, #58b6f0, #1f8fd6);
+  box-shadow: 0 0 12px rgba(42, 171, 238, 0.35);
+}
+
+.webinar-option-icon--viber {
+  background: linear-gradient(145deg, #8f7ff5, #5f3dc4);
+  box-shadow: 0 0 12px rgba(115, 96, 242, 0.35);
+}
+
+.webinar-option-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.webinar-option-copy b {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.webinar-option-line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: color 0.2s ease;
+}
+
+.webinar-option-copy small {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.webinar-option-arrow {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 20px;
+  transition: color 0.2s ease;
+}
+
+.webinar-option-chip {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Неактивный Viber — приглушённый, без свечения. */
+.webinar-option--disabled {
+  cursor: not-allowed;
+}
+
+.webinar-option--disabled .webinar-option-inner {
+  opacity: 0.75;
+}
+
+.webinar-option--disabled .webinar-option-icon--viber {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+/* Чипы формата внизу: БЕСПЛАТНО • 60 МИНУТ • ОНЛАЙН. */
+.webinar-chips {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.webinar-chips i {
+  font-style: normal;
+  color: rgba(232, 149, 44, 0.5);
+}
+
+.webinar-chips-icon {
+  font-size: 15px;
+}
+
+/* Пояснение в форме (например, что платный курс пока недоступен). */
+.modal-notice-note {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(232, 149, 44, 0.45);
+  background: rgba(232, 149, 44, 0.1);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useForm } from '@/contexts/FormContext';
-import { SignupModalForm } from '@/components';
+import { SignupModalForm, WebinarSignupPanel } from '@/components';
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -14,7 +14,8 @@ export default function ModalPopup({
   modalTitle?: string;
   modalSubmitButtonText?: string;
 }) {
-  const { isOpen, closeForm } = useForm();
+  const { isOpen, closeForm, formData } = useForm();
+  const isWebinar = formData?.variant === 'webinar';
   const contentRef = useRef<HTMLDivElement | null>(null);
   const lastActiveRef = useRef<HTMLElement | null>(null);
   const scrollYRef = useRef<number>(0);
@@ -122,14 +123,18 @@ export default function ModalPopup({
   return (
     <div className={`modal-overlay ${isOpen ? 'open' : ''}`} onClick={closeForm}>
       <div
-        className="modal-content"
+        className={isWebinar ? 'modal-content webinar-popup' : 'modal-content'}
         role="dialog"
         aria-modal="true"
-        aria-label={modalTitle ?? 'Запись на занятие'}
+        aria-label={modalTitle ?? (isWebinar ? 'Запись на курс' : 'Запись на занятие')}
         ref={contentRef}
         onClick={(e) => e.stopPropagation()}
       >
-        <SignupModalForm modalTitle={modalTitle} submitButtonText={modalSubmitButtonText} />
+        {isWebinar ? (
+          <WebinarSignupPanel variant="course" notice={formData?.notice} onClose={closeForm} />
+        ) : (
+          <SignupModalForm modalTitle={modalTitle} submitButtonText={modalSubmitButtonText} />
+        )}
       </div>
     </div>
   );

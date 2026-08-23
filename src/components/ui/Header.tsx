@@ -41,9 +41,9 @@ export function Header({
   const isMainPage = pathname === "/";
   const navItems = isMainPage ? MAIN_NAV_ITEMS : NAV_ITEMS;
   const sectionIds = isMainPage ? MAIN_SECTION_IDS : SECTION_IDS;
-  // Кнопка шапки ведёт на экран входа.
-  const ctaHref = "/login";
-  const ctaLabel = "Войти";
+  // Кнопка шапки ведёт к блоку записи текущей страницы (#signup есть на обеих).
+  const ctaHref = "#signup";
+  const ctaLabel = "Записаться";
 
   const [scrolled, setScrolled] = useState(false);
   const [xp, setXp] = useState(0);

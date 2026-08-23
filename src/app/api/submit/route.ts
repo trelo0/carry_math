@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 8;
@@ -120,7 +119,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Слишком длинная цена' }, { status: 400 });
     }
 
-    if (source && source !== 'consultation') {
+    if (source && source !== 'consultation' && source !== 'webinar') {
       return NextResponse.json({ error: 'Некорректный источник заявки' }, { status: 400 });
     }
 
@@ -141,6 +140,11 @@ export async function POST(request: Request) {
     // Если заявка из формы консультации
     if (source === 'consultation') {
       message += `📞 *Консультация*\n\n`;
+    }
+
+    // Заявка с формы записи на бесплатный вебинар
+    if (source === 'webinar') {
+      message += `🎯 *Запись на бесплатный вебинар*\n\n`;
     }
     
     message += `👤 *Имя:* ${name}\n`;
@@ -181,39 +185,6 @@ export async function POST(request: Request) {
     }
     
     message += `\n📅 *Дата:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
-
-    // Дублируем заявку в Supabase (ошибка не ломает отправку в Telegram)
-    if (
-      process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-    ) {
-      try {
-        const supabase = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL,
-          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
-        );
-        const { error: leadError } = await supabase.from('leads').insert({
-          name,
-          contact,
-          comment: comment || null,
-          teacher: teacher || null,
-          service: service || null,
-          grade: grade || null,
-          rating: rating || null,
-          rt_score: rtScore || null,
-          price: price || null,
-          waitlist,
-          spots_status: spotsStatus || null,
-          source: source || null,
-          ip,
-        });
-        if (leadError) {
-          console.error('Supabase lead insert error:', leadError.message);
-        }
-      } catch (leadError) {
-        console.error('Supabase lead insert error:', leadError);
-      }
-    }
 
     // Отправляем в Telegram
     const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;

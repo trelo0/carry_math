@@ -1360,6 +1360,14 @@ html {
   background: rgba(0, 168, 255, 0.28);
 }
 
+/* Кнопка записи на курс — теперь <button>: наследуем шрифт, кликабельна. */
+button.init-cta {
+  display: block;
+  width: 100%;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 /* ---------- Блок «FAQ» ---------- */
 
 .main-faq {

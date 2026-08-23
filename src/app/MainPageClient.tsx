@@ -3,6 +3,12 @@
 import { useEffect, useRef } from 'react';
 import MainFaq from '@/components/ui/MainFaq';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
+import { useForm } from '@/contexts/FormContext';
+
+// Платный курс пока не подключён: кнопка записи показывает сообщение
+// и предлагает бесплатный пробный вебинар (Telegram / Viber).
+const COURSE_UNAVAILABLE_NOTICE =
+  'Запись на платный курс пока недоступна. Запишись на бесплатный пробный вебинар, чтобы познакомиться с форматом.';
 
 const SPECS = [
   { label: 'Харизма и удержание внимания', value: 98 },
@@ -172,6 +178,7 @@ const MISSION_PADS = [
 
 export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
   const reviewList = reviews && reviews.length > 0 ? reviews : DEFAULT_REVIEWS;
+  const { openForm } = useForm();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -662,9 +669,13 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
                   100% возврат после первого занятия, если формат не подошёл
                 </p>
               </div>
-              <a className="init-cta" href="/individual">
+              <button
+                type="button"
+                className="init-cta"
+                onClick={() => openForm({ variant: 'webinar', notice: COURSE_UNAVAILABLE_NOTICE })}
+              >
                 Записаться на курс
-              </a>
+              </button>
             </div>
           </div>
         </div>
