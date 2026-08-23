@@ -184,10 +184,7 @@ export function Header({
       </button>
 
       {isDesktop ? (
-        <a
-          href={ctaHref}
-          className={`header-cta btn btn-gold${scrolled ? " visible" : ""}`}
-        >
+        <a href={ctaHref} className="header-cta btn btn-gold">
           {ctaLabel}
         </a>
       ) : null}

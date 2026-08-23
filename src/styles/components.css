@@ -134,17 +134,34 @@
 .header-cta {
   padding: 10px 20px !important;
   font-size: 12px;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   flex-shrink: 0;
 }
 
-.header-cta.visible {
-  opacity: 1;
-  visibility: visible;
+/* Пока страница не прокручена и шапка прозрачная — кнопка
+   приглушённая, контуром. После прокрутки — обычное золото. */
+.site-header .header-cta.btn-gold {
+  background: transparent;
+  color: var(--gold-hover);
+  border: 1px solid rgba(232, 149, 44, 0.45);
+  box-shadow: none;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.site-header .header-cta.btn-gold:hover {
+  background: rgba(232, 149, 44, 0.12);
+  box-shadow: none;
+}
+
+.site-header.scrolled .header-cta.btn-gold {
+  background: linear-gradient(180deg, var(--gold-hover), var(--gold));
+  color: #0a0e1a;
+  border-color: transparent;
+  box-shadow:
+    0 0 28px rgba(232, 149, 44, 0.45),
+    0 6px 18px rgba(2, 6, 18, 0.4);
 }
 
 .mobile-menu-button,
