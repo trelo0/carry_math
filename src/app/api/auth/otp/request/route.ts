@@ -68,7 +68,8 @@ export async function POST(request: Request) {
       });
     }
 
-    // Кулдаун повторной отправки.
+    // Кулдаун повторной отправки: новый код не шлём, но старый ещё
+    // действует 5 минут — клиент пускает на экран кода и показывает отсчёт.
     const { data: last } = await admin
       .from('otp_codes')
       .select('last_sent_at')
@@ -80,11 +81,11 @@ export async function POST(request: Request) {
       const waitMs =
         RESEND_COOLDOWN_MS - (Date.now() - new Date(last.last_sent_at).getTime());
       if (waitMs > 0) {
-        const seconds = Math.ceil(waitMs / 1000);
-        return NextResponse.json(
-          { error: `Код уже отправлен. Повторно — через ${seconds} сек.` },
-          { status: 429, headers: { 'retry-after': String(seconds) } },
-        );
+        return NextResponse.json({
+          status: 'sent',
+          resent: false,
+          cooldownSeconds: Math.ceil(waitMs / 1000),
+        });
       }
     }
 
@@ -105,7 +106,11 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ status: 'sent' });
+    return NextResponse.json({
+      status: 'sent',
+      resent: true,
+      cooldownSeconds: Math.ceil(RESEND_COOLDOWN_MS / 1000),
+    });
   } catch (error) {
     console.error('OTP request error:', error);
     return NextResponse.json({ error: 'Ошибка сервера. Попробуй ещё раз.' }, { status: 500 });

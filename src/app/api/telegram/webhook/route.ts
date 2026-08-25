@@ -112,10 +112,17 @@ export async function POST(request: Request) {
     });
     if (enforced) return NextResponse.json({ ok: true });
 
-    // /start webinar — рекламный deep link. Параметр зарезервирован, никогда не проверяется как токен привязки и открывает гостевое главное меню.
+    // /start <источник> — рекламный deep link (webinar, insta и т.д.).
+    // Параметры зарезервированы, никогда не проверяются как токен привязки
+    // и открывают гостевое главное меню.
+    const AD_START_SOURCES = ['webinar', 'insta', 'ads', 'vk'];
+    const startSource = update.message?.text?.startsWith('/start ')
+      ? update.message.text.slice('/start '.length).trim()
+      : null;
     if (
-      update.message?.text === '/start webinar' &&
-      update.message.chat &&
+      startSource !== null &&
+      AD_START_SOURCES.includes(startSource) &&
+      update.message?.chat &&
       update.message.from
     ) {
       await ensureMember(

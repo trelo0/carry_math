@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
 
 type NavigationItem = {
   label: string;
@@ -39,11 +40,10 @@ export function Header({
 }) {
   const pathname = usePathname();
   const isMainPage = pathname === "/";
+  // Состояние сессии: до входа — кнопка «Вход» (модалка), после — «Личный кабинет».
+  const { phone, loading: authLoading, openAuth } = useAuth();
   const navItems = isMainPage ? MAIN_NAV_ITEMS : NAV_ITEMS;
   const sectionIds = isMainPage ? MAIN_SECTION_IDS : SECTION_IDS;
-  // Кнопка шапки ведёт к блоку записи текущей страницы (#signup есть на обеих).
-  const ctaHref = "#signup";
-  const ctaLabel = "Записаться";
 
   const [scrolled, setScrolled] = useState(false);
   const [xp, setXp] = useState(0);
@@ -183,10 +183,17 @@ export function Header({
         </span>
       </button>
 
-      {isDesktop ? (
-        <a href={ctaHref} className="header-cta btn btn-gold">
-          {ctaLabel}
-        </a>
+      {isDesktop && !authLoading ? (
+        phone ? (
+          <a href="/account" className="header-account" title={phone}>
+            <span className="header-account-dot" aria-hidden="true" />
+            Личный кабинет
+          </a>
+        ) : (
+          <button type="button" className="header-cta btn btn-gold" onClick={openAuth}>
+            Вход
+          </button>
+        )
       ) : null}
 
       <div
@@ -232,13 +239,29 @@ export function Header({
               </a>
             ))}
           </nav>
-          <a
-            href={ctaHref}
-            className="btn btn-gold mobile-menu-cta"
-            onClick={() => setMenuOpen(false)}
-          >
-            {ctaLabel}
-          </a>
+          {!authLoading ? (
+            phone ? (
+              <a
+                href="/account"
+                className="mobile-menu-account"
+                onClick={() => setMenuOpen(false)}
+              >
+                <span className="header-account-dot" aria-hidden="true" />
+                Личный кабинет
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-gold mobile-menu-cta"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openAuth();
+                }}
+              >
+                Вход
+              </button>
+            )
+          ) : null}
         </div>
       </div>
     </header>

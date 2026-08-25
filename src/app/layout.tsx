@@ -3,8 +3,9 @@ import { Manrope, Oswald } from "next/font/google";
 import { draftMode } from "next/headers";
 import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
-import { Header, ModalPopup, BackToTop, WebinarEntryPopup } from "@/components";
+import { Header, ModalPopup, BackToTop, AuthModal } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
 import { buildSiteMetadata } from "@/lib/siteMetadata";
@@ -49,6 +50,7 @@ export default async function RootLayout({
   return (
     <html lang="ru">
       <body className={`${manrope.className} ${oswald.variable}`}>
+        <AuthProvider>
         <FormProvider>
           <script
             type="application/ld+json"
@@ -97,10 +99,11 @@ export default async function RootLayout({
             </div>
           </footer>
           <ModalPopup modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
-          <WebinarEntryPopup />
+          <AuthModal />
           <BackToTop />
           <Analytics />
         </FormProvider>
+        </AuthProvider>
       </body>
     </html>
   );
