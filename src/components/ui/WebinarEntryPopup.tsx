@@ -6,7 +6,7 @@ import WebinarSignupPanel from './WebinarSignupPanel';
 const SEEN_KEY = 'district-webinar-popup-seen';
 
 // Всплывающее окно при входе на сайт: запись на бесплатный вебинар.
-// Два варианта — Telegram и Viber. Показывается один раз за сессию
+// Вариант записи — Telegram. Показывается один раз за сессию
 // с небольшой задержкой после загрузки.
 export default function WebinarEntryPopup() {
   const [visible, setVisible] = useState(false);

@@ -201,7 +201,7 @@ export default function SignupModalForm({
           <label htmlFor="contact">Контакт</label>
           <ContactInput
             name="contact"
-            placeholder="viber/telegram"
+            placeholder="telegram"
             value={fields.contact}
             onChange={handleChange}
             hasError={errors.contact}

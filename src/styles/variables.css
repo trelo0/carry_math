@@ -39,6 +39,11 @@
   --container-pad: clamp(16px, 4vw, 50px);
   --header-h: 76px;
 
+  /* Кино-слой: моно-шрифты и «студийные» кривые анимации */
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --ease-cine: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.5, 1);
+
   /* Небо над гильдией: сумерки → глубокая ночь */
   --site-bg-base: #0a0e1a;
   --site-bg-gradient: linear-gradient(

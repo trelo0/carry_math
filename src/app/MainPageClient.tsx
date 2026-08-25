@@ -6,7 +6,7 @@ import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
 
 // Платный курс пока не подключён: кнопка записи показывает сообщение
-// и предлагает бесплатный пробный вебинар (Telegram / Viber).
+// и предлагает бесплатный пробный вебинар (Telegram).
 const COURSE_UNAVAILABLE_NOTICE =
   'Запись на платный курс пока недоступна. Запишись на бесплатный пробный вебинар, чтобы познакомиться с форматом.';
 

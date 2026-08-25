@@ -39,7 +39,7 @@
     top: 50%;
     z-index: 3;
     writing-mode: vertical-rl;
-    font-family: "Courier New", monospace;
+    font-family: var(--font-mono);
     font-size: 9px;
     letter-spacing: 0.35em;
     text-transform: uppercase;
@@ -63,7 +63,7 @@
 .section-kicker {
   display: block;
   margin-bottom: 12px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
@@ -171,7 +171,7 @@
 
 .deco-sym {
   position: absolute;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
   color: rgba(110, 180, 255, 0.13);
   text-shadow: 0 0 14px rgba(0, 168, 255, 0.25);
@@ -205,7 +205,7 @@
   content: "+";
   position: absolute;
   z-index: 1;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
   line-height: 1;
   color: rgba(0, 168, 255, 0.55);
@@ -374,7 +374,7 @@
   left: 20px;
   bottom: 18px;
   margin: 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -413,7 +413,7 @@
 
 .data-strip-track span {
   padding-right: 48px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.3em;
   text-transform: uppercase;
@@ -838,7 +838,7 @@ html {
 
 .data-text {
   margin: 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.7;
   letter-spacing: 0.03em;
@@ -859,7 +859,7 @@ html {
   transform: translateX(calc(-100% - 170px));
   width: 270px;
   margin-top: 14px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.5;
   color: var(--text-primary);
@@ -880,7 +880,7 @@ html {
   top: -80px;
   left: calc(50% + 300px);
   max-width: 150px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0.06em;
@@ -988,7 +988,7 @@ html {
     right: -13px;
     transform: translateY(-50%);
     z-index: 1;
-    font-family: "Courier New", monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     color: rgba(232, 149, 44, 0.55);
   }
@@ -1001,7 +1001,7 @@ html {
 }
 
 .step-num {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--gold);
@@ -1120,7 +1120,7 @@ html {
 
 .reviews-stream {
   margin: 44px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1180,7 +1180,7 @@ html {
 
 .main-init-sub {
   margin: 12px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1253,7 +1253,7 @@ html {
 }
 
 .init-num {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   letter-spacing: 0.1em;
   color: var(--accent);
@@ -1280,7 +1280,7 @@ html {
 
 .init-body p {
   margin: 10px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.7;
   letter-spacing: 0.02em;
@@ -1308,7 +1308,7 @@ html {
 
 .price-label {
   margin: 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -1326,7 +1326,7 @@ html {
 
 .price-period {
   margin: 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1335,7 +1335,7 @@ html {
 
 .price-note {
   margin: 14px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -1415,7 +1415,7 @@ button.init-cta {
 
 .faq-num {
   flex: 0 0 auto;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   letter-spacing: 0.1em;
   color: var(--gold);
@@ -1478,7 +1478,7 @@ button.init-cta {
 .faq-body p {
   margin: 0;
   padding: 0 22px 20px 55px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.8;
   letter-spacing: 0.02em;
@@ -1723,7 +1723,7 @@ section[data-reveal].revealed {
 
 .mentor-class {
   display: block;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
@@ -1744,7 +1744,7 @@ section[data-reveal].revealed {
   display: inline-block;
   margin-top: 4px;
   padding: 2px 10px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.16em;
   color: var(--ember);
@@ -1763,7 +1763,7 @@ section[data-reveal].revealed {
 }
 
 .mentor-badges li {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1878,7 +1878,7 @@ section[data-reveal].revealed {
 }
 
 .terminal-label {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 21px;
   font-weight: 700;
   letter-spacing: 3px;
@@ -1997,7 +1997,7 @@ section[data-reveal].revealed {
 
 .mission-lvl {
   display: block;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -2027,7 +2027,7 @@ section[data-reveal].revealed {
   display: inline-block;
   margin-top: 10px;
   padding: 2px 9px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -2080,7 +2080,7 @@ section[data-reveal].revealed {
 }
 
 .path-sub {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2300,7 +2300,7 @@ section[data-reveal].revealed {
     left: 2px;
     z-index: 2;
     padding: 6px 12px;
-    font-family: "Courier New", monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.16em;

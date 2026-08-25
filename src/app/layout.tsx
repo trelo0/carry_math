@@ -3,7 +3,7 @@ import { Manrope, Oswald } from "next/font/google";
 import { draftMode } from "next/headers";
 import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
-import { Header, ModalPopup, BackToTop, AuthModal } from "@/components";
+import { Header, ModalPopup, BackToTop, AuthModal, CinematicFX } from "@/components";
 import { FormProvider } from "@/contexts/FormContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { getSiteSettings } from "@/lib/studio/sanityData";
@@ -101,6 +101,7 @@ export default async function RootLayout({
           <ModalPopup modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
           <AuthModal />
           <BackToTop />
+          <CinematicFX />
           <Analytics />
         </FormProvider>
         </AuthProvider>

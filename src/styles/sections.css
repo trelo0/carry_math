@@ -851,7 +851,7 @@ button:focus-visible {
 .ind-panel-title {
   margin: 0;
   padding: 12px 14px 10px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.22em;
@@ -906,7 +906,7 @@ button:focus-visible {
 .ind-slot-text small {
   display: block;
   margin-top: 4px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -933,7 +933,7 @@ button:focus-visible {
   display: inline-block;
   margin-bottom: 18px;
   padding: 5px 12px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -977,7 +977,7 @@ button:focus-visible {
   right: 20px;
   z-index: 2;
   padding: 3px 9px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
   color: rgba(143, 163, 192, 0.9);
@@ -1047,7 +1047,7 @@ button:focus-visible {
 .ind-format-sub {
   margin: 12px 0 0;
   text-align: center;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1169,7 +1169,7 @@ button:focus-visible {
   width: fit-content;
   margin: 0 auto;
   padding: 7px 16px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -1201,7 +1201,7 @@ button:focus-visible {
 }
 
 .teacher-price-role {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   color: var(--gold);
@@ -1229,7 +1229,7 @@ button:focus-visible {
 .price-row-duration {
   display: block;
   margin-top: 3px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1459,7 +1459,7 @@ button:focus-visible {
 }
 
 .guild-card-brand {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.24em;
@@ -1468,7 +1468,7 @@ button:focus-visible {
 }
 
 .guild-card-num {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.18em;
   color: var(--text-secondary);
@@ -1535,7 +1535,7 @@ button:focus-visible {
 
 .guild-card-class {
   margin: 10px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1544,7 +1544,7 @@ button:focus-visible {
 
 .guild-card-subject {
   margin: 6px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1553,7 +1553,7 @@ button:focus-visible {
 
 .guild-card-verify {
   margin: 10px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1576,7 +1576,7 @@ button:focus-visible {
 
 .guild-card-chips li {
   padding: 5px 12px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1610,7 +1610,7 @@ button:focus-visible {
 }
 
 .guild-card-note {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1681,7 +1681,7 @@ button:focus-visible {
   left: 16px;
   z-index: 3;
   padding: 5px 12px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.2em;
@@ -1755,7 +1755,7 @@ button:focus-visible {
 
 .hero-card-role {
   margin: 8px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -1784,7 +1784,7 @@ button:focus-visible {
 .hero-card-attrs span {
   display: block;
   margin-top: 3px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 8.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1831,7 +1831,7 @@ button:focus-visible {
 }
 
 .terminal-title {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.14em;
   color: var(--text-secondary);
@@ -1874,7 +1874,7 @@ button:focus-visible {
 }
 
 .terminal-lines {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 2;
   letter-spacing: 0.04em;
@@ -2026,7 +2026,7 @@ button:focus-visible {
   right: 12px;
   z-index: 2;
   padding: 4px 10px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -2049,7 +2049,7 @@ button:focus-visible {
   right: 14px;
   top: 50%;
   transform: translateY(-50%);
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.2em;
   color: rgba(143, 163, 192, 0.7);
@@ -2067,7 +2067,7 @@ button:focus-visible {
 
 .select-role {
   margin: 5px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2096,7 +2096,7 @@ button:focus-visible {
 
 .select-chips li {
   padding: 4px 10px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2116,7 +2116,7 @@ button:focus-visible {
 .variant-label {
   margin: clamp(26px, 4vw, 38px) 0 0;
   text-align: center;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.22em;
@@ -2230,7 +2230,7 @@ button:focus-visible {
   width: fit-content;
   margin-top: 10px;
   padding: 3px 9px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 8.5px;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -2246,7 +2246,7 @@ button:focus-visible {
   left: 10px;
   z-index: 2;
   padding: 4px 10px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -2405,7 +2405,7 @@ button:focus-visible {
 
 .vs-sub {
   margin: 8px 0 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -2535,7 +2535,7 @@ button:focus-visible {
 .trial-duration {
   display: inline-block;
   margin-top: 6px;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -2736,7 +2736,7 @@ button:focus-visible {
 }
 
 .price-hint {
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2745,7 +2745,7 @@ button:focus-visible {
 
 .trial-link {
   padding: 2px 0;
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--accent);
@@ -2934,7 +2934,7 @@ button:focus-visible {
   align-items: center;
   gap: 9px;
   color: var(--text-secondary);
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2990,12 +2990,12 @@ button:focus-visible {
 .booking-offer-description { margin: 6px 0 10px; color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
 .booking-offer-meta,
 .booking-group-meta,
-.booking-group-option span { color: var(--text-secondary); font-family: "Courier New", monospace; font-size: 10px; letter-spacing: 0.04em; }
+.booking-group-option span { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; }
 .booking-price-block { display: grid; justify-items: end; gap: 4px; white-space: nowrap; }
 .booking-price-block strong,
 .booking-group-option-price strong,
 .booking-trial-price { color: var(--gold); font-family: var(--font-heading, inherit); font-size: clamp(25px, 2.6vw, 34px); font-weight: 700; letter-spacing: 0.04em; }
-.booking-price-block span { color: var(--text-secondary); font-family: "Courier New", monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.booking-price-block span { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .booking-trial-panel { position: relative; display: grid; grid-template-columns: 62px 1fr; align-content: center; gap: 12px 16px; padding: 26px 26px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
 .booking-or {
   position: absolute;
@@ -3007,7 +3007,7 @@ button:focus-visible {
   border-radius: 8px;
   background: #0a1425;
   color: var(--accent);
-  font-family: "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -3713,7 +3713,7 @@ button:focus-visible {
 .booking-group-option p { font-size: 14px; }
 .booking-group-option > div:first-child > span { font-family: inherit; font-size: 12px; letter-spacing: 0; }
 .booking-group-option-price strong { font-size: 26px; }
-.booking-group-option-price small { font-family: "Courier New", monospace; font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; }
+.booking-group-option-price small { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; }
 .booking-action--group { width: 130px; min-height: 43px; padding: 0 10px; justify-self: end; font-size: 11px; }
 .booking-trial-panel--group {
   grid-template-columns: 60px minmax(0, 1fr);
