@@ -1,4 +1,4 @@
-import {defineConfig} from 'sanity'
+import {defineConfig, type SchemaTypeDefinition} from 'sanity'
 import {structureTool} from 'sanity/structure'
 import {visionTool} from '@sanity/vision'
 import schemaTypes from './sanity/math-cms/schemas/schemaTypes'
@@ -63,6 +63,68 @@ export default defineConfig({
                       ),
                   ])
               ),
+            S.listItem()
+              .title('Страница курса (/)')
+              .id('coursePage')
+              .child(
+                S.list()
+                  .title('Страница курса (/)')
+                  .items([
+                    S.listItem()
+                      .title('Hero-блок')
+                      .child(
+                        S.document()
+                          .schemaType('courseHero')
+                          .documentId('courseHero')
+                      ),
+                    S.listItem()
+                      .title('Наставник')
+                      .child(
+                        S.document()
+                          .schemaType('mentorBlock')
+                          .documentId('mentorBlock')
+                      ),
+                    S.listItem()
+                      .title('Программа обучения')
+                      .child(
+                        S.document()
+                          .schemaType('programBlock')
+                          .documentId('programBlock')
+                      ),
+                    S.listItem()
+                      .title('Отзывы (заголовок секции)')
+                      .child(
+                        S.document()
+                          .schemaType('reviewsBlock')
+                          .documentId('reviewsBlock')
+                      ),
+                    S.listItem()
+                      .title('Время пройти инициацию (цена)')
+                      .child(
+                        S.document()
+                          .schemaType('initBlock')
+                          .documentId('initBlock')
+                      ),
+                    S.listItem()
+                      .title('FAQ (заголовок секции)')
+                      .child(
+                        S.document()
+                          .schemaType('faqBlock')
+                          .documentId('faqBlock')
+                      ),
+                    S.listItem()
+                      .title('Вопросы FAQ')
+                      .schemaType('faqItem')
+                      .child(S.documentTypeList('faqItem').title('Вопросы FAQ')),
+                    S.listItem()
+                      .title('Не подошёл курс (развилка)')
+                      .child(
+                        S.document()
+                          .schemaType('pathsBlock')
+                          .documentId('pathsBlock')
+                      ),
+                  ])
+              ),
             S.divider(),
             S.listItem()
               .title('Настройки сайта (общие)')
@@ -77,7 +139,7 @@ export default defineConfig({
     visionTool(),
   ],
   schema: {
-    types: schemaTypes as any,
+    types: schemaTypes as SchemaTypeDefinition[],
   },
   document: {
     newDocumentOptions: (prev, {creationContext}) => {
