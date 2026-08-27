@@ -1,26 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import Link from 'next/link';
 import DiagnosticSection from '@/components/ui/DiagnosticSection';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
 import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
-import { HomePageContent, SiteSettings } from '@/lib/studio/sanityData';
+import { SiteSettings } from '@/lib/studio/sanityData';
+import type { IndividualPageContent, FormatColumn } from '@/data/individualPageContent';
+import { INDIVIDUAL_PAGE_DEFAULTS } from '@/data/individualPageContent';
+import { pickArr, pickStr } from '@/data/mainPageContent';
 import { urlFor } from '@/lib/studio/sanityImage';
-
-const SOLO_PERKS = [
-  'Программа строится под твою цель и стартовый уровень',
-  'Гибкий график — занятия когда удобно, даже вечером',
-  'Максимальное внимание наставника всё занятие',
-  'Личный куратор и разбор каждой ошибки 24/7',
-];
-
-const GROUP_PERKS = [
-  'Цена ниже, качество подготовки то же',
-  'Командный рейтинг и совместные квесты',
-  'Игровая мотивация: уровни, лиги, награды',
-  'Занятия в мини-группе до 5 человек',
-];
 
 type Format = 'solo' | 'group';
 type VsFocus = 'solo' | 'group' | null;
@@ -28,15 +18,22 @@ type VsFocus = 'solo' | 'group' | null;
 const SOLO_MATCH = /индивиду|соло|solo|1-на-1/i;
 const GROUP_MATCH = /групп|команд|squad/i;
 
+// Иконки преимуществ в блоке записи (по порядку карточек).
+const BENEFIT_ICONS = [
+  <svg key="benefit-pro" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.6"/><path d="M8.6 12l2.1 2.1 4.8-5" stroke="currentColor" strokeWidth="1.6"/></svg>,
+  <svg key="benefit-personal" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.5"/><circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="1.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9L7 7m10 10l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" strokeWidth="1.3"/></svg>,
+  <svg key="benefit-schedule" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7.5 3v5m9-5v5M3.5 10h17M8 14h2m4 0h2M8 17h2m4 0h2" stroke="currentColor" strokeWidth="1.35"/></svg>,
+];
+
 export default function HomePageClient({
-  home,
+  content,
   teachers,
   stats,
   principles,
   processSteps,
   siteSettings,
 }: {
-  home: HomePageContent | null;
+  content: IndividualPageContent | null;
   teachers: Teacher[];
   stats: Stat[];
   principles: Principle[];
@@ -117,18 +114,71 @@ export default function HomePageClient({
     return () => observer.disconnect();
   }, [format]);
 
-  if (!home) {
-    throw new Error('Missing homePage content');
-  }
+  // Контент из Sanity с дефолтами: пустой блок/поле = статический текст.
+  const D = INDIVIDUAL_PAGE_DEFAULTS;
+  const hero = content?.hero;
+  const heroKicker = pickStr(hero?.kicker, D.hero.kicker);
+  const heroTitle = pickStr(hero?.title, D.hero.title);
+  const heroDescription = pickStr(hero?.description, D.hero.description);
+  const heroPanelTitle = pickStr(hero?.panelTitle, D.hero.panelTitle);
+  const heroSlots = pickArr(hero?.slots, D.hero.slots).map((slot) => ({
+    icon: pickStr(slot?.icon, '◆'),
+    title: pickStr(slot?.title, ''),
+    sub: pickStr(slot?.sub, ''),
+    href: pickStr(slot?.href, '#'),
+  }));
 
-  const heroDescription =
-    home.heroDescription ||
-    'Индивидуальные уроки один на один с наставником и мини-группы до 5 человек — выбери свой формат и идём к цели вместе.';
+  const teachersBlock = content?.teachers;
+  const teachersKicker = pickStr(teachersBlock?.kicker, D.teachers.kicker);
+  const teachersTitle = pickStr(teachersBlock?.sectionTitle, D.teachers.sectionTitle);
+  const teacherBadges = pickArr(teachersBlock?.badges, D.teachers.badges);
 
-  const principlesTitle = home.sectionPrinciplesTitle || 'Принципы гильдии';
-  const principlesSubtitle = home.sectionPrinciplesSubtitle || '';
-  const processTitle = home.sectionProcessTitle || 'Как проходит обучение';
-  const processSubtitle = home.sectionProcessSubtitle || '';
+  const principlesBlock = content?.principles;
+  const principlesKicker = pickStr(principlesBlock?.kicker, D.principles.kicker);
+  const principlesTitle = pickStr(principlesBlock?.sectionTitle, D.principles.sectionTitle);
+  const principlesSubtitle = pickStr(principlesBlock?.sectionSubtitle, D.principles.sectionSubtitle);
+
+  const formatsBlock = content?.formats;
+  const formatsKicker = pickStr(formatsBlock?.kicker, D.formats.kicker);
+  const formatsTitle = pickStr(formatsBlock?.sectionTitle, D.formats.sectionTitle);
+  const formatColumns = pickArr(formatsBlock?.columns, D.formats.columns);
+  const normalizeColumn = (col: FormatColumn | undefined, fallback: FormatColumn) => ({
+    icon: pickStr(col?.icon, fallback.icon ?? ''),
+    title: pickStr(col?.title, fallback.title),
+    sub: pickStr(col?.sub, fallback.sub ?? ''),
+    description: pickStr(col?.description, fallback.description ?? ''),
+    perks: pickArr(col?.perks, fallback.perks),
+    ctaText: pickStr(col?.ctaText, fallback.ctaText ?? ''),
+  });
+  const soloColumn = normalizeColumn(formatColumns[0], D.formats.columns[0]);
+  const groupColumn = normalizeColumn(formatColumns[1], D.formats.columns[1]);
+
+  const processBlock = content?.process;
+  const processKicker = pickStr(processBlock?.kicker, D.process.kicker);
+  const processTitle = pickStr(processBlock?.sectionTitle, D.process.sectionTitle);
+
+  const choosePath = content?.choosePath;
+  const signupKicker = pickStr(choosePath?.kicker, D.choosePath.kicker);
+  const signupTitle = pickStr(choosePath?.sectionTitle, D.choosePath.sectionTitle);
+  const signupTitleGold = pickStr(choosePath?.sectionTitleGold, D.choosePath.sectionTitleGold);
+  const soloTabText = pickStr(choosePath?.soloTabText, D.choosePath.soloTabText);
+  const groupTabText = pickStr(choosePath?.groupTabText, D.choosePath.groupTabText);
+  const trialGuideTitle = pickStr(choosePath?.trialGuideTitle, D.choosePath.trialGuideTitle);
+  const trialGuideLines = pickStr(choosePath?.trialGuideText, D.choosePath.trialGuideText).split('\n');
+  const benefits = pickArr(choosePath?.benefits, D.choosePath.benefits).map((benefit) => ({
+    title: pickStr(benefit?.title, ''),
+    text: pickStr(benefit?.text, ''),
+  }));
+
+  const diagnostic = content?.diagnostic;
+  const diagnosticSteps = pickArr(diagnostic?.steps, D.diagnostic.steps).map((step) => ({
+    title: pickStr(step?.title, ''),
+    text: pickStr(step?.text, ''),
+  }));
+
+  const heroTitleWords = heroTitle.trim().split(/\s+/);
+  const heroTitleLast = heroTitleWords[heroTitleWords.length - 1];
+  const heroTitleRest = heroTitleWords.slice(0, -1).join(' ');
 
   const getServicesForFormat = (teacher: Teacher, matcher: RegExp) => {
     const services = Array.isArray(teacher.services) ? teacher.services : [];
@@ -149,36 +199,30 @@ export default function HomePageClient({
         <div className="container hero-content">
           <div className="ind-hero-grid">
             <div className="ind-hero-left">
-              <a className="crumb" href="/">
+              <Link className="crumb" href="/">
                 ← District · главная
-              </a>
+              </Link>
               <span className="section-kicker">
-                ФОРМАТЫ ЗАНЯТИЙ // 5–11 КЛАСС
+                {heroKicker}
               </span>
               <h1 className="ind-hero-title">
-                Занятия с наставником <span className="gold">гильдии</span>
+                {heroTitleRest} <span className="gold">{heroTitleLast}</span>
               </h1>
               <p className="ind-hero-desc">{heroDescription}</p>
             </div>
 
             <aside className="ind-hero-panel" aria-label="Выбор формата занятий">
-              <p className="ind-panel-title">Выбор пути</p>
-              <a className="ind-slot" href="#formats-solo">
-                <span className="ind-slot-icon" aria-hidden="true">🗡</span>
-                <span className="ind-slot-text">
-                  <b>Одиночный рейд</b>
-                  <small>индивидуальные · 5–11 класс</small>
-                </span>
-                <span className="ind-slot-arrow" aria-hidden="true">→</span>
-              </a>
-              <a className="ind-slot" href="#formats-group">
-                <span className="ind-slot-icon" aria-hidden="true">🛡</span>
-                <span className="ind-slot-text">
-                  <b>Командный сектор</b>
-                  <small>мини-группы до 5 · 5–10 класс</small>
-                </span>
-                <span className="ind-slot-arrow" aria-hidden="true">→</span>
-              </a>
+              <p className="ind-panel-title">{heroPanelTitle}</p>
+              {heroSlots.map((slot) => (
+                <a className="ind-slot" href={slot.href} key={slot.title}>
+                  <span className="ind-slot-icon" aria-hidden="true">{slot.icon}</span>
+                  <span className="ind-slot-text">
+                    <b>{slot.title}</b>
+                    <small>{slot.sub}</small>
+                  </span>
+                  <span className="ind-slot-arrow" aria-hidden="true">→</span>
+                </a>
+              ))}
             </aside>
           </div>
         </div>
@@ -190,9 +234,9 @@ export default function HomePageClient({
           <span className="watermark" aria-hidden="true">MENTOR</span>
           <div className="container">
             <span className="section-kicker section-kicker--center">
-              КВЕСТ 01 // ОТРЯД ГИЛЬДИИ :: SELECT
+              {teachersKicker}
             </span>
-            <h2 className="main-teacher-title">Выбери наставника</h2>
+            <h2 className="main-teacher-title">{teachersTitle}</h2>
 
             <div className="teacher-rows">
               {teachers.map((teacher, index) => (
@@ -218,9 +262,9 @@ export default function HomePageClient({
                     
                     <p className="select-desc">{teacher.description}</p>
                     <ul className="select-chips" aria-label="Достижения наставника">
-                      <li>❖ 98 баллов ЦТ</li>
-                      <li>❖ 4 года опыта</li>
-                      <li>❖ БГУ, мехмат</li>
+                      {teacherBadges.map((badge) => (
+                        <li key={badge}>❖ {badge}</li>
+                      ))}
                     </ul>
                   </div>
                 </article>
@@ -234,7 +278,7 @@ export default function HomePageClient({
         <section className="section section-principles ind-principles" id="principles" data-reveal>
           <div className="container">
             <span className="section-kicker section-kicker--center">
-              КВЕСТ 02 // СТАТИСТИКА + ПРИНЦИПЫ :: CODE
+              {principlesKicker}
             </span>
 
             {stats.length > 0 && (
@@ -274,9 +318,9 @@ export default function HomePageClient({
           <span className="watermark" aria-hidden="true">VS</span>
           <div className="container">
             <span className="section-kicker section-kicker--center">
-              КВЕСТ 03 // ВАРИАНТЫ ЗАНЯТИЙ :: VS MODE
+              {formatsKicker}
             </span>
-            <h2 className="main-section-title">Соло или команда?</h2>
+            <h2 className="main-section-title">{formatsTitle}</h2>
 
             <div
               className={'vs-split' + (vsFocus ? ' vs-split--' + vsFocus + '-focus' : '')}
@@ -293,19 +337,18 @@ export default function HomePageClient({
                 onFocus={() => setVsFocus('solo')}
                 onBlur={() => setVsFocus(null)}
               >
-                <h3 className="vs-title">🗡 Одиночный рейд</h3>
-                <p className="vs-sub">индивидуальные · 5–11 класс</p>
+                <h3 className="vs-title">{soloColumn.icon} {soloColumn.title}</h3>
+                <p className="vs-sub">{soloColumn.sub}</p>
                 <p className="vs-desc">
-                  Личный маршрут по математике: программа, темп и фокус — только
-                  под тебя. Наставник ведёт от диагностики до экзамена.
+                  {soloColumn.description}
                 </p>
                 <ul className="vs-perks">
-                  {SOLO_PERKS.map((perk) => (
+                  {soloColumn.perks.map((perk) => (
                     <li key={perk}>{perk}</li>
                   ))}
                 </ul>
                 <a className="mini-cta mini-cta--blue" href="#signup" onClick={() => setFormat('solo')}>
-                  Записаться на соло
+                  {soloColumn.ctaText}
                 </a>
               </div>
 
@@ -326,18 +369,17 @@ export default function HomePageClient({
                 onFocus={() => setVsFocus('group')}
                 onBlur={() => setVsFocus(null)}
               >
-                <h3 className="vs-title">🛡 Командный сектор</h3>
-                <p className="vs-sub">мини-группы до 5 · 5–10 класс</p>
+                <h3 className="vs-title">{groupColumn.icon} {groupColumn.title}</h3>
+                <p className="vs-sub">{groupColumn.sub}</p>
                 <p className="vs-desc">
-                  Мини-отряд единомышленников: общий рейтинг, командные квесты
-                  и дух соревнования. Качество то же, цена ниже.
+                  {groupColumn.description}
                 </p>
                 <ul className="vs-perks">
-                  {GROUP_PERKS.map((perk) => (
+                  {groupColumn.perks.map((perk) => (
                     <li key={perk}>{perk}</li>
                   ))}
                 </ul>
-                <a className="mini-cta" href="#signup" onClick={() => setFormat('group')}>Записаться в группу</a>
+                <a className="mini-cta" href="#signup" onClick={() => setFormat('group')}>{groupColumn.ctaText}</a>
               </div>
             </div>
           </div>
@@ -359,7 +401,7 @@ export default function HomePageClient({
           <div className="process-section-wrapper">
             <div className="container">
               <span className="section-kicker section-kicker--center">
-                КВЕСТ 04 // КАК ПРОХОДИТ ОБУЧЕНИЕ :: ПРОТОКОЛ
+                {processKicker}
               </span>
               <div className="process-header-new">
                 <h2>{processTitle}</h2>
@@ -393,10 +435,10 @@ export default function HomePageClient({
         <section className="main-init ind-signup" id="signup" data-reveal data-format={format}>
           <div className="container">
             <span className="section-kicker section-kicker--center">
-              КВЕСТ 05 // ЗАПИСЬ :: START QUEST
+              {signupKicker}
             </span>
             <h2 className="main-init-title">
-              Время выбрать <span className="gold">свой путь</span>
+              {signupTitle} <span className="gold">{signupTitleGold}</span>
             </h2>
             <div className="format-tabs" role="tablist" aria-label="Форматы занятий">
               <button
@@ -406,7 +448,7 @@ export default function HomePageClient({
                 className={'format-tab' + (format === 'solo' ? ' format-tab--active' : '')}
                 onClick={() => handleFormat('solo')}
               >
-                🗡 Одиночный рейд
+                {soloTabText}
               </button>
               <button
                 type="button"
@@ -415,7 +457,7 @@ export default function HomePageClient({
                 className={'format-tab' + (format === 'group' ? ' format-tab--active' : '')}
                 onClick={() => handleFormat('group')}
               >
-                🛡 Командный сектор
+                {groupTabText}
               </button>
             </div>
             <div className={'signup-body booking-stage booking-stage--' + format}>
@@ -620,8 +662,15 @@ export default function HomePageClient({
               >
                 <span className="booking-trial-guide-icon" aria-hidden="true">i</span>
                 <div className="booking-trial-guide-copy">
-                  <h3>Пробное занятие — первый шаг</h3>
-                  <p>Пробное занятие необходимо для начала индивидуальных занятий.<br />Оно поможет определить уровень и подобрать подходящую программу.</p>
+                  <h3>{trialGuideTitle}</h3>
+                  <p>
+                    {trialGuideLines.map((line, index) => (
+                      <Fragment key={index}>
+                        {index > 0 && <br />}
+                        {line}
+                      </Fragment>
+                    ))}
+                  </p>
                 </div>
                 <svg className="booking-trial-guide-art" viewBox="0 0 150 62" fill="none" aria-hidden="true">
                   <rect x="15" y="13" width="44" height="31" rx="3" stroke="currentColor" strokeWidth="1.2" />
@@ -635,35 +684,25 @@ export default function HomePageClient({
                 </svg>
               </section>
               <section className="booking-benefits" aria-label="Преимущества обучения">
-                <article className="booking-benefit" data-scroll-reveal>
-                  <span className="booking-benefit-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.6"/><path d="M8.6 12l2.1 2.1 4.8-5" stroke="currentColor" strokeWidth="1.6"/></svg>
-                  </span>
-                  <div><h3>Профессиональные</h3><p>опытные преподаватели</p></div>
-                </article>
-                <article className="booking-benefit" data-scroll-reveal>
-                  <span className="booking-benefit-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.5"/><circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="1.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9L7 7m10 10l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" strokeWidth="1.3"/></svg>
-                  </span>
-                  <div><h3>Индивидуальный подход</h3><p>программа под ваши цели</p></div>
-                </article>
-                <article className="booking-benefit" data-scroll-reveal>
-                  <span className="booking-benefit-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7.5 3v5m9-5v5M3.5 10h17M8 14h2m4 0h2M8 17h2m4 0h2" stroke="currentColor" strokeWidth="1.35"/></svg>
-                  </span>
-                  <div><h3>Удобный график</h3><p>занимайтесь в комфортное время</p></div>
-                </article>
+                {benefits.map((benefit, index) => (
+                  <article className="booking-benefit" data-scroll-reveal key={benefit.title || index}>
+                    <span className="booking-benefit-icon" aria-hidden="true">
+                      {BENEFIT_ICONS[index % BENEFIT_ICONS.length]}
+                    </span>
+                    <div><h3>{benefit.title}</h3><p>{benefit.text}</p></div>
+                  </article>
+                ))}
               </section>
             </div>
           </div>
         </section>
         <div id="diagnostic">
           <DiagnosticSection
-            eyebrow={home.diagnosticEyebrow}
-            title={home.diagnosticTitle}
-            text={home.diagnosticText}
-            buttonText={home.diagnosticButtonText}
-            steps={home.diagnosticSteps}
+            eyebrow={diagnostic?.eyebrow}
+            title={diagnostic?.title}
+            text={diagnostic?.text}
+            buttonText={diagnostic?.buttonText}
+            steps={diagnosticSteps}
           />
         </div>
       </main>

@@ -2,7 +2,6 @@ import teacher from './teacher'
 import processStep from './processStep'
 import stat from './stat'
 import principle from './principle'
-import homePage from './homePage'
 import siteSettings from './siteSettings'
 import review from './review'
 import courseHero from './courseHero'
@@ -13,13 +12,19 @@ import initBlock from './initBlock'
 import faqItem from './faqItem'
 import faqBlock from './faqBlock'
 import pathsBlock from './pathsBlock'
+import individualHeroBlock from './individualHeroBlock'
+import teachersBlock from './teachersBlock'
+import principlesBlock from './principlesBlock'
+import formatsBlock from './formatsBlock'
+import processBlock from './processBlock'
+import choosePathBlock from './choosePathBlock'
+import diagnosticBlock from './diagnosticBlock'
 
 export default [
   teacher,
   processStep,
   stat,
   principle,
-  homePage,
   siteSettings,
   review,
   courseHero,
@@ -30,4 +35,11 @@ export default [
   faqItem,
   faqBlock,
   pathsBlock,
+  individualHeroBlock,
+  teachersBlock,
+  principlesBlock,
+  formatsBlock,
+  processBlock,
+  choosePathBlock,
+  diagnosticBlock,
 ]

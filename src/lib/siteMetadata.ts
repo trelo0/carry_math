@@ -1,17 +1,17 @@
 import type { Metadata } from "next";
-import { getHomePage, getSiteSettings } from "@/lib/studio/sanityData";
+import { getIndividualPageContent, getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
 import { getMetadataBaseUrl } from "@/lib/siteUrl";
 
 export async function getSiteMetaContent() {
-  const [siteSettings, home] = await Promise.all([
+  const [siteSettings, individual] = await Promise.all([
     getSiteSettings(),
-    getHomePage(),
+    getIndividualPageContent(),
   ]);
 
   const siteName = normalizeBrandName(siteSettings?.title);
   const description =
-    home?.heroDescription?.trim() ||
+    individual?.hero?.description?.trim() ||
     siteSettings?.footerDescription?.trim() ||
     "Онлайн-школа для тех, кто готов побеждать.";
 

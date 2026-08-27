@@ -1,7 +1,7 @@
 import HomePageClient from '../HomePageClient';
 import { draftMode } from 'next/headers';
 import {
-  getHomePage,
+  getIndividualPageContent,
   getPrinciples,
   getProcessSteps,
   getStats,
@@ -12,8 +12,8 @@ import {
 export default async function IndividualPage() {
   const { isEnabled } = await draftMode();
 
-  const [home, teachers, stats, principles, processSteps, siteSettings] = await Promise.all([
-    getHomePage({ preview: isEnabled }),
+  const [content, teachers, stats, principles, processSteps, siteSettings] = await Promise.all([
+    getIndividualPageContent({ preview: isEnabled }).catch(() => null),
     getTeachers({ preview: isEnabled }),
     getStats({ preview: isEnabled }),
     getPrinciples({ preview: isEnabled }),
@@ -21,15 +21,9 @@ export default async function IndividualPage() {
     getSiteSettings({ preview: isEnabled }),
   ]);
 
-  if (!home) {
-    throw new Error(
-      'Missing Sanity document: homePage. Create and publish the "Главная страница" document in Sanity Studio.',
-    );
-  }
-
   return (
     <HomePageClient
-      home={home}
+      content={content}
       teachers={teachers}
       stats={stats}
       principles={principles}

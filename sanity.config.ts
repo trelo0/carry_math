@@ -23,54 +23,6 @@ export default defineConfig({
                   .title('Главная страница (/)')
                   .items([
                     S.listItem()
-                      .title('Отзывы')
-                      .schemaType('review')
-                      .child(S.documentTypeList('review').title('Отзывы')),
-                  ])
-              ),
-            S.listItem()
-              .title('Индивидуальные занятия (/individual)')
-              .id('individualPage')
-              .child(
-                S.list()
-                  .title('Индивидуальные занятия (/individual)')
-                  .items([
-                    S.listItem()
-                      .title('Тексты страницы')
-                      .id('homePage')
-                      .child(
-                        S.document()
-                          .schemaType('homePage')
-                          .documentId('homePage')
-                      ),
-                    S.listItem()
-                      .title('Наставники')
-                      .schemaType('teacher')
-                      .child(S.documentTypeList('teacher').title('Наставники')),
-                    S.listItem()
-                      .title('Статистика')
-                      .schemaType('stat')
-                      .child(S.documentTypeList('stat').title('Статистика')),
-                    S.listItem()
-                      .title('Принципы')
-                      .schemaType('principle')
-                      .child(S.documentTypeList('principle').title('Принципы')),
-                    S.listItem()
-                      .title('Как проходят занятия (шаги)')
-                      .schemaType('processStep')
-                      .child(
-                        S.documentTypeList('processStep').title('Шаги процесса')
-                      ),
-                  ])
-              ),
-            S.listItem()
-              .title('Страница курса (/)')
-              .id('coursePage')
-              .child(
-                S.list()
-                  .title('Страница курса (/)')
-                  .items([
-                    S.listItem()
                       .title('Hero-блок')
                       .child(
                         S.document()
@@ -99,6 +51,10 @@ export default defineConfig({
                           .documentId('reviewsBlock')
                       ),
                     S.listItem()
+                      .title('Отзывы')
+                      .schemaType('review')
+                      .child(S.documentTypeList('review').title('Отзывы')),
+                    S.listItem()
                       .title('Время пройти инициацию (цена)')
                       .child(
                         S.document()
@@ -125,6 +81,82 @@ export default defineConfig({
                       ),
                   ])
               ),
+            S.listItem()
+              .title('Индивидуальные занятия (/individual)')
+              .id('individualPage')
+              .child(
+                S.list()
+                  .title('Индивидуальные занятия (/individual)')
+                  .items([
+                    S.listItem()
+                      .title('Hero-блок')
+                      .child(
+                        S.document()
+                          .schemaType('individualHeroBlock')
+                          .documentId('individualHeroBlock')
+                      ),
+                    S.listItem()
+                      .title('Наставники (заголовки секции)')
+                      .child(
+                        S.document()
+                          .schemaType('teachersBlock')
+                          .documentId('teachersBlock')
+                      ),
+                    S.listItem()
+                      .title('Наставники (карточки)')
+                      .schemaType('teacher')
+                      .child(S.documentTypeList('teacher').title('Наставники')),
+                    S.listItem()
+                      .title('Принципы (заголовки секции)')
+                      .child(
+                        S.document()
+                          .schemaType('principlesBlock')
+                          .documentId('principlesBlock')
+                      ),
+                    S.listItem()
+                      .title('Статистика')
+                      .schemaType('stat')
+                      .child(S.documentTypeList('stat').title('Статистика')),
+                    S.listItem()
+                      .title('Принципы')
+                      .schemaType('principle')
+                      .child(S.documentTypeList('principle').title('Принципы')),
+                    S.listItem()
+                      .title('Формат «Соло или команда»')
+                      .child(
+                        S.document()
+                          .schemaType('formatsBlock')
+                          .documentId('formatsBlock')
+                      ),
+                    S.listItem()
+                      .title('Как проходят занятия (заголовки)')
+                      .child(
+                        S.document()
+                          .schemaType('processBlock')
+                          .documentId('processBlock')
+                      ),
+                    S.listItem()
+                      .title('Как проходят занятия (шаги)')
+                      .schemaType('processStep')
+                      .child(
+                        S.documentTypeList('processStep').title('Шаги процесса')
+                      ),
+                    S.listItem()
+                      .title('Время выбрать свой путь (запись)')
+                      .child(
+                        S.document()
+                          .schemaType('choosePathBlock')
+                          .documentId('choosePathBlock')
+                      ),
+                    S.listItem()
+                      .title('В чём сильная сторона (диагностика)')
+                      .child(
+                        S.document()
+                          .schemaType('diagnosticBlock')
+                          .documentId('diagnosticBlock')
+                      ),
+                  ])
+              ),
             S.divider(),
             S.listItem()
               .title('Настройки сайта (общие)')
@@ -145,15 +177,13 @@ export default defineConfig({
     newDocumentOptions: (prev, {creationContext}) => {
       if (creationContext.type === 'global') {
         return prev.filter(
-          (templateItem) =>
-            templateItem.templateId !== 'siteSettings' &&
-            templateItem.templateId !== 'homePage'
+          (templateItem) => templateItem.templateId !== 'siteSettings'
         )
       }
       return prev
     },
     actions: (prev, {schemaType}) => {
-      if (schemaType === 'siteSettings' || schemaType === 'homePage') {
+      if (schemaType === 'siteSettings') {
         return prev.filter(
           ({action}) => action !== 'delete' && action !== 'duplicate'
         )

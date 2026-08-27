@@ -2,6 +2,7 @@
 import { groq } from 'next-sanity';
 import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
 import type { MainPageContent } from '@/data/mainPageContent';
+import type { IndividualPageContent } from '@/data/individualPageContent';
 import { getSanityClient } from './sanityClient';
 
 type FetchOptions = {
@@ -39,23 +40,6 @@ export type SiteSettings = {
   modalSubmitButtonText?: string;
 };
 
-export type HomePageContent = {
-  heroEyebrow?: string;
-  heroTitle?: string;
-  heroDescription?: string;
-  sectionTeachersTitle?: string;
-  sectionTeachersSubtitle?: string;
-  sectionPrinciplesTitle?: string;
-  sectionPrinciplesSubtitle?: string;
-  sectionProcessTitle?: string;
-  sectionProcessSubtitle?: string;
-  diagnosticEyebrow?: string;
-  diagnosticTitle?: string;
-  diagnosticText?: string;
-  diagnosticButtonText?: string;
-  diagnosticSteps?: { _key: string; title: string; text: string }[];
-};
-
 export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<SiteSettings | null> {
   const client = getClient({ preview });
   return client.fetch(
@@ -74,27 +58,69 @@ export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<S
   );
 }
 
-export async function getHomePage({ preview }: FetchOptions = {}): Promise<HomePageContent | null> {
+// Контент страницы «Индивидуальные занятия» (/individual): все блоки одним запросом.
+// Любой блок может отсутствовать в Sanity — на клиенте подставляются дефолты.
+export async function getIndividualPageContent({
+  preview,
+}: FetchOptions = {}): Promise<IndividualPageContent | null> {
   const client = getClient({ preview });
   return client.fetch(
-    groq`*[_type == "homePage"] | order(_updatedAt desc)[0]{
-      heroEyebrow,
-      heroTitle,
-      heroDescription,
-      sectionTeachersTitle,
-      sectionTeachersSubtitle,
-      sectionPrinciplesTitle,
-      sectionPrinciplesSubtitle,
-      sectionProcessTitle,
-      sectionProcessSubtitle,
-      diagnosticEyebrow,
-      diagnosticTitle,
-      diagnosticText,
-      diagnosticButtonText,
-      diagnosticSteps[]{ _key, title, text }
+    groq`{
+      "hero": *[_type == "individualHeroBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        title,
+        description,
+        panelTitle,
+        slots[]{ _key, icon, title, sub, href }
+      },
+      "teachers": *[_type == "teachersBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        sectionTitle,
+        badges
+      },
+      "principles": *[_type == "principlesBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        sectionTitle,
+        sectionSubtitle
+      },
+      "formats": *[_type == "formatsBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        sectionTitle,
+        columns[]{ _key, icon, title, sub, description, perks, ctaText }
+      },
+      "process": *[_type == "processBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        sectionTitle,
+        sectionSubtitle
+      },
+      "choosePath": *[_type == "choosePathBlock"] | order(_updatedAt desc)[0]{
+        kicker,
+        sectionTitle,
+        sectionTitleGold,
+        soloTabText,
+        groupTabText,
+        trialGuideTitle,
+        trialGuideText,
+        benefits[]{ _key, title, text }
+      },
+      "diagnostic": *[_type == "diagnosticBlock"] | order(_updatedAt desc)[0]{
+        eyebrow,
+        title,
+        text,
+        buttonText,
+        steps[]{ _key, title, text }
+      }
     }`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:homePage'])
+    getSanityFetchOptions({ preview }, [
+      'sanity:individualHeroBlock',
+      'sanity:teachersBlock',
+      'sanity:principlesBlock',
+      'sanity:formatsBlock',
+      'sanity:processBlock',
+      'sanity:choosePathBlock',
+      'sanity:diagnosticBlock',
+    ])
   );
 }
 

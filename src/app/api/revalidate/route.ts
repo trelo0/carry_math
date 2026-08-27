@@ -1,7 +1,7 @@
 import { revalidateTag as nextRevalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 
-const revalidateTag = nextRevalidateTag as any
+const revalidateTag = nextRevalidateTag as unknown as (tag: string) => void
 
 export async function POST(request: Request) {
   const secret = request.headers.get('x-revalidate-secret')
@@ -20,11 +20,26 @@ export async function POST(request: Request) {
   // If Sanity cannot determine the type, fall back to a broad revalidate.
   if (!docType) {
     revalidateTag('sanity:siteSettings')
-    revalidateTag('sanity:homePage')
     revalidateTag('sanity:teacher')
     revalidateTag('sanity:stat')
     revalidateTag('sanity:principle')
     revalidateTag('sanity:processStep')
+    revalidateTag('sanity:courseHero')
+    revalidateTag('sanity:mentorBlock')
+    revalidateTag('sanity:programBlock')
+    revalidateTag('sanity:reviewsBlock')
+    revalidateTag('sanity:review')
+    revalidateTag('sanity:initBlock')
+    revalidateTag('sanity:faqBlock')
+    revalidateTag('sanity:faqItem')
+    revalidateTag('sanity:pathsBlock')
+    revalidateTag('sanity:individualHeroBlock')
+    revalidateTag('sanity:teachersBlock')
+    revalidateTag('sanity:principlesBlock')
+    revalidateTag('sanity:formatsBlock')
+    revalidateTag('sanity:processBlock')
+    revalidateTag('sanity:choosePathBlock')
+    revalidateTag('sanity:diagnosticBlock')
 
     return NextResponse.json({ revalidated: true, tags: 'all' })
   }
