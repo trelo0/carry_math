@@ -3,6 +3,21 @@
   position: relative;
 }
 
+/* CRT-сетка по всей странице. Лежит ПОД контентом (z-index: -1),
+   чтобы давать текстуру фону, но не снижать резкость фото. */
+.main-page::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.025) 0 1px,
+    transparent 1px 3px
+  );
+}
+
 /* вертикальные надписи по краям экрана */
 .side-rail {
   display: none;
