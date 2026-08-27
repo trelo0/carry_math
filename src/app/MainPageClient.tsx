@@ -339,7 +339,7 @@ export default function MainPageClient({
             <div className="mentor-card">
               <div className="mentor-frame">
                 <img
-                  src="/teachers/lidia.png"
+                  src="/teachers/lidia2.png"
                   alt="Лидия Владимировна — наставник по математике"
                 />
               </div>
@@ -404,10 +404,10 @@ export default function MainPageClient({
             </div>
 
             <div className="teacher-verify">
-              <svg className="verify-line" viewBox="0 0 130 120" fill="none" aria-hidden="true">
-                <circle cx="124" cy="106" r="3" fill="#f5f8ff" />
+              <svg className="verify-line" viewBox="0 0 130 156" fill="none" aria-hidden="true">
+                <circle cx="124" cy="142" r="3" fill="#f5f8ff" />
                 <path
-                  d="M124 106 L40 100 L-30 4"
+                  d="M124 142 L44 124 L-30 4"
                   stroke="rgba(245, 248, 255, 0.7)"
                   strokeWidth="1.5"
                 />

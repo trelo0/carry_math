@@ -8,6 +8,13 @@ export default defineType({
     defineField({ name: 'name', title: 'Имя', type: 'string' }),
     defineField({ name: 'subject', title: 'Предмет', type: 'string' }),
     defineField({ name: 'description', title: 'Описание', type: 'text' }),
+    defineField({
+      name: 'badges',
+      title: 'Чипы-достижения',
+      description: 'Короткие чипы под описанием карточки наставника на странице /individual: «98 баллов ЦТ», «БГУ, мехмат» и т.п. Если оставить пустым — покажутся общие чипы блока «Наставники».',
+      type: 'array',
+      of: [{ type: 'string' }],
+    }),
     defineField({ name: 'photo', title: 'Фото', type: 'image' }),
     defineField({ name: 'hasSpots', title: 'Есть места', type: 'boolean' }),
     defineField({

@@ -15,7 +15,7 @@ export interface Service {
 
 export interface TeacherReview {
   _key: string;
-  image: any;
+  image: unknown;
   caption?: string;
   teacherName?: string;
 }
@@ -25,7 +25,8 @@ export interface Teacher {
   name: string;
   subject: string;
   description: string;
-  photo: any;
+  photo: unknown;
+  badges?: string[];
   hasSpots: boolean;
   trialLesson: {
     price: string;

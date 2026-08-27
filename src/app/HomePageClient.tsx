@@ -262,7 +262,10 @@ export default function HomePageClient({
                     
                     <p className="select-desc">{teacher.description}</p>
                     <ul className="select-chips" aria-label="Достижения наставника">
-                      {teacherBadges.map((badge) => (
+                      {(Array.isArray(teacher.badges) && teacher.badges.length > 0
+                        ? teacher.badges
+                        : teacherBadges
+                      ).map((badge) => (
                         <li key={badge}>❖ {badge}</li>
                       ))}
                     </ul>

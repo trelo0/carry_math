@@ -3,30 +3,6 @@
   position: relative;
 }
 
-/* зерно + сканлайны поверх всей страницы */
-.main-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  opacity: 0.05;
-}
-
-.main-page::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 255, 255, 0.025) 0 1px,
-    transparent 1px 3px
-  );
-}
-
 /* вертикальные надписи по краям экрана */
 .side-rail {
   display: none;
@@ -623,7 +599,7 @@ html {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: clamp(20px, 2.5vw, 40px);
+  gap: clamp(8px, 1.1vw, 18px);
   margin-top: clamp(12px, 1.6vw, 20px);
 }
 
@@ -878,7 +854,7 @@ html {
 .teacher-verify {
   position: absolute;
   top: -80px;
-  left: calc(50% + 300px);
+  left: calc(50% + 250px);
   max-width: 150px;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -894,10 +870,10 @@ html {
 
 .verify-line {
   position: absolute;
-  top: -90px;
-  left: -140px;
-  width: 130px;
-  height: 120px;
+  top: -118px;
+  left: -156px;
+  width: 150px;
+  height: 172px;
   overflow: visible;
 }
 
@@ -1520,13 +1496,24 @@ button.init-cta {
   }
 
   .main-teacher-notes {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    margin-top: 22px;
   }
 
   .teacher-quote {
     left: 0;
     transform: none;
     margin-top: 0;
+    width: auto;
+    max-width: 430px;
+    padding: 14px 16px;
+    border: 1px solid rgba(0, 168, 255, 0.35);
+    border-radius: 12px;
+    background: rgba(13, 21, 38, 0.72);
+    font-size: 10px;
   }
 
   .quote-line {
@@ -1535,11 +1522,28 @@ button.init-cta {
 
   .teacher-verify {
     position: static;
-    margin-top: 16px;
+    margin-top: 0;
+    max-width: 200px;
+    align-self: center;
+    padding: 12px 16px;
+    border: 1px dashed rgba(232, 149, 44, 0.55);
+    border-radius: 12px;
+    background: rgba(13, 21, 38, 0.72);
   }
 
   .verify-line {
     display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .main-teacher-notes {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-quote,
+  .teacher-verify {
+    max-width: none;
   }
 }
 
@@ -1673,21 +1677,37 @@ section[data-reveal].revealed {
 
 /* карточка персонажа-наставника */
 .mentor-card {
-  width: clamp(250px, 24vw, 330px);
+  width: clamp(280px, 29vw, 400px);
   z-index: 1;
   text-align: center;
 }
 
 .mentor-frame {
   position: relative;
-  padding: 18px;
+  padding: 30px;
   background: radial-gradient(
     closest-side,
-    rgba(130, 214, 255, 0.3) 0%,
-    rgba(0, 168, 255, 0.16) 46%,
-    transparent 74%
+    rgba(130, 214, 255, 0.4) 0%,
+    rgba(0, 168, 255, 0.22) 48%,
+    rgba(0, 168, 255, 0.08) 76%,
+    transparent 96%
   );
   animation: mentor-float 7s ease-in-out infinite alternate;
+}
+
+/* расширенный ореол за фото */
+.mentor-frame::before {
+  content: "";
+  position: absolute;
+  inset: -16% -22%;
+  z-index: -1;
+  background: radial-gradient(
+    closest-side,
+    rgba(0, 168, 255, 0.22) 0%,
+    rgba(0, 168, 255, 0.1) 55%,
+    transparent 100%
+  );
+  filter: blur(6px);
 }
 
 .mentor-frame img {
@@ -1695,9 +1715,9 @@ section[data-reveal].revealed {
   width: 100%;
   height: auto;
   filter:
-    drop-shadow(0 0 10px rgba(190, 236, 255, 0.75))
-    drop-shadow(0 0 30px rgba(0, 168, 255, 0.5))
-    drop-shadow(0 0 64px rgba(0, 168, 255, 0.3));
+    drop-shadow(0 0 14px rgba(190, 236, 255, 0.85))
+    drop-shadow(0 0 44px rgba(0, 168, 255, 0.6))
+    drop-shadow(0 0 96px rgba(0, 168, 255, 0.4));
 }
 
 @keyframes mentor-float {
@@ -2245,10 +2265,11 @@ section[data-reveal].revealed {
   .mission-list::before {
     content: "";
     position: absolute;
+    box-sizing: border-box;
     left: 10px;
     top: 30px;
     bottom: 38px;
-    width: 56px;
+    width: 62px;
     border-radius: 6px;
     background: #0f1a2e;
     border-left: 3px solid rgba(0, 168, 255, 0.75);
@@ -2259,7 +2280,7 @@ section[data-reveal].revealed {
   .mission-list::after {
     content: "";
     position: absolute;
-    left: 35px;
+    left: 38.5px;
     top: 40px;
     bottom: 48px;
     width: 5px;
@@ -2281,10 +2302,11 @@ section[data-reveal].revealed {
   .mission::before {
     content: "";
     position: absolute;
+    box-sizing: border-box;
     left: -55px;
     top: 26px;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: #0d1526;
     border: 3px solid rgba(0, 168, 255, 0.85);

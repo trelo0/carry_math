@@ -627,38 +627,82 @@
   margin-right: clamp(24px, 5vw, 80px);
 }
 
-/* Back to Top */
+/* Back to Top — янтарный HUD-маяк */
 .back-to-top {
-  position: fixed !important;
-  bottom: 30px !important;
-  right: 30px !important;
-  width: 48px !important;
-  height: 48px !important;
-  background: var(--accent) !important;
-  border-radius: var(--radius-sm) !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  cursor: pointer !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  transition: all 0.3s ease !important;
-  z-index: 9999 !important;
-  box-shadow: var(--shadow-soft) !important;
-  border: none !important;
-  font-size: 18px !important;
-  color: var(--bg-primary) !important;
-  font-weight: 800 !important;
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 9999;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--gold);
+  background: linear-gradient(160deg, rgba(232, 149, 44, 0.22), rgba(13, 21, 38, 0.92) 60%);
+  border: 1.5px solid rgba(232, 149, 44, 0.8);
+  border-radius: 14px 4px 14px 4px;
+  box-shadow:
+    0 0 18px rgba(232, 149, 44, 0.35),
+    inset 0 0 12px rgba(232, 149, 44, 0.14);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(14px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease,
+    box-shadow 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease;
+}
+
+.back-to-top svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* HUD-уголок */
+.back-to-top::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid var(--gold);
+  border-right: 2px solid var(--gold);
+  border-top-right-radius: 4px;
+  pointer-events: none;
 }
 
 .back-to-top.visible {
-  opacity: 1 !important;
-  visibility: visible !important;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
 }
 
 .back-to-top:hover {
-  transform: translateY(-3px) !important;
-  background: var(--accent-hover) !important;
+  color: #ffd28a;
+  border-color: var(--gold);
+  box-shadow:
+    0 0 28px rgba(255, 171, 64, 0.55),
+    inset 0 0 16px rgba(232, 149, 44, 0.22);
+  transform: translateY(-3px);
+}
+
+.back-to-top:hover svg {
+  animation: btt-nudge 0.9s ease infinite;
+}
+
+@keyframes btt-nudge {
+  0%,
+  100% {
+    transform: translateY(1.5px);
+  }
+  50% {
+    transform: translateY(-1.5px);
+  }
 }
 
 /* Reviews */

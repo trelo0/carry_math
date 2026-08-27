@@ -133,6 +133,7 @@ export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teach
     subject,
     description,
     photo,
+    badges,
     "hasSpots": hasSpots,
     services,
     trialLesson,

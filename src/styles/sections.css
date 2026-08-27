@@ -2302,6 +2302,25 @@ button:focus-visible {
   }
 }
 
+@media (max-width: 640px) {
+  .teacher-row {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-row-photo {
+    min-height: 0;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px dashed rgba(148, 190, 255, 0.2);
+  }
+
+  .teacher-row-photo img {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+}
+
 /* ===== VS-сплит: соло против команды ===== */
 .vs-split {
   display: grid;
