@@ -1,6 +1,7 @@
 // src/lib/studio/sanityData.ts
 import { groq } from 'next-sanity';
 import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
+import type { MainPageContent } from '@/data/mainPageContent';
 import { getSanityClient } from './sanityClient';
 
 type FetchOptions = {
@@ -13,16 +14,16 @@ function getClient({ preview }: FetchOptions = {}) {
 
 function getSanityFetchOptions({ preview }: FetchOptions, tags: string[]) {
   const isDev = process.env.NODE_ENV !== 'production'
-  const options: any = preview
+  const options: { cache: 'no-store' } | { next: { tags: string[]; revalidate: number } } = preview
     ? { cache: 'no-store' }
     : isDev
       ? { cache: 'no-store' }
-    : {
-        next: {
-          tags,
-          revalidate: 60,
-        },
-      }
+      : {
+          next: {
+            tags,
+            revalidate: 60,
+          },
+        }
 
   return options
 }
@@ -183,5 +184,77 @@ export async function getProcessSteps({ preview }: FetchOptions = {}): Promise<P
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
     getSanityFetchOptions({ preview }, ['sanity:processStep'])
+  );
+}
+
+// Контент страницы курса (/): все блоки одним запросом.
+// Любой блок может отсутствовать в Sanity — на клиенте подставляются дефолты.
+export async function getMainPageContent({
+  preview,
+}: FetchOptions = {}): Promise<MainPageContent | null> {
+  const client = getClient({ preview });
+  return client.fetch(
+    groq`{
+      "hero": *[_type == "courseHero"] | order(_updatedAt desc)[0]{
+        eyebrow,
+        headline,
+        pills,
+        questTitle,
+        questNote,
+        questPoints,
+        buttonText
+      },
+      "mentor": *[_type == "mentorBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle,
+        specs[]{ _key, label, value },
+        journal[]{ _key, title, text },
+        mentorName,
+        mentorClass,
+        mentorLevel,
+        badges,
+        quoteStatus,
+        quoteText
+      },
+      "program": *[_type == "programBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle,
+        missions[]{ _key, title, text }
+      },
+      "reviews": *[_type == "reviewsBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle
+      },
+      "init": *[_type == "initBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle,
+        subtitle,
+        steps[]{ _key, icon, title, lines },
+        priceLabel,
+        priceValue,
+        pricePeriod,
+        priceNote,
+        buttonText
+      },
+      "faq": *[_type == "faqBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle
+      },
+      "faqItems": *[_type == "faqItem"] | order(coalesce(order, 9999) asc, _createdAt asc){
+        question,
+        answer
+      },
+      "paths": *[_type == "pathsBlock"] | order(_updatedAt desc)[0]{
+        sectionTitle,
+        columns[]{ _key, title, sub, description, perks },
+        ctaText
+      }
+    }`,
+    {},
+    getSanityFetchOptions({ preview }, [
+      'sanity:courseHero',
+      'sanity:mentorBlock',
+      'sanity:programBlock',
+      'sanity:reviewsBlock',
+      'sanity:initBlock',
+      'sanity:faqBlock',
+      'sanity:faqItem',
+      'sanity:pathsBlock',
+    ])
   );
 }

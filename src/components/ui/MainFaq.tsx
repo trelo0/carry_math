@@ -2,7 +2,13 @@
 
 import { useState } from 'react';
 
-const FAQ_ITEMS = [
+export type MainFaqItem = {
+  q: string;
+  a: string;
+};
+
+// Дефолтные вопросы: используются, пока в Sanity нет ни одного документа «Вопрос FAQ».
+const DEFAULT_FAQ_ITEMS: MainFaqItem[] = [
   {
     q: 'Как проходят занятия онлайн?',
     a: 'Живые вебинары с экспертом 2 раза в неделю по ~90 минут плюс самостоятельная практика на геймифицированной платформе. Все записи занятий остаются у тебя навсегда.',
@@ -29,12 +35,13 @@ const FAQ_ITEMS = [
   },
 ];
 
-export default function MainFaq() {
+export default function MainFaq({ items }: { items?: MainFaqItem[] }) {
   const [open, setOpen] = useState<number | null>(0);
+  const faqItems = items && items.length > 0 ? items : DEFAULT_FAQ_ITEMS;
 
   return (
     <div className="faq-list">
-      {FAQ_ITEMS.map((item, index) => (
+      {faqItems.map((item, index) => (
         <div
           className={`faq-item${open === index ? ' faq-item--open' : ''}`}
           key={item.q}

@@ -4,94 +4,30 @@ import { useEffect, useRef } from 'react';
 import MainFaq from '@/components/ui/MainFaq';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
+import type { MainPageContent } from '@/data/mainPageContent';
+import { MAIN_PAGE_DEFAULTS, pickStr, pickArr, pickNum } from '@/data/mainPageContent';
 
 // Платный курс пока не подключён: кнопка записи показывает сообщение
 // и предлагает бесплатный пробный вебинар (Telegram).
 const COURSE_UNAVAILABLE_NOTICE =
   'Запись на платный курс пока недоступна. Запишись на бесплатный пробный вебинар, чтобы познакомиться с форматом.';
 
-const SPECS = [
-  { label: 'Харизма и удержание внимания', value: 98 },
-  { label: 'Взлом ЦТ / декодирование информации', value: 100 },
-  { label: 'Ментальная стойкость', value: 95 },
-  { label: 'Прокачка новичков', value: 92 },
-  { label: 'Индекс занудства', value: 4 },
-  { label: 'Синхронизация (понятный язык)', value: 99 },
-];
-
-const DATA_ITEMS = [
-  {
-    title: 'Год инициации в системе (опыт)',
-    text: 'Преподавательский стаж 4 года',
-  },
-  {
-    title: 'Базовый сектор подготовки (образование)',
-    text: '2019 — лицей №2, физмат профиль\n2023 — БГУ, механико-математический факультет, специальность: математика [научно-педагогическая деятельность]',
-  },
-  {
-    title: 'Главный боевой трофей (результат)',
-    text: 'Личный результат: 98 баллов ЦТ',
-  },
-];
-
-const PROGRAM_STEPS = [
-  { title: 'Диагностика', text: 'Определяем уровень, цели и точки роста.' },
-  { title: 'Личный план', text: 'Собираем программу под твои задачи.' },
-  { title: 'Практика', text: 'Решаем реальные варианты ЕГЭ и олимпиад.' },
-  { title: 'Контроль', text: 'Срезы, разбор ошибок и отчёты родителям.' },
-  { title: 'Победа', text: 'Выходим на экзамен подготовленным на 100%.' },
-];
-
 const WAVE_BARS = Array.from({ length: 64 }, (_, i) => 18 + ((i * 53) % 82));
 
-const INIT_STEPS = [
-  {
-    num: '01',
-    icon: 'search',
-    title: '8 занятий с экспертом',
-    lines: [
-      '2 раза в неделю',
-      '1 занятие ~90 минут',
-      'Разбор ловушек ЦТ в режиме реального времени',
-      'Решаем только то, что реально будет на ЦТ',
-    ],
-  },
-  {
-    num: '02',
-    icon: 'pencil',
-    title: 'Ручная проверка домашних заданий',
-    lines: [
-      'Поддержка, мотивация и контроль 24/7',
-      'Личный куратор в Telegram с развернутыми комментариями к домашнему заданию — он разбирает каждую твою ошибку',
-    ],
-  },
-  {
-    num: '03',
-    icon: 'sliders',
-    title: 'Доступ к интерактивной платформе',
-    lines: ['Улица Дистрикта с визуализацией твоего прогресса'],
-  },
-  {
-    num: '04',
-    icon: 'chart',
-    title: 'Оружейная комната',
-    lines: ['Шпаргалки, чек-листы и материалы по всем темам ЦТ'],
-  },
-];
-
-const RAID_PERKS = [
-  'Программа строится под твою цель и стартовый уровень',
-  'Гибкий график — занятия когда удобно, даже вечером',
-  'Максимальное внимание наставника всё занятие',
-  'Личный куратор и разбор каждой ошибки 24/7',
-];
-
-const SQUAD_PERKS = [
-  'Цена ниже, качество подготовки то же',
-  'Командный рейтинг и совместные квесты',
-  'Игровая мотивация: уровни, лиги, награды',
-  'Занятия в мини-группе до 5 человек',
-];
+// Заголовок с золотым последним словом («Готовим победителей», «Время пройти инициацию»).
+function GoldLastWord({ text }: { text: string }) {
+  const words = text.trim().split(/\s+/);
+  if (words.length < 2) return <span className="gold">{text}</span>;
+  const last = words[words.length - 1];
+  const rest = words.slice(0, -1).join(' ');
+  return (
+    <>
+      {rest}
+      <br />
+      <span className="gold">{last}</span>
+    </>
+  );
+}
 
 function InitIcon({ icon }: { icon: string }) {
   switch (icon) {
@@ -167,6 +103,10 @@ const DEFAULT_REVIEWS: Review[] = [
 const ROAD_D =
   'M 20 370 H 150 C 240 370 240 300 330 300 C 420 300 430 370 520 370 C 610 370 620 300 710 300 C 800 300 810 370 900 370 C 990 370 1000 300 1090 300 C 1180 300 1190 370 1280 370 C 1330 370 1415 356 1480 352';
 
+// позиции карточек миссий на дороге (% внутри .mission-map-inner)
+const MISSION_LEFTS = [22, 34.7, 47.3, 60, 72.7];
+const MISSION_TOPS = [12.6, 84.6, 12.6, 84.6, 12.6];
+
 // площадки-остановки миссий beside the road (SVG-координаты)
 const MISSION_PADS = [
   { x: 330, y: 215 },
@@ -176,9 +116,68 @@ const MISSION_PADS = [
   { x: 1090, y: 215 },
 ];
 
-export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
+export default function MainPageClient({
+  reviews,
+  content,
+}: {
+  reviews?: Review[];
+  content?: MainPageContent;
+}) {
   const reviewList = reviews && reviews.length > 0 ? reviews : DEFAULT_REVIEWS;
   const { openForm } = useForm();
+
+  // Контент из Sanity с фолбэками на статические дефолты.
+  const D = MAIN_PAGE_DEFAULTS;
+  const hero = content?.hero;
+  const heroEyebrow = pickStr(hero?.eyebrow, D.hero.eyebrow);
+  const heroHeadline = pickStr(hero?.headline, D.hero.headline);
+  const heroPills = pickArr(hero?.pills, D.hero.pills);
+  const heroQuestTitle = pickStr(hero?.questTitle, D.hero.questTitle);
+  const heroQuestNote = pickStr(hero?.questNote, D.hero.questNote);
+  const heroQuestPoints = pickArr(hero?.questPoints, D.hero.questPoints);
+  const heroButtonText = pickStr(hero?.buttonText, D.hero.buttonText);
+
+  const mentor = content?.mentor;
+  const mentorSectionTitle = pickStr(mentor?.sectionTitle, D.mentor.sectionTitle);
+  const specs = pickArr(mentor?.specs, D.mentor.specs).map((s) => ({
+    label: pickStr(s?.label, ''),
+    value: pickNum(s?.value, 0),
+  }));
+  const journal = pickArr(mentor?.journal, D.mentor.journal);
+  const mentorName = pickStr(mentor?.mentorName, D.mentor.mentorName);
+  const mentorClass = pickStr(mentor?.mentorClass, D.mentor.mentorClass);
+  const mentorLevel = pickStr(mentor?.mentorLevel, D.mentor.mentorLevel);
+  const mentorBadges = pickArr(mentor?.badges, D.mentor.badges);
+  const quoteStatus = pickStr(mentor?.quoteStatus, D.mentor.quoteStatus);
+  const quoteText = pickStr(mentor?.quoteText, D.mentor.quoteText);
+
+  const program = content?.program;
+  const programSectionTitle = pickStr(program?.sectionTitle, D.program.sectionTitle);
+  const missions = pickArr(program?.missions, D.program.missions);
+
+  const reviewsSectionTitle = pickStr(content?.reviews?.sectionTitle, D.reviews.sectionTitle);
+
+  const init = content?.init;
+  const initSectionTitle = pickStr(init?.sectionTitle, D.init.sectionTitle);
+  const initSubtitle = pickStr(init?.subtitle, D.init.subtitle);
+  const initSteps = pickArr(init?.steps, D.init.steps);
+  const priceLabel = pickStr(init?.priceLabel, D.init.priceLabel);
+  const priceValue = pickStr(init?.priceValue, D.init.priceValue);
+  const pricePeriod = pickStr(init?.pricePeriod, D.init.pricePeriod);
+  const priceNote = pickStr(init?.priceNote, D.init.priceNote);
+  const initButtonText = pickStr(init?.buttonText, D.init.buttonText);
+  const initKicker = `КВЕСТ 04 // СНАРЯЖЕНИЕ :: ${priceValue.replace(/\s+/g, '_')}`;
+
+  const faqSectionTitle = pickStr(content?.faq?.sectionTitle, D.faq.sectionTitle);
+  const faqItems = pickArr(content?.faqItems, D.faqItems).map((item) => ({
+    q: pickStr(item?.question, ''),
+    a: pickStr(item?.answer, ''),
+  }));
+
+  const paths = content?.paths;
+  const pathsSectionTitle = pickStr(paths?.sectionTitle, D.paths.sectionTitle);
+  const pathColumns = pickArr(paths?.columns, D.paths.columns);
+  const pathsCtaText = pickStr(paths?.ctaText, D.paths.ctaText);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -277,41 +276,35 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
           53.9006° N, 27.5590° E // MINSK NODE // UPLINK STABLE
         </p>
         <div className="container hero-content">
-          <p className="hero-eyebrow">Онлайн-школа по математике</p>
+          <p className="hero-eyebrow">{heroEyebrow}</p>
           <div className="hero-brand">District</div>
           <h1 className="hero-headline">
-            Готовим
-            <br />
-            <span className="gold">победителей</span>
+            <GoldLastWord text={heroHeadline} />
           </h1>
 
           <div className="main-hero-actions">
             <div className="main-hero-chips">
               <div className="main-hero-chip">
-                <span className="chip-pill">Живые вебинары</span>
-                <span className="chip-pill">Геймифицированная платформа</span>
-                <span className="chip-pill">Личный куратор</span>
+                {heroPills.map((pill) => (
+                  <span className="chip-pill" key={pill}>
+                    {pill}
+                  </span>
+                ))}
               </div>
               <div className="main-hero-chip">
-                <span className="chip-pill">Здесь подготовка - это квест</span>
-                <span className="chip-note">Ты не просто учишь формулы, ты:</span>
-                <span className="chip-check">
-                  <span className="box" aria-hidden="true" />
-                  Открываешь секретные коды фракций
-                </span>
-                <span className="chip-check">
-                  <span className="box" aria-hidden="true" />
-                  Прокачиваешь личный прогресс на карте
-                </span>
-                <span className="chip-check">
-                  <span className="box" aria-hidden="true" />
-                  Общаешься с наставником в закрытом ТГ-канале
-                </span>
+                <span className="chip-pill">{heroQuestTitle}</span>
+                <span className="chip-note">{heroQuestNote}</span>
+                {heroQuestPoints.map((point) => (
+                  <span className="chip-check" key={point}>
+                    <span className="box" aria-hidden="true" />
+                    {point}
+                  </span>
+                ))}
               </div>
             </div>
 
             <a className="hero-signup" href="#signup">
-              Записаться
+              {heroButtonText}
             </a>
           </div>
         </div>
@@ -322,14 +315,14 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
         <div className="container">
           <span className="section-kicker section-kicker--center">КВЕСТ 01 // НАСТАВНИК ГИЛЬДИИ :: READY</span>
           <h2 className="main-teacher-title">
-            <span className="line">Твой наставник по математике</span>
+            <span className="line">{mentorSectionTitle}</span>
           </h2>
 
           <div className="main-teacher-layout" ref={layoutRef}>
             <aside className="main-panel main-panel--specs">
               <p className="main-panel-title">Характеристики</p>
-              {SPECS.map((spec) => (
-                <div className="spec-row" key={spec.label}>
+              {specs.map((spec, index) => (
+                <div className="spec-row" key={`${spec.label}-${index}`}>
                   <span className="spec-label">{spec.label}</span>
                   <span className="spec-value">{spec.value}%</span>
                   <span className="spec-bar">
@@ -351,21 +344,21 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
                 />
               </div>
               <div className="mentor-plate">
-                <span className="mentor-class">Наставник гильдии</span>
-                <p className="mentor-name">Лидия Владимировна</p>
-                <span className="mentor-level">LVL 99 · МАТЕМАТИКА</span>
+                <span className="mentor-class">{mentorClass}</span>
+                <p className="mentor-name">{mentorName}</p>
+                <span className="mentor-level">{mentorLevel}</span>
               </div>
               <ul className="mentor-badges" aria-label="Достижения наставника">
-                <li>❖ 98 баллов ЦТ</li>
-                <li>❖ 4 года опыта</li>
-                <li>❖ БГУ, мехмат</li>
+                {mentorBadges.map((badge) => (
+                  <li key={badge}>❖ {badge}</li>
+                ))}
               </ul>
             </div>
 
             <aside className="main-panel main-panel--journal">
               <p className="main-panel-title">Журнал заданий:</p>
-              {DATA_ITEMS.map((item) => (
-                <div className="data-item" key={item.title}>
+              {journal.map((item, index) => (
+                <div className="data-item" key={`${item.title}-${index}`}>
                   <span className="data-hex" aria-hidden="true">
                     <svg viewBox="0 0 24 28" fill="none">
                       <polygon
@@ -390,13 +383,8 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
 
           <div className="main-teacher-notes">
             <div className="teacher-quote">
-              <p className="status">[Наставник гильдии online. Сектор MM-01]</p>
-              <p>
-                «Математика — это четкая архитектура. Я научу твой мозг видеть
-                скрытые ловушки составителей тестов за три секунды. Экзамен —
-                это просто финальный босс, которого мы обязаны пройти на
-                максимум.»
-              </p>
+              <p className="status">{quoteStatus}</p>
+              <p>«{quoteText}»</p>
               <div className="wave" aria-hidden="true">
                 <div className="wave-bars">
                   {WAVE_BARS.map((height, index) => (
@@ -445,7 +433,7 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
         <span className="watermark watermark--left" aria-hidden="true">QUEST</span>
         <div className="container">
           <span className="section-kicker section-kicker--center">КВЕСТ 02 // КАРТА МИССИЙ :: LVL 1–5</span>
-          <h2 className="main-section-title">Программа обучения</h2>
+          <h2 className="main-section-title">{programSectionTitle}</h2>
 
           <div className="mission-map">
             <div className="mission-map-inner">
@@ -558,13 +546,13 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
               </span>
 
               <ol className="mission-list">
-                {PROGRAM_STEPS.map((step, index) => (
+                {missions.map((step, index) => (
                   <li
                     className={`mission mission--${index + 1}`}
-                    key={step.title}
+                    key={`${step.title}-${index}`}
                     style={{
-                      left: `${[22, 34.7, 47.3, 60, 72.7][index]}%`,
-                      top: `${[12.6, 84.6, 12.6, 84.6, 12.6][index]}%`,
+                      left: `${MISSION_LEFTS[index % MISSION_LEFTS.length]}%`,
+                      top: `${MISSION_TOPS[index % MISSION_TOPS.length]}%`,
                     }}
                   >
                     <article className="mission-card">
@@ -593,7 +581,7 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
         <span className="watermark" aria-hidden="true">SAGA</span>
         <div className="container">
           <span className="section-kicker section-kicker--center">КВЕСТ 03 // ХРОНИКА ПОДВИГОВ :: LIVE</span>
-          <h2 className="main-section-title">Отзывы</h2>
+          <h2 className="main-section-title">{reviewsSectionTitle}</h2>
 
           <div
             className={`reviews-track${reviewList.length > 3 ? ' reviews-track--scroll' : ''}`}
@@ -620,10 +608,10 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
       <div className="data-strip" aria-hidden="true">
         <div className="data-strip-track">
           <span>
-            LOOT // 180 BYN // МЕСЯЦ ПОДГОТОВКИ // КУРАТОР 24/7 // ПЛАТФОРМА +XP // ОРУЖЕЙНАЯ КОМНАТА // ★ LVL MAX ★ //&nbsp;
+            {`LOOT // ${priceValue} // МЕСЯЦ ПОДГОТОВКИ // КУРАТОР 24/7 // ПЛАТФОРМА +XP // ОРУЖЕЙНАЯ КОМНАТА // ★ LVL MAX ★ //\u00A0`}
           </span>
           <span>
-            LOOT // 180 BYN // МЕСЯЦ ПОДГОТОВКИ // КУРАТОР 24/7 // ПЛАТФОРМА +XP // ОРУЖЕЙНАЯ КОМНАТА // ★ LVL MAX ★ //&nbsp;
+            {`LOOT // ${priceValue} // МЕСЯЦ ПОДГОТОВКИ // КУРАТОР 24/7 // ПЛАТФОРМА +XP // ОРУЖЕЙНАЯ КОМНАТА // ★ LVL MAX ★ //\u00A0`}
           </span>
         </div>
       </div>
@@ -631,28 +619,28 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
       <section className="main-init" id="signup" data-reveal>
         <span className="watermark watermark--left" aria-hidden="true">LOOT</span>
         <div className="container">
-          <span className="section-kicker section-kicker--center">КВЕСТ 04 // СНАРЯЖЕНИЕ :: 180_BYN</span>
+          <span className="section-kicker section-kicker--center">{initKicker}</span>
           <h2 className="main-init-title">
-            Время пройти <span className="gold">инициацию</span>
+            <GoldLastWord text={initSectionTitle} />
           </h2>
-          <p className="main-init-sub">Полноценный абонемент на месяц</p>
+          <p className="main-init-sub">{initSubtitle}</p>
 
           <div className="init-layout">
             <div className="init-steps">
-              {INIT_STEPS.map((step, index) => (
-                <div className="init-step" key={step.num}>
+              {initSteps.map((step, index) => (
+                <div className="init-step" key={`${step.title}-${index}`}>
                   <div className="init-rail">
                     <span className="init-icon">
-                      <InitIcon icon={step.icon} />
+                      <InitIcon icon={step.icon ?? 'chart'} />
                     </span>
-                    {index < INIT_STEPS.length - 1 && (
+                    {index < initSteps.length - 1 && (
                       <span className="rail-line" aria-hidden="true" />
                     )}
                   </div>
                   <div className="init-body">
-                    <span className="init-num">{step.num}</span>
+                    <span className="init-num">{String(index + 1).padStart(2, '0')}</span>
                     <h3>{step.title}</h3>
-                    {step.lines.map((line) => (
+                    {(step.lines ?? []).map((line) => (
                       <p key={line}>{line}</p>
                     ))}
                   </div>
@@ -662,19 +650,17 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
 
             <div className="init-side">
               <div className="init-price">
-                <p className="price-label">Стоимость</p>
-                <p className="price-value">180 BYN</p>
-                <p className="price-period">за один месяц подготовки</p>
-                <p className="price-note">
-                  100% возврат после первого занятия, если формат не подошёл
-                </p>
+                <p className="price-label">{priceLabel}</p>
+                <p className="price-value">{priceValue}</p>
+                <p className="price-period">{pricePeriod}</p>
+                <p className="price-note">{priceNote}</p>
               </div>
               <button
                 type="button"
                 className="init-cta"
                 onClick={() => openForm({ variant: 'webinar', notice: COURSE_UNAVAILABLE_NOTICE })}
               >
-                Записаться на курс
+                {initButtonText}
               </button>
             </div>
           </div>
@@ -685,8 +671,8 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
         <span className="watermark" aria-hidden="true">FAQ</span>
         <div className="container">
           <span className="section-kicker section-kicker--center">КВЕСТ 05 // СВИТКИ ВОПРОСОВ :: 24/7</span>
-          <h2 className="main-section-title">Часто задаваемые вопросы</h2>
-          <MainFaq />
+          <h2 className="main-section-title">{faqSectionTitle}</h2>
+          <MainFaq items={faqItems} />
         </div>
       </section>
 
@@ -694,48 +680,27 @@ export default function MainPageClient({ reviews }: { reviews?: Review[] }) {
         <span className="watermark" aria-hidden="true">PATHS</span>
         <div className="container">
           <span className="section-kicker section-kicker--center">РАЗВИЛКА // ЕСЛИ КУРС НЕ ПОДХОДИТ</span>
-          <h2 className="main-section-title">Не подошёл курс?</h2>
+          <h2 className="main-section-title">{pathsSectionTitle}</h2>
 
           <div className="paths-grid">
-            <div className="path-col">
-              <h3 className="path-title">Одиночный рейд</h3>
-              <p className="path-sub">
-                Индивидуальные занятия с наставником 5–11 класс
-              </p>
-              <div className="path-card">
-                <p className="path-desc">
-                  Личный маршрут по математике: программа, темп и фокус — только
-                  под тебя. Наставник ведёт от диагностики до экзамена.
-                </p>
-                <ul className="path-perks">
-                  {RAID_PERKS.map((perk) => (
-                    <li key={perk}>{perk}</li>
-                  ))}
-                </ul>
+            {pathColumns.map((col, index) => (
+              <div className="path-col" key={`${col.title}-${index}`}>
+                <h3 className="path-title">{col.title}</h3>
+                <p className="path-sub">{col.sub}</p>
+                <div className="path-card">
+                  <p className="path-desc">{col.description}</p>
+                  <ul className="path-perks">
+                    {(col.perks ?? []).map((perk) => (
+                      <li key={perk}>{perk}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
-            </div>
-
-            <div className="path-col">
-              <h3 className="path-title">Командный сектор</h3>
-              <p className="path-sub">
-                Занятия в мини-группах до 5-ти человек 5–10 класс
-              </p>
-              <div className="path-card">
-                <p className="path-desc">
-                  Мини-отряд до 5 человек: общий рейтинг, командные квесты и
-                  дух соревнования — мотивация, которой не хватает в одиночку.
-                </p>
-                <ul className="path-perks">
-                  {SQUAD_PERKS.map((perk) => (
-                    <li key={perk}>{perk}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            ))}
           </div>
 
           <a className="paths-cta" href="/individual">
-            Узнать больше
+            {pathsCtaText}
           </a>
         </div>
       </section>
