@@ -185,7 +185,7 @@ export function Header({
 
       {isDesktop && !authLoading ? (
         phone ? (
-          <a href="/account" className="header-account" title={phone}>
+          <a href="/cabinet" className="header-account" title={phone}>
             <span className="header-account-dot" aria-hidden="true" />
             Личный кабинет
           </a>
@@ -242,7 +242,7 @@ export function Header({
           {!authLoading ? (
             phone ? (
               <a
-                href="/account"
+                href="/cabinet"
                 className="mobile-menu-account"
                 onClick={() => setMenuOpen(false)}
               >

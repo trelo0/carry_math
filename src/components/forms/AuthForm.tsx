@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { normalizePhone, formatPhoneInput } from '@/lib/phone';
 import { AUTH_CHANGED_EVENT } from '@/contexts/AuthContext';
@@ -44,20 +44,11 @@ export default function AuthForm() {
   const [connectUrl, setConnectUrl] = useState('');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
   const [message, setMessage] = useState<{ type: 'error' | 'ok'; text: string } | null>(null);
   const router = useRouter();
 
   // Ошибка относится к полю: красим рамку и пишем текст сразу под ним.
   const fieldError = message?.type === 'error' ? message.text : null;
-
-  // Живой отсчёт кулдауна повторной отправки кода.
-  const cooling = cooldown > 0;
-  useEffect(() => {
-    if (!cooling) return;
-    const t = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
-    return () => clearInterval(t);
-  }, [cooling]);
 
   const requestCode = async (phoneValue: string) => {
     setMessage(null);
@@ -80,14 +71,7 @@ export default function AuthForm() {
       } else {
         setStep('otp');
         setCode('');
-        setCooldown(typeof data.cooldownSeconds === 'number' ? data.cooldownSeconds : 0);
-        setMessage({
-          type: 'ok',
-          text:
-            data.resent === false
-              ? 'Код уже отправлен — проверь Telegram-бот.'
-              : 'Мы отправили код в Telegram-бот Math School.',
-        });
+        setMessage({ type: 'ok', text: 'Мы отправили код в Telegram-бот Math School.' });
       }
     } catch {
       setMessage({ type: 'error', text: 'Не удалось связаться с сервером. Попробуй ещё раз.' });
@@ -139,7 +123,7 @@ export default function AuthForm() {
       }
       // Шапка и другие компоненты узнают о входе без перезагрузки.
       window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
-      router.push('/account');
+      router.push('/cabinet');
       router.refresh();
     } catch {
       setMessage({ type: 'error', text: 'Не удалось связаться с сервером. Попробуй ещё раз.' });
@@ -239,14 +223,10 @@ export default function AuthForm() {
         <button
           type="button"
           className="auth-secondary"
-          disabled={loading || cooling}
+          disabled={loading}
           onClick={() => void requestCode(normalized)}
         >
-          {loading
-            ? 'Отправляем…'
-            : cooling
-              ? `Повторная отправка через ${cooldown} сек.`
-              : 'Получить код повторно'}
+          Отправить код повторно
         </button>
 
         <button type="button" className="auth-back" onClick={backToPhone}>

@@ -1824,6 +1824,18 @@ section[data-reveal].revealed {
     linear-gradient(90deg, rgba(0, 168, 255, 0.03) 1px, transparent 1px);
   background-size: 62px 62px;
   border-radius: 24px;
+  overflow: hidden;
+}
+
+.mission-map-inner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 15% 40%, rgba(255, 171, 64, 0.06) 0, transparent 40%),
+    radial-gradient(circle at 85% 60%, rgba(0, 168, 255, 0.05) 0, transparent 35%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .road-svg {
@@ -1838,21 +1850,37 @@ section[data-reveal].revealed {
   stroke: #05080f;
   stroke-width: 86;
   stroke-linecap: butt;
+  stroke-linejoin: miter;
   transform: translateY(11px);
+}
+
+.road-reflection {
+  fill: none;
+  stroke: rgba(0, 150, 235, 0.06);
+  stroke-width: 72;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  transform: translateY(28px) scaleY(0.35);
+  transform-origin: center 370px;
+  filter: blur(4px);
 }
 
 .road-halo {
   fill: none;
-  stroke: rgba(0, 160, 255, 0.08);
-  stroke-width: 116;
+  stroke: rgba(0, 160, 255, 0.18);
+  stroke-width: 130;
   stroke-linecap: butt;
+  stroke-linejoin: miter;
+  filter: blur(6px);
 }
 
 .road-curb {
   fill: none;
-  stroke: rgba(0, 150, 235, 0.5);
+  stroke: rgba(0, 150, 235, 0.72);
   stroke-width: 86;
   stroke-linecap: butt;
+  stroke-linejoin: miter;
+  filter: drop-shadow(0 0 8px rgba(0, 168, 255, 0.45));
 }
 
 .road-surface {
@@ -1860,20 +1888,31 @@ section[data-reveal].revealed {
   stroke: url(#roadSurface);
   stroke-width: 72;
   stroke-linecap: butt;
+  stroke-linejoin: miter;
 }
 
 .road-mid-glow {
   fill: none;
-  stroke: rgba(232, 143, 40, 0.2);
-  stroke-width: 8;
+  stroke: rgba(232, 143, 40, 0.35);
+  stroke-width: 10;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
+  filter: blur(2px);
 }
 
 .road-mid {
   fill: none;
-  stroke: #e88f28;
+  stroke: #ffb020;
   stroke-width: 3.5;
   stroke-dasharray: 34 30;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
   animation: road-energy 2.6s linear infinite;
+}
+
+.road-dot {
+  fill: rgba(255, 176, 32, 0.85);
+  filter: drop-shadow(0 0 5px rgba(255, 176, 32, 0.9));
 }
 
 @keyframes road-energy {
@@ -1948,22 +1987,22 @@ section[data-reveal].revealed {
 }
 
 .pad-link {
-  stroke: rgba(0, 168, 255, 0.55);
+  stroke: rgba(0, 168, 255, 0.65);
   stroke-width: 2;
   stroke-dasharray: 5 6;
 }
 
 .card-link {
-  stroke: rgba(232, 149, 44, 0.5);
+  stroke: rgba(0, 168, 255, 0.45);
   stroke-width: 1.5;
   stroke-dasharray: 4 6;
 }
 
 .pad {
   fill: #0c1424;
-  stroke: rgba(0, 150, 235, 0.72);
+  stroke: rgba(0, 150, 235, 0.85);
   stroke-width: 2;
-  filter: drop-shadow(0 0 6px rgba(0, 150, 235, 0.25));
+  filter: drop-shadow(0 0 8px rgba(0, 150, 235, 0.4));
 }
 
 .pad-num {
@@ -1992,13 +2031,14 @@ section[data-reveal].revealed {
 .mission-card {
   position: relative;
   width: min(250px, 100%);
-  border: 1px solid rgba(0, 168, 255, 0.42);
+  border: 1px solid rgba(0, 168, 255, 0.52);
   border-radius: 10px;
-  background: rgba(13, 21, 38, 0.82);
+  background: rgba(13, 21, 38, 0.88);
   padding: 16px 18px 14px;
   box-shadow:
     0 10px 26px rgba(2, 6, 18, 0.45),
-    0 0 20px rgba(0, 168, 255, 0.16);
+    0 0 24px rgba(0, 168, 255, 0.22),
+    inset 0 1px 0 rgba(0, 168, 255, 0.08);
   opacity: 0;
   transform: translateY(20px);
   transition:
@@ -2006,6 +2046,7 @@ section[data-reveal].revealed {
     transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1),
     border-color 0.2s ease,
     box-shadow 0.2s ease;
+  z-index: 1;
 }
 
 .mission-card::before {
@@ -2071,6 +2112,138 @@ section[data-reveal].revealed {
   border-radius: 999px;
   background: rgba(232, 149, 44, 0.08);
 }
+
+/* ---------- Мобильная версия: тропа вертикально ---------- */
+
+@media (max-width: 980px) {
+  .mission-map {
+    perspective: none;
+  }
+
+  .mission-map-inner {
+    transform: none;
+    aspect-ratio: auto;
+    background: none;
+    border-radius: 0;
+  }
+
+  .road-svg {
+    display: none;
+  }
+
+  .mission-list {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 44px 0 52px 84px;
+  }
+
+  .mission-list::before {
+    content: "";
+    position: absolute;
+    box-sizing: border-box;
+    left: 10px;
+    top: 30px;
+    bottom: 38px;
+    width: 62px;
+    border-radius: 6px;
+    background: #0f1a2e;
+    border-left: 3px solid rgba(0, 168, 255, 0.75);
+    border-right: 3px solid rgba(0, 168, 255, 0.75);
+    box-shadow: 0 0 18px rgba(0, 168, 255, 0.15);
+  }
+
+  .mission-list::after {
+    content: "";
+    position: absolute;
+    left: 38.5px;
+    top: 40px;
+    bottom: 48px;
+    width: 5px;
+    border-radius: 3px;
+    background: repeating-linear-gradient(
+      180deg,
+      #ffb020 0 14px,
+      transparent 14px 26px
+    );
+  }
+
+  .mission {
+    position: relative;
+    left: auto !important;
+    top: auto !important;
+    transform: none;
+  }
+
+  .mission::before {
+    content: "";
+    position: absolute;
+    box-sizing: border-box;
+    left: -55px;
+    top: 26px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #0d1526;
+    border: 3px solid rgba(0, 168, 255, 0.85);
+    box-shadow:
+      0 0 12px rgba(0, 168, 255, 0.45),
+      inset 0 0 4px rgba(0, 168, 255, 0.4);
+    z-index: 2;
+  }
+
+  .mobile-terminal {
+    display: block;
+    position: absolute;
+    left: 2px;
+    z-index: 2;
+    padding: 6px 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+
+  .mobile-terminal--start {
+    top: 0;
+    color: var(--accent);
+    border: 1.5px dashed rgba(0, 168, 255, 0.7);
+    background: #0d1526;
+  }
+
+  .mobile-terminal--finish {
+    bottom: 0;
+    color: var(--ember);
+    border: 1.5px solid rgba(232, 149, 44, 0.8);
+    background: #0d1526;
+    box-shadow: 0 0 18px rgba(232, 149, 44, 0.25);
+  }
+
+  .mission-card {
+    width: 100%;
+    transform: none !important;
+  }
+
+  .mentor-card {
+    position: static;
+    transform: none;
+    margin: 0 auto 26px;
+    order: -1;
+    width: min(320px, 100%);
+  }
+
+  .paths-grid {
+    grid-template-columns: 1fr;
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 
 /* ---------- Развилка внизу: одиночный рейд / командный сектор ---------- */
 
@@ -2249,137 +2422,6 @@ section[data-reveal].revealed {
   outline: 2px solid var(--gold);
   outline-offset: 3px;
   border-radius: 4px;
-}
-
-/* ---------- Мобильная версия: тропа вертикально ---------- */
-
-@media (max-width: 980px) {
-  .mission-map {
-    perspective: none;
-  }
-
-  .mission-map-inner {
-    transform: none;
-    aspect-ratio: auto;
-    background: none;
-    border-radius: 0;
-  }
-
-  .road-svg {
-    display: none;
-  }
-
-  .mission-list {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    padding: 44px 0 52px 84px;
-  }
-
-  .mission-list::before {
-    content: "";
-    position: absolute;
-    box-sizing: border-box;
-    left: 10px;
-    top: 30px;
-    bottom: 38px;
-    width: 62px;
-    border-radius: 6px;
-    background: #0f1a2e;
-    border-left: 3px solid rgba(0, 168, 255, 0.75);
-    border-right: 3px solid rgba(0, 168, 255, 0.75);
-    box-shadow: 0 0 18px rgba(0, 168, 255, 0.15);
-  }
-
-  .mission-list::after {
-    content: "";
-    position: absolute;
-    left: 38.5px;
-    top: 40px;
-    bottom: 48px;
-    width: 5px;
-    border-radius: 3px;
-    background: repeating-linear-gradient(
-      180deg,
-      #ffb020 0 14px,
-      transparent 14px 26px
-    );
-  }
-
-  .mission {
-    position: relative;
-    left: auto !important;
-    top: auto !important;
-    transform: none;
-  }
-
-  .mission::before {
-    content: "";
-    position: absolute;
-    box-sizing: border-box;
-    left: -55px;
-    top: 26px;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #0d1526;
-    border: 3px solid rgba(0, 168, 255, 0.85);
-    box-shadow:
-      0 0 12px rgba(0, 168, 255, 0.45),
-      inset 0 0 4px rgba(0, 168, 255, 0.4);
-    z-index: 2;
-  }
-
-  .mobile-terminal {
-    display: block;
-    position: absolute;
-    left: 2px;
-    z-index: 2;
-    padding: 6px 12px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    border-radius: 6px;
-    white-space: nowrap;
-  }
-
-  .mobile-terminal--start {
-    top: 0;
-    color: var(--accent);
-    border: 1.5px dashed rgba(0, 168, 255, 0.7);
-    background: #0d1526;
-  }
-
-  .mobile-terminal--finish {
-    bottom: 0;
-    color: var(--ember);
-    border: 1.5px solid rgba(232, 149, 44, 0.8);
-    background: #0d1526;
-    box-shadow: 0 0 18px rgba(232, 149, 44, 0.25);
-  }
-
-  .mission-card {
-    width: 100%;
-    transform: none !important;
-  }
-
-  .mentor-card {
-    position: static;
-    transform: none;
-    margin: 0 auto 26px;
-    order: -1;
-    width: min(320px, 100%);
-  }
-
-  .paths-grid {
-    grid-template-columns: 1fr;
-    max-width: 520px;
-    margin-left: auto;
-    margin-right: auto;
-  }
 }
 
 /* ---------- Уважение к reduced motion ---------- */

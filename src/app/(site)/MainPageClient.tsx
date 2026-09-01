@@ -100,20 +100,54 @@ const DEFAULT_REVIEWS: Review[] = [
   },
 ];
 
+// резкий зигзаг — только прямые сегменты, без bezier
 const ROAD_D =
-  'M 20 370 H 150 C 240 370 240 300 330 300 C 420 300 430 370 520 370 C 610 370 620 300 710 300 C 800 300 810 370 900 370 C 990 370 1000 300 1090 300 C 1180 300 1190 370 1280 370 C 1330 370 1415 356 1480 352';
+  'M 20 370 H 150 L 240 300 H 330 L 420 370 H 520 L 610 300 H 710 L 800 370 H 900 L 990 300 H 1090 L 1180 370 H 1280 L 1370 352 H 1480';
 
-// позиции карточек миссий на дороге (% внутри .mission-map-inner)
-const MISSION_LEFTS = [22, 34.7, 47.3, 60, 72.7];
-const MISSION_TOPS = [12.6, 84.6, 12.6, 84.6, 12.6];
+const ROAD_HALF = 36;
+const PAD_H = 44;
 
-// площадки-остановки миссий beside the road (SVG-координаты)
-const MISSION_PADS = [
-  { x: 330, y: 215 },
-  { x: 520, y: 485 },
-  { x: 710, y: 215 },
-  { x: 900, y: 485 },
-  { x: 1090, y: 215 },
+type MissionPad = {
+  x: number;
+  roadY: number;
+  cardAbove: boolean;
+};
+
+const MISSION_PADS: MissionPad[] = [
+  { x: 330, roadY: 300, cardAbove: true },
+  { x: 520, roadY: 370, cardAbove: false },
+  { x: 710, roadY: 300, cardAbove: true },
+  { x: 900, roadY: 370, cardAbove: false },
+  { x: 1090, roadY: 300, cardAbove: true },
+];
+
+function padGeometry(pad: MissionPad) {
+  if (pad.cardAbove) {
+    const bottom = pad.roadY - ROAD_HALF + 2;
+    const center = bottom - PAD_H / 2;
+    return {
+      center,
+      padLink: [pad.roadY - ROAD_HALF, bottom] as const,
+      cardLink: [center - PAD_H / 2 - 38, center - PAD_H / 2 - 18] as const,
+    };
+  }
+  const top = pad.roadY + ROAD_HALF - 2;
+  const center = top + PAD_H / 2;
+  return {
+    center,
+    padLink: [pad.roadY + ROAD_HALF, top] as const,
+    cardLink: [center + PAD_H / 2 + 18, center + PAD_H / 2 + 38] as const,
+  };
+}
+
+// точки-светофоры на поворотах
+const ROAD_DOTS = [
+  { x: 240, y: 335 },
+  { x: 420, y: 335 },
+  { x: 610, y: 335 },
+  { x: 800, y: 335 },
+  { x: 990, y: 335 },
+  { x: 1180, y: 335 },
 ];
 
 export default function MainPageClient({
@@ -463,16 +497,29 @@ export default function MainPageClient({
                 <path className="road-mid-glow" d={ROAD_D} />
                 <path className="road-mid" d={ROAD_D} />
 
-                {/* фонари у поворотов */}
-                <g className="lamp" transform="translate(425 0)">
-                  <line x1="0" y1="252" x2="0" y2="281" />
-                  <circle className="lamp-glow" cx="0" cy="248" r="11" />
-                  <circle className="lamp-head" cx="0" cy="248" r="5" />
+                {/* отражение дороги на «полу» */}
+                <path className="road-reflection" d={ROAD_D} />
+
+                {/* маркеры на поворотах */}
+                {ROAD_DOTS.map((dot, i) => (
+                  <circle key={i} className="road-dot" cx={dot.x} cy={dot.y} r="3.5" />
+                ))}
+
+                {/* фонари у острых поворотов */}
+                <g className="lamp" transform="translate(420 0)">
+                  <line x1="0" y1="318" x2="0" y2="348" />
+                  <circle className="lamp-glow" cx="0" cy="314" r="11" />
+                  <circle className="lamp-head" cx="0" cy="314" r="5" />
                 </g>
-                <g className="lamp" transform="translate(940 0)">
-                  <line x1="0" y1="393" x2="0" y2="422" />
-                  <circle className="lamp-glow" cx="0" cy="426" r="11" />
-                  <circle className="lamp-head" cx="0" cy="426" r="5" />
+                <g className="lamp" transform="translate(800 0)">
+                  <line x1="0" y1="348" x2="0" y2="378" />
+                  <circle className="lamp-glow" cx="0" cy="382" r="11" />
+                  <circle className="lamp-head" cx="0" cy="382" r="5" />
+                </g>
+                <g className="lamp" transform="translate(1180 0)">
+                  <line x1="0" y1="318" x2="0" y2="348" />
+                  <circle className="lamp-glow" cx="0" cy="314" r="11" />
+                  <circle className="lamp-head" cx="0" cy="314" r="5" />
                 </g>
 
                 {/* терминал START */}
@@ -503,34 +550,34 @@ export default function MainPageClient({
 
                 {/* площадки миссий + связки дорога↔площадка↔карточка */}
                 {MISSION_PADS.map((pad, i) => {
-                  const top = pad.y < 360;
+                  const geo = padGeometry(pad);
                   return (
                     <g key={i} className="pad-group">
                       <line
                         className="pad-link"
                         x1={pad.x}
-                        y1={top ? 237 : 426}
+                        y1={geo.padLink[0]}
                         x2={pad.x}
-                        y2={top ? 264 : 463}
+                        y2={geo.padLink[1]}
                       />
                       <line
                         className="card-link"
                         x1={pad.x}
-                        y1={top ? 176 : 507}
+                        y1={geo.cardLink[0]}
                         x2={pad.x}
-                        y2={top ? 193 : 524}
+                        y2={geo.cardLink[1]}
                       />
                       <rect
                         className="pad"
                         x={pad.x - 32}
-                        y={pad.y - 22}
+                        y={geo.center - 22}
                         width="64"
                         height="44"
                         rx="10"
                       />
                       <text
                         x={pad.x}
-                        y={pad.y + 6}
+                        y={geo.center + 6}
                         textAnchor="middle"
                         className="pad-num"
                       >
@@ -546,13 +593,15 @@ export default function MainPageClient({
               </span>
 
               <ol className="mission-list">
-                {missions.map((step, index) => (
+                {missions.map((step, index) => {
+                  const pad = MISSION_PADS[index];
+                  return (
                   <li
                     className={`mission mission--${index + 1}`}
                     key={`${step.title}-${index}`}
                     style={{
-                      left: `${MISSION_LEFTS[index % MISSION_LEFTS.length]}%`,
-                      top: `${MISSION_TOPS[index % MISSION_TOPS.length]}%`,
+                      left: pad ? `${(pad.x / 1500) * 100}%` : undefined,
+                      top: pad ? (pad.cardAbove ? '12.6%' : '84.6%') : undefined,
                     }}
                   >
                     <article className="mission-card">
@@ -566,7 +615,8 @@ export default function MainPageClient({
                       </span>
                     </article>
                   </li>
-                ))}
+                  );
+                })}
               </ol>
 
               <span className="mobile-terminal mobile-terminal--finish" aria-hidden="true">

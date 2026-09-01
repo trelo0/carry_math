@@ -117,11 +117,11 @@ export function buildStudentMainMenu(context: UserContext, testFooter = ''): Stu
   }
 }
 
-// Ссылка на личный кабинет сайта. Страница кабинета — /account
+// Ссылка на личный кабинет сайта. Страница кабинета — /cabinet
 // (вход по OTP через телефон уже существует). Когда появится авто-вход
 // по привязке Telegram, токен/deep-link добавится здесь, не меняя меню.
 export function getStudentCabinetUrl(): string {
-  return `${getBaseUrlString()}/account`;
+  return `${getBaseUrlString()}/cabinet`;
 }
 
 // ---------------------------------------------------------------------------
