@@ -23,11 +23,6 @@
   color: var(--cab-text);
 }
 
-/* На десктопе кабинет вмещается в экран без прокрутки страницы. */
-@media (min-width: 1221px) {
-  .cabinet { height: 100dvh; overflow: hidden; }
-}
-
 /* ---------------------------- Сайдбар ----------------------------------- */
 
 .cab-sidebar {
@@ -44,8 +39,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 4px 10px 14px;
+  border: 0;
   border-bottom: 1px solid var(--cab-line-soft);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
 }
 
 .cab-brand .logo-icon {
@@ -80,16 +80,38 @@
   font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  transform-origin: left center;
+  transition: color 0.2s, background 0.2s, border-color 0.2s, box-shadow 0.25s, transform 0.25s, opacity 0.2s;
 }
 
-.cab-nav-item:hover { color: var(--cab-text); background: rgba(56, 198, 255, 0.06); }
+/* неактивные пункты приглушены — контраст с активным очевиден */
+.cab-nav-item:not(.is-active) { opacity: 0.68; }
+
+.cab-nav-item:hover { color: var(--cab-text); background: rgba(56, 198, 255, 0.06); opacity: 1; }
 
 .cab-nav-item.is-active {
+  color: #eaf7ff;
+  background: linear-gradient(90deg, rgba(56, 198, 255, 0.22), rgba(56, 198, 255, 0.05) 72%, transparent);
+  border-color: rgba(56, 198, 255, 0.45);
+  box-shadow:
+    inset 3px 0 0 var(--cab-cyan),
+    0 0 18px rgba(56, 198, 255, 0.3),
+    0 0 5px rgba(56, 198, 255, 0.4);
+  transform: scale(1.05);
+  text-shadow: 0 0 10px rgba(56, 198, 255, 0.55);
+  animation: cab-nav-pop 0.45s ease-out;
+}
+
+.cab-nav-item.is-active .cab-nav-icon {
   color: var(--cab-cyan);
-  background: linear-gradient(90deg, rgba(56, 198, 255, 0.14), rgba(56, 198, 255, 0.03));
-  border-color: var(--cab-line);
-  box-shadow: inset 3px 0 0 var(--cab-cyan);
+  filter: drop-shadow(0 0 6px rgba(56, 198, 255, 0.7));
+}
+
+/* короткий «выстрел» свечения в момент активации пункта */
+@keyframes cab-nav-pop {
+  0% { transform: scale(1); box-shadow: inset 3px 0 0 var(--cab-cyan), 0 0 0 rgba(56, 198, 255, 0); }
+  45% { transform: scale(1.08); box-shadow: inset 3px 0 0 var(--cab-cyan), 0 0 28px rgba(56, 198, 255, 0.55); }
+  100% { transform: scale(1.05); box-shadow: inset 3px 0 0 var(--cab-cyan), 0 0 18px rgba(56, 198, 255, 0.3); }
 }
 
 .cab-nav-icon { width: 17px; height: 17px; flex: none; }
@@ -148,6 +170,24 @@
 }
 
 .cab-burger svg { width: 20px; height: 20px; }
+
+.cab-back {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border: 1px solid var(--cab-line);
+  border-radius: 10px;
+  background: rgba(10, 18, 36, 0.8);
+  color: var(--cab-cyan);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.cab-back:hover { border-color: rgba(56, 198, 255, 0.5); box-shadow: 0 0 12px rgba(56, 198, 255, 0.25); }
+.cab-back svg { width: 18px; height: 18px; }
 
 .cab-body {
   flex: 1;
@@ -240,8 +280,8 @@
 .cab-heart { width: 17px; height: 17px; color: rgba(148, 190, 255, 0.16); }
 
 .cab-heart.is-full {
-  color: var(--cab-cyan);
-  filter: drop-shadow(0 0 6px rgba(56, 198, 255, 0.7));
+  color: #ff4d5e;
+  filter: drop-shadow(0 0 6px rgba(255, 77, 94, 0.75));
 }
 
 .cab-lives-plus {
@@ -389,72 +429,373 @@
 
 /* ---------------------------- Дорога курса ------------------------------- */
 
-.cab-road { display: block; width: 100%; height: 118px; margin-top: 6px; }
+/* Рамка дороги: один общий неподвижный фон-город, поверх которого ездит дорога */
 
-.cab-road-base { stroke: #1a2440; stroke-width: 9; stroke-linecap: round; }
-
-.cab-road-marks {
-  stroke: rgba(223, 233, 255, 0.34);
-  stroke-width: 1.4;
-  stroke-dasharray: 4 7;
-  stroke-linecap: round;
+.cab-roadmap-frame {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  isolation: isolate;
 }
 
-.cab-road-done {
-  stroke: var(--cab-cyan);
-  stroke-width: 9;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 6px rgba(56, 198, 255, 0.8));
+/* одна картинка на всю рамку: не повторяется и не прокручивается вместе с дорогой */
+.cab-roadmap-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: url('/road.jpg') center 68% / cover no-repeat;
+  filter: brightness(0.82) saturate(1.15);
+  opacity: 0.75;
 }
 
-.cab-road-now {
-  stroke: var(--cab-orange);
-  stroke-width: 9;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 6px rgba(255, 154, 46, 0.8));
+/* вуаль: город различим, но остаётся тёмным фоном, не спорит с дорогой */
+.cab-roadmap-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(130% 95% at 50% 45%, rgba(6, 10, 22, 0.12) 40%, rgba(5, 9, 20, 0.68) 100%),
+    linear-gradient(180deg, rgba(6, 10, 22, 0.5), rgba(6, 10, 22, 0.36) 45%, rgba(6, 10, 22, 0.58));
 }
 
-.cab-node-done {
-  fill: #06121f;
-  stroke: var(--cab-cyan);
-  stroke-width: 2;
-  filter: drop-shadow(0 0 5px rgba(56, 198, 255, 0.7));
+.cab-roadmap {
+  position: relative;
+  z-index: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 198, 255, 0.35) transparent;
+  background: transparent;
 }
 
-.cab-node-check { stroke: var(--cab-cyan); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.cab-roadmap::-webkit-scrollbar { height: 6px; }
+.cab-roadmap::-webkit-scrollbar-track { background: rgba(26, 36, 64, 0.45); border-radius: 3px; }
+.cab-roadmap::-webkit-scrollbar-thumb { border-radius: 3px; background: rgba(56, 198, 255, 0.35); }
 
-.cab-node-now-halo { fill: rgba(255, 154, 46, 0.22); animation: cab-pulse 1.8s ease-in-out infinite; }
+.cab-roadmap-canvas { position: relative; height: 470px; }
 
-.cab-node-now {
-  fill: var(--cab-orange);
-  stroke: #ffd9a8;
-  stroke-width: 1.6;
-  filter: drop-shadow(0 0 8px rgba(255, 154, 46, 0.9));
-}
+.cab-roadmap-svg { position: absolute; inset: 0; display: block; }
 
-.cab-node-locked { fill: #101827; stroke: rgba(127, 147, 184, 0.45); stroke-width: 1.6; }
-.cab-node-lock { stroke: rgba(127, 147, 184, 0.8); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-
-.cab-node-finish {
+.cab-rm-finish-bg {
   fill: rgba(56, 198, 255, 0.12);
   stroke: var(--cab-cyan);
   stroke-width: 2;
   filter: drop-shadow(0 0 8px rgba(56, 198, 255, 0.8));
 }
 
-.cab-node-trophy { stroke: var(--cab-cyan); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cab-rm-finish-trophy { stroke: var(--cab-cyan); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.cab-rm-finish-label {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  fill: var(--cab-cyan);
+}
+
+/* площадка-остановка: дорога упирается в неё, как в тупиковую станцию */
+.cab-rm-plaza {
+  fill: #0c1424;
+  stroke: #33456e;
+  stroke-width: 3;
+}
+
+.cab-rm-start-bg {
+  fill: rgba(61, 220, 151, 0.12);
+  stroke: var(--cab-green, #3ddc97);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 8px rgba(61, 220, 151, 0.7));
+}
+
+.cab-rm-start-label {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  fill: var(--cab-green, #3ddc97);
+}
+
+/* Остановка: узел на дороге + табличка вебинара */
+
+.cab-rm-stop {
+  --stop-color: var(--cab-cyan);
+  --stop-glow: rgba(56, 198, 255, 0.35);
+  --stop-soft: rgba(56, 198, 255, 0.08);
+  position: absolute;
+}
+
+.cab-rm-node {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--stop-glow);
+  background: #0a1122;
+  color: var(--stop-color);
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, opacity 0.2s, filter 0.2s;
+}
+
+.cab-rm-node svg { width: 15px; height: 15px; }
+
+.cab-rm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--stop-color); }
+
+.cab-rm-stem {
+  position: absolute;
+  left: 0;
+  width: 2px;
+  height: 26px;
+  transform: translateX(-50%);
+}
+
+.plate-top .cab-rm-stem { top: -26px; background: linear-gradient(180deg, transparent, var(--stop-glow)); }
+.plate-bottom .cab-rm-stem { top: 0; background: linear-gradient(var(--stop-glow), transparent); }
+
+.cab-rm-plate {
+  position: absolute;
+  left: 0;
+  top: -26px;
+  width: 156px;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  text-align: left;
+  border: 1px solid var(--stop-glow);
+  border-radius: 12px;
+  background: rgba(7, 12, 26, 0.95);
+  color: var(--cab-text);
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, opacity 0.2s, filter 0.2s;
+}
+
+.plate-bottom .cab-rm-plate { top: 26px; transform: translate(-50%, 0); }
+
+.cab-rm-plate-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--cab-muted);
+}
+
+.cab-rm-plate-top b { color: var(--stop-color); font-weight: 600; }
+.cab-rm-plate-top em { font-style: normal; font-variant-numeric: tabular-nums; }
+
+.cab-rm-title {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: #f2f7ff;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cab-rm-label { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--cab-muted); }
+
+/* Статусы остановок */
+
+/* Пройдено: сплошное неоновое свечение цветом модуля, без галочки */
+.cab-rm-stop.is-done .cab-rm-node {
+  border-color: var(--stop-color);
+  box-shadow: 0 0 18px var(--stop-glow), 0 0 7px var(--stop-glow), inset 0 0 8px var(--stop-soft);
+}
+
+.cab-rm-stop.is-done .cab-rm-plate {
+  border-color: var(--stop-color);
+  box-shadow: 0 0 22px var(--stop-glow), 0 0 8px var(--stop-glow);
+  background: linear-gradient(160deg, var(--stop-soft), transparent 55%), rgba(7, 12, 26, 0.95);
+}
+
+.cab-rm-stop.is-done .cab-rm-label { color: var(--stop-color); }
+
+/* Просмотрено: неон чуть ярче + зелёная галочка — заметнее, чем просто «пройдено» */
+.cab-rm-stop.is-watched .cab-rm-node {
+  border-color: var(--stop-color);
+  box-shadow: 0 0 24px var(--stop-glow), 0 0 9px var(--stop-glow), inset 0 0 8px var(--stop-soft);
+}
+
+.cab-rm-stop.is-watched .cab-rm-plate {
+  border-color: rgba(61, 220, 151, 0.8);
+  box-shadow: 0 0 24px rgba(61, 220, 151, 0.45), 0 0 8px rgba(61, 220, 151, 0.35);
+  background: linear-gradient(160deg, rgba(61, 220, 151, 0.1), transparent 55%), rgba(7, 12, 26, 0.95);
+}
+
+/* зелёные акценты плиты «просмотрено» — в тон галочке на узле */
+.cab-rm-stop.is-watched .cab-rm-sign { background: #1db97e; box-shadow: 0 0 9px rgba(61, 220, 151, 0.6); }
+.cab-rm-stop.is-watched .cab-rm-label { color: var(--cab-green, #3ddc97); }
+
+/* Текущая остановка: тёплый оранжевый акцент + «дыхание» узла и плиты */
+.cab-rm-stop.is-now {
+  --now: #ff9a2e;
+  --now-soft: rgba(255, 154, 46, 0.4);
+}
+
+.cab-rm-stop.is-now .cab-rm-node {
+  border: 2.5px solid var(--now);
+  color: #ffd9a8;
+  background: #2a1a06;
+  animation: cab-now-glow 2.2s ease-in-out infinite;
+}
+
+.cab-rm-stop.is-now .cab-rm-plate {
+  border: 2px solid rgba(255, 154, 46, 0.9);
+  background: linear-gradient(160deg, rgba(255, 154, 46, 0.14), transparent 60%), rgba(18, 11, 4, 0.95);
+  animation: cab-now-plate 2.2s ease-in-out infinite;
+}
+
+.cab-rm-stop.is-now .cab-rm-label { color: var(--cab-orange); }
+.cab-rm-stop.is-now .cab-rm-sign { background: var(--now); box-shadow: 0 0 9px var(--now-soft); }
+
+.cab-rm-stop.is-locked .cab-rm-node,
+.cab-rm-stop.is-locked .cab-rm-plate { opacity: 0.55; filter: saturate(0.3); cursor: default; }
+
+/* Выбранная остановка: крупнее и ярче всей остальной дороги */
+
+.cab-rm-stop.is-selected { z-index: 6; }
+
+/* мягкое цветное пятно за выбранной остановкой */
+.cab-rm-stop.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 430px;
+  height: 430px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--stop-glow) 0%, transparent 62%);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.cab-rm-stop.is-selected .cab-rm-node {
+  border-width: 3px;
+  border-color: #ffffff;
+  background: var(--stop-color);
+  color: #06101f;
+  transform: translate(-50%, -50%) scale(1.35);
+  box-shadow: 0 0 0 4px var(--stop-color), 0 0 26px var(--stop-glow), 0 0 64px var(--stop-glow);
+}
+
+.plate-top.is-selected .cab-rm-plate { transform: translate(-50%, -100%) scale(1.14); }
+.plate-bottom.is-selected .cab-rm-plate { transform: translate(-50%, 0) scale(1.14); }
+
+/* двойное кольцо: тёмный зазор + обводка цветом модуля — читается с любого расстояния */
+.cab-rm-stop.is-selected .cab-rm-plate {
+  border: 2px solid var(--stop-color);
+  box-shadow:
+    0 0 0 3px rgba(5, 9, 20, 0.95),
+    0 0 0 5px var(--stop-color),
+    0 16px 44px rgba(0, 0, 0, 0.6),
+    0 0 46px var(--stop-glow);
+  background: linear-gradient(160deg, var(--stop-soft), transparent 45%), rgba(7, 12, 26, 0.98);
+}
+
+/* вывеска выбранной станции растягивается на всю плиту */
+.cab-rm-stop.is-selected .cab-rm-sign { width: 100%; box-shadow: 0 0 14px var(--stop-color); }
+.cab-rm-stop.is-selected .cab-rm-label { color: var(--stop-color); font-weight: 700; }
+
+.plate-top:not(.is-selected) .cab-rm-plate:hover:not(:disabled) { transform: translate(-50%, -100%) scale(1.04); }
+.plate-bottom:not(.is-selected) .cab-rm-plate:hover:not(:disabled) { transform: translate(-50%, 0) scale(1.04); }
+
+@keyframes cab-now-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 154, 46, 0.3), inset 0 0 8px rgba(255, 154, 46, 0.12); }
+  50% { box-shadow: 0 0 24px rgba(255, 154, 46, 0.7), inset 0 0 14px rgba(255, 154, 46, 0.25); }
+}
+
+@keyframes cab-now-plate {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 154, 46, 0.25); }
+  50% { box-shadow: 0 0 32px rgba(255, 154, 46, 0.75), inset 0 0 12px rgba(255, 154, 46, 0.15); }
+}
+
+/* Городской декор: элементы станций */
+
+/* неоновая вывеска «станции» на плите остановки */
+.cab-rm-sign {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--stop-color);
+  box-shadow: 0 0 8px var(--stop-glow);
+}
+
+/* значок «просмотрено» — зелёный круг с белой галочкой */
+.cab-rm-checked {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(61, 220, 151, 0.9);
+  background: #1db97e;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(61, 220, 151, 0.75);
+}
+
+.cab-rm-checked svg { width: 9px; height: 9px; stroke-width: 3; }
+
+/* расходящееся кольцо у текущей остановки */
+.cab-rm-ping {
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 154, 46, 0.7);
+  animation: cab-rm-ping 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cab-rm-ping {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.75); opacity: 0; }
+}
 
 @keyframes cab-pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
 
+.cab-mods { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.cab-mod {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--cab-line-soft);
+  border-radius: 999px;
+  background: rgba(9, 15, 31, 0.6);
+  font-size: 11px;
+  color: var(--cab-muted);
+}
+
+.cab-mod i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.cab-mod b { color: var(--cab-text); font-weight: 600; }
+.cab-mod em { font-style: normal; font-size: 10px; opacity: 0.8; }
+
 /* ---------------------------- Модуль вебинара ---------------------------- */
 
 .cab-module-title {
-  color: var(--cab-orange) !important;
-  text-shadow: 0 0 14px rgba(255, 154, 46, 0.35);
+  text-shadow: 0 0 14px rgba(56, 198, 255, 0.25);
 }
+
+.cab-module-sub { font-size: 11.5px; color: var(--cab-muted); white-space: nowrap; }
 
 .cab-badge-now {
   padding: 3px 10px;
@@ -1055,9 +1396,457 @@
 /* ---------------------------- Reduced motion ----------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
-  .cab-node-now-halo { animation: none; }
+  .cab-anim-pop > * { animation: none; opacity: 1; }
+  .cab-rm-stop.is-now .cab-rm-node { animation: none; }
+  .cab-nav-item.is-active,
+  .cab-rm-ping,
+  .cab-rm-stop.is-now .cab-rm-plate { animation: none; }
+  .cab-nav-item,
   .cab-sidebar,
   .cab-backdrop,
-  .cab-mission,
+  .cab-rm-node,
+  .cab-rm-plate,
   .cab-tab { transition: none; }
 }
+
+/* ---------------------------- Индивидуальные занятия --------------------- */
+
+.cab-ind-head h2 {
+  margin: 0;
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: clamp(18px, 2vw, 24px);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #f2f7ff;
+}
+
+.cab-ind-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--cab-muted); }
+
+.cab-ind-next-grid {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(200px, 260px);
+  gap: 18px;
+  align-items: center;
+}
+
+.cab-ind-date,
+.cab-ind-time {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 18px;
+  border: 1px solid var(--cab-line);
+  border-radius: 12px;
+  background: rgba(5, 10, 22, 0.7);
+  text-align: center;
+}
+
+.cab-ind-date strong {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--cab-cyan);
+  text-shadow: 0 0 14px rgba(56, 198, 255, 0.5);
+  line-height: 1;
+}
+
+.cab-ind-date span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--cab-text);
+}
+
+.cab-ind-date em { font-style: normal; font-size: 10.5px; color: var(--cab-muted); }
+
+.cab-ind-time strong {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 22px;
+  font-weight: 600;
+  color: #f0f6ff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.cab-ind-time span { font-size: 11px; color: var(--cab-muted); }
+
+.cab-ind-topic { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cab-ind-topic > strong { font-size: 15px; font-weight: 600; color: #f0f6ff; margin-bottom: 6px; }
+
+.cab-ind-teacher { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cab-text); }
+
+.cab-ind-teacher i {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.4px solid rgba(255, 154, 46, 0.6);
+  background: rgba(255, 154, 46, 0.08);
+  color: var(--cab-orange);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.cab-ind-how { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.cab-ind-how li { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--cab-muted); }
+.cab-ind-how svg { width: 14px; height: 14px; color: var(--cab-cyan); flex: none; }
+
+.cab-ind-join { width: 100%; justify-content: center; margin-top: 14px; }
+
+.cab-ind-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.cab-ind-group {
+  margin: 12px 0 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--cab-muted);
+}
+
+.cab-ind-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 9px 8px;
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--cab-line-soft);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--cab-text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.cab-ind-row:hover { background: rgba(56, 198, 255, 0.05); }
+
+.cab-ind-row.is-selected {
+  border-color: rgba(56, 198, 255, 0.45);
+  background: rgba(56, 198, 255, 0.07);
+  box-shadow: 0 0 12px rgba(56, 198, 255, 0.15);
+}
+
+.cab-ind-chev { width: 13px; height: 13px; color: var(--cab-muted); }
+
+.cab-ind-cell-date { color: var(--cab-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cab-ind-cell-date em { font-style: normal; color: var(--cab-muted); margin-left: 4px; }
+
+.cab-ind-cell-topic {
+  color: var(--cab-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cab-ind-status { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.cab-ind-status.is-upcoming { color: var(--cab-cyan); }
+.cab-ind-status.is-done { color: var(--cab-green); }
+.cab-ind-status.is-now { color: var(--cab-orange); }
+.cab-ind-status.is-cancelled { color: #ff5d73; }
+
+.cab-ind-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.cab-files--plain { border: 0; padding: 0; background: transparent; }
+
+.cab-file--big {
+  padding: 10px 8px;
+  border: 1px solid var(--cab-line);
+  border-radius: 10px;
+  background: rgba(5, 10, 22, 0.7);
+}
+
+.cab-hw { display: flex; flex-direction: column; gap: 10px; }
+
+@media (max-width: 1020px) {
+  .cab-ind-grid { grid-template-columns: 1fr; }
+  .cab-ind-next-grid { grid-template-columns: auto auto minmax(0, 1fr); }
+  .cab-ind-how { grid-column: 1 / -1; }
+}
+
+@media (max-width: 700px) {
+  .cab-ind-next-grid { grid-template-columns: 1fr 1fr; }
+  .cab-ind-topic { grid-column: 1 / -1; }
+  .cab-ind-row { grid-template-columns: 96px minmax(0, 1fr) auto auto auto; }
+}
+
+/* ---------------------------- Анимация смены контента -------------------- */
+
+/* Ступенчатое появление: видео → чек-лист → файлы, выезд сбоку с масштабом. */
+.cab-anim-pop > * {
+  animation: cab-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cab-anim-pop > *:nth-child(2) { animation-delay: 0.1s; }
+.cab-anim-pop > *:nth-child(3) { animation-delay: 0.2s; }
+
+@keyframes cab-pop {
+  0% { opacity: 0; transform: translateX(34px) scale(0.94) rotate(0.6deg); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: translateX(0) scale(1) rotate(0deg); }
+}
+
+/* ---------------------------- Главная: витрина и преимущества ------------ */
+
+.cab-hello h2 {
+  margin: 0;
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: clamp(18px, 2vw, 24px);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #f2f7ff;
+}
+
+.cab-hello p { margin: 4px 0 10px; font-size: 12.5px; color: var(--cab-muted); }
+
+.cab-shop { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+
+.cab-shop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--cab-line);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(56, 198, 255, 0.06), transparent 55%),
+    var(--cab-panel-bg);
+  color: var(--cab-text);
+  text-decoration: none;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.cab-shop-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(56, 198, 255, 0.5);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35), 0 0 18px rgba(56, 198, 255, 0.12);
+}
+
+.cab-shop-ico {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--cab-line);
+  border-radius: 12px;
+  background: rgba(56, 198, 255, 0.08);
+  color: var(--cab-cyan);
+}
+
+.cab-shop-ico svg { width: 22px; height: 22px; }
+
+.cab-shop-card strong {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #f2f7ff;
+}
+
+.cab-shop-text { flex: 1; font-size: 12.5px; line-height: 1.45; color: var(--cab-muted); }
+
+.cab-shop-price {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #f2f7ff;
+}
+
+.cab-shop-price em {
+  font-style: normal;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  text-transform: none;
+  color: var(--cab-muted);
+}
+
+.cab-shop-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cab-orange);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+
+.cab-shop-cta svg { width: 12px; height: 12px; }
+
+.cab-perks { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+
+.cab-perk {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--cab-line-soft);
+  border-radius: 12px;
+  background: rgba(9, 15, 31, 0.5);
+}
+
+.cab-perk-ico {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--cab-line);
+  border-radius: 10px;
+  background: rgba(56, 198, 255, 0.08);
+  color: var(--cab-cyan);
+}
+
+.cab-perk-ico svg { width: 18px; height: 18px; }
+
+.cab-perk-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cab-perk-text strong { font-size: 13px; color: #eaf2ff; }
+.cab-perk-text span { font-size: 11.5px; line-height: 1.4; color: var(--cab-muted); }
+
+/* Тип занятия в индивидуальных: 1-на-1 / группа */
+
+.cab-ind-kind {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cab-ind-kind.is-individual { border: 1px solid rgba(56, 198, 255, 0.5); color: var(--cab-cyan); }
+.cab-ind-kind.is-group { border: 1px solid rgba(255, 154, 46, 0.55); color: var(--cab-orange); }
+
+/* Карточка связи: CTA «Перейти в TG» */
+
+.cab-curator-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  color: var(--cab-orange);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+
+.cab-curator-cta svg { width: 11px; height: 11px; }
+
+/* ---------------------------- Оформление заказа (/cabinet/checkout) ------- */
+
+.cab-checkout {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 28px 16px;
+  background:
+    radial-gradient(900px 480px at 85% -10%, rgba(0, 168, 255, 0.08), transparent 60%),
+    radial-gradient(700px 420px at -10% 110%, rgba(255, 154, 46, 0.05), transparent 60%),
+    var(--bg-primary, #0a0e1a);
+  color: #dfe9ff;
+}
+
+.cab-checkout-card {
+  width: min(480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  border: 1px solid rgba(0, 168, 255, 0.14);
+  border-radius: 18px;
+  background: linear-gradient(160deg, rgba(10, 18, 36, 0.92), rgba(7, 12, 26, 0.96));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+.cab-checkout-back {
+  color: #7f93b8;
+  font-size: 12px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.cab-checkout-back:hover { color: #38c6ff; }
+
+.cab-checkout-k {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #38c6ff;
+}
+
+.cab-checkout-card h1 {
+  margin: 0;
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #f2f7ff;
+}
+
+.cab-checkout-desc { margin: 0; font-size: 13px; line-height: 1.5; color: #7f93b8; }
+
+.cab-checkout-price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 154, 46, 0.4);
+  border-radius: 12px;
+  background: rgba(255, 154, 46, 0.07);
+}
+
+.cab-checkout-price strong {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #ff9a2e;
+}
+
+.cab-checkout-price span { font-size: 12px; color: #7f93b8; }
+
+.cab-checkout-pay {
+  display: flex;
+  justify-content: center;
+  padding: 13px;
+  border: 1px solid rgba(255, 154, 46, 0.8);
+  border-radius: 12px;
+  background: rgba(255, 154, 46, 0.12);
+  color: #ff9a2e;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: box-shadow 0.2s, background 0.2s;
+}
+
+.cab-checkout-pay:hover { box-shadow: 0 0 18px rgba(255, 154, 46, 0.35); background: rgba(255, 154, 46, 0.18); }
+
+.cab-checkout-note { margin: 0; font-size: 11.5px; line-height: 1.5; color: rgba(127, 147, 184, 0.8); }
