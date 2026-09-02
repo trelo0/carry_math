@@ -3,6 +3,7 @@
 import { useState, FormEvent } from 'react';
 import { useForm } from '@/contexts/FormContext';
 import ContactInput from './ContactInput';
+import ConsentCheckbox from './ConsentCheckbox';
 
 export default function SignupModalForm({
   modalTitle,
@@ -22,6 +23,7 @@ export default function SignupModalForm({
     rtScore: '',
     comment: '',
     website: '',
+    consent: false,
   });
 
   const isValidContact = (value: string) => {
@@ -52,7 +54,12 @@ export default function SignupModalForm({
     if ((fields.grade === '10' || fields.grade === '11') && !fields.rtScore.trim()) {
       newErrors.rtScore = true;
     }
-    
+
+    // Без согласия с политикой конфиденциальности заявка не отправляется.
+    if (!fields.consent) {
+      newErrors.consent = true;
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -91,7 +98,7 @@ export default function SignupModalForm({
 
       if (response.ok) {
         setStatus('success');
-        setFields({ name: '', contact: '', grade: '', rtScore: '', comment: '', website: '' });
+        setFields({ name: '', contact: '', grade: '', rtScore: '', comment: '', website: '', consent: false });
         setErrors({});
         setTimeout(() => {
           closeForm();
@@ -250,10 +257,26 @@ export default function SignupModalForm({
           />
         </div>
 
+        <ConsentCheckbox
+          id="signup-consent"
+          checked={fields.consent}
+          error={errors.consent}
+          onChange={(checked) => {
+            setFields((prev) => ({ ...prev, consent: checked }));
+            if (errors.consent) setErrors((prev) => ({ ...prev, consent: false }));
+          }}
+        />
+
+        {errors.consent && (
+          <p className="modal-note error">
+            Необходимо принять политику конфиденциальности.
+          </p>
+        )}
+
         <button
           type="submit"
           className="btn btn-primary modal-submit"
-          disabled={isLoading}
+          disabled={isLoading || !fields.consent}
         >
           {isLoading ? 'Отправка...' : submitButtonText ?? 'Отправить заявку'}
         </button>

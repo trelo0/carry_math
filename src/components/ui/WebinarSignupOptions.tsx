@@ -1,5 +1,8 @@
 'use client';
 
+import { useState } from 'react';
+import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
+
 // Официальный контур логотипа Telegram (simple-icons, viewBox 24x24).
 export function TelegramIcon() {
   return (
@@ -12,6 +15,10 @@ export function TelegramIcon() {
 // Карточка записи на бесплатный вебинар через Telegram.
 // Используются во всплывающем окне при входе и в сообщении вместо курса.
 export function WebinarSignupOptions({ onChoose }: { onChoose?: () => void }) {
+  // Переход в Telegram для записи доступен только после согласия с политикой.
+  const [consent, setConsent] = useState(false);
+  const locked = !consent;
+
   // Deep link: бот по «/start webinar» сразу открывает гостевое главное меню.
   const telegramUrl = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
     ? `https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}?start=webinar`
@@ -19,13 +26,23 @@ export function WebinarSignupOptions({ onChoose }: { onChoose?: () => void }) {
 
   return (
     <div className="webinar-popup-options">
+      
+
       {telegramUrl ? (
         <a
-          className="webinar-option webinar-option--telegram"
+          className={`webinar-option webinar-option--telegram${locked ? ' is-consent-locked' : ''}`}
           href={telegramUrl}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={onChoose}
+          aria-disabled={locked}
+          tabIndex={locked ? -1 : undefined}
+          onClick={(e) => {
+            if (locked) {
+              e.preventDefault();
+              return;
+            }
+            onChoose?.();
+          }}
         >
           <span className="webinar-option-inner">
             <span className="webinar-option-icon webinar-option-icon--telegram" aria-hidden="true">
@@ -40,6 +57,13 @@ export function WebinarSignupOptions({ onChoose }: { onChoose?: () => void }) {
           </span>
         </a>
       ) : null}
+
+    <ConsentCheckbox
+        id="webinar-consent"
+        className="webinar-consent"
+        checked={consent}
+        onChange={setConsent}
+      />
     </div>
   );
 }

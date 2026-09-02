@@ -201,6 +201,69 @@
   color: var(--text-primary);
 }
 
+/* Согласие с политикой конфиденциальности: ошибка и подсказка. */
+.form-checkbox--error label {
+  color: #ff8f84;
+}
+
+.form-checkbox--error input[type="checkbox"] {
+  outline: 1px solid rgba(231, 76, 60, 0.7);
+  outline-offset: 1px;
+}
+
+.auth-consent {
+  margin: 4px 0 18px;
+}
+
+.webinar-consent {
+  margin-bottom: 0;
+}
+
+.consent-hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-light);
+}
+
+/* Действие (ссылка/кнопка) заблокировано до принятия политики. */
+.webinar-option.is-consent-locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.webinar-option.is-consent-locked:hover .webinar-option-inner {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+  transform: none;
+}
+
+.webinar-option.is-consent-locked:hover .webinar-option-line,
+.webinar-option.is-consent-locked:hover .webinar-option-arrow {
+  color: var(--text-secondary);
+}
+
+.cab-checkout-consent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cab-checkout-consent .form-checkbox {
+  margin-bottom: 0;
+}
+
+.cab-checkout-pay.is-consent-locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cab-checkout-pay.is-consent-locked:hover {
+  box-shadow: none;
+  background: rgba(255, 154, 46, 0.12);
+}
+
 /* Form Status Messages */
 .form-status {
   padding: 16px;
@@ -507,6 +570,15 @@
 .modal-body {
   padding: 20px 24px 24px;
   overflow-y: auto;
+  /* Прокрутка остаётся (колесо/свайп), но полоса не видна. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.modal-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .modal-note {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { normalizePhone, formatPhoneInput } from '@/lib/phone';
 import { AUTH_CHANGED_EVENT } from '@/contexts/AuthContext';
 import { TelegramIcon } from '@/components/ui/WebinarSignupOptions';
+import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
 
 type Step = 'phone' | 'notlinked' | 'otp';
 
@@ -44,6 +45,7 @@ export default function AuthForm() {
   const [connectUrl, setConnectUrl] = useState('');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [consent, setConsent] = useState(false);
   const [message, setMessage] = useState<{ type: 'error' | 'ok'; text: string } | null>(null);
   const router = useRouter();
 
@@ -91,6 +93,13 @@ export default function AuthForm() {
       setMessage({
         type: 'error',
         text: 'Формат номера: +375 (29) 123-45-67 или 80(29)123-45-67',
+      });
+      return;
+    }
+    if (!consent) {
+      setMessage({
+        type: 'error',
+        text: 'Необходимо принять политику конфиденциальности.',
       });
       return;
     }
@@ -260,7 +269,17 @@ export default function AuthForm() {
 
       {message && <p className={`auth-message ${message.type}`}>{message.text}</p>}
 
-      <button className="btn btn-gold auth-submit" type="submit" disabled={loading}>
+      <ConsentCheckbox
+        id="auth-consent"
+        className="auth-consent"
+        checked={consent}
+        onChange={(checked) => {
+          setConsent(checked);
+          if (message) setMessage(null);
+        }}
+      />
+
+      <button className="btn btn-gold auth-submit" type="submit" disabled={loading || !consent}>
         {loading ? 'Подожди…' : 'Получить код в Telegram'}
       </button>
 

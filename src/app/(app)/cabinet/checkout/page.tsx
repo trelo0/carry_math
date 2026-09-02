@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import CheckoutPayButton from '@/components/cabinet/CheckoutPayButton';
 
 export const metadata = {
   title: 'Оплата — District',
@@ -65,14 +66,7 @@ export default async function CheckoutPage({
         <span className="cab-checkout-k">Оформление заказа</span>
         <h1>{item.title}</h1>
         <p className="cab-checkout-desc">{item.desc}</p>
-        <a
-          className="cab-checkout-pay"
-          href={payUrl(product)}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Перейти к оплате
-        </a>
+        <CheckoutPayButton href={payUrl(product)} />
         <p className="cab-checkout-note">
           Оплата проходит через Telegram-бот школы. После оплаты доступ
           появится в кабинете автоматически.
