@@ -80,6 +80,12 @@ export default async function SiteLayout({
               (оферта)
               <span className="footer-document-arrow" aria-hidden="true">&rarr;</span>
             </a>
+
+            <a href="/privacy-policy" className="footer-document-link">
+              Политика<br />
+              конфиденциальности
+              <span className="footer-document-arrow" aria-hidden="true">&rarr;</span>
+            </a>
           </div>
 
           <div className="footer-column footer-contacts-column">
