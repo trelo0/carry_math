@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { normalizePhone, formatPhoneInput } from '@/lib/phone';
+import { normalizePhone, formatPhoneInput, phoneInputGhost } from '@/lib/phone';
 import { AUTH_CHANGED_EVENT } from '@/contexts/AuthContext';
 import { TelegramIcon } from '@/components/ui/WebinarSignupOptions';
 import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
@@ -47,7 +47,19 @@ export default function AuthForm() {
   const [loading, setLoading] = useState(false);
   const [consent, setConsent] = useState(false);
   const [message, setMessage] = useState<{ type: 'error' | 'ok'; text: string } | null>(null);
+  // Секунды до возможности повторной отправки кода (приходят с сервера).
+  const [resendIn, setResendIn] = useState(0);
   const router = useRouter();
+
+  // Тикаем раз в секунду, пока идёт отсчёт кулдауна.
+  const cooldownTicking = resendIn > 0;
+  useEffect(() => {
+    if (!cooldownTicking) return;
+    const timer = setInterval(() => {
+      setResendIn((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownTicking]);
 
   // Ошибка относится к полю: красим рамку и пишем текст сразу под ним.
   const fieldError = message?.type === 'error' ? message.text : null;
@@ -73,7 +85,14 @@ export default function AuthForm() {
       } else {
         setStep('otp');
         setCode('');
-        setMessage({ type: 'ok', text: 'Мы отправили код в Telegram-бот Math School.' });
+        setResendIn(typeof data.cooldownSeconds === 'number' ? data.cooldownSeconds : 60);
+        setMessage({
+          type: 'ok',
+          text:
+            data.resent === false
+              ? 'Код уже был отправлен в Telegram-бот Math School — проверь сообщения.'
+              : 'Мы отправили код в Telegram-бот Math School.',
+        });
       }
     } catch {
       setMessage({ type: 'error', text: 'Не удалось связаться с сервером. Попробуй ещё раз.' });
@@ -92,7 +111,7 @@ export default function AuthForm() {
     if (!norm) {
       setMessage({
         type: 'error',
-        text: 'Формат номера: +375 (29) 123-45-67 или 80(29)123-45-67',
+        text: 'Формат номера: 375 (29) 123 45 67 или 80(29) 123 45 67',
       });
       return;
     }
@@ -144,6 +163,7 @@ export default function AuthForm() {
   const backToPhone = () => {
     setStep('phone');
     setCode('');
+    setResendIn(0);
     setMessage(null);
   };
 
@@ -232,10 +252,10 @@ export default function AuthForm() {
         <button
           type="button"
           className="auth-secondary"
-          disabled={loading}
+          disabled={loading || resendIn > 0}
           onClick={() => void requestCode(normalized)}
         >
-          Отправить код повторно
+          {resendIn > 0 ? `Отправить повторно можно через ${resendIn} с` : 'Отправить код повторно'}
         </button>
 
         <button type="button" className="auth-back" onClick={backToPhone}>
@@ -253,6 +273,11 @@ export default function AuthForm() {
         <span className="auth-field-label">Номер телефона</span>
         <span className="auth-field-box">
           <PhoneIcon />
+          {/* Полупрозрачный «хвост» маски поверх поля: набранная часть скрыта, остаток виден. */}
+          <span className="auth-input-ghost" aria-hidden="true">
+            <span className="auth-input-ghost-typed">{phone}</span>
+            {phoneInputGhost(phone)}
+          </span>
           <input
             type="tel"
             autoComplete="tel"
@@ -262,7 +287,7 @@ export default function AuthForm() {
               setPhone(formatPhoneInput(e.target.value));
               if (message) setMessage(null);
             }}
-            placeholder="+375 (29) 123-45-67"
+            placeholder="+375 (29) 123 45 67"
           />
         </span>
       </label>

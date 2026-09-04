@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { type LeadRow, isLeadStatusColumnError, notifyAdminsOfNewLead } from '@/lib/bot/admin/leads';
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 8;
@@ -58,28 +60,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json().catch(() => null);
-    if (!body || typeof body !== 'object') {
+    const parsed: unknown = await request.json().catch(() => null);
+    if (!parsed || typeof parsed !== 'object') {
       return NextResponse.json({ error: 'Некорректные данные' }, { status: 400 });
     }
+    const body = parsed as Record<string, unknown>;
 
-    const honeypot = normalizeString((body as any).website);
+    const honeypot = normalizeString(body.website);
     if (honeypot) {
       return NextResponse.json({ success: true });
     }
 
-    const name = normalizeString((body as any).name);
-    const contact = normalizeString((body as any).contact);
-    const commentRaw = (body as any).comment;
-    const teacher = normalizeString((body as any).teacher);
-    const service = normalizeString((body as any).service);
-    const grade = normalizeString((body as any).grade);
-    const rating = normalizeString((body as any).rating);
-    const rtScore = normalizeString((body as any).rtScore);
-    const price = normalizeString((body as any).price);
-    const waitlist = Boolean((body as any).waitlist);
-    const spotsStatus = normalizeString((body as any).spotsStatus);
-    const source = normalizeString((body as any).source);
+    const name = normalizeString(body.name);
+    const contact = normalizeString(body.contact);
+    const commentRaw = body.comment;
+    const teacher = normalizeString(body.teacher);
+    const service = normalizeString(body.service);
+    const grade = normalizeString(body.grade);
+    const rating = normalizeString(body.rating);
+    const rtScore = normalizeString(body.rtScore);
+    const price = normalizeString(body.price);
+    const waitlist = Boolean(body.waitlist);
+    const spotsStatus = normalizeString(body.spotsStatus);
+    const source = normalizeString(body.source);
 
     const comment = typeof commentRaw === 'string' ? commentRaw.trim() : '';
 
@@ -127,91 +130,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Некорректный статус мест' }, { status: 400 });
     }
 
-    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
+    // Основной источник данных о заявках — Supabase. Заявка считается
+    // отправленной только после успешного INSERT; без записи в БД ответ 500.
+    const admin = createAdminClient();
+    const leadPayload = {
+      name,
+      contact,
+      comment: comment || null,
+      teacher: teacher || null,
+      service: service || null,
+      grade: grade || null,
+      rating: rating || null,
+      rt_score: rtScore || null,
+      price: price || null,
+      waitlist,
+      spots_status: spotsStatus || null,
+      source: source || null,
+      ip,
+    };
+
+    let { data: leadRow, error: insertError } = await admin
+      .from('leads')
+      .insert({ ...leadPayload, status: 'new' })
+      .select()
+      .single();
+
+    // Миграция leads_status.sql ещё не применена: сохраняем без статуса,
+    // чтобы форма продолжала работать до применения миграции.
+    if (insertError && isLeadStatusColumnError(insertError)) {
+      const retry = await admin.from('leads').insert(leadPayload).select().single();
+      leadRow = retry.data;
+      insertError = retry.error;
+    }
+
+    if (insertError || !leadRow) {
+      console.error('Не удалось сохранить заявку:', insertError);
       return NextResponse.json(
-        { error: 'Сервис заявок временно недоступен' },
+        { error: 'Не удалось отправить заявку. Попробуйте ещё раз.' },
         { status: 500 },
       );
     }
 
-    // Формируем сообщение
-    let message = `🎓 *Новая заявка*\n\n`;
-    
-    // Если заявка из формы консультации
-    if (source === 'consultation') {
-      message += `📞 *Консультация*\n\n`;
+    // Уведомляем администраторов через существующего Telegram-бота.
+    // Ошибка доставки НЕ откатывает сохранённую заявку — только логируем.
+    try {
+      await notifyAdminsOfNewLead(admin, leadRow as LeadRow);
+    } catch (notifyError) {
+      console.error('Не удалось уведомить администраторов о заявке:', notifyError);
     }
 
-    // Заявка с формы записи на бесплатный вебинар
-    if (source === 'webinar') {
-      message += `🎯 *Запись на бесплатный вебинар*\n\n`;
-    }
-    
-    message += `👤 *Имя:* ${name}\n`;
-    message += `📞 *Контакт:* ${contact}\n`;
-    
-    if (teacher) {
-      message += `👨‍🏫 *Преподаватель:* ${teacher}\n`;
-    }
-    if (service) {
-      message += `📚 *Услуга:* ${service}\n`;
-    }
-    if (grade) {
-      message += `🏫 *Класс:* ${grade}\n`;
-    }
-    if (rating) {
-      message += `📈 *Оценка:* ${rating}\n`;
-    }
-    if (rtScore) {
-      message += `🎯 *Балл РТ:* ${rtScore}\n`;
-    }
-    if (price) {
-      message += `💳 *Цена:* ${price}\n`;
-    }
-    if (spotsStatus) {
-      if (spotsStatus === 'few') {
-        message += `🔥 *Статус мест:* Мало мест\n`;
-      } else if (spotsStatus === 'none') {
-        message += `⏳ *Статус мест:* Мест нет\n`;
-      } else {
-        message += `✅ *Статус мест:* Есть места\n`;
-      }
-    }
-    if (waitlist) {
-      message += `📝 *Тип записи:* Предварительная\n`;
-    }
-    if (comment) {
-      message += `💬 *Комментарий:* ${comment}\n`;
-    }
-    
-    message += `\n📅 *Дата:* ${new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
-
-    // Отправляем в Telegram
-    const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-
-    const response = await fetch(telegramUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'Markdown',
-      }),
-    });
-
-    const telegramData = await response.json();
-
-    if (!telegramData.ok) {
-      console.error('Telegram error:', telegramData);
-      return NextResponse.json(
-        { error: 'Ошибка отправки в Telegram' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, id: (leadRow as LeadRow).id });
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json(

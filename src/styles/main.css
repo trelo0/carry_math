@@ -2258,6 +2258,8 @@ section[data-reveal].revealed {
 
 .path-col {
   text-align: center;
+  display: flex;
+  flex-direction: column;
 }
 
 .paths-grid {
@@ -2303,6 +2305,7 @@ section[data-reveal].revealed {
   padding: 22px 24px;
   box-shadow: 0 0 24px rgba(232, 149, 44, 0.13);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  flex: 1;
 }
 
 .path-card:hover {
@@ -2366,6 +2369,37 @@ section[data-reveal].revealed {
 .paths-cta:hover {
   transform: translateY(-2px);
   box-shadow: 0 0 38px rgba(255, 171, 64, 0.55);
+}
+
+/* Планшетная и мобильная версия развилки: колонки в один столбец, текст читабельнее. */
+@media (max-width: 980px) {
+  .paths-grid {
+    grid-template-columns: 1fr;
+    gap: 26px;
+  }
+
+  .path-card {
+    padding: 20px 18px;
+  }
+
+  .path-desc {
+    text-align: left;
+    font-size: 13.5px;
+  }
+
+  .path-perks {
+    width: 100%;
+    margin: 0;
+    text-align: left;
+    padding-left: 16px;
+  }
+
+  .paths-cta {
+    width: 100%;
+    justify-content: center;
+    padding: 16px 24px;
+    font-size: 14px;
+  }
 }
 
 /* печать-ачивка на отзывах */

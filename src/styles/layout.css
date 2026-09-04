@@ -505,46 +505,87 @@
    TABLET
    ========================================================= */
 
-@media (max-width: 760px) {
+@media (max-width: 980px) {
 
   .footer-content {
     grid-template-columns: 1fr 1fr;
 
-    row-gap: 34px;
+    grid-template-areas:
+      "brand brand"
+      "links contacts"
+      "legal legal";
 
+    row-gap: 24px;
     column-gap: 0;
-  }
 
-  .footer-brand {
-    grid-column: 1;
-  }
-
-  .footer-legal {
-    grid-column: 2;
-  }
-
-  .footer-links {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .footer-contacts-column {
-    grid-column: 2;
-    grid-row: 2;
+    align-items: start;
   }
 
   .footer-column {
-    padding-left: 18px;
-    padding-right: 18px;
-  }
+    padding: 0;
 
-  .footer-column:nth-child(odd) {
-    padding-left: 0;
     border-left: 0;
   }
 
-  .footer-links .footer-label {
-    margin: 2px 0 18px;
+  .footer-brand {
+    grid-area: brand;
+  }
+
+  .footer-links {
+    grid-area: links;
+
+    padding-right: 26px;
+  }
+
+  .footer-contacts-column {
+    grid-area: contacts;
+
+    padding-left: 26px;
+  }
+
+  .footer-legal {
+    grid-area: legal;
+  }
+
+  /* Единая линия-разделитель над колонками ссылок (без разрыва в стыке). */
+  .footer-links,
+  .footer-contacts-column {
+    padding-top: 24px;
+
+    border-top: 1px solid rgba(148, 190, 255, 0.1);
+  }
+
+  /* Реквизиты — компактная строка «мелким шрифтом» во всю ширину. */
+  .footer-legal {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+
+    gap: 4px 26px;
+
+    padding-top: 20px;
+
+    border-top: 1px solid rgba(148, 190, 255, 0.1);
+  }
+
+  .footer-legal .footer-label {
+    margin: 0;
+  }
+
+  .footer-legal p {
+    margin: 0;
+  }
+
+  .footer-legal p br {
+    display: none;
+  }
+
+  .footer-bottom {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+
+    gap: 10px 24px;
   }
 }
 
@@ -553,17 +594,21 @@
    MOBILE
    ========================================================= */
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
 
   .site-footer {
     padding: 30px 0 16px;
   }
 
+  /* Мобильный футер: симметричная центрированная колонка. */
   .footer-content {
     display: flex;
     flex-direction: column;
+    align-items: center;
 
-    gap: 24px;
+    text-align: center;
+
+    gap: 20px;
 
     padding-bottom: 24px;
   }
@@ -579,6 +624,10 @@
     border-left: 0;
   }
 
+  .footer-brand {
+    align-items: center;
+  }
+
   .footer-brand .site-logo {
     margin-top: 0;
 
@@ -586,54 +635,63 @@
   }
 
   .footer-description {
-    max-width: 240px;
+    max-width: 320px;
+
+    margin: 0 auto;
   }
 
-  .footer-legal,
   .footer-links,
-  .footer-contacts-column {
-    padding-top: 18px;
+  .footer-contacts-column,
+  .footer-legal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    padding-top: 20px;
 
     border-top: 1px solid rgba(148, 190, 255, 0.1);
   }
 
-  .footer-links {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-  }
+  .footer-label {
+    justify-content: center;
 
-  .footer-links .footer-label {
     margin-bottom: 14px;
   }
 
+  .footer-legal {
+    gap: 4px 18px;
+  }
+
+  .footer-contacts {
+    align-items: center;
+  }
+
   .social-links {
-    margin-top: 14px;
+    justify-content: center;
+
+    margin-top: 12px;
   }
 
   .footer-bottom {
-    display: flex;
     flex-direction: column;
+    align-items: center;
 
-    align-items: flex-start;
+    text-align: center;
 
-    gap: 7px;
+    gap: 8px;
 
-    padding-top: 12px;
+    padding-top: 14px;
   }
 
   .footer-payments {
-    width: 100%;
-
-    align-items: flex-start;
-
     flex-direction: column;
+    align-items: center;
 
     gap: 8px;
   }
 
   .footer-payment-image {
-    width: min(100%, 300px);
+    width: min(100%, 260px);
 
     opacity: 0.9;
 

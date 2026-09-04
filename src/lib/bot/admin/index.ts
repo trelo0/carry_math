@@ -36,6 +36,7 @@ import {
   renderTemplateDetail,
   renderTemplateMigrationMessage,
 } from './settings';
+import { renderLeadsMenu, handleLeadsAction, isLeadsAction } from './leads';
 
 // Единый сценарий админа: главное меню, пользователи, рассылки, статистика,
 // контроль переписки, управление вебинарами, шаблоны уведомлений и тестовые
@@ -87,6 +88,10 @@ async function openSettingsSection(chatId: number): Promise<void> {
   });
 }
 
+async function openLeadsSection(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderLeadsMenu(admin, sendDeliver(chatId));
+}
+
 // ---------------------------------------------------------------------------
 // Единые точки входа для webhook
 // ---------------------------------------------------------------------------
@@ -103,7 +108,8 @@ export async function handleAdminCallback(
   const isReminder = data.startsWith('ar:');
   const isTemplate = data.startsWith('an:');
   const isWebinar = data.startsWith('admin:');
-  if (!isReminder && !isTemplate && !isWebinar) return false;
+  const isLeads = isLeadsAction(data);
+  if (!isReminder && !isTemplate && !isWebinar && !isLeads) return false;
 
   const acknowledge = async (text?: string, showAlert = false) => {
     if (callbackQueryId) {
@@ -124,6 +130,7 @@ export async function handleAdminCallback(
   try {
     if (isReminder) return await handleReminderAction(admin, data, message, telegramId);
     if (isTemplate) return await handleTemplateAction(admin, data, message, telegramId);
+    if (isLeads) return await handleLeadsAction(admin, data, message);
     if (data === 'admin:broadcasts' || data.startsWith('admin:bc:')) {
       return await handleBroadcastAction(admin, data, message, telegramId);
     }
@@ -159,6 +166,7 @@ export async function handleAdminMessage(
     else if (text === ADMIN_REPLY_LABELS.stats) await openStatsSection(admin, chatId);
     else if (text === ADMIN_REPLY_LABELS.moderation) await openModerationSection(admin, telegramId, chatId);
     else if (text === ADMIN_REPLY_LABELS.webinars) await openWebinarsSection(chatId);
+    else if (text === ADMIN_REPLY_LABELS.leads) await openLeadsSection(admin, chatId);
     else await openSettingsSection(chatId);
     return true;
   }

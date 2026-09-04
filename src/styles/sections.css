@@ -2300,6 +2300,10 @@ button:focus-visible {
   .teacher-rows {
     grid-template-columns: 1fr;
   }
+
+  .teacher-row {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -2307,17 +2311,22 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  /* Фото фиксированной пропорции: карточка не распухает от высоких фото. */
   .teacher-row-photo {
     min-height: 0;
-    height: auto;
+    aspect-ratio: 4 / 5;
+    max-height: 420px;
     border-right: none;
     border-bottom: 1px dashed rgba(148, 190, 255, 0.2);
   }
 
   .teacher-row-photo img {
-    position: static;
+    position: absolute;
+    inset: 0;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: cover;
+    object-position: top center;
   }
 }
 
@@ -2490,6 +2499,80 @@ button:focus-visible {
 
 .mini-cta--blue:hover {
   box-shadow: 0 0 38px rgba(0, 168, 255, 0.55);
+}
+
+/* Мобильная версия VS-сплита: колонки складываются вертикально,
+   ось VS становится горизонтальным разделителем, текст выравнивается влево. */
+@media (max-width: 768px) {
+  .vs-split {
+    grid-template-columns: 1fr;
+  }
+
+  .vs-side {
+    padding: 22px 18px;
+    text-align: left;
+  }
+
+  .vs-side--solo {
+    border-right: 1.5px solid rgba(0, 168, 255, 0.45);
+    border-bottom: none;
+    border-radius: 18px 18px 0 0;
+    text-align: left;
+  }
+
+  .vs-side--group {
+    border-left: 1.5px solid rgba(232, 149, 44, 0.5);
+    border-top: none;
+    border-radius: 0 0 18px 18px;
+  }
+
+  .vs-axis {
+    min-height: 48px;
+    background: none;
+  }
+
+  .vs-axis::before {
+    inset: 50% 0 50% 0;
+    width: auto;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--accent) 30%,
+      var(--gold) 70%,
+      transparent
+    );
+  }
+
+  .vs-badge {
+    width: 46px;
+    height: 46px;
+    font-size: 15px;
+  }
+
+  /* Перки соло на мобильном — слева, как у сектора, вместо правого края. */
+  .vs-side--solo .vs-perks li {
+    border-right: none;
+    border-left: 2px solid rgba(0, 168, 255, 0.5);
+    padding: 7px 0 7px 14px;
+  }
+
+  .vs-side--solo .vs-perks li::after {
+    content: none;
+  }
+
+  .vs-side--solo .vs-perks li::before {
+    content: "◆";
+    position: absolute;
+    left: -6px;
+    top: 10px;
+    font-size: 8px;
+    color: var(--accent);
+  }
+
+  .vs-side .mini-cta {
+    margin-top: 18px;
+  }
 }
 
 /* ===== Пробное занятие ===== */

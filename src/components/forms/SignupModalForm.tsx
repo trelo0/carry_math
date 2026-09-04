@@ -94,7 +94,7 @@ export default function SignupModalForm({
         }),
       });
 
-      const data = await response.json();
+      await response.json().catch(() => null);
 
       if (response.ok) {
         setStatus('success');
@@ -278,18 +278,20 @@ export default function SignupModalForm({
           className="btn btn-primary modal-submit"
           disabled={isLoading || !fields.consent}
         >
-          {isLoading ? 'Отправка...' : submitButtonText ?? 'Отправить заявку'}
+          {isLoading ? '⏳ Отправляем заявку...' : submitButtonText ?? 'Отправить заявку'}
         </button>
 
         {status === 'success' && (
           <p className="modal-note success">
-            ✅ Заявка успешно отправлена!
+            ✅ Заявка отправлена.<br />
+            Мы получили ваши данные и свяжемся с вами в ближайшее время.
           </p>
         )}
 
         {status === 'error' && (
           <p className="modal-note error">
-            ❌ Ошибка при отправке. Попробуйте ещё раз
+            ❌ Не удалось отправить заявку.<br />
+            Попробуйте ещё раз.
           </p>
         )}
       </div>

@@ -1075,6 +1075,29 @@
   color: var(--text-light);
 }
 
+/* Полупрозрачный «хвост» маски: слой поверх поля с той же типографикой, что и input. */
+.auth-input-ghost {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 13px 16px 13px 42px;
+  font-size: 16px;
+  font-family: inherit;
+  line-height: 1.2;
+  color: var(--text-light);
+  opacity: 0.45;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Набранная часть в ghost-слое невидима — она лишь задаёт смещение «хвоста». */
+.auth-input-ghost-typed {
+  visibility: hidden;
+}
+
 .auth-field-box input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(0, 168, 255, 0.15);

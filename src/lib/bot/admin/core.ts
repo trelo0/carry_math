@@ -275,6 +275,7 @@ export function adminReplyKeyboard(): ReplyKeyboard {
       [{ text: '👥 Пользователи' }, { text: '📢 Рассылки' }],
       [{ text: '📊 Статистика' }, { text: '🚨 Контроль' }],
       [{ text: '📅 Вебинары' }, { text: '⚙️ Настройки' }],
+      [{ text: '📝 Заявки' }],
     ],
     resize_keyboard: true,
   };
@@ -288,6 +289,7 @@ export const ADMIN_REPLY_LABELS = {
   moderation: '🚨 Контроль',
   webinars: '📅 Вебинары',
   settings: '⚙️ Настройки',
+  leads: '📝 Заявки',
 } as const;
 
 export const ADMIN_REPLY_LABEL_SET = new Set<string>(Object.values(ADMIN_REPLY_LABELS));
