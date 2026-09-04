@@ -25,12 +25,12 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Setup SSH
+      - name: Test SSH
         run: |
           mkdir -p "$HOME/.ssh"
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > "$HOME/.ssh/deploy_key"
           chmod 600 "$HOME/.ssh/deploy_key"
-          ssh-keyscan -p 22 93.84.119.244 >> "$HOME/.ssh/known_hosts"
+          ssh-keyscan -v -T 10 -p 22 93.84.119.244
 
       - name: Deploy
         run: |
