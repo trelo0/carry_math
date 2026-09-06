@@ -1,0 +1,11 @@
+# Сборка и зависимости Node.js
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Логи и кэш
+*.log
+.npm
+.eslintcache
