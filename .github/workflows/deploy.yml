@@ -25,7 +25,32 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Deploy via FTP
+      - name: Prepare deployment package
+        run: |
+          mkdir deploy
+
+          cp -r .next deploy/.next
+          cp -r public deploy/public
+
+          cp package.json deploy/
+          cp package-lock.json deploy/
+          cp next.config.* deploy/ 2>/dev/null || true
+          cp postcss.config.* deploy/ 2>/dev/null || true
+
+          if [ -f proxy.ts ]; then cp proxy.ts deploy/; fi
+          if [ -f middleware.ts ]; then cp middleware.ts deploy/; fi
+
+          if [ -d src ]; then cp -r src deploy/src; fi
+          if [ -d sanity ]; then cp -r sanity deploy/sanity; fi
+
+          mkdir -p deploy/.deploy
+          touch deploy/.deploy/restart
+
+          cd deploy
+          zip -r ../deploy.zip . \
+            -x ".next/cache/*"
+
+      - name: Upload deployment archive
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -35,20 +60,10 @@ jobs:
           port: 21
           local-dir: ./
           server-dir: /www/district-school.by/
-
           exclude: |
-            **/.git*
-            **/.github/**
-            **/.agents/**
-            **/.booking-glow-diagnostic-profile/**
-            **/.chrome-booking-test/**
-            **/node_modules/**
-            **/.next/cache/**
-            **/.env*
-            **/*.log
-            **/dev-*.png
+            **/*
 
-      - name: Create restart trigger
+      - name: Upload deployment package
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -56,5 +71,8 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          local-dir: .github/deploy-trigger/
-          server-dir: /www/district-school.by/.deploy/
+          local-dir: ./
+          server-dir: /www/district-school.by/
+          exclude: |
+            **/*
+            !deploy.zip
