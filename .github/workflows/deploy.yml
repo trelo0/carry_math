@@ -25,8 +25,9 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Prepare deployment package
+      - name: Create deployment archive
         run: |
+          rm -rf deploy deploy.zip
           mkdir deploy
 
           cp -r .next deploy/.next
@@ -34,21 +35,28 @@ jobs:
 
           cp package.json deploy/
           cp package-lock.json deploy/
+
           cp next.config.* deploy/ 2>/dev/null || true
           cp postcss.config.* deploy/ 2>/dev/null || true
 
-          if [ -f proxy.ts ]; then cp proxy.ts deploy/; fi
-          if [ -f middleware.ts ]; then cp middleware.ts deploy/; fi
+          if [ -f proxy.ts ]; then
+            cp proxy.ts deploy/
+          fi
 
-          if [ -d src ]; then cp -r src deploy/src; fi
-          if [ -d sanity ]; then cp -r sanity deploy/sanity; fi
+          if [ -f middleware.ts ]; then
+            cp middleware.ts deploy/
+          fi
 
-          mkdir -p deploy/.deploy
-          touch deploy/.deploy/restart
+          if [ -d src ]; then
+            cp -r src deploy/src
+          fi
+
+          if [ -d sanity ]; then
+            cp -r sanity deploy/sanity
+          fi
 
           cd deploy
-          zip -r ../deploy.zip . \
-            -x ".next/cache/*"
+          zip -r ../deploy.zip . -x ".next/cache/*"
 
       - name: Upload deployment archive
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -62,8 +70,9 @@ jobs:
           server-dir: /www/district-school.by/
           exclude: |
             **/*
+            !deploy.zip
 
-      - name: Upload deployment package
+      - name: Create restart trigger
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
@@ -71,8 +80,5 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          local-dir: ./
-          server-dir: /www/district-school.by/
-          exclude: |
-            **/*
-            !deploy.zip
+          local-dir: .github/deploy-trigger/
+          server-dir: /www/district-school.by/.deploy/
