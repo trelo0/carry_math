@@ -42,7 +42,7 @@ jobs:
           cd deploy
           zip -r ../deploy.zip . -x ".next/cache/*"
 
-            - name: Upload deployment archive
+      - name: Upload deployment archive
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
