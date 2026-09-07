@@ -10,31 +10,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Получаем код
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2. Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
 
+      # 3. Устанавливаем зависимости
       - name: Install dependencies
         run: npm ci
 
+      # 4. Собираем production-версию
       - name: Build
         run: npm run build
 
+      # 5. Загружаем сайт на FTP
       - name: Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+
           protocol: ftp
           port: 21
+
           local-dir: ./
           server-dir: /www/district-school.by/
+
           exclude: |
             **/.git/**
             **/.github/**
@@ -46,13 +54,21 @@ jobs:
             **/dev-*.png
             **/booking-glow-diagnostic-profile/**
             **/chrome-booking-test/**
+
+      # 6. Создаём файл-триггер для перезапуска Node.js
       - name: Create restart trigger
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+
           protocol: ftp
           port: 21
+
           local-dir: .github/deploy-trigger/
           server-dir: /www/district-school.by/.deploy/
+
+          exclude: |
+            **/.git/**
+            **/.github/**
