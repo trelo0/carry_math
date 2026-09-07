@@ -58,3 +58,5 @@ jobs:
             -Q "RNFR deploy.zip.tmp" \
             -Q "RNTO deploy.zip" \
             "ftp://$FTP_SERVER/www/district-school.by/"
+
+# deployment trigger
