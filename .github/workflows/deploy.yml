@@ -42,7 +42,7 @@ jobs:
           cd deploy
           zip -r ../deploy.zip . -x ".next/cache/*"
 
-      - name: Upload deployment archive
+            - name: Upload deployment archive
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
@@ -51,4 +51,10 @@ jobs:
           curl --fail --ftp-pasv \
             --user "$FTP_USERNAME:$FTP_PASSWORD" \
             --upload-file deploy.zip \
-            "ftp://$FTP_SERVER/www/district-school.by/deploy.zip"
+            "ftp://$FTP_SERVER/www/district-school.by/deploy.zip.tmp"
+
+          curl --fail --ftp-pasv \
+            --user "$FTP_USERNAME:$FTP_PASSWORD" \
+            -Q "RNFR deploy.zip.tmp" \
+            -Q "RNTO deploy.zip" \
+            "ftp://$FTP_SERVER/www/district-school.by/"
