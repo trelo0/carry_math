@@ -39,46 +39,16 @@ jobs:
           cp next.config.* deploy/ 2>/dev/null || true
           cp postcss.config.* deploy/ 2>/dev/null || true
 
-          if [ -f proxy.ts ]; then
-            cp proxy.ts deploy/
-          fi
-
-          if [ -f middleware.ts ]; then
-            cp middleware.ts deploy/
-          fi
-
-          if [ -d src ]; then
-            cp -r src deploy/src
-          fi
-
-          if [ -d sanity ]; then
-            cp -r sanity deploy/sanity
-          fi
-
           cd deploy
           zip -r ../deploy.zip . -x ".next/cache/*"
 
       - name: Upload deployment archive
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftp
-          port: 21
-          local-dir: ./
-          server-dir: /www/district-school.by/
-          exclude: |
-            **/*
-            !deploy.zip
-
-      - name: Create restart trigger
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftp
-          port: 21
-          local-dir: .github/deploy-trigger/
-          server-dir: /www/district-school.by/.deploy/
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+        run: |
+          curl --fail --ftp-pasv \
+            --user "$FTP_USERNAME:$FTP_PASSWORD" \
+            --upload-file deploy.zip \
+            "ftp://$FTP_SERVER/www/district-school.by/deploy.zip"
