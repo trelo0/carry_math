@@ -48,3 +48,42 @@
 ⚠ Fast Refresh had to perform a full reload due to a runtime error.
  GET /cabinet 200 in 11.8s (compile: 350ms, proxy.ts: 3.4s, render: 8.0s)
 ✓ Compiled in 498ms
+ GET /cabinet-preview 200 in 4.1s (compile: 263ms, proxy.ts: 11ms, render: 3.9s)
+✓ Compiled in 362ms
+✓ Compiled in 328ms
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /cabinet-preview 200 in 2.9s (compile: 519ms, proxy.ts: 28ms, render: 2.3s)
+ GET /cabinet 307 in 3.1s (compile: 1786ms, proxy.ts: 31ms, render: 1306ms)
+ GET /login 200 in 3.4s (compile: 2.5s, proxy.ts: 16ms, render: 822ms)
+✓ Compiled in 354ms
+✓ Compiled in 426ms
+✓ Compiled in 351ms
+✓ Compiled in 323ms
+✓ Compiled in 315ms
+✓ Compiled in 212ms
+✓ Compiled in 298ms
+✓ Compiled in 332ms
+✓ Compiled in 551ms
+✓ Compiled in 662ms
+✓ Compiled in 623ms
+✓ Compiled in 725ms
+✓ Compiled in 635ms
+ GET / 200 in 1461ms (compile: 34ms, proxy.ts: 23ms, render: 1404ms)
+ GET /cabinet 307 in 1743ms (compile: 595ms, proxy.ts: 19ms, render: 1129ms)
+ GET /login 200 in 868ms (compile: 27ms, proxy.ts: 17ms, render: 824ms)
+ POST /api/auth/otp/request 200 in 4.3s (compile: 2.2s, proxy.ts: 14ms, render: 2.1s)
+ POST /api/auth/otp/verify 200 in 3.7s (compile: 762ms, proxy.ts: 12ms, render: 2.9s)
+ POST /api/auth/otp/verify 400 in 401ms (compile: 17ms, proxy.ts: 182ms, render: 202ms)
+ GET /cabinet 200 in 2.5s (compile: 24ms, proxy.ts: 175ms, render: 2.3s)
+ GET /cabinet 200 in 2.3s (compile: 23ms, proxy.ts: 186ms, render: 2.1s)
+✓ Compiled in 576ms
+✓ Compiled in 352ms
+✓ Compiled in 439ms
+✓ Compiled in 685ms
+✓ Compiled in 612ms
+✓ Compiled in 387ms
+✓ Compiled in 605ms
+✓ Compiled in 273ms
+ GET /cabinet-preview 200 in 1065ms (compile: 301ms, proxy.ts: 12ms, render: 751ms)
+ GET /cabinet 200 in 4.2s (compile: 269ms, proxy.ts: 663ms, render: 3.2s)

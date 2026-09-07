@@ -362,10 +362,13 @@
 
 .cab-lesson:hover { border-color: rgba(126, 156, 205, 0.45); box-shadow: 0 0 10px rgba(59, 166, 216, 0.15); }
 
-.cab-lesson.k-group { border-left-color: #9b8cf5; }
+.cab-lesson.k-course { border-left-color: #4fc3e8; }
+.cab-lesson.k-individual { border-left-color: #8fb3e8; }
+.cab-lesson.k-group { border-left-color: #e8b04a; }
 
-.cab-lesson-kind { font-size: 7.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #7fd4ea; }
-.cab-lesson.k-group .cab-lesson-kind { color: #beb2ff; }
+.cab-lesson-kind { font-size: 7.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #b9cdf0; }
+.cab-lesson.k-course .cab-lesson-kind { color: #7fd4ea; }
+.cab-lesson.k-group .cab-lesson-kind { color: #f0c987; }
 
 .cab-lesson strong {
   font-size: 11px;
@@ -428,8 +431,9 @@
 
 .cab-sched-dots { display: inline-flex; gap: 3px; }
 
-.cab-sched-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--cab-cyan); opacity: 0.8; }
-.cab-sched-dots i.k-group { background: #9b8cf5; }
+.cab-sched-dots i { width: 5px; height: 5px; border-radius: 50%; background: #4fc3e8; opacity: 0.8; }
+.cab-sched-dots i.k-individual { background: #8fb3e8; }
+.cab-sched-dots i.k-group { background: #e8b04a; }
 
 .cab-sched-monthlist { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 
@@ -493,14 +497,23 @@
 
 .cab-sched-next-meta { font-size: 11px; color: var(--cab-muted); }
 
-.cab-sched-next-cta { width: 100%; justify-content: center; margin-top: 10px; }
+.cab-sched-next-note {
+  margin-top: 6px;
+  padding: 9px 12px;
+  border: 1px solid var(--cab-line-soft);
+  border-radius: 10px;
+  background: rgba(8, 14, 30, 0.55);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--cab-muted);
+}
 
 /* список предстоящих */
 .cab-sched-upcoming { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 
 .cab-sched-upcoming li {
   display: grid;
-  grid-template-columns: 52px 48px minmax(0, 1fr) auto auto;
+  grid-template-columns: 52px 48px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 9px 4px;
@@ -529,8 +542,6 @@
 
 .cab-up-title strong { font-size: 12.5px; font-weight: 600; color: var(--cab-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cab-up-title em { font-style: normal; font-size: 10.5px; color: var(--cab-muted); }
-
-.cab-up-action { padding: 6px 12px; font-size: 10px; }
 
 /* пустое состояние */
 .cab-sched-empty {
@@ -734,9 +745,38 @@
 .cab-pkg-mini .cab-btn { align-self: flex-start; margin-top: auto; }
 
 /* пополнение пакета: выбор операции */
-.cab-pkg-refill { display: flex; flex-direction: column; gap: 16px; }
+.cab-pkg-refill { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; }
 
-.cab-pkg-refill-group { display: flex; flex-direction: column; gap: 4px; }
+.cab-pkg-refill-types { display: flex; flex-direction: column; gap: 6px; }
+
+.cab-pkg-refill-type {
+  text-align: left;
+  padding: 11px 15px;
+  border: 1px solid var(--cab-line-soft);
+  border-radius: 10px;
+  background: rgba(8, 14, 30, 0.55);
+  color: var(--cab-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.cab-pkg-refill-type:hover { color: var(--cab-text); }
+
+.cab-pkg-refill-type.is-active {
+  border-color: rgba(59, 166, 216, 0.45);
+  background: rgba(59, 166, 216, 0.07);
+  color: #cfe9f7;
+}
+
+.cab-pkg-refill-options { display: flex; flex-direction: column; }
+
+.cab-pkg-refill-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+.cab-pkg-refill-name strong { font-size: 12.5px; font-weight: 600; color: var(--cab-text); }
+
+.cab-pkg-refill-name em { font-style: normal; font-size: 10.5px; color: var(--cab-muted); }
 
 .cab-pkg-refill-row {
   display: grid;
@@ -789,6 +829,8 @@
   .cab-pkg-block { padding: 16px 14px 18px; }
   .cab-pkg-hero { padding: 18px 16px; }
   .cab-pkg-hero-num b { font-size: 36px; }
+  .cab-pkg-refill { grid-template-columns: 1fr; gap: 12px; }
+  .cab-pkg-refill-types { flex-direction: row; flex-wrap: wrap; }
   .cab-pkg-refill-row { grid-template-columns: minmax(0, 1fr) auto; }
   .cab-pkg-refill-btn { grid-column: 2; }
 }
@@ -847,8 +889,8 @@
 }
 
 .cab-schedule-kind.k-course { border: 1px solid rgba(59, 166, 216, 0.5); color: #7fd4ea; }
-.cab-schedule-kind.k-individual { border: 1px solid rgba(155, 140, 245, 0.5); color: #beb2ff; }
-.cab-schedule-kind.k-group { border: 1px solid rgba(53, 181, 131, 0.5); color: #7fdcae; }
+.cab-schedule-kind.k-individual { border: 1px solid rgba(143, 179, 232, 0.5); color: #b9cdf0; }
+.cab-schedule-kind.k-group { border: 1px solid rgba(232, 149, 44, 0.5); color: #f0c987; }
 
 /* ---------------------------- Основная колонка --------------------------- */
 
@@ -2308,11 +2350,10 @@
 
 .cab-ind-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--cab-muted); }
 
-/* групповой кабинет: спокойная сиреневая тема на весь раздел */
+/* групповой кабинет: приглушённая золотая тема на весь раздел */
 
 .cab-ind-next > * { position: relative; z-index: 1; }
 
-.cab-ind-scope.kind-group .cab-ind-head h2 { color: #e6e0ff; }
 
 /* участники мини-группы */
 .cab-group-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -2326,9 +2367,9 @@
   display: inline-grid;
   place-items: center;
   border-radius: 50%;
-  border: 1.5px solid rgba(155, 140, 245, 0.45);
+  border: 1.5px solid rgba(232, 149, 44, 0.45);
   background: rgba(16, 14, 30, 0.9);
-  color: #beb2ff;
+  color: #f0c987;
   font-size: 9px;
   font-weight: 700;
   font-style: normal;
@@ -2337,46 +2378,46 @@
 .cab-group-avatars i + i,
 .cab-group-avatars em { margin-left: -8px; }
 
-.cab-group-avatars em { color: #8f83c9; }
+.cab-group-avatars em { color: #c9a35f; }
 
-.cab-group-name { font-size: 12px; font-weight: 600; letter-spacing: 0.4px; color: #cbc3ea; }
+.cab-group-name { font-size: 12px; font-weight: 600; letter-spacing: 0.4px; color: #ecd9b4; }
 
 /* вся тема раздела — сиреневая: табы, список, статусы, кнопки, скроллбар */
 .cab-ind-scope.kind-group .cab-ind-tab.is-active {
-  color: #beb2ff;
-  border-color: rgba(155, 140, 245, 0.4);
-  background: rgba(155, 140, 245, 0.07);
+  color: #f0c987;
+  border-color: rgba(232, 149, 44, 0.4);
+  background: rgba(232, 149, 44, 0.07);
 }
 
-.cab-ind-scope.kind-group .cab-ind-tab.is-active b { background: rgba(155, 140, 245, 0.22); color: #e6e0ff; }
+.cab-ind-scope.kind-group .cab-ind-tab.is-active b { background: rgba(232, 149, 44, 0.22); color: #f3e6cf; }
 
-.cab-ind-scope.kind-group .cab-ind-row:hover { background: rgba(155, 140, 245, 0.05); }
+.cab-ind-scope.kind-group .cab-ind-row:hover { background: rgba(232, 149, 44, 0.05); }
 
 .cab-ind-scope.kind-group .cab-ind-row.is-selected {
-  border-color: rgba(155, 140, 245, 0.35);
-  background: rgba(155, 140, 245, 0.06);
+  border-color: rgba(232, 149, 44, 0.35);
+  background: rgba(232, 149, 44, 0.06);
 }
 
-.cab-ind-scope.kind-group .cab-ind-status.is-upcoming { color: #beb2ff; }
+.cab-ind-scope.kind-group .cab-ind-status.is-upcoming { color: #f0c987; }
 
 .cab-ind-scope.kind-group .cab-btn--line {
-  border-color: rgba(155, 140, 245, 0.45);
-  color: #beb2ff;
-  background: rgba(155, 140, 245, 0.06);
+  border-color: rgba(232, 149, 44, 0.45);
+  color: #f0c987;
+  background: rgba(232, 149, 44, 0.06);
 }
 
-.cab-ind-scope.kind-group .cab-btn--line:hover { box-shadow: 0 0 10px rgba(155, 140, 245, 0.2); }
+.cab-ind-scope.kind-group .cab-btn--line:hover { box-shadow: 0 0 10px rgba(232, 149, 44, 0.2); }
 
-.cab-ind-scope.kind-group .cab-file-dl { color: #beb2ff; }
+.cab-ind-scope.kind-group .cab-file-dl { color: #f0c987; }
 
 .cab-ind-scope.kind-group .cab-file-dl:hover {
-  border-color: rgba(155, 140, 245, 0.5);
-  box-shadow: 0 0 6px rgba(155, 140, 245, 0.2);
+  border-color: rgba(232, 149, 44, 0.5);
+  box-shadow: 0 0 6px rgba(232, 149, 44, 0.2);
 }
 
-.cab-ind-scope.kind-group .cab-ind-list { scrollbar-color: rgba(155, 140, 245, 0.35) transparent; }
+.cab-ind-scope.kind-group .cab-ind-list { scrollbar-color: rgba(232, 149, 44, 0.35) transparent; }
 
-.cab-ind-scope.kind-group .cab-ind-list::-webkit-scrollbar-thumb { background: rgba(155, 140, 245, 0.35); }
+.cab-ind-scope.kind-group .cab-ind-list::-webkit-scrollbar-thumb { background: rgba(232, 149, 44, 0.35); }
 
 /* переключатель Индивидуальные / Групповые (когда куплены оба типа) */
 .cab-ind-switch {
@@ -2418,45 +2459,33 @@
 }
 
 .cab-ind-switch-btn.is-group.is-active {
-  background: linear-gradient(180deg, rgba(155, 140, 245, 0.3), rgba(155, 140, 245, 0.14));
-  color: #e6e0ff;
-  box-shadow: inset 0 0 0 1px rgba(175, 160, 255, 0.45), 0 0 14px rgba(155, 140, 245, 0.18);
+  background: linear-gradient(180deg, rgba(232, 149, 44, 0.3), rgba(232, 149, 44, 0.14));
+  color: #f3e6cf;
+  box-shadow: inset 0 0 0 1px rgba(235, 180, 100, 0.45), 0 0 14px rgba(232, 149, 44, 0.18);
 }
 
 /* групповой кабинет: спокойный сиреневый акцент вместо синего */
 .cab-ind-scope.kind-group .cab-ind-next {
-  border-color: rgba(155, 140, 245, 0.35);
+  border-color: rgba(232, 149, 44, 0.35);
   background:
-    radial-gradient(460px 220px at 88% -30%, rgba(155, 140, 245, 0.12), transparent 65%),
-    linear-gradient(160deg, rgba(13, 12, 26, 0.95), rgba(8, 7, 16, 0.97));
+    radial-gradient(460px 220px at 88% -30%, rgba(232, 149, 44, 0.12), transparent 65%),
+    linear-gradient(160deg, rgba(10, 18, 36, 0.95), rgba(6, 11, 24, 0.97));
 }
 
 .cab-ind-scope.kind-group .cab-ind-kicker {
-  border-color: rgba(155, 140, 245, 0.45);
-  background: rgba(155, 140, 245, 0.08);
-  color: #beb2ff;
+  border-color: rgba(232, 149, 44, 0.45);
+  background: rgba(232, 149, 44, 0.08);
+  color: #f0c987;
 }
 
-.cab-ind-scope.kind-group .cab-ind-kicker i { background: #9b8cf5; }
+.cab-ind-scope.kind-group .cab-ind-kicker i { background: #e8b04a; }
 
-.cab-ind-scope.kind-group .cab-ind-date strong { color: #beb2ff; }
+.cab-ind-scope.kind-group .cab-ind-date strong { color: #f0c987; }
 
 .cab-ind-scope.kind-group .cab-ind-teacher i {
-  border-color: rgba(155, 140, 245, 0.55);
-  background: rgba(155, 140, 245, 0.08);
-  color: #beb2ff;
-}
-
-.cab-ind-scope.kind-group .cab-btn--join {
-  background: linear-gradient(180deg, #6f60c9, #5447a3);
-  border-color: rgba(190, 178, 255, 0.45);
-  color: #f2efff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
-}
-
-.cab-ind-scope.kind-group .cab-btn--join:hover {
-  border-color: rgba(190, 178, 255, 0.65);
-  box-shadow: 0 0 16px rgba(155, 140, 245, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  border-color: rgba(232, 149, 44, 0.55);
+  background: rgba(232, 149, 44, 0.08);
+  color: #f0c987;
 }
 
 /* акцентный блок предстоящего занятия */
@@ -2718,6 +2747,70 @@
 }
 
 .cab-set-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+/* карточка профиля в настройках */
+.cab-set-profile {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 6px 2px 2px;
+}
+
+.cab-set-avatar {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid rgba(59, 166, 216, 0.45);
+  background: radial-gradient(circle at 35% 30%, rgba(59, 166, 216, 0.2), rgba(10, 18, 36, 0.95));
+  color: var(--cab-cyan);
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.cab-set-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+.cab-set-id strong {
+  font-family: var(--font-heading, 'Oswald', sans-serif);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #f2f7ff;
+  line-height: 1.1;
+}
+
+.cab-set-id span { font-size: 13px; color: var(--cab-muted); font-variant-numeric: tabular-nums; }
+
+.cab-set-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+
+.cab-set-tag {
+  padding: 6px 14px;
+  border: 1px solid var(--cab-line);
+  border-radius: 999px;
+  background: rgba(8, 14, 30, 0.6);
+  color: var(--cab-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cab-set-tag.is-goal {
+  border-color: rgba(59, 166, 216, 0.4);
+  background: rgba(59, 166, 216, 0.07);
+  color: #7fd4ea;
+}
+
+/* системная информация аккаунта */
+.cab-set-sys {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 14px;

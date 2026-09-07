@@ -143,7 +143,7 @@ function dateParts(date: string): { day: string; month: string; weekday: string 
 /* ---------------------------- Страница расписания ------------------------- */
 /* Демо-занятия вокруг текущей даты (индивидуальные + групповые).
    Курс в расписание не входит — у него своя дорожная карта. */
-type SchedKind = 'individual' | 'group';
+type SchedKind = 'course' | 'individual' | 'group';
 type SchedLesson = {
   id: string;
   date: Date;
@@ -177,6 +177,9 @@ function schedLesson(
 }
 
 const DEMO_SCHED_LESSONS: SchedLesson[] = [
+  schedLesson('c1', 1, '16:00', 'Четырёхугольники', 'course'),
+  schedLesson('c2', 3, '16:00', 'Площади фигур', 'course'),
+  schedLesson('c3', 6, '16:00', 'Окружности', 'course'),
   schedLesson('s1', 0, '18:30', 'Квадратные уравнения', 'individual'),
   schedLesson('s2', 1, '18:00', 'Групповой интенсив: параметры', 'group', SCHED_GROUP_TEACHER),
   schedLesson('s3', 2, '17:00', 'Дробно-рациональные выражения', 'individual'),
@@ -191,12 +194,6 @@ const MONTHS_NOM = ['ЯНВАРЬ', 'ФЕВРАЛЬ', 'МАРТ', 'АПРЕЛЬ'
 const SCHED_START_HOUR = 10;
 const SCHED_HOURS = 11; // 10:00–21:00
 const HOUR_PX = 56;
-
-function startOfWeek(d: Date): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x;
-}
 
 function dayKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -233,6 +230,7 @@ function layoutColumns(items: SchedLesson[]): { lesson: SchedLesson; col: number
 }
 
 const SCHED_KIND_LABEL: Record<SchedKind, string> = {
+  course: 'Курс',
   individual: 'Индивидуальное',
   group: 'Групповое',
 };
@@ -275,6 +273,21 @@ const STUDY_GOALS = [
   'Поступление в вуз',
   'Другое',
 ];
+
+/* Доступные варианты пополнения пакетов (демо-цены). */
+type PkgRefillType = 'course' | 'individual' | 'group';
+const PKG_REFILL: Record<PkgRefillType, { label: string; options: { name: string; sub?: string; price: string }[] }> = {
+  course: { label: 'Курс District', options: [{ name: '8 занятий', sub: 'Алгебра + Геометрия', price: '120' }] },
+  individual: {
+    label: 'Индивидуальные',
+    options: [
+      { name: '1 занятие', price: '25' },
+      { name: '4 занятия', price: '90' },
+      { name: '8 занятий', price: '160' },
+    ],
+  },
+  group: { label: 'Групповые', options: [{ name: '8 занятий', sub: 'мини-группа', price: '80' }] },
+};
 
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 
@@ -711,10 +724,15 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
   const [indKind, setIndKind] = useState<'individual' | 'group'>('individual');
   const [schedView, setSchedView] = useState<'week' | 'month'>('week');
   const [schedFilter, setSchedFilter] = useState<'all' | SchedKind>('all');
-  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [weekStart, setWeekStart] = useState(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d; // окно «недели» начинается с сегодняшнего дня и идёт вперёд
+  });
   const [monthCursor, setMonthCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [monthSelected, setMonthSelected] = useState<string | null>(null);
   const [pkgHistoryAll, setPkgHistoryAll] = useState(false);
+  const [pkgRefillType, setPkgRefillType] = useState<PkgRefillType>('course');
   const [profileSaved, setProfileSaved] = useState({ name: '', klass: DEMO_PROFILE.level.split(' ')[0] ?? '10', goal: 'Подготовка к ЦТ' });
   const [profileDraft, setProfileDraft] = useState<{ name: string; klass: string; goal: string } | null>(null);
 
@@ -761,7 +779,7 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
   const weekLessonsByDay = weekDays.map((d) => schedLessons.filter((l) => dayKey(l.date) === dayKey(d)));
   const schedLabel =
     schedView === 'week'
-      ? `${MONTHS_NOM[weekStart.getMonth()]} ${weekStart.getFullYear()}`
+      ? `${MONTHS_GEN[weekStart.getMonth()]} ${weekStart.getFullYear()}`
       : `${MONTHS_NOM[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`;
 
   function shiftSched(dir: 1 | -1) {
@@ -794,6 +812,12 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
   /* ——— Пакеты ——— */
   const coursePkg = DEMO_MY_PACKAGES.find((p) => p.id === 'p-course') ?? null;
   const secondaryPackages = DEMO_MY_PACKAGES.filter((p) => p.id !== 'p-course');
+
+  /* счётчик до ЦТ (демо-дата экзамена) */
+  const examDaysLeft = Math.max(
+    0,
+    Math.ceil((new Date(2027, 4, 30).getTime() - new Date().getTime()) / 86_400_000)
+  );
 
   function startProfileEdit() {
     setProfileDraft({
@@ -842,17 +866,11 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
         </nav>
 
         <div className="cab-sidebar-footer">
-          <div className="cab-user-mini">
-            <span className="cab-avatar-sm">{initials(displayName)}</span>
-            <span className="cab-user-mini-name">
-              <strong>{displayName}</strong>
-              <span>{data.phone}</span>
-            </span>
+          <div className="cab-exam-countdown" suppressHydrationWarning>
+            <span className="cab-k">До ЦТ по математике</span>
+            <strong>{examDaysLeft}</strong>
+            <em>дней · 30 мая 2027</em>
           </div>
-          <button type="button" className="cab-nav-item cab-nav-logout" onClick={handleSignOut} disabled={signingOut}>
-            <Icon d={ICONS.exit} className="cab-nav-icon" />
-            <span className="cab-nav-label">{signingOut ? 'Выходим…' : 'Выйти'}</span>
-          </button>
         </div>
       </aside>
 
@@ -1213,7 +1231,9 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                       type="button"
                       className="cab-btn cab-btn--line cab-sched-today"
                       onClick={() => {
-                        setWeekStart(startOfWeek(new Date()));
+                        const d = new Date();
+                        d.setHours(0, 0, 0, 0);
+                        setWeekStart(d);
                         setMonthCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
                         setMonthSelected(null);
                       }}
@@ -1235,6 +1255,15 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                   <div className="cab-sched-filters" role="tablist" aria-label="Фильтр занятий">
                     <button type="button" role="tab" aria-selected={schedFilter === 'all'} className={`cab-sched-filter${schedFilter === 'all' ? ' is-active' : ''}`} onClick={() => setSchedFilter('all')}>
                       Все
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={schedFilter === 'course'}
+                      className={`cab-sched-filter${schedFilter === 'course' ? ' is-active' : ''}`}
+                      onClick={() => setSchedFilter('course')}
+                    >
+                      Курс
                     </button>
                     <button
                       type="button"
@@ -1274,7 +1303,7 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                           return (
                             <div key={di} className={`cab-sched-day${isToday ? ' is-today' : ''}`}>
                               <header className="cab-sched-dayhead">
-                                <span className="cab-sched-dayname">{DAY_HEADERS[di]}</span>
+                                <span className="cab-sched-dayname">{DAY_HEADERS[(day.getDay() + 6) % 7]}</span>
                                 {/*suppressHydrationWarning: даты считаются на клиенте*/}
                                 <b suppressHydrationWarning>{day.getDate()}</b>
                               </header>
@@ -1389,9 +1418,7 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                           {schedNearest.teacher}
                         </span>
                         <span className="cab-sched-next-meta">{schedNearest.duration} минут · Онлайн</span>
-                        <button type="button" className="cab-btn cab-btn--join cab-sched-next-cta">
-                          Подключиться <Icon d={ICONS.chevron} />
-                        </button>
+                        <span className="cab-sched-next-note">Ссылка на подключение придёт в Telegram за 15 минут до начала.</span>
                       </>
                     ) : (
                       <>
@@ -1422,9 +1449,6 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                             <em>{l.teacher}</em>
                           </span>
                           <span className={`cab-schedule-kind k-${l.kind}`}>{SCHED_KIND_LABEL[l.kind]}</span>
-                          <button type="button" className="cab-btn cab-btn--line cab-up-action">
-                            Подключиться
-                          </button>
                         </li>
                       ))}
                     </ul>
@@ -1520,41 +1544,33 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                     <span className="cab-set-num">02 · Пополнить пакет</span>
                   </header>
                   <div className="cab-pkg-refill">
-                    <div className="cab-pkg-refill-group">
-                      <span className="cab-k">Курс District</span>
-                      <div className="cab-pkg-refill-row">
-                        <span className="cab-pkg-refill-name">8 занятий · Алгебра + Геометрия</span>
-                        <span className="cab-pkg-refill-price">120 BYN</span>
-                        <a className="cab-pkg-refill-btn" href="/cabinet/checkout?product=course">
-                          Выбрать <Icon d={ICONS.chevron} />
-                        </a>
-                      </div>
+                    <div className="cab-pkg-refill-types" role="tablist" aria-label="Тип пакета">
+                      {(Object.keys(PKG_REFILL) as PkgRefillType[]).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          role="tab"
+                          aria-selected={pkgRefillType === t}
+                          className={`cab-pkg-refill-type${pkgRefillType === t ? ' is-active' : ''}`}
+                          onClick={() => setPkgRefillType(t)}
+                        >
+                          {PKG_REFILL[t].label}
+                        </button>
+                      ))}
                     </div>
-                    <div className="cab-pkg-refill-group">
-                      <span className="cab-k">Индивидуальные</span>
-                      {[
-                        { n: 1, price: '25' },
-                        { n: 4, price: '90' },
-                        { n: 8, price: '160' },
-                      ].map((o) => (
-                        <div key={o.n} className="cab-pkg-refill-row">
-                          <span className="cab-pkg-refill-name">{o.n} {pluralLessons(o.n)}</span>
+                    <div className="cab-pkg-refill-options">
+                      {PKG_REFILL[pkgRefillType].options.map((o) => (
+                        <div key={o.name} className="cab-pkg-refill-row">
+                          <span className="cab-pkg-refill-name">
+                            <strong>{o.name}</strong>
+                            {o.sub ? <em>{o.sub}</em> : null}
+                          </span>
                           <span className="cab-pkg-refill-price">{o.price} BYN</span>
-                          <a className="cab-pkg-refill-btn" href="/cabinet/checkout?product=individual">
+                          <a className="cab-pkg-refill-btn" href={`/cabinet/checkout?product=${pkgRefillType}`}>
                             Выбрать <Icon d={ICONS.chevron} />
                           </a>
                         </div>
                       ))}
-                    </div>
-                    <div className="cab-pkg-refill-group">
-                      <span className="cab-k">Групповые</span>
-                      <div className="cab-pkg-refill-row">
-                        <span className="cab-pkg-refill-name">8 занятий · мини-группа</span>
-                        <span className="cab-pkg-refill-price">80 BYN</span>
-                        <a className="cab-pkg-refill-btn" href="/cabinet/checkout?product=group">
-                          Выбрать <Icon d={ICONS.chevron} />
-                        </a>
-                      </div>
                     </div>
                   </div>
                 </section>
@@ -1599,24 +1615,17 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                     )}
                   </header>
                   {!profileDraft ? (
-                    <dl className="cab-set-grid">
-                      <div className="cab-set-item">
-                        <dt>Имя</dt>
-                        <dd>{profileName}</dd>
+                    <div className="cab-set-profile">
+                      <span className="cab-set-avatar">{initials(profileName)}</span>
+                      <div className="cab-set-id">
+                        <strong>{profileName}</strong>
+                        <span>{data.phone}</span>
                       </div>
-                      <div className="cab-set-item">
-                        <dt>Телефон</dt>
-                        <dd>{data.phone}</dd>
+                      <div className="cab-set-tags">
+                        <span className="cab-set-tag">{profileSaved.klass ? `${profileSaved.klass} класс` : 'Класс не указан'}</span>
+                        <span className="cab-set-tag is-goal">{profileSaved.goal}</span>
                       </div>
-                      <div className="cab-set-item">
-                        <dt>Класс</dt>
-                        <dd>{profileSaved.klass ? `${profileSaved.klass} класс` : '—'}</dd>
-                      </div>
-                      <div className="cab-set-item cab-set-item--wide">
-                        <dt>Цель обучения</dt>
-                        <dd>{profileSaved.goal}</dd>
-                      </div>
-                    </dl>
+                    </div>
                   ) : (
                     <form
                       className="cab-set-form"
@@ -1671,7 +1680,7 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
                   <header className="cab-set-head">
                     <span className="cab-set-num">02 · Аккаунт</span>
                   </header>
-                  <dl className="cab-set-grid">
+                  <dl className="cab-set-sys">
                     <div className="cab-set-item">
                       <dt>ID ученика</dt>
                       <dd className="cab-set-mono">{studentId}</dd>
@@ -1695,26 +1704,22 @@ export default function CabinetShell({ data }: { data: CabinetData }) {
             <section className="cab-panel cab-profile">
               <header className="cab-panel-head">
                 <h3>Профиль</h3>
-                <button type="button" className="cab-edit" onClick={() => setSection('settings')}>
-                  Редактировать <Icon d={ICONS.edit} />
-                </button>
               </header>
               <div className="cab-profile-row">
                 <span className="cab-avatar-lg">{initials(displayName)}</span>
                 <div className="cab-profile-id">
                   <strong>{displayName}</strong>
-                  <span>{DEMO_PROFILE.sub}</span>
                   <span className="cab-profile-mail">{data.phone}</span>
                 </div>
               </div>
               <div className="cab-stats">
                 <div>
-                  <span>Уровень</span>
-                  <strong>{DEMO_PROFILE.level}</strong>
+                  <span>Класс</span>
+                  <strong>{profileSaved.klass ? `${profileSaved.klass} класс` : '—'}</strong>
                 </div>
                 <div>
                   <span>Цель</span>
-                  <strong>{DEMO_PROFILE.goal}</strong>
+                  <strong>{profileSaved.goal}</strong>
                 </div>
                 <div>
                   <span>В системе</span>
