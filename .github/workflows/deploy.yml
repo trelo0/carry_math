@@ -38,13 +38,14 @@ jobs:
           exclude: |
             **/.git/**
             **/.github/**
+            **/.agents/**
             **/node_modules/**
+            **/.next/cache/**
             **/.env*
             **/*.log
             **/dev-*.png
             **/booking-glow-diagnostic-profile/**
             **/chrome-booking-test/**
-
       - name: Create restart trigger
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
