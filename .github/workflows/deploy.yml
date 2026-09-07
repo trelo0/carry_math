@@ -1,4 +1,4 @@
-name: Deploy to production
+name: Deploy to district-school.by
 
 on:
   push:
@@ -25,26 +25,33 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test SSH
-        run: |
-          mkdir -p "$HOME/.ssh"
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > "$HOME/.ssh/deploy_key"
-          chmod 600 "$HOME/.ssh/deploy_key"
-          ssh-keyscan -v -T 10 -p 22 93.84.119.244
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          local-dir: ./
+          server-dir: /www/district-school.by/
+          exclude: |
+            **/.git/**
+            **/.github/**
+            **/node_modules/**
+            **/.env*
+            **/*.log
+            **/dev-*.png
+            **/booking-glow-diagnostic-profile/**
+            **/chrome-booking-test/**
 
-      - name: Deploy
-        run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.env' \
-            --exclude='.env.*' \
-            --exclude='node_modules' \
-            --exclude='.next/cache' \
-            -e "ssh -i ~/.ssh/deploy_key -p 22" \
-            ./ district@93.84.119.244:/var/www/district/data/www/district-school.by/
-
-      - name: Restart application
-        run: |
-          ssh -i ~/.ssh/deploy_key -p 22 district@93.84.119.244 \
-            'cd /var/www/district/data/www/district-school.by && npm install --omit=dev && pm2 restart "district-school.by"'
+      - name: Create restart trigger
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          local-dir: .github/deploy-trigger/
+          server-dir: /www/district-school.by/.deploy/
