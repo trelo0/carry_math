@@ -55,8 +55,6 @@ jobs:
 
           curl --fail --ftp-pasv \
             --user "$FTP_USERNAME:$FTP_PASSWORD" \
-            -Q "RNFR deploy.zip.tmp" \
-            -Q "RNTO deploy.zip" \
-            "ftp://$FTP_SERVER/www/district-school.by/"
-
-# deployment trigger
+            --quote "RNFR /www/district-school.by/deploy.zip.tmp" \
+            --quote "RNTO /www/district-school.by/deploy.zip" \
+            "ftp://$FTP_SERVER/"
