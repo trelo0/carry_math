@@ -28,6 +28,12 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
+      - name: Verify production build
+        run: |
+          test -f .next/BUILD_ID
+          echo "BUILD_ID:"
+          cat .next/BUILD_ID
+
       - name: Create production artifact
         run: |
           rm -rf deploy
@@ -44,9 +50,14 @@ jobs:
 
           rm -rf deploy/.next/cache
 
+          echo "Artifact contents:"
+          du -sh deploy/.next
+          ls -la deploy/.next
+
       - name: Upload production artifact
         uses: actions/upload-artifact@v4
         with:
           name: production-build
           path: deploy
+          include-hidden-files: true
           retention-days: 7
