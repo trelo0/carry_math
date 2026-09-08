@@ -50,4 +50,3 @@ jobs:
           name: production-build
           path: deploy
           retention-days: 7
-```
