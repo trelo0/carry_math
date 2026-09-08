@@ -1,4 +1,5 @@
-name: Deploy to district-school.by
+```yaml
+name: Build production
 
 on:
   push:
@@ -6,7 +7,7 @@ on:
       - main
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,9 +29,9 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
-      - name: Create deployment archive
+      - name: Create production artifact
         run: |
-          rm -rf deploy deploy.zip
+          rm -rf deploy
           mkdir deploy
 
           cp -r .next deploy/.next
@@ -42,22 +43,12 @@ jobs:
           cp next.config.* deploy/ 2>/dev/null || true
           cp postcss.config.* deploy/ 2>/dev/null || true
 
-          cd deploy
-          zip -r ../deploy.zip . -x ".next/cache/*"
+          rm -rf deploy/.next/cache
 
-      - name: Upload deployment archive
-        env:
-          FTP_SERVER: ${{ secrets.FTP_SERVER }}
-          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
-          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-        run: |
-          curl --fail --ftp-pasv \
-            --user "$FTP_USERNAME:$FTP_PASSWORD" \
-            --upload-file deploy.zip \
-            "ftp://$FTP_SERVER/www/district-school.by/deploy.zip.tmp"
-
-          curl --fail --ftp-pasv \
-            --user "$FTP_USERNAME:$FTP_PASSWORD" \
-            --quote "RNFR /www/district-school.by/deploy.zip.tmp" \
-            --quote "RNTO /www/district-school.by/deploy.zip" \
-            "ftp://$FTP_SERVER/"
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: deploy
+          retention-days: 7
+```
