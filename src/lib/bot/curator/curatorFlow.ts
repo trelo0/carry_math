@@ -30,7 +30,7 @@ import {
   type CuratorHomeworkRecord,
   type CuratorStudentRecord,
 } from './curatorData';
-import { getStudentCabinetUrl } from '../studentFlow';
+import { getBaseUrlString } from '@/lib/siteUrl';
 import {
   approveCourseHomeworkByCurator,
   deductLifeForHomeworkDebtByCurator,
@@ -75,7 +75,7 @@ function curatorCabinetScreen(): { text: string; keyboard: InlineKeyboard } {
     text: '🌐 Личный кабинет\n\nОткрой кабинет на сайте District:',
     keyboard: {
       inline_keyboard: [
-        [{ text: '🌐 Открыть личный кабинет', url: getStudentCabinetUrl() }],
+        [{ text: '🌐 Открыть личный кабинет', url: `${getBaseUrlString()}/cabinet` }],
         [backButton('⬅️ Назад', 'c:menu')],
       ],
     },
