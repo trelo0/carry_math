@@ -14,28 +14,40 @@ import {
   saveState,
   sendAdminMessage,
 } from '../admin/core';
+import { CURATOR_HW_STATUS_LABELS, CURATOR_HW_STATUS_SHORT } from './curator-types';
+import { loadCuratorLibrary } from './curator-library';
 import {
-  CURATOR_HW_STATUS_LABELS,
-  CURATOR_HW_STATUS_SHORT,
-  CURATOR_LIBRARY,
-  CURATOR_PRE_LESSON_SUMMARY,
-} from './mock-data';
-import {
-  getCuratorHomework,
-  getCuratorNewSubmissions,
-  getCuratorNotification,
-  getCuratorStudent,
-  getCuratorStudentLives,
-  getCuratorStudentListLabel,
-  getCuratorStudentSummary,
-  getCuratorStudents,
+  getCuratorHomeworkRecord,
+  getCuratorNotificationById,
+  getCuratorStudentRecord,
   isCuratorNotificationRead,
+  listCuratorStudentLabel,
+  listCuratorSubmissionNotifications,
+  loadCuratorStudents,
   markCuratorNotificationRead,
-  setCuratorHomeworkStatus,
-} from './mock-state';
+  summarizeCuratorStudent,
+  summarizeCuratorStudents,
+  type CuratorHomeworkRecord,
+  type CuratorStudentRecord,
+} from './curatorData';
+import { getStudentCabinetUrl } from '../studentFlow';
+import {
+  approveCourseHomeworkByCurator,
+  deductLifeForHomeworkDebtByCurator,
+  formatLifeDeductionNote,
+  rejectCourseHomeworkByCurator,
+  CourseHomeworkError,
+} from '../education/course-homework';
+import { getEnrollmentLives } from '../education/lives';
+import { resolveCourseIdForContent } from '../education/course-record';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
+import {
+  notifyStudentHomeworkReviewed,
+  sendSubmissionToCurator,
+} from '../studentHomeworkFlow';
 
 // ---------------------------------------------------------------------------
-// Кабинет ментора (role = curator). Этап проверки UX на MOCK-данных.
+// Кабинет куратора курса (role = curator). Данные — Supabase + Sanity.
 //
 // Архитектура та же, что у админки и кабинета преподавателя:
 // • Reply Keyboard — постоянное главное меню под полем ввода;
@@ -43,9 +55,6 @@ import {
 // • новое сообщение — результаты действий (одобрение/отклонение ДЗ,
 //   ответ на текст/голос/фото), чтобы результат был под сообщением ментора.
 //
-// Все данные — mock-data.ts / mock-state.ts: статусы меняются только
-// в памяти процесса, в Supabase ничего не пишется, ученикам ничего
-// не отправляется.
 // ---------------------------------------------------------------------------
 
 export const CURATOR_MENU_LABELS = {
@@ -59,10 +68,19 @@ export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU
 
 const CURATOR_HOME_TEXT =
   '🧑‍🏫 Кабинет ментора District\n\n' +
-  'Разделы — на кнопках меню под полем ввода. Сейчас интерфейс работает на тестовых данных.';
+  'Разделы — на кнопках меню под полем ввода.';
 
-const CURATOR_CABINET_TEXT =
-  '🌐 Личный кабинет\n\nСсылка на личный кабинет будет подключена после готовности сайта.';
+function curatorCabinetScreen(): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: '🌐 Личный кабинет\n\nОткрой кабинет на сайте District:',
+    keyboard: {
+      inline_keyboard: [
+        [{ text: '🌐 Открыть личный кабинет', url: getStudentCabinetUrl() }],
+        [backButton('⬅️ Назад', 'c:menu')],
+      ],
+    },
+  };
+}
 
 const CURATOR_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
@@ -113,21 +131,38 @@ function notFoundKeyboard(backText: string, backCallback: string): InlineKeyboar
 
 // --- Библиотека учебных материалов (§4) ------------------------------------
 
-export function renderCuratorLibrary(): { text: string; keyboard: InlineKeyboard } {
-  const text = `📝 ДОМАШКИ\n\n📚 Курс\n\n${CURATOR_LIBRARY.map((w) => `📂 ${w.title}`).join('\n')}`;
+export async function renderCuratorLibrary(): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const library = await loadCuratorLibrary();
+  if (library.length === 0) {
+    return {
+      text: '📝 ДОМАШКИ\n\nПока нет опубликованных заданий в программе курса.',
+      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
+    };
+  }
+  const text = `📝 ДОМАШКИ\n\n📚 Курс\n\n${library.map((w) => `📂 ${w.title}`).join('\n')}`;
   return {
     text,
     keyboard: {
       inline_keyboard: [
-        ...CURATOR_LIBRARY.map((w): InlineButton[] => [{ text: `📂 ${w.title}`, callback_data: `c:libw:${w.id}` }]),
+        ...library.map((w): InlineButton[] => [{ text: `📂 ${w.title}`, callback_data: `c:libw:${w.id}` }]),
         [backButton('⬅️ Назад', 'c:menu')],
       ],
     },
   };
 }
 
-export function renderCuratorWebinar(webinarId: string): { text: string; keyboard: InlineKeyboard } | null {
-  const webinar = CURATOR_LIBRARY.find((w) => w.id === webinarId);
+async function findLibraryTask(taskId: string) {
+  const library = await loadCuratorLibrary();
+  for (const webinar of library) {
+    const task = webinar.tasks.find((t) => t.id === taskId);
+    if (task) return { webinar, task };
+  }
+  return null;
+}
+
+export async function renderCuratorWebinar(webinarId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const library = await loadCuratorLibrary();
+  const webinar = library.find((w) => w.id === webinarId);
   if (!webinar) return null;
   const text = `📂 ${webinar.title}\n\n${webinar.tasks.map((t) => `📄 ${t.title}`).join('\n')}`;
   return {
@@ -141,49 +176,51 @@ export function renderCuratorWebinar(webinarId: string): { text: string; keyboar
   };
 }
 
-export function renderCuratorLibraryTask(taskId: string): {
+export async function renderCuratorLibraryTask(taskId: string): Promise<{
   text: string;
   keyboard: InlineKeyboard;
   webinarId: string;
-} | null {
-  for (const webinar of CURATOR_LIBRARY) {
-    const task = webinar.tasks.find((t) => t.id === taskId);
-    if (task) {
-      return {
-        webinarId: webinar.id,
-        text: `📄 ${task.title}\n\nУсловие задания:\n\n${task.condition}\n\n📎 Файл с условием`,
-        keyboard: {
-          inline_keyboard: [
-            [{ text: '👀 Посмотреть', callback_data: `c:libf:${task.id}` }],
-            [backButton('⬅️ Назад', `c:libw:${webinar.id}`)],
-          ],
-        },
-      };
-    }
-  }
-  return null;
+} | null> {
+  const hit = await findLibraryTask(taskId);
+  if (!hit) return null;
+  const { webinar, task } = hit;
+  return {
+    webinarId: webinar.id,
+    text: `📄 ${task.title}\n\nУсловие задания:\n\n${task.condition}`,
+    keyboard: {
+      inline_keyboard: [
+        ...(task.fileUrl ? [[{ text: '👀 Открыть файл', url: task.fileUrl }] as InlineButton[]] : []),
+        [backButton('⬅️ Назад', `c:libw:${webinar.id}`)],
+      ],
+    },
+  };
 }
 
-export function renderCuratorLibraryFile(taskId: string): { text: string; keyboard: InlineKeyboard } | null {
-  const task = renderCuratorLibraryTask(taskId);
-  if (!task) return null;
+export async function renderCuratorLibraryFile(taskId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const hit = await findLibraryTask(taskId);
+  if (!hit?.task.fileUrl) return null;
   return {
-    text: '📎 Файл с условием\n\nВ реальной версии здесь будет файл задания.',
+    text: `📎 ${hit.task.title}\n\n${hit.task.fileUrl}`,
     keyboard: { inline_keyboard: [[backButton('⬅️ Назад', `c:libv:${taskId}`)]] },
   };
 }
 
 // --- Ученики (§5, §6) -------------------------------------------------------
 
-export function renderCuratorStudentsList(): { text: string; keyboard: InlineKeyboard } {
-  const students = getCuratorStudents();
-  const text = `👨‍🎓 УЧЕНИКИ\n\n${students.map((s) => getCuratorStudentListLabel(s)).join('\n')}`;
+export function renderCuratorStudentsList(students: CuratorStudentRecord[]): { text: string; keyboard: InlineKeyboard } {
+  if (students.length === 0) {
+    return {
+      text: '👨‍🎓 УЧЕНИКИ\n\nПока нет закреплённых учеников.',
+      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
+    };
+  }
+  const text = `👨‍🎓 УЧЕНИКИ\n\n${students.map((s) => listCuratorStudentLabel(s)).join('\n')}`;
   return {
     text,
     keyboard: {
       inline_keyboard: [
         ...students.map((s): InlineButton[] => [
-          { text: getCuratorStudentListLabel(s), callback_data: `c:sp:${s.id}` },
+          { text: listCuratorStudentLabel(s), callback_data: `c:sp:${s.id}` },
         ]),
         [backButton('⬅️ Назад', 'c:menu')],
       ],
@@ -191,11 +228,11 @@ export function renderCuratorStudentsList(): { text: string; keyboard: InlineKey
   };
 }
 
-export function renderCuratorStudentProfile(studentId: string): { text: string; keyboard: InlineKeyboard } | null {
-  const student = getCuratorStudent(studentId);
-  if (!student) return null;
-  const summary = getCuratorStudentSummary(student);
-  const lives = getCuratorStudentLives(studentId);
+export function renderCuratorStudentProfile(
+  student: CuratorStudentRecord,
+  lives: number | null,
+): { text: string; keyboard: InlineKeyboard } {
+  const summary = summarizeCuratorStudent(student);
 
   const parts = [`👨‍🎓 ${student.name}`, '', `❤️ Жизни на Арене: ${lives ?? '—'}`, ''];
   if (summary.debtCount > 0) {
@@ -231,26 +268,27 @@ export function renderCuratorStudentProfile(studentId: string): { text: string; 
 // --- Проверка ДЗ ученика (§8–§13) -------------------------------------------
 
 export function renderCuratorHomeworkCard(
-  studentId: string,
-  hwNumber: number,
-): { text: string; keyboard: InlineKeyboard } | null {
-  const student = getCuratorStudent(studentId);
-  const homework = getCuratorHomework(studentId, hwNumber);
-  if (!student || !homework) return null;
+  student: CuratorStudentRecord,
+  homework: CuratorHomeworkRecord,
+): { text: string; keyboard: InlineKeyboard } {
   const text =
     '📝 ДОМАШНЕЕ ЗАДАНИЕ\n\n' +
     `Ученик: ${student.name}\n` +
-    `Задание: ДЗ №${hwNumber}\n` +
+    `Задание: ДЗ №${homework.number} — ${homework.title}\n` +
     `Статус: ${CURATOR_HW_STATUS_LABELS[homework.status]}\n\n` +
+    (homework.submissionNote ? `Комментарий ученика:\n${homework.submissionNote}\n\n` : '') +
     '📎 Работа ученика';
   return {
     text,
     keyboard: {
       inline_keyboard: [
-        [{ text: '👀 Посмотреть', callback_data: `c:vieww:${studentId}:${hwNumber}` }],
-        [{ text: '✅ ОДОБРИТЬ', callback_data: `c:appr:${studentId}:${hwNumber}` }],
-        [{ text: '❌ ОТКЛОНИТЬ', callback_data: `c:rej:${studentId}:${hwNumber}` }],
-        [backButton('⬅️ Назад', `c:sp:${studentId}`)],
+        ...(homework.status === 'waiting'
+          ? [[{ text: '❤️ Снять жизнь (не сдано)', callback_data: `c:lded:${student.id}:${homework.number}` }]]
+          : []),
+        [{ text: '👀 Посмотреть', callback_data: `c:vieww:${student.id}:${homework.number}` }],
+        [{ text: '✅ ОДОБРИТЬ', callback_data: `c:appr:${student.id}:${homework.number}` }],
+        [{ text: '❌ ОТКЛОНИТЬ', callback_data: `c:rej:${student.id}:${homework.number}` }],
+        [backButton('⬅️ Назад', `c:sp:${student.id}`)],
       ],
     },
   };
@@ -276,9 +314,16 @@ export function renderCuratorRejectMethod(studentId: string, hwNumber: number): 
 
 // --- Уведомления (§14, §15) --------------------------------------------------
 
-export function renderCuratorNotifications(): { text: string; keyboard: InlineKeyboard } {
-  const notifications = getCuratorNewSubmissions();
-  const unread = notifications.filter((n) => !isCuratorNotificationRead(n.id));
+export async function renderCuratorNotifications(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+  students: CuratorStudentRecord[],
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const notifications = listCuratorSubmissionNotifications(students);
+  const readFlags = await Promise.all(
+    notifications.map((n) => isCuratorNotificationRead(admin, curatorTelegramId, n.id)),
+  );
+  const unread = notifications.filter((_, i) => !readFlags[i]);
 
   const parts = ['🔔 УВЕДОМЛЕНИЯ', ''];
   if (unread.length > 0) {
@@ -291,9 +336,9 @@ export function renderCuratorNotifications(): { text: string; keyboard: InlineKe
   }
 
   const buttons = notifications.map(
-    (n): InlineButton[] => [
+    (n, i): InlineButton[] => [
       {
-        text: `${isCuratorNotificationRead(n.id) ? '✓' : '📎'} ${n.studentName} — ДЗ №${n.hwNumber}`,
+        text: `${readFlags[i] ? '✓' : '📎'} ${n.studentName} — ДЗ №${n.hwNumber}`,
         callback_data: `c:notv:${n.id}`,
       },
     ],
@@ -310,13 +355,15 @@ export function renderCuratorNotifications(): { text: string; keyboard: InlineKe
   };
 }
 
-export function renderCuratorNotificationView(notificationId: string): {
-  text: string;
-  keyboard: InlineKeyboard;
-} | null {
-  const notification = getCuratorNotification(notificationId);
+export async function renderCuratorNotificationView(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+  students: CuratorStudentRecord[],
+  notificationId: string,
+): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const notification = getCuratorNotificationById(students, notificationId);
   if (!notification) return null;
-  markCuratorNotificationRead(notificationId);
+  await markCuratorNotificationRead(admin, curatorTelegramId, notificationId);
   const text =
     `📎 ${notification.studentName} отправил${feminineEnding(notification.studentName)} ДЗ №${notification.hwNumber}\n\n` +
     'Статус:\n' +
@@ -345,8 +392,8 @@ function feminineEnding(name: string): string {
 
 // --- Контроль перед занятием (§16) -------------------------------------------
 
-export function renderCuratorPreLesson(): { text: string; keyboard: InlineKeyboard } {
-  const summary = CURATOR_PRE_LESSON_SUMMARY;
+export function renderCuratorPreLesson(students: CuratorStudentRecord[]): { text: string; keyboard: InlineKeyboard } {
+  const summary = summarizeCuratorStudents(students);
   const text =
     '🔔 КОНТРОЛЬ ПЕРЕД ЗАНЯТИЕМ\n\n' +
     'Завтра занятие.\n\n' +
@@ -368,10 +415,7 @@ export function renderCuratorPreLesson(): { text: string; keyboard: InlineKeyboa
 }
 
 export function renderCuratorCabinet(): { text: string; keyboard: InlineKeyboard } {
-  return {
-    text: CURATOR_CABINET_TEXT,
-    keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
-  };
+  return curatorCabinetScreen();
 }
 
 // ---------------------------------------------------------------------------
@@ -423,19 +467,38 @@ export async function handleCuratorMessage(
     const payload = state.payload as RejectPayload;
     const studentId = payload.studentId ?? '';
     const hwNumber = payload.hwNumber ?? 0;
-    const student = getCuratorStudent(studentId);
-    if (!student || !setCuratorHomeworkStatus(studentId, hwNumber, 'rejected', text)) {
-      await sendAdminMessage(chatId, 'Не удалось найти работу в тестовых данных.');
+    const students = await loadCuratorStudents(admin, telegramId);
+    const student = getCuratorStudentRecord(students, studentId);
+    if (!student) {
+      await sendAdminMessage(chatId, 'Не удалось найти работу.');
       return true;
     }
-    await sendAdminMessage(
-      chatId,
-      '❌ ДЗ отклонено.\n\n' +
-        `Ученик: ${student.name}\n\n` +
-        `Комментарий:\n«${text}»\n\n` +
-        'В реальной версии сообщение будет отправлено ученику через Telegram-бота.',
-      { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${studentId}`)]] },
-    );
+    try {
+      const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
+        admin,
+        telegramId,
+        student.telegramId,
+        hwNumber,
+        text,
+      );
+      await notifyStudentHomeworkReviewed(admin, student.telegramId, {
+        lessonNumber: lesson.lessonNumber,
+        title: lesson.title,
+        approved: false,
+        note: text,
+      });
+      await sendAdminMessage(
+        chatId,
+        '❌ ДЗ отклонено.\n\n' +
+          `Ученик: ${student.name}\n\n` +
+          `Комментарий:\n«${text}»` +
+          formatLifeDeductionNote(lifeDeduction),
+        { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${studentId}`)]] },
+      );
+    } catch (error) {
+      const message = error instanceof CourseHomeworkError ? error.message : 'Не удалось отклонить домашку.';
+      await sendAdminMessage(chatId, message);
+    }
     return true;
   }
 
@@ -450,23 +513,24 @@ export async function handleCuratorMessage(
     return true;
   }
   if (text === CURATOR_MENU_LABELS.homework) {
-    const screen = renderCuratorLibrary();
+    const screen = await renderCuratorLibrary();
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
   if (text === CURATOR_MENU_LABELS.students) {
-    const screen = renderCuratorStudentsList();
+    const students = await loadCuratorStudents(admin, telegramId);
+    const screen = renderCuratorStudentsList(students);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
-  const screen = renderCuratorNotifications();
+  const students = await loadCuratorStudents(admin, telegramId);
+  const screen = await renderCuratorNotifications(admin, telegramId, students);
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// Вложения: голосовое (§12) или фото (§13) как комментарий при отклонении.
-// Реальному ученику ничего не отправляется — только тестовый результат.
+// Вложения: голосовое или фото как комментарий при отклонении → ученику.
 // ---------------------------------------------------------------------------
 
 export async function handleCuratorAttachment(
@@ -474,6 +538,7 @@ export async function handleCuratorAttachment(
   telegramId: number,
   chatId: number,
   kind: 'voice' | 'photo',
+  fileId: string,
 ): Promise<boolean> {
   const role = await effectiveCuratorRole(admin, telegramId);
   if (role !== 'curator') return false;
@@ -492,21 +557,54 @@ export async function handleCuratorAttachment(
   const payload = state.payload as RejectPayload;
   const studentId = payload.studentId ?? '';
   const hwNumber = payload.hwNumber ?? 0;
-  const student = getCuratorStudent(studentId);
-  if (!student || !setCuratorHomeworkStatus(studentId, hwNumber, 'rejected')) {
-    await sendAdminMessage(chatId, 'Не удалось найти работу в тестовых данных.');
+  const students = await loadCuratorStudents(admin, telegramId);
+  const student = getCuratorStudentRecord(students, studentId);
+  if (!student) {
+    await sendAdminMessage(chatId, 'Не удалось найти работу.');
     return true;
   }
+  try {
+    const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
+      admin,
+      telegramId,
+      student.telegramId,
+      hwNumber,
+    );
+    const mediaNote =
+      kind === 'voice'
+        ? 'Голосовой комментарий от куратора — см. сообщение ниже.'
+        : 'Комментарий на фото от куратора — см. сообщение ниже.';
+    await notifyStudentHomeworkReviewed(admin, student.telegramId, {
+      lessonNumber: lesson.lessonNumber,
+      title: lesson.title,
+      approved: false,
+      note: mediaNote,
+    });
 
-  const receivedText =
-    kind === 'voice'
-      ? '✅ Тестовое голосовое сообщение принято.\n\nВ реальной версии оно будет отправлено ученику вместе с уведомлением о доработке.'
-      : '✅ Тестовая фотография принята.\n\nВ реальной версии она будет отправлена ученику вместе с комментарием.';
-  await sendAdminMessage(
-    chatId,
-    `❌ ДЗ отклонено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}\n\n${receivedText}`,
-    { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${studentId}`)]] },
-  );
+    const { data: studentMember } = await admin
+      .from('bot_members')
+      .select('chat_id')
+      .eq('telegram_id', student.telegramId)
+      .maybeSingle();
+    const studentChatId = studentMember?.chat_id as number | undefined;
+    if (studentChatId) {
+      if (kind === 'voice') {
+        await telegramSend('sendVoice', { chat_id: studentChatId, voice: fileId });
+      } else {
+        await telegramSend('sendPhoto', { chat_id: studentChatId, photo: fileId });
+      }
+    }
+
+    await sendAdminMessage(
+      chatId,
+      `❌ ДЗ отклонено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}\n\nКомментарий отправлен ученику.` +
+        formatLifeDeductionNote(lifeDeduction),
+      { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${studentId}`)]] },
+    );
+  } catch (error) {
+    const message = error instanceof CourseHomeworkError ? error.message : 'Не удалось отклонить домашку.';
+    await sendAdminMessage(chatId, message);
+  }
   return true;
 }
 
@@ -537,6 +635,18 @@ export async function handleCuratorCallback(
   return true;
 }
 
+async function loadStudentLives(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+): Promise<number | null> {
+  const content = await getDistrictCourseContent();
+  if (!content) return null;
+  const courseId = await resolveCourseIdForContent(admin, content);
+  if (!courseId) return null;
+  const lives = await getEnrollmentLives(admin, studentTelegramId, courseId);
+  return lives?.lives_current ?? null;
+}
+
 async function routeCuratorCallback(
   admin: SupabaseClient,
   message: AdminMessage,
@@ -554,12 +664,12 @@ async function routeCuratorCallback(
 
     // Библиотека: корень → вебинар → задание → файл-заглушка.
     case 'lib': {
-      const screen = renderCuratorLibrary();
+      const screen = await renderCuratorLibrary();
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'libw': {
-      const screen = id ? renderCuratorWebinar(id) : null;
+      const screen = id ? await renderCuratorWebinar(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Вебинар не найден.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
@@ -568,7 +678,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'libv': {
-      const screen = id ? renderCuratorLibraryTask(id) : null;
+      const screen = id ? await renderCuratorLibraryTask(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
@@ -577,7 +687,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'libf': {
-      const screen = id ? renderCuratorLibraryFile(id) : null;
+      const screen = id ? await renderCuratorLibraryFile(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
@@ -588,51 +698,85 @@ async function routeCuratorCallback(
 
     // Ученики: список → профиль → карточка ДЗ.
     case 'stud': {
-      const screen = renderCuratorStudentsList();
+      const students = await loadCuratorStudents(admin, telegramId);
+      const screen = renderCuratorStudentsList(students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'sp': {
-      const screen = id ? renderCuratorStudentProfile(id) : null;
-      if (!screen) {
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      if (!student) {
         await editCuratorScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
+      const lives = await loadStudentLives(admin, student.telegramId);
+      const screen = renderCuratorStudentProfile(student, lives);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'shw': {
-      const screen = id && subId ? renderCuratorHomeworkCard(id, hwNumber) : null;
-      if (!screen) {
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
+      if (!student || !homework) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
+      const screen = renderCuratorHomeworkCard(student, homework);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // Просмотр работы ученика — заглушка новым сообщением.
     case 'vieww': {
-      await sendAdminMessage(
-        message.chatId,
-        '📎 Работа ученика\n\nВ реальной версии здесь будет файл работы ученика.',
-        { inline_keyboard: [[backButton('⬅️ Назад', `c:shw:${id}:${subId}`)]] },
-      );
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
+      if (!student || !homework) {
+        await sendAdminMessage(message.chatId, 'Работа не найдена.');
+        return true;
+      }
+      await sendSubmissionToCurator(admin, telegramId, {
+        studentName: student.name,
+        lessonNumber: homework.number,
+        title: homework.title,
+        fileUrl: homework.submissionFileUrl,
+        note: homework.submissionNote,
+      });
+      await sendAdminMessage(message.chatId, '📎 Работа ученика отправлена выше.', {
+        inline_keyboard: [[backButton('⬅️ Назад', `c:shw:${id}:${subId}`)]],
+      });
       return true;
     }
 
-    // Одобрение (§9): меняем только mock state, профиль покажет новый статус.
     case 'appr': {
-      const student = id ? getCuratorStudent(id) : undefined;
-      if (!student || !setCuratorHomeworkStatus(id, hwNumber, 'approved')) {
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      if (!student) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
-      await sendAdminMessage(
-        message.chatId,
-        `✅ Домашнее задание одобрено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}`,
-        { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${id}`)]] },
-      );
+      try {
+        const { lesson } = await approveCourseHomeworkByCurator(
+          admin,
+          telegramId,
+          student.telegramId,
+          hwNumber,
+        );
+        await notifyStudentHomeworkReviewed(admin, student.telegramId, {
+          lessonNumber: lesson.lessonNumber,
+          title: lesson.title,
+          approved: true,
+        });
+        await sendAdminMessage(
+          message.chatId,
+          `✅ Домашнее задание одобрено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}`,
+          { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${id}`)]] },
+        );
+      } catch (error) {
+        const msg = error instanceof CourseHomeworkError ? error.message : 'Не удалось одобрить домашку.';
+        await sendAdminMessage(message.chatId, msg);
+      }
       return true;
     }
 
@@ -679,39 +823,108 @@ async function routeCuratorCallback(
       return true;
     }
     case 'rejskip': {
-      const student = id ? getCuratorStudent(id) : undefined;
-      if (!student || !setCuratorHomeworkStatus(id, hwNumber, 'rejected')) {
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      if (!student) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
-      await sendAdminMessage(
-        message.chatId,
-        `❌ ДЗ отклонено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}\n\nКомментарий: без комментария.`,
-        { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${id}`)]] },
-      );
+      try {
+        const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
+          admin,
+          telegramId,
+          student.telegramId,
+          hwNumber,
+        );
+        await notifyStudentHomeworkReviewed(admin, student.telegramId, {
+          lessonNumber: lesson.lessonNumber,
+          title: lesson.title,
+          approved: false,
+        });
+        await sendAdminMessage(
+          message.chatId,
+          `❌ ДЗ отклонено.\n\nУченик: ${student.name}\nДЗ: №${hwNumber}\n\nКомментарий: без комментария.` +
+            formatLifeDeductionNote(lifeDeduction),
+          { inline_keyboard: [[backButton('⬅️ Назад', `c:sp:${id}`)]] },
+        );
+      } catch (error) {
+        const msg = error instanceof CourseHomeworkError ? error.message : 'Не удалось отклонить домашку.';
+        await sendAdminMessage(message.chatId, msg);
+      }
       return true;
     }
-    case 'rejc': {
-      await clearStateIfAvailable(admin, telegramId);
-      const screen = id && subId ? renderCuratorHomeworkCard(id, hwNumber) : null;
-      if (!screen) {
+    case 'lded': {
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
+      if (!student || !homework) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
+      if (homework.status !== 'waiting') {
+        await editCuratorScreen(
+          message,
+          'Снять жизнь можно только за несданное домашнее задание.',
+          notFoundKeyboard('Назад', `c:shw:${id}:${hwNumber}`),
+        );
+        return true;
+      }
+      try {
+        const { lifeDeduction } = await deductLifeForHomeworkDebtByCurator(
+          admin,
+          telegramId,
+          student.telegramId,
+          homework.sanityLessonId,
+          'notSubmitted',
+        );
+        const note = lifeDeduction?.deducted
+          ? `❤️ Жизнь снята за ДЗ №${hwNumber}.`
+          : lifeDeduction
+            ? `Жизнь за это ДЗ уже была снята ранее.`
+            : 'Не удалось обновить жизни.';
+        const tail = lifeDeduction
+          ? `\n\nОсталось: ${lifeDeduction.livesCurrent} из ${lifeDeduction.livesMax}.` +
+            (lifeDeduction.accessBlocked ? '\n\n⚠️ Доступ к урокам заблокирован.' : '')
+          : '';
+        await sendAdminMessage(message.chatId, `${note}${tail}`, {
+          inline_keyboard: [[backButton('⬅️ Назад', `c:shw:${id}:${hwNumber}`)]],
+        });
+      } catch (error) {
+        const msg =
+          error instanceof CourseHomeworkError ? error.message : 'Не удалось снять жизнь.';
+        await sendAdminMessage(message.chatId, msg, {
+          inline_keyboard: [[backButton('⬅️ Назад', `c:shw:${id}:${hwNumber}`)]],
+        });
+      }
+      return true;
+    }
+
+    case 'rejc': {
+      await clearStateIfAvailable(admin, telegramId);
+      const students = await loadCuratorStudents(admin, telegramId);
+      const student = id ? getCuratorStudentRecord(students, id) : undefined;
+      const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
+      if (!student || !homework) {
+        await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
+        return true;
+      }
+      const screen = renderCuratorHomeworkCard(student, homework);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // Уведомления (§14, §15) и контроль перед занятием (§16).
     case 'notif': {
-      const screen = renderCuratorNotifications();
+      const students = await loadCuratorStudents(admin, telegramId);
+      const screen = await renderCuratorNotifications(admin, telegramId, students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'notv': {
-      // id уведомления содержит двоеточие (studentId:номер) — собираем обратно.
       const notificationId = [id, subId].filter(Boolean).join(':');
-      const screen = notificationId ? renderCuratorNotificationView(notificationId) : null;
+      const students = await loadCuratorStudents(admin, telegramId);
+      const screen = notificationId
+        ? await renderCuratorNotificationView(admin, telegramId, students, notificationId)
+        : null;
       if (!screen) {
         await editCuratorScreen(message, 'Уведомление не найдено.', notFoundKeyboard('Назад', 'c:notif'));
         return true;
@@ -720,7 +933,8 @@ async function routeCuratorCallback(
       return true;
     }
     case 'pre': {
-      const screen = renderCuratorPreLesson();
+      const students = await loadCuratorStudents(admin, telegramId);
+      const screen = renderCuratorPreLesson(students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
