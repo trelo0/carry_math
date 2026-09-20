@@ -6,7 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "import:course": "node scripts/import-district-course.mjs",
+    "import:course:dry": "node scripts/import-district-course.mjs --dry-run",
+    "import:cabinet-settings": "node scripts/import-cabinet-settings.mjs",
+    "import:cabinet-settings:dry": "node scripts/import-cabinet-settings.mjs --dry-run",
+    "fulfill:purchase": "npx tsx scripts/fulfill-purchase.ts",
+    "schedule:lesson": "npx tsx scripts/schedule-lesson.ts",
+    "submit:homework": "npx tsx scripts/submit-homework.ts",
+    "review:homework": "npx tsx scripts/review-homework.ts",
+    "deduct:life": "npx tsx scripts/deduct-life.ts",
+    "grant:life": "npx tsx scripts/grant-life.ts"
   },
   "dependencies": {
     "@sanity/client": "^7.17.0",

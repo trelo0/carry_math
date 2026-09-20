@@ -47,7 +47,19 @@ export type AdminPayload = {
   fileName?: string;
   buttonText?: string;
   buttonUrl?: string;
+  studentTelegramId?: number;
+  scheduleKind?: 'individual' | 'group';
+  scheduleTopic?: string;
+  scheduleStartsAt?: string;
+  scheduleMeetUrl?: string;
+  scheduleGroupId?: number;
+  groupTitle?: string;
+  groupTeacherId?: number;
+  groupCuratorId?: number;
+  targetGroupId?: number;
   sanityLessonId?: string;
+  mentorTelegramId?: number;
+  homework?: boolean;
 };
 
 export type ConversationStep =
@@ -75,6 +87,16 @@ export type ConversationStep =
   | 'broadcast:button-url'
   | 'broadcast:preview'
   | 'broadcast:confirm'
+  | 'edu:group:title'
+  | 'edu:group:teacher'
+  | 'edu:group:curator'
+  | 'edu:group:add'
+  | 'edu:group:teacher-set'
+  | 'edu:sched:topic'
+  | 'edu:sched:datetime'
+  | 'edu:sched:meet'
+  | 'student:support'
+  | 'student:mentor'
   | 'student:course-hw-submit';
 
 export type ConversationState = {
@@ -277,7 +299,8 @@ export function adminReplyKeyboard(): ReplyKeyboard {
       [{ text: '👥 Пользователи' }, { text: '📢 Рассылки' }],
       [{ text: '📊 Статистика' }, { text: '🚨 Контроль' }],
       [{ text: '📅 Вебинары' }, { text: '⚙️ Настройки' }],
-      [{ text: '📝 Заявки' }],
+      [{ text: '📝 Заявки' }, { text: '💳 Оплаты' }],
+      [{ text: '📚 Учёба' }],
     ],
     resize_keyboard: true,
   };
@@ -292,6 +315,8 @@ export const ADMIN_REPLY_LABELS = {
   webinars: '📅 Вебинары',
   settings: '⚙️ Настройки',
   leads: '📝 Заявки',
+  purchases: '💳 Оплаты',
+  education: '📚 Учёба',
 } as const;
 
 export const ADMIN_REPLY_LABEL_SET = new Set<string>(Object.values(ADMIN_REPLY_LABELS));

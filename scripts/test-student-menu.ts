@@ -10,7 +10,7 @@ import {
   STUDENT_HOME_LABEL,
   buildStudentMainMenu,
   getLessonsDirectionLabel,
-  getStudentCabinetUrl,
+  getStudentCabinetUrlSync,
   getStudentUiMode,
   isStudentWelcomed,
   markStudentWelcomed,
@@ -202,8 +202,8 @@ async function main(): Promise<void> {
 
   console.log('Тест 11: ссылка на личный кабинет');
   {
-    const url = getStudentCabinetUrl();
-    check('URL ведёт на /account сайта', /^https?:\/\/.+\/account$/.test(url));
+    const url = getStudentCabinetUrlSync();
+    check('URL ведёт на /cabinet сайта', /^https?:\/\/.+\/cabinet$/.test(url));
     console.log(`  → ${url}`);
   }
 

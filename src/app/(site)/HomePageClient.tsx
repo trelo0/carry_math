@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import Link from 'next/link';
 import DiagnosticSection from '@/components/ui/DiagnosticSection';
+import IndProcessCardFrame from '@/components/ui/IndProcessCardFrame';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
 import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
@@ -18,12 +19,146 @@ type VsFocus = 'solo' | 'group' | null;
 const SOLO_MATCH = /индивиду|соло|solo|1-на-1/i;
 const GROUP_MATCH = /групп|команд|squad/i;
 
+function splitSectionTitle(title: string, gold: string): { title: string; gold: string } {
+  const goldTrimmed = gold.trim();
+  const titleTrimmed = title.trim();
+  if (!goldTrimmed) return { title: titleTrimmed, gold: '' };
+
+  const titleLower = titleTrimmed.toLowerCase();
+  const goldLower = goldTrimmed.toLowerCase();
+  const goldIdx = titleLower.lastIndexOf(goldLower);
+
+  if (goldIdx > 0) {
+    const white = titleTrimmed.slice(0, goldIdx).trimEnd().replace(/,\s*$/, ',');
+    return { title: white, gold: goldTrimmed };
+  }
+
+  return { title: titleTrimmed, gold: goldTrimmed };
+}
+
+function formatPrinciplesTitleWhite(title: string, gold: string): string {
+  let trimmed = title.trim();
+  if (/которых мы стоим/i.test(gold) && !/,\s*на\s*$/iu.test(trimmed)) {
+    trimmed = `${trimmed.replace(/,\s*$/, '')},\u00A0на`;
+  } else {
+    trimmed = trimmed.replace(/,\s*на\s*$/iu, ',\u00A0на');
+  }
+  return trimmed.replace(/^три\s+принципа/iu, 'Три\u00A0принципа');
+}
+
+function formatPrinciplesTitleGold(gold: string): string {
+  return gold.trim().replace(/\s+/g, '\u00A0');
+}
+
+function splitPrinciplesSubtitle(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  const explicitLines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (explicitLines.length > 1) return explicitLines;
+
+  const sentenceBreak = trimmed.match(/^(.+?[.!?…])\s+(Это\b.+)$/u);
+  if (sentenceBreak) {
+    return [sentenceBreak[1].trim(), sentenceBreak[2].trim()];
+  }
+
+  return [trimmed];
+}
+
 // Иконки преимуществ в блоке записи (по порядку карточек).
 const BENEFIT_ICONS = [
   <svg key="benefit-pro" viewBox="0 0 24 24" fill="none"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.6"/><path d="M8.6 12l2.1 2.1 4.8-5" stroke="currentColor" strokeWidth="1.6"/></svg>,
   <svg key="benefit-personal" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="6" stroke="currentColor" strokeWidth="1.5"/><circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="1.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9L7 7m10 10l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1" stroke="currentColor" strokeWidth="1.3"/></svg>,
   <svg key="benefit-schedule" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="15" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7.5 3v5m9-5v5M3.5 10h17M8 14h2m4 0h2M8 17h2m4 0h2" stroke="currentColor" strokeWidth="1.35"/></svg>,
 ];
+
+// Пиктограмма чипа наставника подбирается по смыслу текста из Sanity.
+const BADGE_ICON_PATHS = {
+  cap: 'M3 9.2L12 5l9 4.2-9 4.2-9-4.2z M7 11.4v4.1c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2v-4.1',
+  clock: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z M12 8v4.4l3 1.8',
+  pin: 'M12 3.5c3 0 5.5 2.4 5.5 5.4 0 4-5.5 11.6-5.5 11.6S6.5 12.9 6.5 8.9C6.5 5.9 9 3.5 12 3.5z M12 10.6a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8z',
+  spark: 'M12 3l1.7 5.6L19 10l-5.3 1.4L12 17l-1.7-5.6L5 10l5.3-1.4L12 3z',
+} as const;
+
+function StatOctagonFrame() {
+  return (
+    <svg className="ind-stat-icon-oct" viewBox="0 0 48 48" aria-hidden="true">
+      <polygon
+        points="24,2 44,10 46,24 44,38 24,46 4,38 2,24 4,10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+function StatIcon({ index }: { index: number }) {
+  const icons = [
+    <svg key="stat-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 7h14v12H5z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 4h8v3H8zM8 11h8M8 15h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>,
+    <svg key="stat-1" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>,
+    <svg key="stat-2" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 9.5 12 5l9 4.5L12 14 3 9.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M6 11.5V16c0 1.5 2.7 2.7 6 2.7s6-1.2 6-2.7v-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>,
+    <svg key="stat-3" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 11l-3.5 2v4.5c1.2.8 2.8 1.2 4.5 1.2M17 11l3.5 2v4.5c-1.2.8-2.8 1.2-4.5 1.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7 11c0-2.2 2.2-4 5-4s5 1.8 5 4M12 7V4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>,
+  ];
+
+  return icons[index % icons.length];
+}
+
+function IndSlotIcon({ index }: { index: number }) {
+  if (index === 0) {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M6 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8.6 12l2.1 2.1 4.8-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TeacherBadgeIcon({ badge }: { badge: string }) {
+  const text = badge.toLowerCase();
+  const kind = /балл|цт|цэ|экзам|егэ|олимпиад/.test(text)
+    ? 'cap'
+    : /год|лет|опыт|стаж/.test(text)
+      ? 'clock'
+      : /бгу|бгпу|мехмат|универ|факульт|кафедр|лиц|школ/.test(text)
+        ? 'pin'
+        : 'spark';
+
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d={BADGE_ICON_PATHS[kind]}
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function HomePageClient({
   content,
@@ -131,12 +266,23 @@ export default function HomePageClient({
   const teachersBlock = content?.teachers;
   const teachersKicker = pickStr(teachersBlock?.kicker, D.teachers.kicker);
   const teachersTitle = pickStr(teachersBlock?.sectionTitle, D.teachers.sectionTitle);
-  const teacherBadges = pickArr(teachersBlock?.badges, D.teachers.badges);
 
   const principlesBlock = content?.principles;
   const principlesKicker = pickStr(principlesBlock?.kicker, D.principles.kicker);
-  const principlesTitle = pickStr(principlesBlock?.sectionTitle, D.principles.sectionTitle);
-  const principlesSubtitle = pickStr(principlesBlock?.sectionSubtitle, D.principles.sectionSubtitle);
+  const principlesTitleRaw = pickStr(principlesBlock?.sectionTitle, D.principles.sectionTitle);
+  const principlesTitleGoldRaw = pickStr(
+    principlesBlock?.sectionTitleGold,
+    D.principles.sectionTitleGold ?? '',
+  );
+  const { title: principlesTitleRawSplit, gold: principlesTitleGold } = splitSectionTitle(
+    principlesTitleRaw,
+    principlesTitleGoldRaw,
+  );
+  const principlesTitle = formatPrinciplesTitleWhite(principlesTitleRawSplit, principlesTitleGold);
+  const principlesTitleGoldDisplay = formatPrinciplesTitleGold(principlesTitleGold);
+  const principlesSubtitleLines = splitPrinciplesSubtitle(
+    pickStr(principlesBlock?.sectionSubtitle, D.principles.sectionSubtitle ?? ''),
+  );
 
   const formatsBlock = content?.formats;
   const formatsKicker = pickStr(formatsBlock?.kicker, D.formats.kicker);
@@ -196,41 +342,105 @@ export default function HomePageClient({
       <div className="city-backdrop" aria-hidden="true" />
 
       <section className="hero ind-hero" id="hero">
+        <div className="hero-hud" aria-hidden="true">
+          <span className="hero-hud-rail hero-hud-rail--right ind-hero-rail">
+            DISTRICT // ONLINE // UNIIE / 2023
+          </span>
+        </div>
+
+        <span className="watermark watermark--left" aria-hidden="true">MENTOR</span>
+
+        <svg className="ind-hero-constellation" viewBox="0 0 520 320" fill="none" aria-hidden="true">
+          <defs>
+            <filter id="ind-star-glow-orange" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="ind-star-glow-blue" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="3.5" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <g stroke="rgba(120, 185, 255, 0.34)" strokeWidth="1.1">
+            <path d="M214 176 L268 198 L322 142 L378 168 L432 118 L478 146" />
+            <path d="M322 142 L352 92 L378 168" />
+            <path d="M432 118 L468 78 L478 146" />
+          </g>
+          <g filter="url(#ind-star-glow-orange)">
+            <circle cx="268" cy="198" r="3.5" fill="#ff9a2e" />
+            <circle cx="378" cy="168" r="3.5" fill="#ff9a2e" />
+            <circle cx="478" cy="146" r="4" fill="#ff9a2e" />
+            <circle cx="468" cy="78" r="2.5" fill="#ff9a2e" />
+          </g>
+          <g filter="url(#ind-star-glow-blue)">
+            <circle cx="214" cy="176" r="5" fill="#8fd4f0" />
+            <circle cx="322" cy="142" r="4.5" fill="#8fd4f0" />
+            <circle cx="432" cy="118" r="5" fill="#8fd4f0" />
+            <circle cx="352" cy="92" r="2.5" fill="#8fd4f0" />
+          </g>
+        </svg>
+
         <div className="container hero-content">
           <div className="ind-hero-grid">
             <div className="ind-hero-left">
-              <Link className="crumb" href="/">
+              <Link className="ind-crumb" href="/">
                 ← District · главная
               </Link>
-              <span className="section-kicker">
-                {heroKicker}
-              </span>
+
+              <span className="section-kicker ind-hero-kicker">{heroKicker}</span>
+
               <h1 className="ind-hero-title">
-                {heroTitleRest} <span className="gold">{heroTitleLast}</span>
+                <span className="ind-hero-title-line">{heroTitleRest}</span>
+                <span className="ind-hero-title-line gold">{heroTitleLast}</span>
               </h1>
+
               <p className="ind-hero-desc">{heroDescription}</p>
             </div>
 
-            <aside className="ind-hero-panel" aria-label="Выбор формата занятий">
-              <p className="ind-panel-title">{heroPanelTitle}</p>
-              {heroSlots.map((slot) => (
-                <a className="ind-slot" href={slot.href} key={slot.title}>
-                  <span className="ind-slot-icon" aria-hidden="true">{slot.icon}</span>
-                  <span className="ind-slot-text">
-                    <b>{slot.title}</b>
-                    <small>{slot.sub}</small>
-                  </span>
-                  <span className="ind-slot-arrow" aria-hidden="true">→</span>
-                </a>
-              ))}
+            <div className="ind-hero-panel-col">
+            <aside className="ind-hero-panel-shell" aria-label="Выбор формата занятий">
+              <span className="ind-hero-panel-mark ind-hero-panel-mark--tl" aria-hidden="true" />
+              <span className="ind-hero-panel-mark ind-hero-panel-mark--tr" aria-hidden="true" />
+              <span className="ind-hero-panel-mark ind-hero-panel-mark--bl" aria-hidden="true" />
+              <span className="ind-hero-panel-mark ind-hero-panel-mark--br" aria-hidden="true" />
+              <div className="ind-hero-panel">
+                <p className="ind-panel-title">+ {heroPanelTitle.toUpperCase()}</p>
+                <div className="ind-slot-list">
+                {heroSlots.map((slot, index) => (
+                  <a
+                    className={`ind-slot${index === 0 ? ' ind-slot--solo' : ' ind-slot--team'}`}
+                    href={slot.href}
+                    key={slot.title}
+                  >
+                    <span className="ind-slot-icon" aria-hidden="true">
+                      <IndSlotIcon index={index} />
+                    </span>
+                    <span className="ind-slot-text">
+                      <b>{slot.title}</b>
+                      <small>{slot.sub}</small>
+                    </span>
+                    <span className="ind-slot-arrow" aria-hidden="true">→</span>
+                  </a>
+                ))}
+                </div>
+              </div>
             </aside>
+            </div>
           </div>
         </div>
       </section>
 
       <main className="site-main">
         {/* ---------- Наставник: карточка персонажа ---------- */}
-        <section className="main-teacher" id="teachers" data-reveal>
+        <section className="main-teacher ind-teacher" id="teachers" data-reveal>
           <span className="watermark" aria-hidden="true">MENTOR</span>
           <div className="container">
             <span className="section-kicker section-kicker--center">
@@ -238,40 +448,72 @@ export default function HomePageClient({
             </span>
             <h2 className="main-teacher-title">{teachersTitle}</h2>
 
-            <div className="teacher-rows">
-              {teachers.map((teacher, index) => (
-                <article
-                  className="teacher-row"
-                  key={teacher._id}
-                  data-scroll-reveal
-                  data-reveal-direction={index % 2 === 0 ? 'left' : 'right'}
-                  data-reveal-delay={String(index)}
-                >
-                  <div className="teacher-row-photo">
-                    
-                    {teacher.photo ? (
-                      <img
-                        src={urlFor(teacher.photo).width(480).url()}
-                        alt={`${teacher.name} — наставник по математике`}
-                      />
-                    ) : null}
-                  </div>
-                  <div className="teacher-row-body" data-index={String(index + 1).padStart(2, '0')}>
-                    <p className="select-name">{teacher.name}</p>
-                    <p className="select-role">Наставник гильдии · {teacher.subject}</p>
-                    
-                    <p className="select-desc">{teacher.description}</p>
-                    <ul className="select-chips" aria-label="Достижения наставника">
-                      {(Array.isArray(teacher.badges) && teacher.badges.length > 0
-                        ? teacher.badges
-                        : teacherBadges
-                      ).map((badge) => (
-                        <li key={badge}>❖ {badge}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </article>
-              ))}
+            <div className="teacher-hud-grid">
+              {teachers.map((teacher, index) => {
+                const num = String(index + 1).padStart(2, '0');
+                const metaItems = String(teacher.subject || '')
+                  .split(/[•·|,]/)
+                  .map((part) => part.trim())
+                  .filter(Boolean);
+                const blockBadges = Array.isArray(teachersBlock?.badges) ? teachersBlock.badges : [];
+                const chips = (
+                  Array.isArray(teacher.badges) && teacher.badges.length > 0
+                    ? teacher.badges
+                    : blockBadges
+                )
+                  .map((badge) => String(badge).trim())
+                  .filter(Boolean);
+
+                return (
+                  <article
+                    className="teacher-hud"
+                    key={teacher._id}
+                    data-scroll-reveal
+                    data-reveal-direction={index % 2 === 0 ? 'left' : 'right'}
+                    data-reveal-delay={String(index)}
+                  >
+                    <div className="teacher-hud__fill" aria-hidden="true" />
+                    <span className="teacher-hud-corner teacher-hud-corner--tl" aria-hidden="true" />
+                    <span className="teacher-hud-corner teacher-hud-corner--br" aria-hidden="true" />
+                    <div className="teacher-hud-body">
+                      <h3 className="teacher-hud-name">{teacher.name}</h3>
+                      {metaItems.length > 0 && (
+                        <p className="teacher-hud-meta">
+                          {metaItems.map((item, itemIndex) => (
+                            <span key={item} className={itemIndex === 0 ? 'is-accent' : undefined}>
+                              {item}
+                            </span>
+                          ))}
+                        </p>
+                      )}
+                      <p className="teacher-hud-desc">{teacher.description}</p>
+                      {chips.length > 0 && (
+                        <ul className="teacher-hud-chips" aria-label="Достижения наставника">
+                          {chips.map((badge) => (
+                            <li key={badge}>
+                              <TeacherBadgeIcon badge={badge} />
+                              {badge}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="teacher-hud-photo">
+                      {teacher.photo ? (
+                        <img
+                          src={urlFor(teacher.photo).width(560).height(740).url()}
+                          alt={`${teacher.name} — наставник по математике`}
+                        />
+                      ) : null}
+                    </div>
+                    <span className="teacher-hud-ghost" aria-hidden="true">
+                      {num}
+                    </span>
+                    <span className="teacher-hud-hatch" aria-hidden="true" />
+                  </article>
+                );
+              })}
             </div>
 
           </div>
@@ -285,26 +527,60 @@ export default function HomePageClient({
             </span>
 
             {stats.length > 0 && (
-              <div className="stats-ribbon">
-                {stats.map((stat) => (
-                  <div key={stat._id} className="stat-card">
-                    <span className="stat-value">{stat.value}</span>
-                    <span className="stat-label">{stat.label}</span>
+              <div className="stats-ribbon ind-stats-ribbon">
+                {stats.map((stat, index) => (
+                  <div key={stat._id} className="stat-card ind-stat-card">
+                    <div className="ind-stat-card__fill" aria-hidden="true" />
+                    <span className="ind-stat-corner ind-stat-corner--tl" aria-hidden="true" />
+                    <span className="ind-stat-corner ind-stat-corner--br" aria-hidden="true" />
+                    <div className="ind-stat-inner">
+                      <div className="ind-stat-top">
+                        <span className="ind-stat-icon" aria-hidden="true">
+                          <StatOctagonFrame />
+                          <StatIcon index={index} />
+                        </span>
+                        <span className="stat-value">{stat.value}</span>
+                      </div>
+                      <span className="stat-label">{stat.label}</span>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="principles-layout">
-              <div className="principles-header">
-                <h2>{principlesTitle}</h2>
-                {principlesSubtitle ? <p>{principlesSubtitle}</p> : null}
+            <div className="principles-layout ind-principles-layout">
+              <div className="principles-header ind-principles-header">
+                <h2>
+                  <span className="ind-principles-title-line">{principlesTitle}</span>
+                  {principlesTitleGold ? (
+                    <span className="ind-principles-title-line ind-principles-title-line--gold">
+                      {principlesTitleGoldDisplay}
+                    </span>
+                  ) : null}
+                </h2>
+                {principlesSubtitleLines.length > 0 ? (
+                  <div className="ind-principles-intro">
+                    <span className="ind-principles-intro-mark" aria-hidden="true">///</span>
+                    <p className="ind-principles-intro-text">
+                      {principlesSubtitleLines.map((line, lineIndex) => (
+                        <Fragment key={line}>
+                          {lineIndex > 0 ? <br /> : null}
+                          {line}
+                        </Fragment>
+                      ))}
+                    </p>
+                  </div>
+                ) : null}
               </div>
 
-              <div className="principles-list">
-                {principles.map((principle) => (
-                  <div key={principle._id} className="principle-item">
-                    <span className="principle-numeral">❖</span>
+              <div className="principles-list ind-principles-list">
+                {principles.map((principle, index) => (
+                  <div key={principle._id} className="principle-item ind-principle-item">
+                    <span className="ind-principle-index" aria-hidden="true">
+                      <span className="ind-principle-index-mark ind-principle-index-mark--tl" />
+                      <span className="ind-principle-index-mark ind-principle-index-mark--br" />
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
                     <div className="principle-content">
                       <h3>{principle.title}</h3>
                       <p>{principle.description}</p>
@@ -317,7 +593,7 @@ export default function HomePageClient({
         </section>
 
         {/* ---------- VS-сплит: соло против команды ---------- */}
-        <section className="main-paths ind-formats-vs" data-reveal>
+        <section className="main-paths ind-formats-vs" id="formats" data-reveal>
           <span className="watermark" aria-hidden="true">VS</span>
           <div className="container">
             <span className="section-kicker section-kicker--center">
@@ -350,7 +626,7 @@ export default function HomePageClient({
                     <li key={perk}>{perk}</li>
                   ))}
                 </ul>
-                <a className="mini-cta mini-cta--blue" href="#signup" onClick={() => setFormat('solo')}>
+                <a className="mini-cta" href="#signup" onClick={() => setFormat('solo')}>
                   {soloColumn.ctaText}
                 </a>
               </div>
@@ -382,7 +658,9 @@ export default function HomePageClient({
                     <li key={perk}>{perk}</li>
                   ))}
                 </ul>
-                <a className="mini-cta" href="#signup" onClick={() => setFormat('group')}>{groupColumn.ctaText}</a>
+                <a className="mini-cta mini-cta--blue" href="#signup" onClick={() => setFormat('group')}>
+                  {groupColumn.ctaText}
+                </a>
               </div>
             </div>
           </div>
@@ -400,7 +678,7 @@ export default function HomePageClient({
         </div>
 
         {/* ---------- Как проходит обучение ---------- */}
-        <section className="section section-process ind-section" id="process" data-reveal>
+        <section className="section section-process ind-section ind-process" id="process" data-reveal>
           <div className="process-section-wrapper">
             <div className="container">
               <span className="section-kicker section-kicker--center">
@@ -421,10 +699,24 @@ export default function HomePageClient({
                     key={step._id}
                     className={`process-step-alt ${index % 2 === 0 ? 'step-left' : 'step-right'}`}
                   >
-                    <div className="step-alt-card">
-                      <h3>{step.title}</h3>
-                      <p>{step.description}</p>
-                      <div className="step-alt-number">{String(index + 1).padStart(2, '0')}</div>
+                    <div
+                      className={`step-alt-card ind-process-card ${
+                        index % 2 === 0 ? 'ind-process-card--left' : 'ind-process-card--right'
+                      }`}
+                    >
+                      <IndProcessCardFrame />
+                      <div className="ind-process-card__fill" aria-hidden="true" />
+                      <span className="ind-process-slashes" aria-hidden="true">
+                        <i /><i /><i />
+                      </span>
+                      <div className="ind-process-num">
+                        {String(index + 1).padStart(2, '0')}
+                      </div>
+                      <span className="ind-process-divider" aria-hidden="true" />
+                      <div className="ind-process-body">
+                        <h3>{step.title}</h3>
+                        <p>{step.description}</p>
+                      </div>
                     </div>
                     <div className="step-alt-dot"></div>
                   </div>

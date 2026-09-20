@@ -77,39 +77,23 @@
 
 .site-footer {
   width: 100%;
-
   margin: 0;
-
-  padding: 38px 0 16px;
-
-  background: rgba(3, 8, 22, 0.96);
-
-  border-top: 1px solid rgba(148, 190, 255, 0.08);
-
+  padding: 26px 0 12px;
+  background: rgba(10, 18, 36, 0.92);
+  border-top: 1px solid rgba(148, 190, 255, 0.12);
   min-height: 0;
 }
-
-
-/* =========================================================
-   CONTENT
-   =========================================================
-*/
 
 .footer-content {
   width: 100%;
   max-width: 1280px;
-
   margin: 0 auto;
   padding: 0 var(--container-pad);
-
   display: grid;
   grid-template-columns: 1.05fr 1.25fr 0.8fr 1.15fr;
-
   column-gap: 0;
-
   align-items: stretch;
-
-  padding-bottom: 30px;
+  padding-bottom: 18px;
 }
 
 
@@ -120,9 +104,7 @@
 
 .footer-column {
   min-width: 0;
-
-  padding: 0 clamp(18px, 2.2vw, 30px);
-
+  padding: 0 clamp(14px, 1.8vw, 22px);
   border-left: 1px solid rgba(148, 190, 255, 0.1);
 }
 
@@ -151,27 +133,25 @@
 .footer-brand .site-logo {
   display: inline-flex;
   align-items: center;
-
   gap: 0;
-
-  margin: 20px 0 7px;
-
+  margin: 6px 0 4px;
   font-family: var(--font-heading, inherit);
-
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
-
   line-height: 1;
-
   letter-spacing: 0.08em;
-
   text-transform: uppercase;
-
   color: var(--accent);
-
   text-decoration: none;
-
   transition: opacity 0.2s ease;
+}
+
+.footer-description {
+  max-width: 230px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(196, 210, 230, 0.78);
 }
 
 .footer-brand .site-logo:hover {
@@ -183,19 +163,6 @@
   transform-origin: left center;
 }
 
-.footer-description {
-  max-width: 230px;
-
-  margin: 0;
-
-  color: var(--text-secondary);
-
-  font-size: 13px;
-  line-height: 1.6;
-
-  opacity: 0.72;
-}
-
 
 /* =========================================================
    LABELS
@@ -204,25 +171,16 @@
 
 .footer-label {
   display: inline-flex;
-
   align-items: center;
-
   gap: 9px;
-
-  margin: 2px 0 18px;
-
+  margin: 0 0 12px;
   color: var(--text-light);
-
   font-size: 13px;
   font-weight: 700;
-
   line-height: 1;
-
   letter-spacing: 0.14em;
-
   text-transform: uppercase;
-
-  opacity: 0.7;
+  opacity: 0.78;
 }
 
 .footer-label svg {
@@ -231,11 +189,6 @@
 
   flex: 0 0 auto;
 
-  color: var(--gold);
-}
-
-.footer-contacts-column .footer-label svg,
-.footer-links .footer-label svg {
   color: var(--accent);
 }
 
@@ -260,7 +213,7 @@
 
   color: var(--text-secondary);
 
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.55;
 
   opacity: 0.68;
@@ -271,7 +224,7 @@
 
   color: var(--text-primary);
 
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1.55;
 
   opacity: 0.82;
@@ -302,7 +255,7 @@
 
   color: var(--white);
 
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
 
   line-height: 1.45;
@@ -319,7 +272,7 @@
 
 .footer-document-arrow {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   opacity: 0;
   transform: translateX(-3px);
   transition: opacity 0.2s ease, transform 0.2s ease;
@@ -366,7 +319,7 @@
 
   color: var(--text-secondary);
 
-  font-size: 12px;
+  font-size: 14px;
 
   line-height: 1.5;
 
@@ -443,29 +396,21 @@
 
 .footer-bottom {
   max-width: 1280px;
-
   margin: 0 auto;
-
-  padding: 14px var(--container-pad) 0;
-
-  border-top: 1px solid rgba(148, 190, 255, 0.06);
-
+  padding: 10px var(--container-pad) 0;
+  border-top: 1px solid rgba(148, 190, 255, 0.08);
   display: flex;
   align-items: center;
   justify-content: space-between;
-
-  gap: 20px;
+  gap: 16px;
 }
 
 .footer-bottom p {
   margin: 0;
-
   color: var(--text-light);
-
-  font-size: 11px;
-  line-height: 1.5;
-
-  opacity: 0.42;
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.5;
 }
 
 .footer-payments {
@@ -479,7 +424,7 @@
 .footer-payment-label {
   color: var(--text-light);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;
   opacity: 0.4;
@@ -650,6 +595,23 @@
     padding-top: 20px;
 
     border-top: 1px solid rgba(148, 190, 255, 0.1);
+  }
+
+  .footer-links {
+    gap: 12px;
+  }
+
+  .footer-document-link {
+    display: block;
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    text-align: center;
+    line-height: 1.45;
+  }
+
+  .footer-document-arrow {
+    display: none;
   }
 
   .footer-label {

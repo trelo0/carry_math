@@ -37,6 +37,7 @@ import {
   showAdminHome,
 } from './core';
 import { handleStatsAction } from './stats';
+import { loadUserEducationSummary } from './education-ops';
 
 // ---------------------------------------------------------------------------
 // Панель администратора: пользователи и роли
@@ -246,8 +247,6 @@ async function renderUserList(
   await editAdminMessage(message, text, { inline_keyboard: keyboard });
 }
 
-// Карточка пользователя. Поля без данных в системе помечены «нет данных»,
-// чтобы не выдумывать сущности: таблиц оплат и занятий пока нет.
 async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, member: MemberRow): Promise<void> {
   let leads = 0;
   try {
@@ -274,15 +273,27 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
     if (!isViolationTableError(error)) console.error('Не удалось получить счётчики нарушений:', error);
   }
 
+  let eduSummary = {
+    accessLines: ['📚 Доступы: нет данных'],
+    packageLines: ['📦 Пакеты: нет данных'],
+    groupLine: '👥 Группа: нет данных',
+    mentorLines: ['🧑‍🏫 Наставник: нет данных'],
+  };
+  try {
+    eduSummary = await loadUserEducationSummary(admin, member.telegram_id);
+  } catch (error) {
+    console.error('Не удалось загрузить учебные данные:', error);
+  }
+
   const lines = [
     `👤 ${memberDisplayName(member)}`,
     member.phone ? `📱 Телефон: ${member.phone}` : '📱 Телефон: не указан',
     `✈️ Telegram: ${member.chat_id ? 'подключён' : 'не подключён'}`,
     `🎭 Роль: ${roleLabel(member.role)}`,
-    `📚 Доступ к курсу: ${member.role === 'student' ? 'есть' : 'нет'}`,
-    '👨‍🏫 Индивидуальные занятия: нет данных (таблицы занятий нет)',
-    '👥 Групповые занятия: нет данных (таблицы занятий нет)',
-    '💳 Оплата: нет данных (таблицы оплат нет)',
+    ...eduSummary.accessLines,
+    ...eduSummary.packageLines,
+    eduSummary.groupLine,
+    ...eduSummary.mentorLines,
   ];
   if (leads > 0) lines.push(`📝 Заявок с сайта: ${leads}`);
   if (moderationStatus === 'blocked') lines.push('🔒 Статус доступа: заблокирован');
@@ -299,8 +310,15 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
   }
 
   const keyboard: InlineButton[][] = [
-    [{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
+    [{ text: '📅 Назначить занятие', callback_data: `ae:sched:${member.telegram_id}` }],
   ];
+  if (member.role === 'student') {
+    keyboard.push(
+      [{ text: '📚 Доступы', callback_data: `ae:access:${member.telegram_id}` }],
+      [{ text: '👤 Назначить наставника', callback_data: `ae:mentor:${member.telegram_id}` }],
+    );
+  }
+  keyboard.push([{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }]);
   if (stats) {
     keyboard.push([{ text: '📋 История нарушений', callback_data: `admin:mod:usr:${member.telegram_id}:0` }]);
   }

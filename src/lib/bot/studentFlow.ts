@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getBaseUrlString } from '@/lib/siteUrl';
+import { beginCourseHomeworkSubmit } from './studentHomeworkFlow';
+import { beginStudentMentorQuestion } from './studentMentorFlow';
+import { beginStudentPurchase } from './studentPurchaseFlow';
+import { beginStudentSupport } from './studentSupportFlow';
+import { createCabinetLoginUrl } from '@/lib/cabinet-login';
+import { getNextScheduledLesson } from './lessons';
 import { type UserContext, getUserContext } from './accesses';
 
 // ---------------------------------------------------------------------------
@@ -15,7 +21,7 @@ import { type UserContext, getUserContext } from './accesses';
 //     интерфейса для group нет).
 // Если активны оба направления — показывается экран выбора направления;
 // если одно — сразу его меню, без промежуточного выбора.
-// Учебной системы пока нет: все действия — заглушки без фиктивных данных.
+// Действия разделов подключены к Supabase (ДЗ, занятия, поддержка).
 // UX тот же, что у админки: Reply Keyboard — навигация, ответ на ввод —
 // всегда новое сообщение под текстом пользователя.
 // ---------------------------------------------------------------------------
@@ -24,6 +30,7 @@ export type StudentUiMode = 'none' | 'course' | 'lessons' | 'both';
 
 // Кнопка личного кабинета — доступна ученику всегда и в любом режиме.
 export const STUDENT_HOME_LABEL = '👤 Личный кабинет';
+export const STUDENT_BUY_LABEL = '💳 Купить';
 // Возврат из раздела к выбору направления (только при двух направлениях).
 export const STUDENT_BACK_LABEL = '⬅️ Назад';
 
@@ -34,16 +41,20 @@ const LESSONS_MIXED_LABEL = '👥 МОИ ЗАНЯТИЯ';
 const COURSE_ACTIONS = ['📚 Сдать ДЗ ментору', '🆘 Получить помощь', '📅 Ближайшее занятие'] as const;
 const LESSONS_ACTIONS = ['📅 Следующее занятие', '💬 Задать вопрос наставнику', '📝 Сдать домашку'] as const;
 
-// Заглушки действий: реальных занятий/домашек/сообщений пока нет,
-// фиктивные данные не показываем.
-const ACTION_STUBS: Record<string, string> = {
-  '📚 Сдать ДЗ ментору': 'Раздел сдачи домашних заданий находится в разработке.',
-  '🆘 Получить помощь': 'Раздел помощи находится в разработке.',
-  '📅 Ближайшее занятие': 'Раздел занятий находится в разработке.',
-  '📅 Следующее занятие': 'Раздел занятий находится в разработке.',
-  '💬 Задать вопрос наставнику': 'Раздел сообщений находится в разработке.',
-  '📝 Сдать домашку': 'Раздел сдачи домашних заданий находится в разработке.',
-};
+const SUPPORT_ACTIONS = new Set(['🆘 Получить помощь', '💬 Задать вопрос наставнику']);
+const HOMEWORK_ACTIONS = new Set(['📚 Сдать ДЗ ментору', '📝 Сдать домашку']);
+const UPCOMING_ACTIONS = new Set(['📅 Ближайшее занятие', '📅 Следующее занятие']);
+
+function formatUpcomingLesson(iso: string): string {
+  return new Date(iso).toLocaleString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 // Режим UI ученика: роль student + активные доступы → вариант меню.
 export function getStudentUiMode(context: UserContext): StudentUiMode {
@@ -68,7 +79,7 @@ type StudentReplyKeyboard = { keyboard: Array<Array<{ text: string }>>; resize_k
 function buildSectionKeyboard(actions: readonly string[], withBack: boolean): StudentReplyKeyboard {
   const keyboard = actions.map((text) => [{ text }]);
   if (withBack) keyboard.push([{ text: STUDENT_BACK_LABEL }]);
-  keyboard.push([{ text: STUDENT_HOME_LABEL }]);
+  keyboard.push([{ text: STUDENT_BUY_LABEL }], [{ text: STUDENT_HOME_LABEL }]);
   return { keyboard, resize_keyboard: true };
 }
 
@@ -103,6 +114,7 @@ export function buildStudentMainMenu(context: UserContext, testFooter = ''): Stu
           keyboard: [
             [{ text: COURSE_DIRECTION_LABEL }],
             [{ text: getLessonsDirectionLabel(context) }],
+            [{ text: STUDENT_BUY_LABEL }],
             [{ text: STUDENT_HOME_LABEL }],
           ],
           resize_keyboard: true,
@@ -112,15 +124,25 @@ export function buildStudentMainMenu(context: UserContext, testFooter = ''): Stu
       return {
         mode,
         text: `🎓 Личный кабинет\n\nУ вас пока нет активных учебных программ.${testFooter}`,
-        keyboard: null,
+        keyboard: {
+          keyboard: [[{ text: STUDENT_BUY_LABEL }], [{ text: STUDENT_HOME_LABEL }]],
+          resize_keyboard: true,
+        },
       };
   }
 }
 
-// Ссылка на личный кабинет сайта. Страница кабинета — /cabinet
-// (вход по OTP через телефон уже существует). Когда появится авто-вход
-// по привязке Telegram, токен/deep-link добавится здесь, не меняя меню.
-export function getStudentCabinetUrl(): string {
+/** Ссылка на кабинет с одноразовым auto-login (fallback — /cabinet). */
+export async function getStudentCabinetUrl(
+  admin: SupabaseClient,
+  telegramId: number,
+  path = '/cabinet',
+): Promise<string> {
+  return createCabinetLoginUrl(admin, telegramId, path);
+}
+
+/** Синхронный fallback без auto-login (legacy callers). */
+export function getStudentCabinetUrlSync(): string {
   return `${getBaseUrlString()}/cabinet`;
 }
 
@@ -220,8 +242,11 @@ export async function handleStudentMessage(
   if (
     text !== STUDENT_HOME_LABEL &&
     text !== STUDENT_BACK_LABEL &&
+    text !== STUDENT_BUY_LABEL &&
     !isDirection &&
-    !(text in ACTION_STUBS)
+    !SUPPORT_ACTIONS.has(text) &&
+    !HOMEWORK_ACTIONS.has(text) &&
+    !UPCOMING_ACTIONS.has(text)
   ) {
     return false;
   }
@@ -232,13 +257,18 @@ export async function handleStudentMessage(
   const { course, individual, group } = context.accesses;
   const lessons = individual || group;
 
+  if (text === STUDENT_BUY_LABEL) {
+    await beginStudentPurchase(admin, telegramId, chatId);
+    return true;
+  }
+
   // Личный кабинет: сообщение с URL-кнопкой на кабинет сайта.
   if (text === STUDENT_HOME_LABEL) {
     await telegramSend('sendMessage', {
       chat_id: chatId,
       text: '👤 Личный кабинет\n\nКабинет открывается на сайте District:',
       reply_markup: {
-        inline_keyboard: [[{ text: '🌐 Открыть личный кабинет', url: getStudentCabinetUrl() }]],
+        inline_keyboard: [[{ text: '🌐 Открыть личный кабинет', url: await getStudentCabinetUrl(admin, telegramId) }]],
       },
     });
     return true;
@@ -271,15 +301,52 @@ export async function handleStudentMessage(
     return true;
   }
 
-  // Действия внутри разделов — заглушки; доступ перепроверяется
-  // (клавиатура могла остаться от старого набора доступов).
+  // Действия внутри разделов; доступ перепроверяется (клавиатура могла устареть).
   const isCourseAction = (COURSE_ACTIONS as readonly string[]).includes(text);
-  if ((isCourseAction && !course) || (!isCourseAction && !lessons)) {
+  const isLessonsAction = (LESSONS_ACTIONS as readonly string[]).includes(text);
+  if ((isCourseAction && !course) || (isLessonsAction && !lessons)) {
     return denyAccess(chatId);
   }
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: `${text}\n\n${ACTION_STUBS[text]}`,
-  });
-  return true;
+
+  if (text === '📚 Сдать ДЗ ментору') {
+    return beginCourseHomeworkSubmit(admin, telegramId, chatId);
+  }
+
+  if (text === '📝 Сдать домашку') {
+    await beginStudentMentorQuestion(admin, telegramId, chatId, { homework: true });
+    return true;
+  }
+
+  if (text === '💬 Задать вопрос наставнику') {
+    await beginStudentMentorQuestion(admin, telegramId, chatId);
+    return true;
+  }
+
+  if (text === '🆘 Получить помощь') {
+    await beginStudentSupport(admin, telegramId, chatId);
+    return true;
+  }
+
+  if (UPCOMING_ACTIONS.has(text)) {
+    const lesson = await getNextScheduledLesson(admin, telegramId);
+    if (!lesson) {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: '📅 Ближайших занятий пока нет.\n\nКогда администратор назначит занятие, оно появится здесь и в личном кабинете.',
+      });
+      return true;
+    }
+    const lines = [
+      '📅 Ближайшее занятие',
+      '',
+      `📝 ${lesson.topic}`,
+      `🕐 ${formatUpcomingLesson(lesson.startsAt)}`,
+      `📦 ${lesson.kind === 'individual' ? 'Индивидуальное' : 'Групповое'}`,
+    ];
+    if (lesson.meetUrl) lines.push(`🔗 ${lesson.meetUrl}`);
+    await telegramSend('sendMessage', { chat_id: chatId, text: lines.join('\n') });
+    return true;
+  }
+
+  return false;
 }

@@ -29,6 +29,28 @@ function getSanityFetchOptions({ preview }: FetchOptions, tags: string[]) {
   return options
 }
 
+type SanityFetchOptions = ReturnType<typeof getSanityFetchOptions>
+
+async function safeSanityFetch<T>(
+  client: ReturnType<typeof getSanityClient>,
+  query: string,
+  params: Record<string, unknown>,
+  options: SanityFetchOptions,
+  fallback: T,
+): Promise<T> {
+  try {
+    return (await client.fetch<T>(query, params, options)) ?? fallback
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const authHint =
+      message.includes('403') || message.includes('401')
+        ? ' Проверьте SANITY_API_READ_TOKEN (или SANITY_API_WRITE_TOKEN) в .env.local — создайте новый токен в sanity.io/manage → API → Tokens.'
+        : ''
+    console.error(`[Sanity] fetch failed:${authHint}`, message.split('\n')[0])
+    return fallback
+  }
+}
+
 export type SiteSettings = {
   title: string;
   footerDescription?: string;
@@ -42,7 +64,8 @@ export type SiteSettings = {
 
 export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<SiteSettings | null> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`*[_type == "siteSettings"] | order(_updatedAt desc)[0]{
       title,
       footerDescription,
@@ -54,7 +77,8 @@ export async function getSiteSettings({ preview }: FetchOptions = {}): Promise<S
       modalSubmitButtonText
     }`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:siteSettings'])
+    getSanityFetchOptions({ preview }, ['sanity:siteSettings']),
+    null,
   );
 }
 
@@ -64,7 +88,8 @@ export async function getIndividualPageContent({
   preview,
 }: FetchOptions = {}): Promise<IndividualPageContent | null> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`{
       "hero": *[_type == "individualHeroBlock"] | order(_updatedAt desc)[0]{
         kicker,
@@ -81,6 +106,7 @@ export async function getIndividualPageContent({
       "principles": *[_type == "principlesBlock"] | order(_updatedAt desc)[0]{
         kicker,
         sectionTitle,
+        sectionTitleGold,
         sectionSubtitle
       },
       "formats": *[_type == "formatsBlock"] | order(_updatedAt desc)[0]{
@@ -120,7 +146,8 @@ export async function getIndividualPageContent({
       'sanity:processBlock',
       'sanity:choosePathBlock',
       'sanity:diagnosticBlock',
-    ])
+    ]),
+    null,
   );
 }
 
@@ -144,17 +171,19 @@ export const getTeachers = async ({ preview }: FetchOptions = {}): Promise<Teach
     }
   }`;
 
-  const teachers: Teacher[] = await client.fetch(
+  return safeSanityFetch(
+    client,
     query,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:teacher'])
+    getSanityFetchOptions({ preview }, ['sanity:teacher']),
+    [] as Teacher[],
   );
-  return teachers;
 };
 
 export async function getStats({ preview }: FetchOptions = {}): Promise<Stat[]> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`*[_type == "stat"]{
       _id,
       value,
@@ -162,13 +191,15 @@ export async function getStats({ preview }: FetchOptions = {}): Promise<Stat[]> 
       order
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:stat'])
+    getSanityFetchOptions({ preview }, ['sanity:stat']),
+    [] as Stat[],
   );
 }
 
 export async function getPrinciples({ preview }: FetchOptions = {}): Promise<Principle[]> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`*[_type == "principle"]{
       _id,
       title,
@@ -176,7 +207,8 @@ export async function getPrinciples({ preview }: FetchOptions = {}): Promise<Pri
       order
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:principle'])
+    getSanityFetchOptions({ preview }, ['sanity:principle']),
+    [] as Principle[],
   );
 }
 
@@ -189,7 +221,8 @@ export type MainPageReview = {
 
 export async function getMainPageReviews({ preview }: FetchOptions = {}): Promise<MainPageReview[]> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`*[_type == "review"]{
       _id,
       name,
@@ -197,20 +230,23 @@ export async function getMainPageReviews({ preview }: FetchOptions = {}): Promis
       text
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:review'])
+    getSanityFetchOptions({ preview }, ['sanity:review']),
+    [] as MainPageReview[],
   );
 }
 
 export async function getProcessSteps({ preview }: FetchOptions = {}): Promise<ProcessStep[]> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`*[_type == "processStep"]{
       _id,
       title,
       description
     } | order(coalesce(order, 9999) asc, _createdAt asc)`,
     {},
-    getSanityFetchOptions({ preview }, ['sanity:processStep'])
+    getSanityFetchOptions({ preview }, ['sanity:processStep']),
+    [] as ProcessStep[],
   );
 }
 
@@ -220,7 +256,8 @@ export async function getMainPageContent({
   preview,
 }: FetchOptions = {}): Promise<MainPageContent | null> {
   const client = getClient({ preview });
-  return client.fetch(
+  return safeSanityFetch(
+    client,
     groq`{
       "hero": *[_type == "courseHero"] | order(_updatedAt desc)[0]{
         eyebrow,
@@ -282,6 +319,7 @@ export async function getMainPageContent({
       'sanity:faqBlock',
       'sanity:faqItem',
       'sanity:pathsBlock',
-    ])
+    ]),
+    null,
   );
 }

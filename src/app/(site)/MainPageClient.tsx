@@ -1,20 +1,38 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import MainFaq from '@/components/ui/MainFaq';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
 import type { MainPageContent } from '@/data/mainPageContent';
-import { MAIN_PAGE_DEFAULTS, pickStr, pickArr, pickNum } from '@/data/mainPageContent';
+import {
+  MAIN_PAGE_DEFAULTS,
+  pickStr,
+  pickArr,
+  pickNum,
+  formatSpecLabel,
+} from '@/data/mainPageContent';
 
 // Платный курс пока не подключён: кнопка записи показывает сообщение
 // и предлагает бесплатный пробный вебинар (Telegram).
 const COURSE_UNAVAILABLE_NOTICE =
   'Запись на платный курс пока недоступна. Запишись на бесплатный пробный вебинар, чтобы познакомиться с форматом.';
 
-const WAVE_BARS = Array.from({ length: 64 }, (_, i) => 18 + ((i * 53) % 82));
+// Заголовок: «Готовим» белым, последнее слово — оранжевым неоном.
+function HeroHeadline({ text }: { text: string }) {
+  const words = text.trim().split(/\s+/);
+  if (words.length < 2) return <span className="hero-headline-accent">{text}</span>;
+  const last = words[words.length - 1];
+  const rest = words.slice(0, -1).join(' ');
+  return (
+    <>
+      <span className="hero-headline-main">{rest}</span>
+      <br />
+      <span className="hero-headline-accent">{last}</span>
+    </>
+  );
+}
 
-// Заголовок с золотым последним словом («Готовим победителей», «Время пройти инициацию»).
 function GoldLastWord({ text }: { text: string }) {
   const words = text.trim().split(/\s+/);
   if (words.length < 2) return <span className="gold">{text}</span>;
@@ -22,10 +40,31 @@ function GoldLastWord({ text }: { text: string }) {
   const rest = words.slice(0, -1).join(' ');
   return (
     <>
-      {rest}
-      <br />
-      <span className="gold">{last}</span>
+      {rest} <span className="gold">{last}</span>
     </>
+  );
+}
+
+const HERO_NAV_ICONS = [
+  // живые вебинары
+  'M8 5h8l4 4v10H8V5z M12 9v6 M9.5 12h5',
+  // платформа
+  'M5 5h6v6H5V5z M13 5h6v6h-6V5z M5 13h6v6H5v-6z M13 13h6v6h-6v-6z',
+  // наставник
+  'M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M6 20v-1a6 6 0 0 1 12 0v1',
+] as const;
+
+function HeroNavIcon({ index }: { index: number }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d={HERO_NAV_ICONS[index % HERO_NAV_ICONS.length]}
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -114,11 +153,11 @@ type MissionPad = {
 };
 
 const MISSION_PADS: MissionPad[] = [
-  { x: 330, roadY: 300, cardAbove: true },
-  { x: 520, roadY: 370, cardAbove: false },
+  { x: 300, roadY: 300, cardAbove: true },
+  { x: 495, roadY: 370, cardAbove: false },
   { x: 710, roadY: 300, cardAbove: true },
-  { x: 900, roadY: 370, cardAbove: false },
-  { x: 1090, roadY: 300, cardAbove: true },
+  { x: 925, roadY: 370, cardAbove: false },
+  { x: 1140, roadY: 300, cardAbove: true },
 ];
 
 function padGeometry(pad: MissionPad) {
@@ -128,7 +167,7 @@ function padGeometry(pad: MissionPad) {
     return {
       center,
       padLink: [pad.roadY - ROAD_HALF, bottom] as const,
-      cardLink: [center - PAD_H / 2 - 38, center - PAD_H / 2 - 18] as const,
+      cardLink: [center - PAD_H / 2 - 58, center - PAD_H / 2 - 30] as const,
     };
   }
   const top = pad.roadY + ROAD_HALF - 2;
@@ -174,7 +213,7 @@ export default function MainPageClient({
   const mentor = content?.mentor;
   const mentorSectionTitle = pickStr(mentor?.sectionTitle, D.mentor.sectionTitle);
   const specs = pickArr(mentor?.specs, D.mentor.specs).map((s) => ({
-    label: pickStr(s?.label, ''),
+    label: formatSpecLabel(pickStr(s?.label, '')),
     value: pickNum(s?.value, 0),
   }));
   const journal = pickArr(mentor?.journal, D.mentor.journal);
@@ -214,32 +253,107 @@ export default function MainPageClient({
   const pathsCtaText = pickStr(paths?.ctaText, D.paths.ctaText);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
+  const notesRef = useRef<HTMLDivElement | null>(null);
+  const [mentorConnectors, setMentorConnectors] = useState<{
+    leftPath: string;
+    rightPath: string;
+    plateLeft: { x: number; y: number };
+    plateRight: { x: number; y: number };
+    quoteRight: { x: number; y: number };
+    verifyLeft: { x: number; y: number };
+  } | null>(null);
 
-  // панели характеристик/журнала всегда одной высоты:
-  // короткая дорастает до высокой (без привязки к карточке персонажа)
   useEffect(() => {
-    const layout = layoutRef.current;
-    if (!layout) return;
-
-    const panels = Array.from(layout.querySelectorAll<HTMLElement>(
-      '.main-panel--specs, .main-panel--journal'
-    ));
-    if (panels.length !== 2) return;
+    const notes = notesRef.current;
+    if (!notes) return;
 
     const sync = () => {
-      panels.forEach((el) => {
-        el.style.minHeight = '0px';
+      if (window.innerWidth <= 980) {
+        setMentorConnectors(null);
+        return;
+      }
+
+      const conn = notes.querySelector<SVGSVGElement>('.mentor-connectors');
+      const plate = document.querySelector<HTMLElement>('.mentor-plate');
+      const quote = notes.querySelector<HTMLElement>('.teacher-quote');
+      const verify = notes.querySelector<HTMLElement>('.teacher-verify');
+      if (!conn || !plate || !quote || !verify) return;
+
+      const fmt = (n: number) => Number(n.toFixed(2));
+
+      const pr = plate.getBoundingClientRect();
+      const qr = quote.getBoundingClientRect();
+      const vr = verify.getBoundingClientRect();
+      const badges = document.querySelector('.mentor-badges');
+      const badgesRect = badges?.getBoundingClientRect();
+      const linkY = badgesRect
+        ? badgesRect.top + badgesRect.height / 2
+        : pr.bottom - 8;
+      const startY = pr.top + pr.height * 0.5;
+
+      const pagePoints = [
+        { x: pr.left, y: startY },
+        { x: pr.right, y: startY },
+        { x: qr.right, y: linkY },
+        { x: vr.left, y: linkY },
+      ];
+      const notesRect = notes.getBoundingClientRect();
+      const minY = Math.min(...pagePoints.map((p) => p.y));
+      const maxY = Math.max(...pagePoints.map((p) => p.y));
+      conn.style.top = `${minY - notesRect.top - 6}px`;
+      conn.style.height = `${maxY - minY + 12}px`;
+
+      const connRect = conn.getBoundingClientRect();
+      const vb = conn.viewBox.baseVal;
+      if (connRect.width <= 0 || connRect.height <= 0) return;
+
+      const toSvg = (x: number, y: number) => ({
+        x: vb.x + ((x - connRect.left) / connRect.width) * vb.width,
+        y: vb.y + ((y - connRect.top) / connRect.height) * vb.height,
       });
-      const target = Math.max(panels[0].offsetHeight, panels[1].offsetHeight);
-      panels.forEach((el) => {
-        el.style.minHeight = `${target}px`;
+
+      const plateLeft = toSvg(pr.left, startY);
+      const plateRight = toSvg(pr.right, startY);
+      const quoteRight = toSvg(qr.right, linkY);
+      const verifyLeft = toSvg(vr.left, linkY);
+
+      const leftBend = {
+        x: quoteRight.x + Math.max(14, (plateLeft.x - quoteRight.x) * 0.3),
+        y: quoteRight.y,
+      };
+      const rightBend = {
+        x: verifyLeft.x - Math.max(14, (verifyLeft.x - plateRight.x) * 0.3),
+        y: verifyLeft.y,
+      };
+
+      setMentorConnectors({
+        leftPath: `M ${fmt(plateLeft.x)} ${fmt(plateLeft.y)} L ${fmt(leftBend.x)} ${fmt(leftBend.y)} L ${fmt(quoteRight.x)} ${fmt(quoteRight.y)}`,
+        rightPath: `M ${fmt(plateRight.x)} ${fmt(plateRight.y)} L ${fmt(rightBend.x)} ${fmt(rightBend.y)} L ${fmt(verifyLeft.x)} ${fmt(verifyLeft.y)}`,
+        plateLeft,
+        plateRight,
+        quoteRight,
+        verifyLeft,
       });
     };
 
     sync();
+    const raf = requestAnimationFrame(sync);
     const ro = new ResizeObserver(sync);
-    panels.forEach((el) => ro.observe(el));
-    return () => ro.disconnect();
+    ro.observe(notes);
+    const plate = document.querySelector('.mentor-plate');
+    const quote = notes.querySelector('.teacher-quote');
+    const verify = notes.querySelector('.teacher-verify');
+    const badges = document.querySelector('.mentor-badges');
+    if (plate) ro.observe(plate);
+    if (quote) ro.observe(quote);
+    if (verify) ro.observe(verify);
+    if (badges) ro.observe(badges);
+    window.addEventListener('resize', sync);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -293,53 +407,80 @@ export default function MainPageClient({
 
   return (
     <div className="main-page" ref={rootRef}>
-      <span className="side-rail side-rail--left" aria-hidden="true">
-        GUILD // ONLINE MATH QUEST // ЦТ-2026
-      </span>
-      <span className="side-rail side-rail--right" aria-hidden="true">
-        XP FARMING MODE // MATH.QUEST v2.6
-      </span>
-
       <AtmosphereLayers />
 
       <div className="city-backdrop" aria-hidden="true" />
       <section className="hero" id="hero">
         <div className="hero-bg" aria-hidden="true" />
-        <span className="hero-barcode" aria-hidden="true" />
-        <p className="hero-coords" aria-hidden="true">
-          53.9006° N, 27.5590° E // MINSK NODE // UPLINK STABLE
-        </p>
+        <div className="hero-hud" aria-hidden="true">
+          <span className="hero-hud-rail hero-hud-rail--left">STUDY / ONLINE / MATH / QUEST / 2026</span>
+          <span className="hero-hud-rail hero-hud-rail--right">STUDY / ONLINE / MATH / QUEST / 2026</span>
+          <p className="hero-coords">53.9010° N, 27.5490° E</p>
+          <div className="hero-hud-foot">
+            <span className="hero-hud-compass">N</span>
+            <span className="hero-hud-foot-text">// MATHEMATICS — THIS IS NOT JUST A SUBJECT</span>
+          </div>
+        </div>
         <div className="container hero-content">
-          <p className="hero-eyebrow">{heroEyebrow}</p>
-          <div className="hero-brand">District</div>
-          <h1 className="hero-headline">
-            <GoldLastWord text={heroHeadline} />
-          </h1>
+          <div className="hero-title-frame">
+            <span className="hero-frame-mark hero-frame-mark--tl" aria-hidden="true" />
+            <span className="hero-frame-mark hero-frame-mark--br" aria-hidden="true" />
+            <p className="hero-eyebrow">
+              <span className="hero-eyebrow-mark">//</span> {heroEyebrow}
+            </p>
+            <div className="hero-brand">District</div>
+            <h1 className="hero-headline">
+              <HeroHeadline text={heroHeadline} />
+            </h1>
+          </div>
 
           <div className="main-hero-actions">
-            <div className="main-hero-chips">
-              <div className="main-hero-chip">
-                {heroPills.map((pill) => (
-                  <span className="chip-pill" key={pill}>
-                    {pill}
-                  </span>
-                ))}
-              </div>
-              <div className="main-hero-chip">
-                <span className="chip-pill">{heroQuestTitle}</span>
-                <span className="chip-note">{heroQuestNote}</span>
-                {heroQuestPoints.map((point) => (
-                  <span className="chip-check" key={point}>
-                    <span className="box" aria-hidden="true" />
-                    {point}
-                  </span>
-                ))}
+            <div className="hero-panels-shell">
+              <div className="hero-panels">
+                <div className="hero-panel hero-panel--nav">
+                  {heroPills.map((pill, index) => (
+                    <div className="hero-nav-row" key={pill}>
+                      <span className="hero-nav-ico">
+                        <HeroNavIcon index={index} />
+                      </span>
+                      <span className="hero-nav-text">{pill}</span>
+                      <span className="hero-nav-chev" aria-hidden="true">›</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hero-panel hero-panel--quest">
+                  <div className="hero-quest-head">
+                    <span className="hero-quest-target" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.5" />
+                        <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
+                        <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="1.5" />
+                      </svg>
+                    </span>
+                    <span>{heroQuestTitle}</span>
+                  </div>
+                  <p className="hero-quest-note">{heroQuestNote}</p>
+                  <ul className="hero-quest-list">
+                    {heroQuestPoints.map((point) => (
+                      <li key={point}>
+                        <span className="hero-quest-check" aria-hidden="true" />
+                        {point}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </div>
 
-            <a className="hero-signup" href="#signup">
-              {heroButtonText}
-            </a>
+            <div className="hero-signup-wrap">
+              <span className="hero-frame-mark hero-frame-mark--bl" aria-hidden="true" />
+              <span className="hero-frame-mark hero-frame-mark--tr" aria-hidden="true" />
+              <a className="hero-signup" href="#signup">
+                {heroButtonText}
+                <span className="hero-signup-arrow" aria-hidden="true">→</span>
+              </a>
+            </div>
           </div>
         </div>
       </section>
@@ -354,7 +495,7 @@ export default function MainPageClient({
 
           <div className="main-teacher-layout" ref={layoutRef}>
             <aside className="main-panel main-panel--specs">
-              <p className="main-panel-title">Характеристики</p>
+              <p className="main-panel-title">// 1. Характеристики</p>
               {specs.map((spec, index) => (
                 <div className="spec-row" key={`${spec.label}-${index}`}>
                   <span className="spec-label">{spec.label}</span>
@@ -376,21 +517,21 @@ export default function MainPageClient({
                   src="/teachers/lidia2.png"
                   alt="Лидия Владимировна — наставник по математике"
                 />
-              </div>
-              <div className="mentor-plate">
-                <span className="mentor-class">{mentorClass}</span>
-                <p className="mentor-name">{mentorName}</p>
-                <span className="mentor-level">{mentorLevel}</span>
+                <div className="mentor-plate">
+                  <span className="mentor-class">{mentorClass}</span>
+                  <p className="mentor-name">{mentorName}</p>
+                  <span className="mentor-level">{mentorLevel}</span>
+                </div>
               </div>
               <ul className="mentor-badges" aria-label="Достижения наставника">
                 {mentorBadges.map((badge) => (
-                  <li key={badge}>❖ {badge}</li>
+                  <li key={badge}>{badge}</li>
                 ))}
               </ul>
             </div>
 
             <aside className="main-panel main-panel--journal">
-              <p className="main-panel-title">Журнал заданий:</p>
+              <p className="main-panel-title">// 2. Журнал заданий</p>
               {journal.map((item, index) => (
                 <div className="data-item" key={`${item.title}-${index}`}>
                   <span className="data-hex" aria-hidden="true">
@@ -415,38 +556,49 @@ export default function MainPageClient({
             </aside>
           </div>
 
-          <div className="main-teacher-notes">
+          <div className="main-teacher-notes" ref={notesRef}>
+            <svg className="mentor-connectors" viewBox="0 0 1000 120" preserveAspectRatio="none" fill="none" aria-hidden="true">
+              <defs>
+                <filter id="mentor-line-glow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="1.2" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+              {mentorConnectors && (
+                <g filter="url(#mentor-line-glow)">
+                  <path
+                    d={mentorConnectors.leftPath}
+                    stroke="#ff9a2e"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx={mentorConnectors.plateLeft.x} cy={mentorConnectors.plateLeft.y} r="3" fill="#ff9a2e" />
+                  <circle cx={mentorConnectors.quoteRight.x} cy={mentorConnectors.quoteRight.y} r="3" fill="#ff9a2e" />
+                  <path
+                    d={mentorConnectors.rightPath}
+                    stroke="#ff9a2e"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx={mentorConnectors.plateRight.x} cy={mentorConnectors.plateRight.y} r="3" fill="#ff9a2e" />
+                  <circle cx={mentorConnectors.verifyLeft.x} cy={mentorConnectors.verifyLeft.y} r="3" fill="#ff9a2e" />
+                </g>
+              )}
+            </svg>
+
             <div className="teacher-quote">
               <p className="status">{quoteStatus}</p>
-              <p>«{quoteText}»</p>
-              <div className="wave" aria-hidden="true">
-                <div className="wave-bars">
-                  {WAVE_BARS.map((height, index) => (
-                    <span key={index} style={{ height: `${height}%` }} />
-                  ))}
-                </div>
-                <div className="wave-ticks" />
-              </div>
-              <svg className="quote-line" viewBox="0 0 130 112" fill="none" aria-hidden="true">
-                <circle cx="6" cy="106" r="3" fill="#f5f8ff" />
-                <path
-                  d="M6 106 L64 100 L124 4"
-                  stroke="rgba(245, 248, 255, 0.7)"
-                  strokeWidth="1.5"
-                />
-              </svg>
+              <p className="teacher-quote-text">«{quoteText}»</p>
             </div>
 
             <div className="teacher-verify">
-              <svg className="verify-line" viewBox="0 0 130 156" fill="none" aria-hidden="true">
-                <circle cx="124" cy="142" r="3" fill="#f5f8ff" />
-                <path
-                  d="M124 142 L44 124 L-30 4"
-                  stroke="rgba(245, 248, 255, 0.7)"
-                  strokeWidth="1.5"
-                />
-              </svg>
-              Код верификации подтвержден <span className="check">✓</span>
+              <span className="teacher-verify-text">Код верификации подтвержден</span>
+              <span className="check" aria-hidden="true">✓</span>
             </div>
           </div>
         </div>
@@ -601,7 +753,7 @@ export default function MainPageClient({
                     key={`${step.title}-${index}`}
                     style={{
                       left: pad ? `${(pad.x / 1500) * 100}%` : undefined,
-                      top: pad ? (pad.cardAbove ? '12.6%' : '84.6%') : undefined,
+                      top: pad ? (pad.cardAbove ? '11%' : '79%') : undefined,
                     }}
                   >
                     <article className="mission-card">
@@ -700,6 +852,8 @@ export default function MainPageClient({
 
             <div className="init-side">
               <div className="init-price">
+                <span className="init-price-mark init-price-mark--tl" aria-hidden="true" />
+                <span className="init-price-mark init-price-mark--br" aria-hidden="true" />
                 <p className="price-label">{priceLabel}</p>
                 <p className="price-value">{priceValue}</p>
                 <p className="price-period">{pricePeriod}</p>
@@ -734,16 +888,23 @@ export default function MainPageClient({
 
           <div className="paths-grid">
             {pathColumns.map((col, index) => (
-              <div className="path-col" key={`${col.title}-${index}`}>
+              <div
+                className={`path-col ${index === 0 ? 'path-col--solo' : 'path-col--team'}`}
+                key={`${col.title}-${index}`}
+              >
                 <h3 className="path-title">{col.title}</h3>
                 <p className="path-sub">{col.sub}</p>
                 <div className="path-card">
+                  <span className="path-card-mark path-card-mark--tl" aria-hidden="true" />
+                  <span className="path-card-mark path-card-mark--br" aria-hidden="true" />
                   <p className="path-desc">{col.description}</p>
-                  <ul className="path-perks">
-                    {(col.perks ?? []).map((perk) => (
-                      <li key={perk}>{perk}</li>
-                    ))}
-                  </ul>
+                  <div className="path-perks-wrap">
+                    <ul className="path-perks">
+                      {(col.perks ?? []).map((perk) => (
+                        <li key={perk}>{perk}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
             ))}

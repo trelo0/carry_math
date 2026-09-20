@@ -1,4 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { grantEnrollmentTrialAccess, isCourseAccessTableError } from './course-access';
+import { initEnrollmentLives, isLivesTableError } from './lives';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 // ---------------------------------------------------------------------------
 // Курсы и зачисления (courses, course_enrollments)
@@ -134,7 +137,19 @@ export async function enrollStudent(
     .select('id, telegram_id, course_id, status, started_at, ended_at, created_at, updated_at')
     .single();
   if (error) throw error;
-  return data as CourseEnrollment;
+  const enrollment = data as CourseEnrollment;
+
+  try {
+    const courseContent = await getDistrictCourseContent().catch(() => null);
+    await grantEnrollmentTrialAccess(admin, telegramId, courseId, courseContent);
+    await initEnrollmentLives(admin, telegramId, courseId);
+  } catch (sideEffectError) {
+    if (!isCourseAccessTableError(sideEffectError) && !isLivesTableError(sideEffectError)) {
+      throw sideEffectError;
+    }
+  }
+
+  return enrollment;
 }
 
 // Отчисление: запись сохраняется как cancelled (история не теряется).

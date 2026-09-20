@@ -9,7 +9,7 @@ type WebinarPanelVariant = 'entry' | 'course';
 
 const TITLES: Record<WebinarPanelVariant, { main: string; sub: string }> = {
   entry: { main: 'Бесплатный вебинар', sub: 'по математике' },
-  course: { main: 'Запись на курс', sub: '' },
+  course: { main: 'Записаться на бесплатный вебинар', sub: 'по математике' },
 };
 
 export default function WebinarSignupPanel({

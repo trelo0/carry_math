@@ -104,12 +104,12 @@ export const MAIN_PAGE_DEFAULTS = {
   mentor: {
     sectionTitle: 'Твой наставник по математике',
     specs: [
-      { label: 'Харизма и удержание внимания', value: 98 },
+      { label: 'Харизма и удержание\nвнимания', value: 98 },
       { label: 'Взлом ЦТ / декодирование информации', value: 100 },
       { label: 'Ментальная стойкость', value: 95 },
       { label: 'Прокачка новичков', value: 92 },
       { label: 'Индекс занудства', value: 4 },
-      { label: 'Синхронизация (понятный язык)', value: 99 },
+      { label: 'Синхронизация\n(понятный язык)', value: 99 },
     ] as MentorSpec[],
     journal: [
       {
@@ -267,4 +267,16 @@ export function pickArr<T>(value: T[] | null | undefined, fallback: T[]): T[] {
 /** Число из Sanity, если оно задано; иначе дефолт. */
 export function pickNum(value: number | null | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/** Перенос длинных подписей характеристик на 2 строки. */
+export function formatSpecLabel(label: string): string {
+  const text = label.trim();
+  if (/харизма.*внимания/i.test(text)) {
+    return text.replace(/\s+(внимания)$/i, '\n$1');
+  }
+  if (/синхронизация/i.test(text) && /\(/.test(text)) {
+    return text.replace(/\s+(?=\()/, '\n');
+  }
+  return text;
 }

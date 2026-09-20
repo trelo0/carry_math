@@ -19,6 +19,15 @@ import formatsBlock from './formatsBlock'
 import processBlock from './processBlock'
 import choosePathBlock from './choosePathBlock'
 import diagnosticBlock from './diagnosticBlock'
+import lessonMaterial from './lessonMaterial'
+import lessonFile from './lessonFile'
+import lessonHomework from './lessonHomework'
+import districtCourseLesson from './districtCourseLesson'
+import districtModule from './districtModule'
+import districtCourse from './districtCourse'
+import cabinetLessonPackage from './cabinetLessonPackage'
+import cabinetAchievement from './cabinetAchievement'
+import cabinetSettings from './cabinetSettings'
 
 export default [
   teacher,
@@ -42,4 +51,13 @@ export default [
   processBlock,
   choosePathBlock,
   diagnosticBlock,
+  lessonMaterial,
+  lessonFile,
+  lessonHomework,
+  districtCourseLesson,
+  districtModule,
+  districtCourse,
+  cabinetLessonPackage,
+  cabinetAchievement,
+  cabinetSettings,
 ]

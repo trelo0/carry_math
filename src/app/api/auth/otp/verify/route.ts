@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { normalizePhone } from '@/lib/phone';
 import { verifyOtpHash } from '@/lib/otp';
 import { getIp, rateLimit } from '@/lib/ratelimit';
+import { supabaseCookieOptions } from '@/lib/supabase/cookieOptions';
 
 const MAX_ATTEMPTS = 5; // попыток на один код, дальше код сгорает
 
@@ -118,6 +119,7 @@ export async function POST(request: NextRequest) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
       {
+        cookieOptions: supabaseCookieOptions,
         cookies: {
           getAll: () => request.cookies.getAll(),
           setAll: (cookies) => {

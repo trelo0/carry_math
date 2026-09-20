@@ -57,7 +57,10 @@ section[data-reveal].revealed {
 }
 
 .main-page .hero-coords,
-.main-page .hero-barcode {
+.main-page .hero-hud-foot,
+.main-page .hero-hud-rail,
+.main-page .hero-title-frame,
+.main-page .hero-signup-wrap {
   animation: cine-fade 1.4s ease 0.9s backwards;
 }
 

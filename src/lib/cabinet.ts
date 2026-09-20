@@ -1,4 +1,48 @@
+import { notFound } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
+import {
+  buildCourseMapStops,
+  buildCourseMapStopsFromContent,
+  buildCourseStructureStopsFromContent,
+  isCourseProgressTableError,
+  loadCourseCatalog,
+  type CourseMapStop,
+  type CourseMapStopStatus,
+} from '@/lib/bot/education/course-progress';
+import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
+import { getCabinetPricing, DEFAULT_CABINET_PRICING, type CabinetPricing } from '@/lib/studio/cabinetSettings';
+import {
+  countCourseLessons,
+  getDistrictCourseContent,
+  type DistrictCourseContent,
+} from '@/lib/studio/courseContent';
+import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
+import { HOMEWORK_STATUS_LABELS } from '@/lib/bot/education/course-homework';
+import { cabinetLessonFileUrl } from '@/lib/cabinet-lesson-files';
+import {
+  isPurchaseRequestTableError,
+  listPurchaseRequestsForUser,
+} from '@/lib/bot/purchase-requests';
+
+export function formatModulePeriodFromLessons(lessons: { lessonDate: string | null }[]): string | null {
+  const dates = lessons
+    .map((l) => l.lessonDate)
+    .filter((d): d is string => Boolean(d))
+    .map((d) => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Date(`${d}T12:00:00`);
+      const dotted = d.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+      if (dotted) return new Date(Number(dotted[3]), Number(dotted[2]) - 1, Number(dotted[1]));
+      return new Date(d);
+    })
+    .filter((d) => !Number.isNaN(d.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (!dates.length) return null;
+  const fmt = (d: Date) =>
+    d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace(/\./g, '');
+  if (dates.length === 1) return fmt(dates[0]);
+  return `${fmt(dates[0])} – ${fmt(dates[dates.length - 1])}`;
+}
 
 // Данные личного кабинета ученика.
 //
@@ -10,8 +54,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 // через серверный admin-клиент. Никаких новых таблиц не создаём:
 // разделы без данных (ДЗ, платежи, жизни) отображаются как «скоро».
 
-export type CabinetMode = 'course' | 'individual';
+export type CabinetSection = 'course' | 'lessons' | 'schedule' | 'payments' | 'settings';
 export type CabinetAccessProduct = 'course' | 'individual' | 'group';
+export type CourseCabinetState = 'preview' | 'enrolled_locked' | 'full';
 
 export type CabinetAccess = {
   product: CabinetAccessProduct;
@@ -19,9 +64,38 @@ export type CabinetAccess = {
 };
 
 export type CabinetEnrollment = {
+  courseId: number;
   courseTitle: string;
   status: string;
   startedAt: string;
+};
+
+export type CabinetCourseModulePreview = {
+  name: string;
+  about: string;
+  count: number;
+  color: string;
+  period: string | null;
+  lessons: { title: string }[];
+};
+
+export type CabinetCourseCatalog = {
+  id: number;
+  title: string;
+  slug: string;
+  description: string | null;
+  cabinetEyebrow: string | null;
+  deliveryFormat: string | null;
+  homeworkIntro: string | null;
+  coverImageUrl: string | null;
+  previewImageUrl: string | null;
+  previewInsideItems: string[];
+  previewAfterEnrollment: string | null;
+  previewAudience: string | null;
+  sanityId: string | null;
+  curatorName: string | null;
+  totalLessons: number;
+  modulePreviews: CabinetCourseModulePreview[];
 };
 
 export type CabinetGroup = {
@@ -34,22 +108,521 @@ export type CabinetMentor = {
   name: string;
 };
 
+export type CabinetLesson = {
+  id: string;
+  kind: 'individual' | 'group';
+  date: string;
+  time: string;
+  topic: string;
+  status: 'upcoming' | 'done';
+  paid: boolean;
+  meetUrl: string | null;
+  materials: { id: number; name: string; size: string; downloadUrl: string }[];
+  homework: {
+    id: number;
+    name: string;
+    size: string;
+    state: string;
+    tone: 'ok' | 'now';
+    downloadUrl: string;
+  } | null;
+};
+
+export type CabinetPackage = {
+  id: string;
+  product: CabinetAccessProduct;
+  title: string;
+  sub: string;
+  remaining: number;
+  total: number;
+  active: boolean;
+};
+
+export type CabinetPaymentStatus = 'paid' | 'pending' | 'rejected';
+
+export type CabinetPayment = {
+  id: string;
+  date: string;
+  title: string;
+  price: string;
+  status: CabinetPaymentStatus;
+};
+
+export type CabinetProfile = {
+  name: string | null;
+  klass: string | null;
+  goal: string | null;
+  resultType: 'ct' | 'grade' | null;
+  resultValue: number | null;
+};
+
+export type CourseLessonStatus = CourseMapStopStatus;
+
+export type CabinetCourseModule = {
+  id: number;
+  name: string;
+  color: string;
+  count: number;
+  about: string;
+  sortOrder: number;
+};
+
+export type CabinetCourseStop = {
+  id: number;
+  sanityLessonId: string | null;
+  lessonId: number | null;
+  module: number;
+  numInModule: number;
+  status: CourseLessonStatus;
+  kind: 'webinar' | 'practice' | 'milestone';
+  title: string;
+  description: string | null;
+  date: string;
+  sessionStartsAt: string | null;
+  liveUrl: string | null;
+  recordingUrl: string | null;
+  mandatoryHomework: boolean;
+  homeworkStatus: HomeworkProgressStatus | null;
+  homeworkTitle: string | null;
+  homeworkReviewNote: string | null;
+  homeworkCompletedAt: string | null;
+  contentChips: string[];
+  materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+  homeworkFiles: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+};
+
+export type CabinetLivesState = {
+  current: number;
+  max: number;
+  accessBlocked: boolean;
+};
+
+export type CabinetCourseProgress = {
+  lessonIndex: number;
+  status: CourseLessonStatus;
+};
+
 export type CabinetData = {
   phone: string;
   createdAt: string;
   studentName: string | null;
   telegramLinked: boolean;
+  /** Действующие продуктовые доступы. */
   accesses: CabinetAccess[];
+  /** Продукты, которые когда-либо выдавались (включая expired/cancelled). */
+  accessHistory: CabinetAccessProduct[];
   enrollment: CabinetEnrollment | null;
+  /** Активный курс школы для preview и записи (из courses). */
+  courseCatalog: CabinetCourseCatalog | null;
+  /** Все доступные курсы — для переключателя, когда их станет больше одного. */
+  courseCatalogs?: CabinetCourseCatalog[];
+  /** Контент курса из Sanity (структура модулей/уроков). */
+  courseContent: DistrictCourseContent | null;
   group: CabinetGroup | null;
   mentors: CabinetMentor[];
+  lessons: CabinetLesson[];
+  packages: CabinetPackage[];
+  payments: CabinetPayment[];
+  profile: CabinetProfile | null;
+  courseProgress: CabinetCourseProgress[];
+  courseModules: CabinetCourseModule[];
+  courseStops: CabinetCourseStop[];
+  lives: CabinetLivesState | null;
+  /** Цены пакетов курса / индивидуальных / групповых из Sanity. */
+  cabinetPricing: CabinetPricing;
 };
+
+export function hasActiveAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
+  return data.accesses.some((a) => a.product === product);
+}
+
+export function hadAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
+  return data.accessHistory.includes(product);
+}
+
+export function hadAnyLessonsProduct(data: CabinetData): boolean {
+  return hadAccess(data, 'individual') || hadAccess(data, 'group');
+}
+
+/** Три состояния раздела «Курс»: не записан / записан без покупки / полный доступ. */
+export function getCourseCabinetState(data: CabinetData): CourseCabinetState {
+  if (!data.enrollment) return 'preview';
+  if (!hasActiveAccess(data, 'course')) return 'enrolled_locked';
+  return 'full';
+}
+
+export function isEnrolledOnCourse(data: CabinetData): boolean {
+  return data.enrollment !== null;
+}
+
+/** Куратор показывается только при полном доступе или при 0 жизнях. */
+export function shouldShowCourseCurator(data: CabinetData): boolean {
+  const state = getCourseCabinetState(data);
+  if (state === 'full') return !!data.mentors.find((m) => m.kind === 'curator');
+  if (data.lives?.accessBlocked) return !!data.mentors.find((m) => m.kind === 'curator');
+  return false;
+}
+
+/** Наставник ind/group — только если есть назначенные занятия или персональное назначение. */
+export function shouldShowLessonsMentor(data: CabinetData): boolean {
+  const hasScheduled = data.lessons.length > 0;
+  const hasTeacher = data.mentors.some((m) => m.kind === 'teacher');
+  return hasScheduled || hasTeacher;
+}
 
 const ACTIVE = 'active';
 
 function isNotExpired(expiresAt: string | null): boolean {
   if (!expiresAt) return true;
   return new Date(expiresAt).getTime() > Date.now();
+}
+
+function isCabinetTableError(error: unknown): boolean {
+  const details = error as { message?: unknown; code?: unknown } | null;
+  const message = String(details?.message ?? error);
+  const code = String(details?.code ?? '');
+  if (code === '42P01' || code === 'PGRST205') return true;
+  return (
+    message.includes('does not exist') ||
+    message.includes('Could not find') ||
+    message.includes('schema cache')
+  );
+}
+
+function formatLessonDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+}
+
+function formatPaymentDate(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+const PRODUCT_LABELS: Record<CabinetAccessProduct, string> = {
+  course: 'Курс District',
+  individual: 'Индивидуальные занятия',
+  group: 'Групповые занятия',
+};
+
+const HW_REVIEW_LABELS: Record<string, { state: string; tone: 'ok' | 'now' }> = {
+  pending: { state: 'Не сдано', tone: 'now' },
+  submitted: { state: 'На проверке', tone: 'now' },
+  reviewing: { state: 'На проверке', tone: 'now' },
+  done: { state: 'Проверено', tone: 'ok' },
+};
+
+type LessonMaterialRow = {
+  id: number;
+  file_name: string;
+  file_size: string | null;
+  sort_order: number;
+};
+type HomeworkRow = {
+  id: number;
+  file_name: string;
+  file_size: string | null;
+  review_status: string;
+};
+
+type ScheduledLessonRow = {
+  id: number;
+  kind: 'individual' | 'group';
+  starts_at: string;
+  topic: string;
+  status: string;
+  is_paid: boolean;
+  meet_url: string | null;
+  lesson_materials: LessonMaterialRow[] | null;
+  homework_assignments: HomeworkRow[] | null;
+};
+
+async function loadLessons(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+): Promise<CabinetLesson[]> {
+  const { data, error } = await admin
+    .from('scheduled_lessons')
+    .select(
+      'id, kind, starts_at, topic, status, is_paid, meet_url, lesson_materials(id, file_name, file_size, sort_order), homework_assignments(id, file_name, file_size, review_status)',
+    )
+    .eq('telegram_id', telegramId)
+    .neq('status', 'cancelled')
+    .order('starts_at', { ascending: false });
+  if (error) throw error;
+
+  const now = Date.now();
+  return ((data ?? []) as ScheduledLessonRow[]).map((row) => {
+    const { date, time } = formatLessonDateTime(row.starts_at);
+    const isDone = row.status === 'completed';
+    const isUpcoming = row.status === 'scheduled' && new Date(row.starts_at).getTime() > now;
+    const rawMaterials = row.lesson_materials;
+    const materialList = Array.isArray(rawMaterials) ? rawMaterials : rawMaterials ? [rawMaterials] : [];
+    const lessonId = String(row.id);
+    const materials = materialList
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((m) => ({
+        id: m.id,
+        name: m.file_name,
+        size: m.file_size ?? '—',
+        downloadUrl: cabinetLessonFileUrl(lessonId, m.id, 'material'),
+      }));
+    const rawHw = row.homework_assignments;
+    const hw = Array.isArray(rawHw) ? rawHw[0] : rawHw ?? null;
+    const hwMeta = hw ? HW_REVIEW_LABELS[hw.review_status] ?? HW_REVIEW_LABELS.pending : null;
+
+    return {
+      id: lessonId,
+      kind: row.kind,
+      date,
+      time,
+      topic: row.topic,
+      status: isDone ? 'done' : isUpcoming ? 'upcoming' : 'done',
+      paid: row.is_paid,
+      meetUrl: row.meet_url,
+      materials,
+      homework: hw
+        ? {
+            id: hw.id,
+            name: hw.file_name,
+            size: hw.file_size ?? '—',
+            state: hwMeta!.state,
+            tone: hwMeta!.tone,
+            downloadUrl: cabinetLessonFileUrl(lessonId, hw.id, 'homework'),
+          }
+        : null,
+    };
+  });
+}
+
+async function loadPackages(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+): Promise<CabinetPackage[]> {
+  const { data, error } = await admin
+    .from('lesson_packages')
+    .select('id, product, title, total_lessons, used_lessons, remaining_lessons, status')
+    .eq('telegram_id', telegramId)
+    .order('purchased_at', { ascending: false });
+  if (error) throw error;
+
+  return (data ?? []).map((row) => ({
+    id: String(row.id),
+    product: row.product as CabinetAccessProduct,
+    title: row.title,
+    sub: PRODUCT_LABELS[row.product as CabinetAccessProduct] ?? row.title,
+    remaining: row.remaining_lessons,
+    total: row.total_lessons,
+    active: row.status === 'active' && row.remaining_lessons > 0,
+  }));
+}
+
+async function loadPayments(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+): Promise<CabinetPayment[]> {
+  const { data: paidRows, error: paidError } = await admin
+    .from('payments')
+    .select('id, product, amount_byn, paid_at')
+    .eq('telegram_id', telegramId)
+    .order('paid_at', { ascending: false })
+    .limit(20);
+  if (paidError) throw paidError;
+
+  const paid: CabinetPayment[] = (paidRows ?? []).map((row) => ({
+    id: `pay-${row.id}`,
+    date: formatPaymentDate(row.paid_at),
+    title: PRODUCT_LABELS[row.product as CabinetAccessProduct] ?? row.product,
+    price: String(row.amount_byn),
+    status: 'paid' as const,
+  }));
+
+  let requests: CabinetPayment[] = [];
+  try {
+    const rows = await listPurchaseRequestsForUser(admin, telegramId, 20);
+    requests = rows
+      .filter((row) => row.status !== 'approved')
+      .map((row) => ({
+        id: row.id,
+        date: formatPaymentDate(row.created_at),
+        title: row.title,
+        price: String(row.amount_byn),
+        status: row.status === 'pending' ? ('pending' as const) : ('rejected' as const),
+      }));
+  } catch (error) {
+    if (!isPurchaseRequestTableError(error)) throw error;
+  }
+
+  return [...requests, ...paid]
+    .sort((a, b) => {
+      const parse = (value: string) => {
+        const parts = value.split('.');
+        if (parts.length !== 3) return 0;
+        return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).getTime();
+      };
+      return parse(b.date) - parse(a.date);
+    })
+    .slice(0, 20);
+}
+
+async function loadProfile(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+): Promise<CabinetProfile | null> {
+  const { data, error } = await admin
+    .from('student_profiles')
+    .select('display_name, school_class, goal, result_type, result_value')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+
+  return {
+    name: data.display_name ?? null,
+    klass: data.school_class ?? null,
+    goal: data.goal ?? null,
+    resultType: (data.result_type as 'ct' | 'grade' | null) ?? null,
+    resultValue: data.result_value ?? null,
+  };
+}
+
+function formatSessionDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+function mapStopToCabinet(stop: CourseMapStop): CabinetCourseStop {
+  return {
+    id: stop.lessonIndex + 1,
+    sanityLessonId: stop.sanityLessonId,
+    lessonId: stop.lessonId,
+    module: stop.moduleIndex,
+    numInModule: stop.numInModule,
+    status: stop.status,
+    kind: stop.kind,
+    title: stop.title,
+    description: stop.description,
+    date: formatSessionDate(stop.sessionStartsAt),
+    sessionStartsAt: stop.sessionStartsAt,
+    liveUrl: stop.liveUrl,
+    recordingUrl: stop.recordingUrl,
+    mandatoryHomework: stop.mandatoryHomework,
+    homeworkStatus: stop.homeworkStatus,
+    homeworkTitle: stop.homeworkTitle,
+    homeworkReviewNote: stop.homeworkReviewNote,
+    homeworkCompletedAt: stop.homeworkCompletedAt,
+    contentChips: stop.contentChips,
+    materials: stop.materials,
+    homeworkFiles: stop.homeworkFiles,
+  };
+}
+
+export function mapContentToCourseModules(content: DistrictCourseContent): CabinetCourseModule[] {
+  return content.modules.map((m, i) => {
+    const publishedCount = m.lessons.filter((l) => l.publicationStatus === 'published').length;
+    return {
+      id: i,
+      name: m.title,
+      color: m.color,
+      count: publishedCount > 0 ? publishedCount : m.lessons.length,
+      about: m.description ?? '',
+      sortOrder: m.sortOrder,
+    };
+  });
+}
+
+export function mapContentToStructureStops(content: DistrictCourseContent): CabinetCourseStop[] {
+  return buildCourseStructureStopsFromContent(content).map(mapStopToCabinet);
+}
+
+async function resolveCourseMapFromContent(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+  courseId: number | null,
+  content: DistrictCourseContent,
+  options: {
+    courseState: CourseCabinetState;
+    hasCourseProductAccess: boolean;
+    withProgress: boolean;
+  },
+): Promise<{
+  modules: CabinetCourseModule[];
+  stops: CabinetCourseStop[];
+  progress: CabinetCourseProgress[];
+}> {
+  const modules = mapContentToCourseModules(content);
+
+  if (options.withProgress && courseId) {
+    const livesState = await getEnrollmentLives(admin, telegramId, courseId);
+    const accessBlocked = livesState?.access_blocked ?? false;
+    const mapStops = await buildCourseMapStopsFromContent(admin, telegramId, content, accessBlocked, {
+      courseState: options.courseState,
+      hasCourseProductAccess: options.hasCourseProductAccess,
+    });
+    return {
+      modules,
+      stops: mapStops.map(mapStopToCabinet),
+      progress: mapStops.map((s) => ({ lessonIndex: s.lessonIndex, status: s.status })),
+    };
+  }
+
+  const structureStops = buildCourseStructureStopsFromContent(content);
+  return {
+    modules,
+    stops: structureStops.map(mapStopToCabinet),
+    progress: [],
+  };
+}
+
+async function loadCourseMapData(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+  courseId: number | null,
+  content: DistrictCourseContent | null,
+  options: {
+    courseState: CourseCabinetState;
+    hasCourseProductAccess: boolean;
+  },
+): Promise<{
+  modules: CabinetCourseModule[];
+  stops: CabinetCourseStop[];
+  progress: CabinetCourseProgress[];
+}> {
+  if (!courseId) return { modules: [], stops: [], progress: [] };
+
+  if (content && content.modules.length > 0) {
+    return resolveCourseMapFromContent(admin, telegramId, courseId, content, {
+      courseState: options.courseState,
+      hasCourseProductAccess: options.hasCourseProductAccess,
+      withProgress: true,
+    });
+  }
+
+  const livesState = await getEnrollmentLives(admin, telegramId, courseId);
+  const accessBlocked = livesState?.access_blocked ?? false;
+  const mapStops = await buildCourseMapStops(admin, telegramId, courseId, accessBlocked);
+  const { modules } = await loadCourseCatalog(admin, courseId);
+  const cabinetModules = modules.map((m) => ({
+    id: m.id,
+    name: m.title,
+    color: m.color,
+    count: m.lesson_count,
+    about: m.about ?? '',
+    sortOrder: m.sort_order,
+  }));
+
+  return {
+    modules: cabinetModules,
+    stops: mapStops.map(mapStopToCabinet),
+    progress: mapStops.map((s) => ({ lessonIndex: s.lessonIndex, status: s.status })),
+  };
 }
 
 export async function getCabinetData(phone: string, createdAt: string): Promise<CabinetData> {
@@ -59,9 +632,21 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     studentName: null,
     telegramLinked: false,
     accesses: [],
+    accessHistory: [],
     enrollment: null,
+    courseCatalog: null,
+    courseContent: null,
     group: null,
     mentors: [],
+    lessons: [],
+    packages: [],
+    payments: [],
+    profile: null,
+    courseProgress: [],
+    courseModules: [],
+    courseStops: [],
+    lives: null,
+    cabinetPricing: await getCabinetPricing(),
   };
 
   let admin: ReturnType<typeof createAdminClient>;
@@ -104,25 +689,104 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
           expiresAt: row.expires_at ?? null,
         }));
 
+  const { data: historyRows } = await admin
+    .from('user_accesses')
+    .select('product')
+    .eq('telegram_id', telegramId);
+  const accessHistory = [
+    ...new Set((historyRows ?? []).map((row) => row.product as CabinetAccessProduct)),
+  ];
+
+  // Контент курса из Sanity + запись courses в Supabase (без seed уроков).
+  let courseContent: DistrictCourseContent | null = null;
+  let cabinetPricing: CabinetPricing;
+  try {
+    [courseContent, cabinetPricing] = await Promise.all([
+      getDistrictCourseContent(),
+      getCabinetPricing(),
+    ]);
+  } catch (error) {
+    console.error('[cabinet] Sanity fetch failed:', error);
+    courseContent = null;
+    try {
+      cabinetPricing = await getCabinetPricing();
+    } catch {
+      cabinetPricing = DEFAULT_CABINET_PRICING;
+    }
+  }
+
+  let courseCatalog: CabinetCourseCatalog | null = null;
+  let resolvedCourseId: number | null = null;
+  try {
+    resolvedCourseId = await resolveCourseIdForContent(admin, courseContent);
+  } catch {
+    resolvedCourseId = null;
+  }
+
+  if (resolvedCourseId) {
+    const { data: catalogRow } = await admin
+      .from('courses')
+      .select('id, title, slug, description, sanity_id')
+      .eq('id', resolvedCourseId)
+      .maybeSingle();
+
+    if (catalogRow) {
+      const modulePreviews: CabinetCourseModulePreview[] = courseContent
+        ? courseContent.modules.map((m) => {
+            const visibleLessons = m.lessons.filter((l) => l.publicationStatus !== 'archived');
+            return {
+              name: m.title,
+              about: m.description ?? '',
+              count: visibleLessons.length,
+              color: m.color,
+              period: formatModulePeriodFromLessons(m.lessons),
+              lessons: visibleLessons.map((l) => ({ title: l.title })),
+            };
+          })
+        : [];
+
+      courseCatalog = {
+        id: catalogRow.id as number,
+        title: (courseContent?.title ?? catalogRow.title) as string,
+        slug: (courseContent?.slug ?? catalogRow.slug) as string,
+        description: courseContent?.description?.trim() || null,
+        cabinetEyebrow: courseContent?.cabinetEyebrow ?? null,
+        deliveryFormat: courseContent?.deliveryFormat ?? null,
+        homeworkIntro: courseContent?.homeworkIntro ?? null,
+        coverImageUrl: courseContent?.coverImageUrl ?? null,
+        previewImageUrl: courseContent?.previewImageUrl ?? null,
+        previewInsideItems: courseContent?.previewInsideItems ?? [],
+        previewAfterEnrollment: courseContent?.previewAfterEnrollment ?? null,
+        previewAudience: courseContent?.previewAudience ?? null,
+        sanityId: (catalogRow.sanity_id as string | null) ?? courseContent?.sanityId ?? null,
+        curatorName: courseContent?.curatorName ?? null,
+        totalLessons: courseContent ? countCourseLessons(courseContent) : 0,
+        modulePreviews,
+      };
+    }
+  }
+
   // Активное зачисление на курс.
   const { data: enrollmentRows, error: enrollmentError } = await admin
     .from('course_enrollments')
-    .select('status, started_at, courses(title)')
+    .select('status, started_at, course_id, courses(title)')
     .eq('telegram_id', telegramId)
     .eq('status', ACTIVE)
     .order('started_at', { ascending: false })
     .limit(1);
   let enrollment: CabinetEnrollment | null = null;
+  let enrolledCourseId: number | null = null;
   if (!enrollmentError && enrollmentRows?.[0]) {
     const row = enrollmentRows[0];
-    const courseTitle = (row.courses as { title?: string } | null)?.title;
-    if (courseTitle) {
-      enrollment = {
-        courseTitle,
-        status: row.status,
-        startedAt: row.started_at,
-      };
-    }
+    enrolledCourseId = row.course_id as number;
+    const coursesRaw = row.courses as { title?: string } | { title?: string }[] | null;
+    const joinedTitle = Array.isArray(coursesRaw) ? coursesRaw[0]?.title : coursesRaw?.title;
+    enrollment = {
+      courseId: enrolledCourseId,
+      courseTitle: joinedTitle ?? courseCatalog?.title ?? 'Курс District',
+      status: row.status,
+      startedAt: row.started_at,
+    };
   }
 
   // Активная группа + преподаватель группы.
@@ -175,14 +839,238 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     }
   }
 
+  let lessons: CabinetLesson[] = [];
+  let packages: CabinetPackage[] = [];
+  let payments: CabinetPayment[] = [];
+  let profile: CabinetProfile | null = null;
+  let courseProgress: CabinetCourseProgress[] = [];
+  let courseModules: CabinetCourseModule[] = [];
+  let courseStops: CabinetCourseStop[] = [];
+  let lives: CabinetLivesState | null = null;
+
+  const courseIdForMap = enrolledCourseId ?? resolvedCourseId ?? courseCatalog?.id ?? null;
+  const hasCourseProductAccess = accesses.some((a) => a.product === 'course');
+  const courseState: CourseCabinetState = !enrollment
+    ? 'preview'
+    : !hasCourseProductAccess
+      ? 'enrolled_locked'
+      : 'full';
+
+  try {
+    lessons = await loadLessons(admin, telegramId);
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
+  try {
+    packages = await loadPackages(admin, telegramId);
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
+  try {
+    payments = await loadPayments(admin, telegramId);
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
+  try {
+    profile = await loadProfile(admin, telegramId);
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
+  if (courseContent?.modules.length) {
+    try {
+      const mapData = await resolveCourseMapFromContent(admin, telegramId, courseIdForMap, courseContent, {
+        courseState,
+        hasCourseProductAccess,
+        withProgress: Boolean(enrollment && courseIdForMap),
+      });
+      courseModules = mapData.modules;
+      courseStops = mapData.stops;
+      if (mapData.progress.length > 0) courseProgress = mapData.progress;
+    } catch (error) {
+      if (!isCourseProgressTableError(error) && !isCabinetTableError(error)) throw error;
+    }
+  } else if (enrollment && courseIdForMap) {
+    try {
+      const mapData = await loadCourseMapData(admin, telegramId, courseIdForMap, courseContent, {
+        courseState,
+        hasCourseProductAccess,
+      });
+      courseModules = mapData.modules;
+      courseStops = mapData.stops;
+      if (mapData.progress.length > 0) courseProgress = mapData.progress;
+    } catch (error) {
+      if (!isCourseProgressTableError(error) && !isCabinetTableError(error)) throw error;
+    }
+  }
+
+  if (enrollment && courseIdForMap) {
+    try {
+      const livesState = await getEnrollmentLives(admin, telegramId, courseIdForMap);
+      if (livesState) {
+        lives = {
+          current: livesState.lives_current,
+          max: livesState.lives_max,
+          accessBlocked: livesState.access_blocked,
+        };
+      }
+    } catch (error) {
+      if (!isLivesTableError(error)) throw error;
+    }
+  }
+
   return {
     phone,
     createdAt,
     studentName,
     telegramLinked: true,
     accesses,
+    accessHistory,
     enrollment,
+    courseCatalog,
+    courseContent,
     group,
     mentors,
+    lessons,
+    packages,
+    payments,
+    profile,
+    courseProgress,
+    courseModules,
+    courseStops,
+    lives,
+    cabinetPricing,
+  };
+}
+
+export type CabinetLessonPageData = {
+  courseCatalog: CabinetCourseCatalog | null;
+  courseModules: CabinetCourseModule[];
+  stop: CabinetCourseStop;
+  courseState: CourseCabinetState;
+};
+
+/** Облегчённая загрузка для страницы одного занятия (без платежей, расписания и т.д.). */
+export async function getCabinetLessonPageData(
+  phone: string,
+  lessonId: string,
+): Promise<CabinetLessonPageData | null> {
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return null;
+  }
+
+  const { data: link, error: linkError } = await admin
+    .from('telegram_links')
+    .select('telegram_id')
+    .eq('phone', phone)
+    .maybeSingle();
+  if (linkError || !link?.telegram_id) return null;
+  const telegramId = link.telegram_id as number;
+
+  let courseContent: DistrictCourseContent | null = null;
+  try {
+    courseContent = await getDistrictCourseContent();
+  } catch {
+    courseContent = null;
+  }
+
+  let resolvedCourseId: number | null = null;
+  try {
+    resolvedCourseId = await resolveCourseIdForContent(admin, courseContent);
+  } catch {
+    resolvedCourseId = null;
+  }
+
+  let courseCatalog: CabinetCourseCatalog | null = null;
+  if (resolvedCourseId) {
+    const { data: catalogRow } = await admin
+      .from('courses')
+      .select('id, title, slug, description, sanity_id')
+      .eq('id', resolvedCourseId)
+      .maybeSingle();
+
+    if (catalogRow) {
+      courseCatalog = {
+        id: catalogRow.id as number,
+        title: (courseContent?.title ?? catalogRow.title) as string,
+        slug: (courseContent?.slug ?? catalogRow.slug) as string,
+        description: courseContent?.description?.trim() || null,
+        cabinetEyebrow: courseContent?.cabinetEyebrow ?? null,
+        deliveryFormat: courseContent?.deliveryFormat ?? null,
+        homeworkIntro: courseContent?.homeworkIntro ?? null,
+        coverImageUrl: courseContent?.coverImageUrl ?? null,
+        previewImageUrl: courseContent?.previewImageUrl ?? null,
+        previewInsideItems: courseContent?.previewInsideItems ?? [],
+        previewAfterEnrollment: courseContent?.previewAfterEnrollment ?? null,
+        previewAudience: courseContent?.previewAudience ?? null,
+        sanityId: (catalogRow.sanity_id as string | null) ?? courseContent?.sanityId ?? null,
+        curatorName: courseContent?.curatorName ?? null,
+        totalLessons: courseContent ? countCourseLessons(courseContent) : 0,
+        modulePreviews: [],
+      };
+    }
+  }
+
+  const [{ data: enrollmentRows }, { data: accessRows }] = await Promise.all([
+    admin
+      .from('course_enrollments')
+      .select('status, course_id')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE)
+      .order('started_at', { ascending: false })
+      .limit(1),
+    admin
+      .from('user_accesses')
+      .select('product, expires_at')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE),
+  ]);
+
+  const enrollment = enrollmentRows?.[0] ?? null;
+  const enrolledCourseId = (enrollment?.course_id as number) ?? null;
+  const accesses: CabinetAccess[] = (accessRows ?? [])
+    .filter((row) => isNotExpired(row.expires_at ?? null))
+    .map((row) => ({
+      product: row.product as CabinetAccessProduct,
+      expiresAt: row.expires_at ?? null,
+    }));
+  const hasCourseProductAccess = accesses.some((a) => a.product === 'course');
+  const courseState: CourseCabinetState = !enrollment
+    ? 'preview'
+    : !hasCourseProductAccess
+      ? 'enrolled_locked'
+      : 'full';
+
+  const courseIdForMap = enrolledCourseId ?? resolvedCourseId ?? courseCatalog?.id ?? null;
+  let courseModules: CabinetCourseModule[] = [];
+  let courseStops: CabinetCourseStop[] = [];
+
+  if (courseContent?.modules.length && courseIdForMap) {
+    try {
+      const mapData = await resolveCourseMapFromContent(admin, telegramId, courseIdForMap, courseContent, {
+        courseState,
+        hasCourseProductAccess,
+        withProgress: Boolean(enrollment),
+      });
+      courseModules = mapData.modules;
+      courseStops = mapData.stops;
+    } catch {
+      courseModules = mapContentToCourseModules(courseContent);
+      courseStops = mapContentToStructureStops(courseContent);
+    }
+  }
+
+  const stop =
+    courseStops.find((s) => s.sanityLessonId === lessonId) ??
+    courseStops.find((s) => String(s.id) === lessonId);
+  if (!stop) notFound();
+
+  return {
+    courseCatalog,
+    courseModules,
+    stop,
+    courseState,
   };
 }

@@ -15,6 +15,22 @@ import {
 } from '@/lib/bot/admin';
 import { analyzeUserMessage, enforceModerationRestrictions } from '@/lib/bot/moderation';
 import { handleStudentMessage, sendStudentStart } from '@/lib/bot/studentFlow';
+import { beginStudentPurchase, handleStudentPurchaseCallback, parsePayStartPayload } from '@/lib/bot/studentPurchaseFlow';
+import {
+  beginCourseHomeworkSubmit,
+  handleStudentHomeworkAttachment,
+  handleStudentHomeworkMessage,
+} from '@/lib/bot/studentHomeworkFlow';
+import {
+  beginStudentMentorQuestion,
+  handleStudentMentorAttachment,
+  handleStudentMentorMessage,
+} from '@/lib/bot/studentMentorFlow';
+import {
+  beginStudentSupport,
+  handleStudentSupportAttachment,
+  handleStudentSupportMessage,
+} from '@/lib/bot/studentSupportFlow';
 import { handleTeacherCallback, handleTeacherMessage, sendTeacherStart } from '@/lib/bot/teacher';
 import {
   handleCuratorAttachment,
@@ -34,6 +50,7 @@ import {
   ROLE_LABELS,
   type BotRole,
 } from '@/lib/bot/roles';
+import { isAccessProduct } from '@/lib/bot/accesses';
 
 type TgFrom = {
   id: number;
@@ -76,6 +93,7 @@ export async function POST(request: Request) {
       message_id?: number;
             from?: TgFrom;
       reply_to_message?: { from?: TgFrom };
+      caption?: string;
       document?: {
         file_id?: string;
         file_name?: string;
@@ -131,6 +149,84 @@ export async function POST(request: Request) {
         memberPatch(update.message.from, update.message.chat.id),
       );
       await renderMainMenu(update.message.chat.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start pay_<product>[_<pkg>_<teacher>] — покупка из кабинета.
+    if (
+      startSource?.startsWith('pay_') &&
+      update.message?.chat &&
+      update.message.from
+    ) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      const options = parsePayStartPayload(startSource);
+      if (options.product && isAccessProduct(options.product)) {
+        await beginStudentPurchase(admin, update.message.from.id, update.message.chat.id, options);
+      } else {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: 'Неизвестный продукт. Открой раздел «Оплаты» в личном кабинете на сайте.',
+        });
+      }
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start support — обращение в поддержку из кабинета.
+    if (startSource === 'support' && update.message?.chat && update.message.from) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await beginStudentSupport(admin, update.message.from.id, update.message.chat.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start mentor — вопрос или домашка наставнику из кабинета.
+    if (startSource === 'mentor' && update.message?.chat && update.message.from) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start mentor_hw — сдать домашку ind/group через наставника.
+    if (startSource === 'mentor_hw' && update.message?.chat && update.message.from) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id, {
+        homework: true,
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start hw_<sanityLessonId> — сдача домашки из личного кабинета.
+    if (
+      startSource?.startsWith('hw_') &&
+      update.message?.chat &&
+      update.message.from
+    ) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await beginCourseHomeworkSubmit(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        startSource.slice('hw_'.length),
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -348,6 +444,34 @@ export async function POST(request: Request) {
 
     // Вложения админа (документ или фото): шаблон уведомления или рассылка.
     if (update.message?.document?.file_id && update.message.chat && update.message.from) {
+      const studentDocHandled = await handleStudentHomeworkAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        {
+          fileId: update.message.document.file_id,
+          kind: 'document',
+          fileName: update.message.document.file_name,
+        },
+      );
+      if (studentDocHandled) return NextResponse.json({ ok: true });
+
+      const mentorDocHandled = await handleStudentMentorAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.caption ?? update.message.document.file_name ?? 'Документ',
+      );
+      if (mentorDocHandled) return NextResponse.json({ ok: true });
+
+      const supportDocHandled = await handleStudentSupportAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.caption ?? update.message.document.file_name ?? 'Документ',
+      );
+      if (supportDocHandled) return NextResponse.json({ ok: true });
+
       const handled = await handleAdminDocument(
         admin,
         update.message.from.id,
@@ -365,6 +489,30 @@ export async function POST(request: Request) {
     if (update.message?.photo?.length && update.message.chat && update.message.from) {
       const largest = update.message.photo[update.message.photo.length - 1];
       if (largest?.file_id) {
+        const studentPhotoHandled = await handleStudentHomeworkAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (studentPhotoHandled) return NextResponse.json({ ok: true });
+
+        const mentorPhotoHandled = await handleStudentMentorAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.caption ?? 'Фото',
+        );
+        if (mentorPhotoHandled) return NextResponse.json({ ok: true });
+
+        const supportPhotoHandled = await handleStudentSupportAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.caption ?? 'Фото',
+        );
+        if (supportPhotoHandled) return NextResponse.json({ ok: true });
+
         const handled = await handleAdminDocument(
           admin,
           update.message.from.id,
@@ -421,6 +569,30 @@ export async function POST(request: Request) {
       update.message.chat &&
       update.message.from
     ) {
+      const hwHandled = await handleStudentHomeworkMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (hwHandled) return NextResponse.json({ ok: true });
+
+      const mentorHandled = await handleStudentMentorMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (mentorHandled) return NextResponse.json({ ok: true });
+
+      const supportHandled = await handleStudentSupportMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (supportHandled) return NextResponse.json({ ok: true });
+
       const handled = await handleStudentMessage(
         admin,
         update.message.from.id,
@@ -509,6 +681,15 @@ export async function POST(request: Request) {
         id,
       );
       if (adminHandled) return NextResponse.json({ ok: true });
+
+      const purchaseHandled = await handleStudentPurchaseCallback(
+        admin,
+        data,
+        { chatId, messageId },
+        from.id,
+        id,
+      );
+      if (purchaseHandled) return NextResponse.json({ ok: true });
 
       const guestHandled = await handleGuestCallback(
         admin,

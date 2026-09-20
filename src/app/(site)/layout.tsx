@@ -1,5 +1,5 @@
 import { draftMode } from "next/headers";
-import { Header, ModalPopup, BackToTop, AuthModal, CinematicFX } from "@/components";
+import { Header, ModalPopup, BackToTop, AuthModal, CinematicFX, WebinarEntryPopup } from "@/components";
 import { getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
 
@@ -161,6 +161,7 @@ export default async function SiteLayout({
         </div>
       </footer>
       <ModalPopup modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
+      <WebinarEntryPopup />
       <AuthModal />
       <BackToTop />
       <CinematicFX />

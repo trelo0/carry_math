@@ -9,9 +9,14 @@ html {
   overflow-x: hidden;
   min-height: 100%;
   background-color: var(--site-bg-base);
-  background-image: var(--site-bg-gradient);
+  background-image:
+    var(--site-bg-glow),
+    var(--site-bg-accent),
+    var(--site-bg-gradient);
   background-repeat: no-repeat;
-  background-size: 100% 100%;
+  background-size: 100% 100vh, 100% 100vh, 100% 100%;
+  background-position: top center;
+  background-attachment: scroll;
 }
 
 body {
@@ -24,16 +29,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* glow перенесён на html — убираем отдельный fixed-слой (мерцание при scroll в Chrome) */
 body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  background-image: var(--site-bg-glow), var(--site-bg-accent);
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  background-position: top center;
+  content: none;
 }
 
 p,

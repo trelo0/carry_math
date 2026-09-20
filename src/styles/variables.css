@@ -10,10 +10,13 @@
   --accent-hover: #33bdff;
   --accent-muted: rgba(0, 168, 255, 0.12);
 
-  --gold: #e8952c;
-  --gold-hover: #ffae42;
-  --gold-muted: rgba(232, 149, 44, 0.14);
-  --ember: #ffab40;
+  --gold: #ff9a2e;
+  --gold-hover: #ffb347;
+  --gold-muted: rgba(255, 154, 46, 0.14);
+  --ember: #ff9a2e;
+  --gold-fill: linear-gradient(90deg, #ffb347 0%, #ff9a2e 48%, #ff8a1f 72%, #e87400 100%);
+  --gold-neon: 0 0 18px rgba(255, 154, 46, 0.55), 0 0 42px rgba(255, 120, 30, 0.35);
+  --gold-neon-soft: 0 0 12px rgba(255, 154, 46, 0.48), 0 0 24px rgba(255, 120, 30, 0.28);
 
   --text-primary: #f5f8ff;
   --text-secondary: #8fa3c0;
@@ -44,18 +47,19 @@
   --ease-cine: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.3, 0.5, 1);
 
-  /* Небо над гильдией: сумерки → глубокая ночь */
-  --site-bg-base: #0a0e1a;
+  /* Небо: опорный синий #102A56, к footer — провал в тёмный */
+  --site-bg-base: #0a1224;
   --site-bg-gradient: linear-gradient(
     180deg,
-    #2c4a7c 0%,
-    #243d69 12%,
-    #1d335b 24%,
-    #182b4e 36%,
-    #142443 50%,
-    #111e3a 64%,
-    #0e1a32 78%,
-    #0c162c 90%,
+    #1a3870 0%,
+    #163464 12%,
+    #143060 24%,
+    #122c5a 36%,
+    #102A56 48%,
+    #0e254e 58%,
+    #0c2046 68%,
+    #0a1a3c 78%,
+    #081530 88%,
     #0a1224 100%
   );
   --site-bg-glow: radial-gradient(

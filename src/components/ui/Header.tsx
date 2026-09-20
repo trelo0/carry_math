@@ -12,7 +12,8 @@ type NavigationItem = {
 };
 
 const SECTION_IDS = ["hero", "teachers", "formats", "signup", "process"] as const;
-const MAIN_SECTION_IDS = ["hero", "teacher", "program", "reviews", "faq", "paths"] as const;
+const INDIVIDUAL_SECTION_IDS = ["hero", "teachers", "principles", "formats", "process", "signup"] as const;
+const MAIN_SECTION_IDS = ["hero", "teacher", "program", "reviews", "signup", "faq", "paths"] as const;
 
 const NAV_ITEMS: NavigationItem[] = [
   { label: "Главная", href: "/", home: true },
@@ -22,13 +23,23 @@ const NAV_ITEMS: NavigationItem[] = [
   { label: "Уроки", href: "#process" },
 ];
 
+const INDIVIDUAL_NAV_ITEMS: NavigationItem[] = [
+  { label: "Главная", href: "/", home: true },
+  { label: "Наставник", href: "#teachers" },
+  { label: "Принципы", href: "#principles" },
+  { label: "Варианты", href: "#formats" },
+  { label: "Обучение", href: "#process" },
+  { label: "Запись", href: "#signup" },
+];
+
 // Навигация главной: якоря секций страницы.
 const MAIN_NAV_ITEMS: NavigationItem[] = [
   { label: "Наставник", href: "#teacher" },
   { label: "Программа", href: "#program" },
   { label: "Отзывы", href: "#reviews" },
+  { label: "Инициация", href: "#signup" },
   { label: "FAQ", href: "#faq" },
-  { label: "Другой путь", href: "#paths" },
+  { label: "Другой путь", href: "/individual" },
 ];
 
 export function Header({
@@ -40,10 +51,19 @@ export function Header({
 }) {
   const pathname = usePathname();
   const isMainPage = pathname === "/";
+  const isIndividualPage = pathname === "/individual" || pathname.startsWith("/individual/");
   // Состояние сессии: до входа — кнопка «Вход» (модалка), после — «Личный кабинет».
   const { phone, loading: authLoading, openAuth } = useAuth();
-  const navItems = isMainPage ? MAIN_NAV_ITEMS : NAV_ITEMS;
-  const sectionIds = isMainPage ? MAIN_SECTION_IDS : SECTION_IDS;
+  const navItems = isMainPage
+    ? MAIN_NAV_ITEMS
+    : isIndividualPage
+      ? INDIVIDUAL_NAV_ITEMS
+      : NAV_ITEMS;
+  const sectionIds = isMainPage
+    ? MAIN_SECTION_IDS
+    : isIndividualPage
+      ? INDIVIDUAL_SECTION_IDS
+      : SECTION_IDS;
 
   const [scrolled, setScrolled] = useState(false);
   const [xp, setXp] = useState(0);
@@ -134,12 +154,13 @@ export function Header({
   };
 
   return (
+    <>
     <header className={`site-header${scrolled ? " scrolled" : ""}`}>
       <div className="header-xp" aria-hidden="true">
         <div className="header-xp-fill" style={{ width: `${xp}%` }} />
         <span className="header-xp-label">XP {xp}%</span>
       </div>
-      <a href={isMainPage ? "#hero" : "/"} className="site-logo">
+      <a href={isMainPage ? "#hero" : isIndividualPage ? "/individual#hero" : "/"} className="site-logo">
         <span className="logo-icon" aria-hidden="true" />
         {siteTitle ?? "District"}
       </a>
@@ -195,75 +216,78 @@ export function Header({
           </button>
         )
       ) : null}
+    </header>
 
+    <div
+      className={`mobile-menu-overlay${menuOpen ? " open" : ""}`}
+      onClick={() => setMenuOpen(false)}
+      aria-hidden={!menuOpen}
+    >
       <div
-        className={`mobile-menu-overlay${menuOpen ? " open" : ""}`}
-        onClick={() => setMenuOpen(false)}
+        id="mobile-menu"
+        className="mobile-menu-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Меню"
+        aria-hidden={!menuOpen}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div
-          id="mobile-menu"
-          className="mobile-menu-panel"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Меню"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="mobile-menu-top">
+        <div className="mobile-menu-top">
+          <a
+            href={isMainPage ? "#hero" : isIndividualPage ? "/individual#hero" : "/"}
+            className="mobile-menu-logo"
+            onClick={() => setMenuOpen(false)}
+          >
+            <span className="logo-icon" aria-hidden="true" />
+            {siteTitle ?? "District"}
+          </a>
+          <button
+            type="button"
+            className="mobile-menu-close"
+            aria-label="Закрыть меню"
+            onClick={() => setMenuOpen(false)}
+          >
+            ×
+          </button>
+        </div>
+        <nav className="mobile-navigation" aria-label="Мобильная навигация">
+          {navItems.map((item) => (
             <a
-              href={isMainPage ? "#hero" : "/"}
-              className="mobile-menu-logo"
+              key={item.label}
+              href={item.href}
+              className={item.stub ? "nav-stub" : undefined}
+              onClick={(e) => handleNavClick(item, e)}
+              aria-disabled={item.stub ? true : undefined}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+        {!authLoading ? (
+          phone ? (
+            <a
+              href="/cabinet"
+              className="mobile-menu-account"
               onClick={() => setMenuOpen(false)}
             >
-              <span className="logo-icon" aria-hidden="true" />
-              {siteTitle ?? "District"}
+              <span className="header-account-dot" aria-hidden="true" />
+              Личный кабинет
             </a>
+          ) : (
             <button
               type="button"
-              className="mobile-menu-close"
-              aria-label="Закрыть меню"
-              onClick={() => setMenuOpen(false)}
+              className="btn btn-gold mobile-menu-cta"
+              onClick={() => {
+                setMenuOpen(false);
+                openAuth();
+              }}
             >
-              ×
+              Вход
             </button>
-          </div>
-          <nav className="mobile-navigation" aria-label="Мобильная навигация">
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                className={item.stub ? "nav-stub" : undefined}
-                onClick={(e) => handleNavClick(item, e)}
-                aria-disabled={item.stub ? true : undefined}
-              >
-                {item.label}
-              </a>
-            ))}
-          </nav>
-          {!authLoading ? (
-            phone ? (
-              <a
-                href="/cabinet"
-                className="mobile-menu-account"
-                onClick={() => setMenuOpen(false)}
-              >
-                <span className="header-account-dot" aria-hidden="true" />
-                Личный кабинет
-              </a>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-gold mobile-menu-cta"
-                onClick={() => {
-                  setMenuOpen(false);
-                  openAuth();
-                }}
-              >
-                Вход
-              </button>
-            )
-          ) : null}
-        </div>
+          )
+        ) : null}
       </div>
-    </header>
+    </div>
+    </>
   );
 }

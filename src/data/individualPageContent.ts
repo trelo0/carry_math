@@ -26,6 +26,7 @@ export type TeachersBlockContent = {
 export type PrinciplesBlockContent = {
   kicker?: string;
   sectionTitle?: string;
+  sectionTitleGold?: string;
   sectionSubtitle?: string;
 };
 
@@ -104,8 +105,10 @@ export const INDIVIDUAL_PAGE_DEFAULTS = {
   },
   principles: {
     kicker: 'КВЕСТ 02 // СТАТИСТИКА + ПРИНЦИПЫ :: CODE',
-    sectionTitle: 'Принципы гильдии',
-    sectionSubtitle: '',
+    sectionTitle: 'Три принципа, на',
+    sectionTitleGold: 'которых мы стоим',
+    sectionSubtitle:
+      'Наш подход к обучению — это не просто курсы,\nЭто система, которая даёт результат.',
   },
   formats: {
     kicker: 'КВЕСТ 03 // ВАРИАНТЫ ЗАНЯТИЙ :: VS MODE',

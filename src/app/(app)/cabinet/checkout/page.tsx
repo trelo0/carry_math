@@ -1,47 +1,38 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getCabinetData } from '@/lib/cabinet';
+import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
 import CheckoutPayButton from '@/components/cabinet/CheckoutPayButton';
-
+import { buildPayStartPayload } from '@/lib/bot/studentPurchaseFlow';
+import { isAccessProduct, type AccessProduct } from '@/lib/bot/accesses';
 export const metadata = {
   title: 'Оплата — District',
 };
 
-/* Демо-каталог продуктов: реальных платежей в проекте ещё нет.
-   Описания временные — заменить при подключении платёжной
-   интеграции (кнопка записи станет вести на реальный checkout). */
-const PRODUCTS: Record<
-  string,
-  { title: string; desc: string }
-> = {
-  course: {
-    title: 'Курс подготовки',
-    desc: '74 занятия в 7 модулях: от стартовой диагностики до пробного экзамена. Доступ к записям, домашкам и куратору на 12 месяцев.',
-  },
-  individual: {
-    title: 'Индивидуальные занятия',
-    desc: 'Занятия 1-на-1 с преподавателем под твою цель и график. 60 минут, запись и конспект остаются у тебя.',
-  },
-  group: {
-    title: 'Групповые занятия',
-    desc: 'Мини-группы: живое общение, разбор задач и мотивация. Преподаватель, материалы и домашки с проверкой.',
-  },
-};
-
-/* Пока платёжной страницы нет, оплата оформляется через Telegram-бота
-   школы (start-пейлоад pay_<продукт>) — бот может сразу начать сценарий
-   покупки. Заменить на URL реального checkout при подключении платежей. */
-function payUrl(product: string): string {
+function payUrl(
+  product: AccessProduct,
+  packageIndex?: number,
+  teacherId?: string,
+  teachers?: { teacherId: string }[],
+): string {
   const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  return username
-    ? `https://t.me/${username}?start=pay_${product}`
-    : 'mailto:district.school.210@gmail.com';
+  if (!username) return 'mailto:district.school.210@gmail.com';
+
+  let teacherIndex: number | undefined;
+  if (teacherId && teachers?.length) {
+    const idx = teachers.findIndex((t) => t.teacherId === teacherId);
+    teacherIndex = idx >= 0 ? idx : 0;
+  }
+
+  const payload = buildPayStartPayload(product, packageIndex, teacherIndex);
+  return `https://t.me/${username}?start=${payload}`;
 }
 
 export default async function CheckoutPage({
   searchParams,
 }: {
-  searchParams: Promise<{ product?: string }>;
+  searchParams: Promise<{ product?: string; package?: string; teacher?: string }>;
 }) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
@@ -50,12 +41,38 @@ export default async function CheckoutPage({
     redirect('/login');
   }
 
-  const { product } = await searchParams;
-  const item = product ? PRODUCTS[product] : undefined;
+  const phone =
+    (data.user.user_metadata?.phone as string) ?? data.user.phone ?? '';
+  const cabinet = await getCabinetData(phone, data.user.created_at);
 
-  if (!product || !item) {
+  if (!cabinet.telegramLinked) {
+    return <CabinetTelegramGate />;
+  }
+
+  const { product, package: packageRaw, teacher: teacherId } = await searchParams;
+  if (!product || !isAccessProduct(product)) {
     redirect('/cabinet');
   }
+
+  const pricing = cabinet.cabinetPricing;
+  const titles: Record<AccessProduct, string> = {
+    course: pricing.course.label,
+    individual: pricing.individual.label,
+    group: pricing.group.label,
+  };
+  const descriptions: Record<AccessProduct, string | null> = {
+    course: pricing.course.offer.description,
+    individual: pricing.individual.offerDescription,
+    group: pricing.group.offerDescription,
+  };
+
+  const title = titles[product];
+  const desc = descriptions[product];
+
+  const packageIndex =
+    packageRaw != null && packageRaw !== '' && Number.isFinite(Number(packageRaw))
+      ? Math.max(0, Number(packageRaw))
+      : undefined;
 
   return (
     <div className="cab-checkout">
@@ -64,12 +81,12 @@ export default async function CheckoutPage({
           ← Вернуться в кабинет
         </Link>
         <span className="cab-checkout-k">Оформление заказа</span>
-        <h1>{item.title}</h1>
-        <p className="cab-checkout-desc">{item.desc}</p>
-        <CheckoutPayButton href={payUrl(product)} />
+        <h1>{title}</h1>
+        {desc && <p className="cab-checkout-desc">{desc}</p>}
+        <CheckoutPayButton href={payUrl(product, packageIndex, teacherId, pricing.teachers)} />
         <p className="cab-checkout-note">
-          Оплата проходит через Telegram-бот школы. После оплаты доступ
-          появится в кабинете автоматически.
+          Оформление заявки проходит через Telegram-бот школы. Администратор свяжется с вами для
+          подтверждения оплаты.
         </p>
       </main>
     </div>

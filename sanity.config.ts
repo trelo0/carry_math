@@ -1,7 +1,54 @@
 import {defineConfig, type SchemaTypeDefinition} from 'sanity'
-import {structureTool} from 'sanity/structure'
+import {structureTool, type StructureBuilder} from 'sanity/structure'
 import {visionTool} from '@sanity/vision'
 import schemaTypes from './sanity/math-cms/schemas/schemaTypes'
+
+function coursesStructure(S: StructureBuilder) {
+  return S.documentTypeList('districtCourse')
+    .title('Курсы')
+    .child((courseId) =>
+      S.list()
+        .title('Курс')
+        .items([
+          S.listItem()
+            .title('Настройки курса')
+            .child(S.document().schemaType('districtCourse').documentId(courseId)),
+          S.listItem()
+            .title('Модули')
+            .child(
+              S.documentTypeList('districtModule')
+                .title('Модули')
+                .filter('_type == "districtModule" && course._ref == $courseId')
+                .params({courseId})
+                .defaultOrdering([{field: 'sortOrder', direction: 'asc'}])
+                .initialValueTemplates([
+                  S.initialValueTemplateItem('districtModule-in-course', {courseId}),
+                ])
+                .child((moduleId) =>
+                  S.list()
+                    .title('Модуль')
+                    .items([
+                      S.listItem()
+                        .title('Настройки модуля')
+                        .child(S.document().schemaType('districtModule').documentId(moduleId)),
+                      S.listItem()
+                        .title('Занятия')
+                        .child(
+                          S.documentTypeList('districtCourseLesson')
+                            .title('Занятия')
+                            .filter('_type == "districtCourseLesson" && module._ref == $moduleId')
+                            .params({moduleId})
+                            .defaultOrdering([{field: 'moduleOrder', direction: 'asc'}])
+                            .initialValueTemplates([
+                              S.initialValueTemplateItem('districtCourseLesson-in-module', {moduleId}),
+                            ]),
+                        ),
+                    ]),
+                ),
+            ),
+        ]),
+    )
+}
 
 export default defineConfig({
   name: 'default',
@@ -159,6 +206,26 @@ export default defineConfig({
               ),
             S.divider(),
             S.listItem()
+              .title('Кабинет')
+              .id('cabinet')
+              .child(
+                S.list()
+                  .title('Кабинет')
+                  .items([
+                    S.listItem()
+                      .title('Курсы')
+                      .child(coursesStructure(S)),
+                    S.listItem()
+                      .title('Цены')
+                      .child(
+                        S.document()
+                          .schemaType('cabinetSettings')
+                          .documentId('cabinetSettings')
+                      ),
+                  ])
+              ),
+            S.divider(),
+            S.listItem()
               .title('Настройки сайта (общие)')
               .id('siteSettings')
               .child(
@@ -172,18 +239,47 @@ export default defineConfig({
   ],
   schema: {
     types: schemaTypes as SchemaTypeDefinition[],
+    templates: (prev) => [
+      ...prev,
+      {
+        id: 'districtModule-in-course',
+        title: 'Модуль',
+        schemaType: 'districtModule',
+        parameters: [{name: 'courseId', type: 'string'}],
+        value: ({courseId}: {courseId: string}) => ({
+          course: {_type: 'reference', _ref: courseId},
+          color: '#4f7cff',
+          sortOrder: 0,
+        }),
+      },
+      {
+        id: 'districtCourseLesson-in-module',
+        title: 'Занятие',
+        schemaType: 'districtCourseLesson',
+        parameters: [{name: 'moduleId', type: 'string'}],
+        value: ({moduleId}: {moduleId: string}) => ({
+          module: {_type: 'reference', _ref: moduleId},
+          lessonType: 'webinar',
+          publicationStatus: 'published',
+          moduleOrder: 1,
+          contentChips: ['Теория', 'Разбор задач', 'Практика', 'Домашнее задание'],
+        }),
+      },
+    ],
   },
   document: {
     newDocumentOptions: (prev, {creationContext}) => {
       if (creationContext.type === 'global') {
         return prev.filter(
-          (templateItem) => templateItem.templateId !== 'siteSettings'
+          (templateItem) =>
+            templateItem.templateId !== 'siteSettings' &&
+            templateItem.templateId !== 'cabinetSettings',
         )
       }
       return prev
     },
     actions: (prev, {schemaType}) => {
-      if (schemaType === 'siteSettings') {
+      if (schemaType === 'siteSettings' || schemaType === 'cabinetSettings') {
         return prev.filter(
           ({action}) => action !== 'delete' && action !== 'duplicate'
         )
