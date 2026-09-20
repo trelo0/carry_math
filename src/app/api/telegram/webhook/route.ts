@@ -384,12 +384,16 @@ export async function POST(request: Request) {
       update.message.from
     ) {
       const largest = update.message.photo?.[update.message.photo.length - 1];
-      const curatorHandled = await handleCuratorAttachment(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.voice?.file_id ? 'voice' : largest?.file_id ? 'photo' : 'photo',
-      );
+      const curatorFileId = update.message.voice?.file_id ?? largest?.file_id;
+      const curatorHandled =
+        curatorFileId &&
+        (await handleCuratorAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.voice?.file_id ? 'voice' : 'photo',
+          curatorFileId,
+        ));
       if (curatorHandled) return NextResponse.json({ ok: true });
     }
 
