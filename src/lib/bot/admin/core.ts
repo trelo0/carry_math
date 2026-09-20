@@ -47,6 +47,7 @@ export type AdminPayload = {
   fileName?: string;
   buttonText?: string;
   buttonUrl?: string;
+  sanityLessonId?: string;
 };
 
 export type ConversationStep =
@@ -73,7 +74,8 @@ export type ConversationStep =
   | 'broadcast:button-text'
   | 'broadcast:button-url'
   | 'broadcast:preview'
-  | 'broadcast:confirm';
+  | 'broadcast:confirm'
+  | 'student:course-hw-submit';
 
 export type ConversationState = {
   telegram_id: number;
