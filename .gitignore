@@ -40,3 +40,22 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Chrome debug profiles
+.chrome-booking-test/
+.booking-glow-diagnostic-profile/
+
+# IDE / agent session artifacts
+.zcode/
+.agents/
+skills-lock.json
+
+# Windows artifact (redirect target)
+nul
+
+# Debug screenshots and logs
+artifacts/
+*.log
+
+# Cursor local config (rules/skills — uncomment to commit)
+.cursor/
