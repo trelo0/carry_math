@@ -128,7 +128,13 @@ function LessonEditor({
         if ((body.notify.sent ?? 0) === 0) throw new Error(body.notify.message ?? 'Уведомления не отправлены');
         return body.notify.message ?? 'Эфир начался — ученики видят трансляцию';
       }
-    }, action === 'start' ? 'Эфир начался — ученики видят трансляцию' : 'Занятие завершено');
+    },
+    action === 'start'
+      ? lesson.sessionStatus === 'completed'
+        ? 'Эфир снова запущен — ученики видят трансляцию'
+        : 'Эфир начался — ученики видят трансляцию'
+      : 'Занятие завершено',
+  );
 
   const notify = (type: 'materials' | 'recording') =>
     runAction(async () => {
@@ -185,8 +191,9 @@ function LessonEditor({
       }
     }, published ? 'Файл опубликован' : 'Публикация снята');
 
-  const canStart = lesson.sessionStatus !== 'live' && lesson.sessionStatus !== 'completed';
+  const canStart = lesson.sessionStatus !== 'live';
   const canEnd = lesson.sessionStatus === 'live';
+  const isRestart = lesson.sessionStatus === 'completed';
 
   return (
     <div className="curator-panel curator-panel--wide">
@@ -249,6 +256,11 @@ function LessonEditor({
 
         <section className="curator-card curator-card--actions">
           <h2>Управление эфиром</h2>
+          {isRestart ? (
+            <p className="curator-help">
+              Занятие уже завершено. Можно снова запустить эфир — ученики увидят трансляцию и получат уведомление.
+            </p>
+          ) : null}
           <div className="curator-session-actions">
             <button
               type="button"
@@ -256,7 +268,7 @@ function LessonEditor({
               disabled={busy || !canStart || !writeEnabled}
               onClick={() => void sessionAction('start')}
             >
-              ▶ Начать вебинар
+              {isRestart ? '▶ Начать снова' : '▶ Начать вебинар'}
             </button>
             <button
               type="button"
