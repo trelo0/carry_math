@@ -1,8 +1,11 @@
-import Link from 'next/link';
+'use client';
+
+import { useAuth } from '@/contexts/AuthContext';
 
 const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
 
-export default function CabinetTelegramGate() {
+export default function CabinetTelegramGate({ returnTo = '/cabinet' }: { returnTo?: string }) {
+  const { openAuth } = useAuth();
   const connectUrl = BOT_USERNAME ? `https://t.me/${BOT_USERNAME}` : null;
 
   return (
@@ -11,7 +14,7 @@ export default function CabinetTelegramGate() {
         <section className="cab-panel cab-tg-gate">
           <h1>Нужен Telegram</h1>
           <p>
-            Личный кабинет работает только с привязанным Telegram. Войди через номер телефона на странице входа —
+            Личный кабинет работает только с привязанным Telegram. Войди по номеру телефона —
             бот пришлёт код после подключения аккаунта.
           </p>
           {connectUrl ? (
@@ -19,9 +22,13 @@ export default function CabinetTelegramGate() {
               Открыть бота District
             </a>
           ) : null}
-          <Link className="cab-tg-gate-back" href="/login">
-            Вернуться ко входу
-          </Link>
+          <button
+            type="button"
+            className="cab-tg-gate-back"
+            onClick={() => openAuth(returnTo)}
+          >
+            Войти по номеру телефона
+          </button>
         </section>
       </div>
     </div>

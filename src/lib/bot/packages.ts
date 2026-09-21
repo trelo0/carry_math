@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type AccessProduct, grantAccess, isAccessTableError } from './accesses';
 import {
-  grantAllPublishedCourseLessons,
+  grantPackageLessonAccess,
   isCourseAccessTableError,
 } from './education/course-access';
 import { resolveCourseIdForContent } from './education/course-record';
@@ -226,11 +226,12 @@ export async function completeProductPurchase(
   if (product === 'course' && resolvedCourseId) {
     try {
       const courseContent = await getDistrictCourseContent().catch(() => null);
-      lessonsGranted = await grantAllPublishedCourseLessons(
+      lessonsGranted = await grantPackageLessonAccess(
         admin,
         telegramId,
         resolvedCourseId,
         pkg.id,
+        options.lessons,
         courseContent,
       );
     } catch (error) {

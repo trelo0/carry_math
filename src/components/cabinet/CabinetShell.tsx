@@ -5,7 +5,16 @@ import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { CabinetCourseProgress, CabinetData, CabinetCourseCatalog, CabinetCourseModulePreview, CabinetCourseStop, CourseCabinetState } from '@/lib/cabinet';
-import { getCourseCabinetState, hadAccess, hasActiveAccess, mapContentToCourseModules, mapContentToStructureStops } from '@/lib/cabinet';
+import {
+  buildModulesFromCatalogPreviews,
+  buildStopsFromCatalogPreviews,
+  getCourseCabinetState,
+  hadAccess,
+  hasActiveAccess,
+  lessonPathForStop,
+  mapContentToCourseModules,
+  mapContentToStructureStops,
+} from '@/lib/cabinet';
 import { priceForTeacher } from '@/lib/studio/cabinetSettings';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
@@ -45,14 +54,19 @@ const MONTHS_GEN = ['января', 'февраля', 'марта', 'апрел�
 const WEEKDAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const SANITY_PLACEHOLDER = 'ВВЕДИТЕ ТЕКСТ';
 
-function sanityText(value: string | null | undefined): string {
+function sanityText(value: string | null | undefined, fallback = '—'): string {
   const trimmed = value?.trim();
-  return trimmed ? trimmed : SANITY_PLACEHOLDER;
+  if (!trimmed || trimmed.toUpperCase() === SANITY_PLACEHOLDER) return fallback;
+  return trimmed;
 }
 
 function sanityList(value: string | null | undefined): string[] {
-  const items = value?.split(/\n+/).map((s) => s.trim()).filter(Boolean) ?? [];
-  return items.length ? items : [SANITY_PLACEHOLDER];
+  const items =
+    value
+      ?.split(/\n+/)
+      .map((s) => s.trim())
+      .filter((s) => s && s.toUpperCase() !== SANITY_PLACEHOLDER) ?? [];
+  return items.length ? items : [];
 }
 
 /* Дата следующего занятия из дд.мм.гггг → «24 / Сентября / вторник». */
@@ -493,7 +507,7 @@ function CourseMap({
   if (stops.length === 0) {
     return (
       <div className="cab-roadmap-frame">
-        <ComingSoon text="Карта курса появится после загрузки программы." />
+        <ComingSoon text="Программа курса скоро появится. Если вы куратор — проверьте, что уроки опубликованы в Sanity." />
       </div>
     );
   }
@@ -734,7 +748,16 @@ function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
     return { tone: 'locked' as const, label: 'ДЗ не выполнено', action: 'locked' as const };
   }
 
+  const hwNotReady =
+    stop.kind === 'webinar' &&
+    stop.webinarSessionStatus !== 'completed' &&
+    stop.status !== 'watched' &&
+    stop.status !== 'done';
+
   const status: HomeworkProgressStatus = stop.homeworkStatus ?? 'pending';
+  if (hwNotReady && (status === 'pending' || !stop.homeworkStatus)) {
+    return { tone: 'locked' as const, label: 'Доступно после эфира', action: 'locked' as const };
+  }
   if (status === 'approved') {
     return { tone: 'done' as const, label: 'ДЗ выполнено', action: 'view' as const };
   }
@@ -1072,10 +1095,13 @@ export default function CabinetShell({
   data,
   initialSection,
   initialProduct,
+  showCabinetPick,
 }: {
   data: CabinetData;
   initialSection?: SectionId;
   initialProduct?: 'course' | 'individual' | 'group';
+  /** Создатель из ADMIN_TELEGRAM_IDS — ссылка на выбор кабинета. */
+  showCabinetPick?: boolean;
 }) {
   const router = useRouter();
   const [section, setSection] = useState<SectionId>(initialSection ?? 'course');
@@ -1116,6 +1142,12 @@ export default function CabinetShell({
     description: s.description,
     materials: s.materials,
   }));
+  const courseModulesFromCatalog = buildModulesFromCatalogPreviews(data.courseCatalog).map((m) => ({
+    name: m.name,
+    color: m.color,
+    count: m.count,
+    about: m.about,
+  }));
   const courseModules =
     data.courseModules.length > 0
       ? data.courseModules.map((m) => ({
@@ -1131,7 +1163,7 @@ export default function CabinetShell({
             count: m.count,
             about: m.about,
           }))
-        : [];
+        : courseModulesFromCatalog;
   const cabinetPricing = data.cabinetPricing;
   const cabinetTeachers = cabinetPricing.teachers;
   const courseStopsFromSanity: CourseStop[] = data.courseContent
@@ -1151,12 +1183,27 @@ export default function CabinetShell({
         materials: s.materials,
       }))
     : [];
+  const courseStopsFromCatalog: CourseStop[] = buildStopsFromCatalogPreviews(data.courseCatalog).map((s) => ({
+    id: s.id,
+    sanityLessonId: s.sanityLessonId,
+    lessonId: s.lessonId,
+    module: s.module,
+    numInModule: s.numInModule,
+    status: s.status,
+    kind: s.kind,
+    title: s.title,
+    date: s.date,
+    liveUrl: s.liveUrl,
+    recordingUrl: s.recordingUrl,
+    description: s.description,
+    materials: s.materials,
+  }));
   const courseStops =
     courseStopsFromDb.length > 0
       ? courseStopsFromDb
       : courseStopsFromSanity.length > 0
         ? applyCourseProgress(courseStopsFromSanity, data.courseProgress)
-        : [];
+        : courseStopsFromCatalog;
   const moduleRanges = (() => {
     return courseModules.map((_, moduleIndex) => {
       let start = -1;
@@ -1443,13 +1490,13 @@ export default function CabinetShell({
   function openCourseLesson() {
     const detail = data.courseStops.find((s) => s.id === stopId);
     if (!detail) return;
-    router.push(`/cabinet/lesson/${encodeURIComponent(detail.sanityLessonId ?? String(detail.id))}`);
+    router.push(lessonPathForStop(detail));
   }
 
   useEffect(() => {
     const detail = data.courseStops.find((s) => s.id === stopId);
     if (!detail) return;
-    router.prefetch(`/cabinet/lesson/${encodeURIComponent(detail.sanityLessonId ?? String(detail.id))}`);
+    router.prefetch(lessonPathForStop(detail));
   }, [data.courseStops, router, stopId]);
 
   async function confirmEnroll() {
@@ -1522,6 +1569,11 @@ export default function CabinetShell({
               <Icon d={ICONS.chevron} className="cab-exam-chevron" strokeWidth={1.6} />
             </div>
           )}
+          {showCabinetPick ? (
+            <a href="/cabinet/pick" className="cab-nav-item cab-pick-link">
+              Выбор кабинета
+            </a>
+          ) : null}
           <p className="cab-sidebar-tagline">
             Больше, чем просто уроки
             <Icon d={ICONS.feather} className="cab-sidebar-tagline-ico" strokeWidth={1.4} />
@@ -1596,10 +1648,12 @@ export default function CabinetShell({
                       <div className="cab-course-hero-copy">
                         <div className="cab-course-hero-title-row">
                           <span className="cab-course-hero-title">{sanityText(courseName)}</span>
-                          <div className="cab-course-hero-badge">
-                            <Icon d={ICONS.check} />
-                            <span>Вы записаны на курс</span>
-                          </div>
+                          {hasCourse && (
+                            <div className="cab-course-hero-badge">
+                              <Icon d={ICONS.check} />
+                              <span>Вы записаны на курс</span>
+                            </div>
+                          )}
                         </div>
                         <h2>{sanityText(courseHeadline)}</h2>
                         <p>{sanityText(courseDescription)}</p>
@@ -1788,7 +1842,7 @@ export default function CabinetShell({
                         {!hasCourse && stop.id === trialStopId && (
                           <span className="cab-lesson-v2-badge is-trial">Пробное</span>
                         )}
-                        {stop.status === 'now' && hasCourse && (
+                        {selectedCabinetStop?.isCurrent && hasCourse && (
                           <span className="cab-lesson-v2-badge is-now">Сейчас</span>
                         )}
                         <span className="cab-lesson-v2-badge is-open">Доступно</span>
@@ -1800,6 +1854,7 @@ export default function CabinetShell({
                             sessionStartsAt={selectedCabinetStop?.sessionStartsAt ?? null}
                             liveUrl={selectedCabinetStop?.liveUrl ?? null}
                             recordingUrl={selectedCabinetStop?.recordingUrl ?? null}
+                            webinarSessionStatus={selectedCabinetStop?.webinarSessionStatus ?? null}
                             posterUrl={courseCoverUrl}
                             onNavigate={openCourseLesson}
                           >

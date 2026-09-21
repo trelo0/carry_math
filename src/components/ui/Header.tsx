@@ -211,7 +211,7 @@ export function Header({
             Личный кабинет
           </a>
         ) : (
-          <button type="button" className="header-cta btn btn-gold" onClick={openAuth}>
+          <button type="button" className="header-cta btn btn-gold" onClick={() => openAuth()}>
             Вход
           </button>
         )

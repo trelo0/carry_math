@@ -3,6 +3,7 @@ import { telegramSend } from '@/lib/telegram';
 import {
   getMember,
   getModerationInfo,
+  isCreatorTelegramId,
   listMembersInRoles,
   roleLabel,
 } from '@/lib/bot/roles';
@@ -563,6 +564,7 @@ export async function enforceModerationRestrictions(
   },
 ): Promise<boolean> {
   if (!params.telegramId) return false;
+  if (isCreatorTelegramId(params.telegramId)) return false;
   try {
     const info = await getModerationInfo(admin, params.telegramId);
     if (!info || info.role === 'admin' || info.moderationStatus === 'active') return false;

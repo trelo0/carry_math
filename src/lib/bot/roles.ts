@@ -41,6 +41,57 @@ export function isAdminEnv(telegramId: number): boolean {
     .includes(String(telegramId));
 }
 
+/** Создатель из env — полные права бота независимо от текущей роли в БД. */
+export function isCreatorTelegramId(telegramId: number): boolean {
+  return isAdminEnv(telegramId);
+}
+
+/** Админ-команды и сценарии всех ролей (создатель или role=admin). */
+export function hasCreatorPowers(telegramId: number, role: BotRole): boolean {
+  return isCreatorTelegramId(telegramId) || role === 'admin';
+}
+
+/** /as, /role, /users — создатель из env не теряет доступ при role=guest. */
+export function canManageBotRoles(telegramId: number, role: BotRole): boolean {
+  return isCreatorTelegramId(telegramId) || role === 'admin' || role === 'test';
+}
+
+/** Владелец из env, роль admin или test — могут использовать /as и менять роли. */
+export function canUseTesterTools(telegramId: number, role: BotRole): boolean {
+  return canManageBotRoles(telegramId, role);
+}
+
+/** Роль для UI бота с учётом тест-маски (/as). */
+export function resolveEffectiveRole(member: MemberInfo, telegramId: number): BotRole {
+  if (
+    canUseTesterTools(telegramId, member.role) &&
+    member.viewRole &&
+    member.viewRole !== 'test'
+  ) {
+    return member.viewRole;
+  }
+  if (isAdminEnv(telegramId) && member.role === 'guest') {
+    return 'admin';
+  }
+  return member.role;
+}
+
+export function resolveEffectiveRoleWithFooter(
+  member: MemberInfo,
+  telegramId: number,
+): { role: BotRole; testFooter: string } {
+  const role = resolveEffectiveRole(member, telegramId);
+  const masked =
+    canUseTesterTools(telegramId, member.role) &&
+    member.viewRole &&
+    member.viewRole !== 'test' &&
+    member.viewRole !== member.role
+      ? member.viewRole
+      : null;
+  const testFooter = masked ? `\n\n🧪 Тест-маска: ${ROLE_LABELS[masked]}. Сброс — /as reset.` : '';
+  return { role, testFooter };
+}
+
 export function isBotRole(value: string): value is BotRole {
   return (BOT_ROLES as string[]).includes(value);
 }
@@ -82,11 +133,12 @@ export async function ensureMember(
     };
   }
 
+  const roleForInsert: BotRole = isAdminEnv(telegramId) ? 'admin' : initialRole;
   const { error: insertError } = await admin
     .from('bot_members')
-    .insert({ telegram_id: telegramId, role: initialRole, ...cleanPatch });
+    .insert({ telegram_id: telegramId, role: roleForInsert, ...cleanPatch });
   if (insertError) throw insertError;
-  return { role: initialRole, viewRole: null };
+  return { role: roleForInsert, viewRole: null };
 }
 
 // Включает/сбрасывает тест-маску (только для роли test).

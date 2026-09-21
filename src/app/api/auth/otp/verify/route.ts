@@ -7,6 +7,7 @@ import { normalizePhone } from '@/lib/phone';
 import { verifyOtpHash } from '@/lib/otp';
 import { getIp, rateLimit } from '@/lib/ratelimit';
 import { supabaseCookieOptions } from '@/lib/supabase/cookieOptions';
+import { resolveCabinetEntryPathForPhone } from '@/lib/cabinet-auth';
 
 const MAX_ATTEMPTS = 5; // попыток на один код, дальше код сгорает
 
@@ -23,6 +24,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   const phone = normalizePhone(body?.phone);
   const code = typeof body?.code === 'string' ? body.code.trim() : '';
+  const nextPath =
+    body && typeof body === 'object' && typeof body.next === 'string' ? body.next.trim() : null;
   if (!phone || !/^\d{6}$/.test(code)) {
     return NextResponse.json({ error: 'Введи 6-значный код из Telegram.' }, { status: 400 });
   }
@@ -113,8 +116,10 @@ export async function POST(request: NextRequest) {
       if (updateError) throw updateError;
     }
 
+    const redirectTo = await resolveCabinetEntryPathForPhone(admin, phone, nextPath);
+
     // Сессия через официальный API, куки пишет @supabase/ssr.
-    let response = NextResponse.json({ status: 'ok' });
+    let response = NextResponse.json({ status: 'ok', redirectTo });
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,

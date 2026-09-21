@@ -4,8 +4,13 @@ import type {
   DistrictCourseContent,
 } from '@/lib/studio/courseContent';
 import {
+  defaultWebinarSessionStatus,
+  loadSanityLessonSessionMap,
+  resolveWebinarSessionStatus,
+  type SanityWebinarSessionStatus,
+} from '@/lib/curator/lesson-session';
+import {
   DEFAULT_LESSON_CONTENT_CHIPS,
-  deriveWebinarSessionStatus,
   flattenCourseLessons,
   isLessonVisible,
   mapLessonKind,
@@ -60,8 +65,10 @@ export type CourseLessonSessionRow = {
   starts_at: string | null;
   live_url: string | null;
   recording_url: string | null;
-  status: 'scheduled' | 'live' | 'completed' | 'cancelled';
+  status: 'scheduled' | 'waiting' | 'live' | 'completed' | 'cancelled';
 };
+
+export type WebinarSessionStatus = SanityWebinarSessionStatus;
 
 export type CourseMapStop = {
   sanityLessonId: string | null;
@@ -69,6 +76,7 @@ export type CourseMapStop = {
   lessonIndex: number;
   moduleIndex: number;
   numInModule: number;
+  isCurrent: boolean;
   title: string;
   description: string | null;
   kind: 'webinar' | 'practice' | 'milestone';
@@ -76,7 +84,7 @@ export type CourseMapStop = {
   sessionStartsAt: string | null;
   liveUrl: string | null;
   recordingUrl: string | null;
-  sessionStatus: CourseLessonSessionRow['status'] | null;
+  sessionStatus: WebinarSessionStatus | null;
   mandatoryHomework: boolean;
   homeworkStatus: HomeworkProgressStatus | null;
   homeworkTitle: string | null;
@@ -117,7 +125,7 @@ export function computeMapStopStatus(params: {
   hasAccess: boolean;
   accessBlocked: boolean;
   accessStatus: string | null;
-  sessionStatus: CourseLessonSessionRow['status'] | null;
+  sessionStatus: WebinarSessionStatus | null;
   progress: CourseLessonStudentProgress | undefined;
   isCurrent: boolean;
 }): CourseMapStopStatus {
@@ -128,6 +136,7 @@ export function computeMapStopStatus(params: {
     if (params.progress?.homework_status !== 'approved') return 'watched';
   }
   if (params.sessionStatus === 'completed') return 'watched';
+  if (params.sessionStatus === 'live') return 'now';
   if (params.isCurrent) return 'now';
   if (params.hasAccess) return 'now';
   return 'locked';
@@ -151,16 +160,55 @@ function resolveLessonAccess(params: {
   if (params.courseState === 'enrolled_locked' && params.isTrialFree) {
     return { hasAccess: true, accessStatus: 'available' };
   }
-  if (params.courseState === 'full' && params.hasCourseProductAccess) {
-    return { hasAccess: true, accessStatus: params.accessStatus ?? 'available' };
-  }
   return { hasAccess: false, accessStatus: null };
+}
+
+async function mergeLegacyLessonAccess(
+  admin: SupabaseClient,
+  telegramId: number,
+  content: DistrictCourseContent,
+  sanityLessonIds: string[],
+  accessMap: Map<string, string>,
+): Promise<void> {
+  const { data: legacyRows, error } = await admin
+    .from('course_lesson_access')
+    .select('course_lesson_id, access_status')
+    .eq('telegram_id', telegramId)
+    .is('sanity_lesson_id', null)
+    .neq('access_status', 'revoked');
+  if (error) throw error;
+  if (!legacyRows?.length) return;
+
+  const courseLessonIds = legacyRows
+    .map((row) => row.course_lesson_id as number | null)
+    .filter((id): id is number => id != null);
+  if (courseLessonIds.length === 0) return;
+
+  const { data: catalogRows, error: catalogError } = await admin
+    .from('course_lessons')
+    .select('id, lesson_index')
+    .in('id', courseLessonIds);
+  if (catalogError) throw catalogError;
+
+  const lessonNumberToSanity = new Map<number, string>();
+  for (const lesson of flattenCourseLessons(content)) {
+    lessonNumberToSanity.set(lesson.lessonNumber, lesson.sanityId);
+  }
+
+  for (const row of legacyRows) {
+    const catalog = (catalogRows ?? []).find((item) => item.id === row.course_lesson_id);
+    if (!catalog) continue;
+    const sanityId = lessonNumberToSanity.get(catalog.lesson_index as number);
+    if (!sanityId || !sanityLessonIds.includes(sanityId) || accessMap.has(sanityId)) continue;
+    accessMap.set(sanityId, row.access_status as string);
+  }
 }
 
 async function loadProgressAndAccessBySanity(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonIds: string[],
+  content?: DistrictCourseContent,
 ): Promise<{
   accessMap: Map<string, string>;
   progressMap: Map<string, CourseLessonStudentProgress>;
@@ -182,10 +230,15 @@ async function loadProgressAndAccessBySanity(
       .in('sanity_lesson_id', sanityLessonIds),
   ]);
 
+  const accessMap = new Map(
+    (accessRows ?? []).map((r) => [r.sanity_lesson_id as string, r.access_status as string]),
+  );
+  if (content) {
+    await mergeLegacyLessonAccess(admin, telegramId, content, sanityLessonIds, accessMap);
+  }
+
   return {
-    accessMap: new Map(
-      (accessRows ?? []).map((r) => [r.sanity_lesson_id as string, r.access_status as string]),
-    ),
+    accessMap,
     progressMap: new Map(
       (progressRows ?? []).map((r) => [r.sanity_lesson_id as string, r as CourseLessonStudentProgress]),
     ),
@@ -209,6 +262,7 @@ export async function buildCourseMapStopsFromContent(
       admin,
       telegramId,
       allLessons.map((l) => l.sanityId),
+      content,
     ),
     admin
       .from('course_lesson_student_progress')
@@ -226,31 +280,32 @@ export async function buildCourseMapStopsFromContent(
   content.modules.forEach((mod, moduleIndex) => {
     let numInModule = 0;
     for (const lesson of mod.lessons) {
-      if (!isLessonVisible(lesson, progressSanityIds)) continue;
+      if (lesson.publicationStatus === 'archived' && !progressSanityIds.has(lesson.sanityId)) continue;
       numInModule += 1;
       visibleLessons.push({ lesson, moduleIndex, numInModule });
     }
   });
 
   const sanityIds = visibleLessons.map((v) => v.lesson.sanityId);
-  const { accessMap, progressMap } = await loadProgressAndAccessBySanity(
-    admin,
-    telegramId,
-    sanityIds,
-  );
+  const [{ accessMap, progressMap }, sessionMap] = await Promise.all([
+    loadProgressAndAccessBySanity(admin, telegramId, sanityIds, content),
+    loadSanityLessonSessionMap(admin, sanityIds),
+  ]);
 
-  const accessibleIncomplete = visibleLessons.filter(({ lesson }) => {
-    const access = resolveLessonAccess({
-      courseState: options.courseState,
-      hasCourseProductAccess: options.hasCourseProductAccess,
-      accessStatus: accessMap.get(lesson.sanityId) ?? null,
-      isTrialFree: lesson.isTrialFree,
-    });
-    if (!access.hasAccess) return false;
-    const accessStatus = access.accessStatus;
-    if (accessBlocked && accessStatus === 'blocked_lives') return false;
-    return !progressMap.get(lesson.sanityId)?.completed_at;
-  });
+  const accessibleIncomplete = visibleLessons
+    .filter(({ lesson }) => {
+      const access = resolveLessonAccess({
+        courseState: options.courseState,
+        hasCourseProductAccess: options.hasCourseProductAccess,
+        accessStatus: accessMap.get(lesson.sanityId) ?? null,
+        isTrialFree: lesson.isTrialFree,
+      });
+      if (!access.hasAccess) return false;
+      const accessStatus = access.accessStatus;
+      if (accessBlocked && accessStatus === 'blocked_lives') return false;
+      return !progressMap.get(lesson.sanityId)?.completed_at;
+    })
+    .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
   const currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
 
   return visibleLessons.map(({ lesson, moduleIndex, numInModule }, lessonIndex) => {
@@ -262,7 +317,12 @@ export async function buildCourseMapStopsFromContent(
     });
     const progress = progressMap.get(lesson.sanityId) ?? initialProgress.get(lesson.sanityId);
     const sessionStatus =
-      lesson.lessonType === 'webinar' ? deriveWebinarSessionStatus(lesson) : null;
+      lesson.lessonType === 'webinar'
+        ? resolveWebinarSessionStatus(
+            lesson.scheduledAt,
+            sessionMap.get(lesson.sanityId),
+          )
+        : null;
     const status = computeMapStopStatus({
       hasAccess: access.hasAccess,
       accessBlocked,
@@ -278,6 +338,7 @@ export async function buildCourseMapStopsFromContent(
       lessonIndex,
       moduleIndex,
       numInModule,
+      isCurrent: lesson.sanityId === currentSanityId,
       title: lesson.title,
       description: lesson.description,
       kind: mapLessonKind(lesson.lessonType),
@@ -318,7 +379,7 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
   content.modules.forEach((mod, moduleIndex) => {
     let numInModule = 0;
     for (const lesson of mod.lessons) {
-      if (lesson.publicationStatus !== 'published') continue;
+      if (lesson.publicationStatus === 'archived') continue;
       numInModule += 1;
       out.push({
         sanityLessonId: lesson.sanityId,
@@ -326,6 +387,7 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         lessonIndex,
         moduleIndex,
         numInModule,
+        isCurrent: false,
         title: lesson.title,
         description: lesson.description,
         kind: mapLessonKind(lesson.lessonType),
@@ -333,7 +395,10 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         sessionStartsAt: lesson.scheduledAt,
         liveUrl: lesson.liveUrl,
         recordingUrl: lesson.recordingUrl,
-        sessionStatus: null,
+        sessionStatus:
+          lesson.lessonType === 'webinar'
+            ? defaultWebinarSessionStatus(lesson.scheduledAt)
+            : null,
         mandatoryHomework: lesson.mandatoryHomework,
         homeworkStatus: null,
         homeworkTitle: lesson.homework?.title ?? null,
@@ -457,6 +522,7 @@ export async function buildCourseMapStops(
       lessonIndex: lesson.lesson_index,
       moduleIndex: moduleOrder.get(lesson.module_id) ?? 0,
       numInModule: lesson.num_in_module,
+      isCurrent: lesson.id === currentLessonId,
       title: lesson.title,
       description: null,
       kind: lesson.kind,

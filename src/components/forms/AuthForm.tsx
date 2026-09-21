@@ -3,7 +3,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { normalizePhone, formatPhoneInput, phoneInputGhost } from '@/lib/phone';
-import { AUTH_CHANGED_EVENT } from '@/contexts/AuthContext';
+import { AUTH_CHANGED_EVENT, useAuth } from '@/contexts/AuthContext';
 import { TelegramIcon } from '@/components/ui/WebinarSignupOptions';
 import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
 
@@ -50,6 +50,7 @@ export default function AuthForm() {
   // Секунды до возможности повторной отправки кода (приходят с сервера).
   const [resendIn, setResendIn] = useState(0);
   const router = useRouter();
+  const { loginNext } = useAuth();
 
   // Тикаем раз в секунду, пока идёт отсчёт кулдауна.
   const cooldownTicking = resendIn > 0;
@@ -142,7 +143,14 @@ export default function AuthForm() {
       const res = await fetch('/api/auth/otp/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: normalized, code }),
+        body: JSON.stringify({
+          phone: normalized,
+          code,
+          next:
+            loginNext && loginNext.startsWith('/') && !loginNext.startsWith('//')
+              ? loginNext
+              : undefined,
+        }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -151,7 +159,17 @@ export default function AuthForm() {
       }
       // Шапка и другие компоненты узнают о входе без перезагрузки.
       window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
-      router.push('/cabinet');
+      const apiRedirect =
+        data && typeof data === 'object' && typeof data.redirectTo === 'string'
+          ? data.redirectTo
+          : null;
+      const destination =
+        apiRedirect && apiRedirect.startsWith('/') && !apiRedirect.startsWith('//')
+          ? apiRedirect
+          : loginNext && loginNext.startsWith('/') && !loginNext.startsWith('//')
+            ? loginNext
+            : '/cabinet';
+      router.push(destination);
       router.refresh();
     } catch {
       setMessage({ type: 'error', text: 'Не удалось связаться с сервером. Попробуй ещё раз.' });

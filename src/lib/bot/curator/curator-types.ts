@@ -1,4 +1,10 @@
-export type CuratorHwStatus = 'submitted' | 'approved' | 'rejected' | 'revision' | 'waiting';
+export type CuratorHwStatus =
+  | 'submitted'
+  | 'approved'
+  | 'rejected'
+  | 'revision'
+  | 'waiting'
+  | 'upcoming';
 
 export const CURATOR_HW_STATUS_LABELS: Record<CuratorHwStatus, string> = {
   submitted: '🟡 Ждёт проверки',
@@ -6,6 +12,7 @@ export const CURATOR_HW_STATUS_LABELS: Record<CuratorHwStatus, string> = {
   rejected: '❌ Отклонено',
   revision: '🔄 На доработке',
   waiting: '⚪ Не сдано',
+  upcoming: '🔒 После эфира',
 };
 
 export const CURATOR_HW_STATUS_SHORT: Record<CuratorHwStatus, string> = {
@@ -14,6 +21,7 @@ export const CURATOR_HW_STATUS_SHORT: Record<CuratorHwStatus, string> = {
   rejected: 'отклонено',
   revision: 'на доработке',
   waiting: 'не сдано',
+  upcoming: 'после эфира',
 };
 
 export type CuratorHwItem = {

@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
 import { getCabinetData } from '@/lib/cabinet';
+import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
 import CheckoutPayButton from '@/components/cabinet/CheckoutPayButton';
 import { buildPayStartPayload } from '@/lib/bot/studentPurchaseFlow';
@@ -32,21 +34,28 @@ function payUrl(
 export default async function CheckoutPage({
   searchParams,
 }: {
-  searchParams: Promise<{ product?: string; package?: string; teacher?: string }>;
+  searchParams: Promise<{ product?: string; package?: string; teacher?: string; login?: string }>;
 }) {
+  const sp = await searchParams;
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
 
   if (!data.user) {
-    redirect('/login');
+    if (sp.login === '1') {
+      return <CabinetLoginGate returnTo="/cabinet/checkout" title="Оплата" />;
+    }
+    redirect(authLoginRedirectPath('/cabinet/checkout'));
   }
+
+  const cleanPath = pathWithoutAuthLoginQuery('/cabinet/checkout', sp);
+  if (cleanPath) redirect(cleanPath);
 
   const phone =
     (data.user.user_metadata?.phone as string) ?? data.user.phone ?? '';
   const cabinet = await getCabinetData(phone, data.user.created_at);
 
   if (!cabinet.telegramLinked) {
-    return <CabinetTelegramGate />;
+    return <CabinetTelegramGate returnTo="/cabinet/checkout" />;
   }
 
   const { product, package: packageRaw, teacher: teacherId } = await searchParams;

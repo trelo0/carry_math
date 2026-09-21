@@ -9,7 +9,7 @@ type WebinarPanelVariant = 'entry' | 'course';
 
 const TITLES: Record<WebinarPanelVariant, { main: string; sub: string }> = {
   entry: { main: 'Бесплатный вебинар', sub: 'по математике' },
-  course: { main: 'Записаться на бесплатный вебинар', sub: 'по математике' },
+  course: { main: 'Записаться на курс', sub: 'District' },
 };
 
 export default function WebinarSignupPanel({
@@ -53,22 +53,22 @@ export default function WebinarSignupPanel({
             </p>
           ) : (
             <>
-              <p className="modal-notice-note">
-                {notice ?? 'Запись на платный курс пока недоступна.'}
-              </p>
+              {notice ? <p className="modal-notice-note">{notice}</p> : null}
               <p className="webinar-popup-sub">
-                Записаться на бесплатный пробный вебинар:
+                Оставьте заявку через Telegram — мы свяжемся с вами для записи на курс.
               </p>
             </>
           )}
 
-          <WebinarSignupOptions onChoose={onClose} />
+          <WebinarSignupOptions onChoose={onClose} purpose={variant === 'course' ? 'course' : 'webinar'} />
 
-          <div className="webinar-chips">
-            <span>Бесплатно</span>
-            <i aria-hidden="true">•</i>
-            <span>Онлайн</span>
-          </div>
+          {variant === 'entry' ? (
+            <div className="webinar-chips">
+              <span>Бесплатно</span>
+              <i aria-hidden="true">•</i>
+              <span>Онлайн</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

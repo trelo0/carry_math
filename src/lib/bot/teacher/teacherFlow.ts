@@ -14,6 +14,7 @@ import {
   saveState,
   sendAdminMessage,
 } from '../admin/core';
+import { isBotRole, isCreatorTelegramId, resolveEffectiveRole } from '../roles';
 import {
   getGroupHomeworkForGroup,
   getHomeworkSubmission,
@@ -349,10 +350,9 @@ async function effectiveTeacherRole(admin: SupabaseClient, telegramId: number): 
     .maybeSingle();
   if (error) throw error;
   if (!data) return 'guest';
-  const role = String(data.role);
-  const viewRole = data.view_role as string | null;
-  if (role === 'test' && viewRole && viewRole !== 'test') return viewRole;
-  return role;
+  const role = isBotRole(data.role) ? data.role : 'guest';
+  const viewRole = isBotRole(data.view_role) ? data.view_role : null;
+  return resolveEffectiveRole({ role, viewRole }, telegramId);
 }
 
 async function editTeacherScreen(message: AdminMessage, text: string, keyboard: InlineKeyboard): Promise<void> {
@@ -371,7 +371,7 @@ export async function handleTeacherMessage(
   text: string,
 ): Promise<boolean> {
   const role = await effectiveTeacherRole(admin, telegramId);
-  if (role !== 'teacher') return false;
+  if (role !== 'teacher' && !isCreatorTelegramId(telegramId)) return false;
 
   // Диалог «Написать ученику»: состояние шага хранится в
   // bot_conversation_states (общий механизм состояний бота).
@@ -451,7 +451,7 @@ export async function handleTeacherCallback(
 ): Promise<boolean> {
   if (!data.startsWith('t:')) return false;
   const role = await effectiveTeacherRole(admin, telegramId);
-  if (role !== 'teacher') return false;
+  if (role !== 'teacher' && !isCreatorTelegramId(telegramId)) return false;
 
   const message: AdminMessage = { chatId, messageId };
   const parts = data.split(':');

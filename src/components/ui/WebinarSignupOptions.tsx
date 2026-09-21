@@ -12,16 +12,23 @@ export function TelegramIcon() {
   );
 }
 
-// Карточка записи на бесплатный вебинар через Telegram.
-// Используются во всплывающем окне при входе и в сообщении вместо курса.
-export function WebinarSignupOptions({ onChoose }: { onChoose?: () => void }) {
+type SignupPurpose = 'webinar' | 'course';
+
+// Карточка перехода в Telegram: вебинар (entry) или заявка на курс (course).
+export function WebinarSignupOptions({
+  onChoose,
+  purpose = 'webinar',
+}: {
+  onChoose?: () => void;
+  purpose?: SignupPurpose;
+}) {
   // Переход в Telegram для записи доступен только после согласия с политикой.
   const [consent, setConsent] = useState(false);
   const locked = !consent;
 
-  // Deep link: бот по «/start webinar» сразу открывает гостевое главное меню.
+  const startParam = purpose === 'course' ? 'course_apply' : 'webinar';
   const telegramUrl = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-    ? `https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}?start=webinar`
+    ? `https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}?start=${startParam}`
     : '';
 
   return (
@@ -50,8 +57,14 @@ export function WebinarSignupOptions({ onChoose }: { onChoose?: () => void }) {
             </span>
             <span className="webinar-option-copy">
               <b>Telegram</b>
-              <span className="webinar-option-line">Записаться через Telegram</span>
-              <small>Быстрая регистрация через нашего бота</small>
+              <span className="webinar-option-line">
+                {purpose === 'course' ? 'Оставить заявку через Telegram' : 'Записаться через Telegram'}
+              </span>
+              <small>
+                {purpose === 'course'
+                  ? 'Заявка на курс и доступ к личному кабинету'
+                  : 'Быстрая регистрация через нашего бота'}
+              </small>
             </span>
             <span className="webinar-option-arrow" aria-hidden="true">→</span>
           </span>

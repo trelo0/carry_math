@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isCreatorTelegramId } from '@/lib/bot/roles';
 import { telegramSend } from '@/lib/telegram';
 import type { ReminderType } from '@/lib/webinarReminders';
 
@@ -97,7 +98,8 @@ export type ConversationStep =
   | 'edu:sched:meet'
   | 'student:support'
   | 'student:mentor'
-  | 'student:course-hw-submit';
+  | 'student:course-hw-submit'
+  | 'course-apply:link-phone';
 
 export type ConversationState = {
   telegram_id: number;
@@ -120,6 +122,7 @@ export type IncomingDocument = {
 // ---------------------------------------------------------------------------
 
 export async function isAdmin(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+  if (isCreatorTelegramId(telegramId)) return true;
   const { data, error } = await admin
     .from('bot_members')
     .select('role')

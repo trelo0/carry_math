@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
+import { canUseTesterTools, isBotRole } from './roles';
 
 export const GUEST_CALLBACKS = {
   main: 'guest:main',
@@ -212,7 +213,10 @@ async function isTestMaskActive(admin: SupabaseClient, telegramId: number): Prom
     .maybeSingle();
 
   if (error) throw error;
-  return data?.role === 'test' && data.view_role !== null;
+  const role = data?.role as string | undefined;
+  const viewRole = data?.view_role;
+  if (!viewRole) return false;
+  return !!role && isBotRole(role) && canUseTesterTools(telegramId, role);
 }
 
 async function hasReceivedCheatsheet(

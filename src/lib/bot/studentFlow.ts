@@ -8,6 +8,7 @@ import { beginStudentSupport } from './studentSupportFlow';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { getNextScheduledLesson } from './lessons';
 import { type UserContext, getUserContext } from './accesses';
+import { resolveEffectiveRole } from './roles';
 
 // ---------------------------------------------------------------------------
 // Сценарий ученика (role = student)
@@ -211,12 +212,11 @@ export async function sendStudentStart(
   await sendWithOptionalKeyboard(chatId, main.text, main.keyboard);
 }
 
-// Эффективная роль с учётом тест-маски: тестер с /as student видит ученика.
 function effectiveRole(context: UserContext): string {
-  if (context.role === 'test' && context.viewRole && context.viewRole !== 'test') {
-    return context.viewRole;
-  }
-  return context.role;
+  return resolveEffectiveRole(
+    { role: context.role, viewRole: context.viewRole },
+    context.telegramId,
+  );
 }
 
 async function denyAccess(chatId: number): Promise<boolean> {

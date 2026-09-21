@@ -11,8 +11,8 @@ export function getSanityClient({ preview, includeDrafts }: SanityClientOptions 
   const isPreview = Boolean(preview)
   const isDev = process.env.NODE_ENV !== 'production'
   const readToken = process.env.SANITY_API_READ_TOKEN ?? process.env.SANITY_API_WRITE_TOKEN
-  const isServer = typeof window === 'undefined'
-  const useDrafts = Boolean(isPreview || includeDrafts || (isServer && readToken))
+  // Черновики только в preview / явном includeDrafts — иначе localhost и Vercel расходятся.
+  const useDrafts = Boolean(isPreview || includeDrafts)
 
   const envProjectId = process.env.NEXT_PUBLIC_SANITY_PROJECT_ID
   const envDataset = process.env.NEXT_PUBLIC_SANITY_DATASET
@@ -28,12 +28,17 @@ export function getSanityClient({ preview, includeDrafts }: SanityClientOptions 
   const dataset = envDataset ?? 'production'
   const apiVersion = process.env.NEXT_PUBLIC_SANITY_API_VERSION ?? '2023-03-17'
 
+  // Dataset private: без токена API отдаёт пусто даже для published.
+  const isServer = typeof window === 'undefined'
+  const token =
+    readToken && (isServer || useDrafts) ? readToken : undefined
+
   return createClient({
     projectId,
     dataset,
     apiVersion,
-    useCdn: !useDrafts && !isDev,
-    token: useDrafts ? readToken : undefined,
+    useCdn: !useDrafts && !isDev && !token,
+    token,
     perspective: isPreview ? 'previewDrafts' : useDrafts ? 'raw' : 'published',
   })
 }

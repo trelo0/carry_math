@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { randomBytes } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { siteLoginRedirectPath } from '@/lib/auth-login-redirect';
 import { resolveCabinetLoginToken } from '@/lib/cabinet-login';
 import { supabaseCookieOptions } from '@/lib/supabase/cookieOptions';
 
@@ -12,14 +13,14 @@ export async function GET(request: NextRequest) {
   const safeNext = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/cabinet';
 
   if (!token) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(new URL(siteLoginRedirectPath(safeNext), request.url));
   }
 
   try {
     const admin = createAdminClient();
     const telegramId = await resolveCabinetLoginToken(admin, token);
     if (!telegramId) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      return NextResponse.redirect(new URL(siteLoginRedirectPath(safeNext), request.url));
     }
 
     const { data: link } = await admin
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
     const phone = link?.phone;
     if (!phone) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      return NextResponse.redirect(new URL(siteLoginRedirectPath(safeNext), request.url));
     }
 
     const tempPassword = randomBytes(32).toString('base64url');
@@ -76,13 +77,13 @@ export async function GET(request: NextRequest) {
       password: tempPassword,
     });
     if (signInError) {
-      return NextResponse.redirect(new URL('/login', request.url));
+      return NextResponse.redirect(new URL(siteLoginRedirectPath(safeNext), request.url));
     }
 
     await admin.from('telegram_links').update({ user_id: userId }).eq('phone', phone);
     return response;
   } catch (error) {
     console.error('[auth/cabinet]', error);
-    return NextResponse.redirect(new URL('/login', request.url));
+    return NextResponse.redirect(new URL(siteLoginRedirectPath(safeNext), request.url));
   }
 }

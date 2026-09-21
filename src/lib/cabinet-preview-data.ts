@@ -210,6 +210,7 @@ export function buildCabinetPreviewData(
     courseStops: [],
     lives: variant === 'enrolled_locked' || variant === 'full' ? { current: 2, max: 3, accessBlocked: false } : null,
     cabinetPricing: DEFAULT_CABINET_PRICING,
+    courseMapViewed: variant !== 'preview' && variant !== 'lessons_only',
   };
 }
 

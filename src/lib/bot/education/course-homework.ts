@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  deriveWebinarSessionStatus,
+  getSanityLessonSession,
+  loadSanityLessonSessionMap,
+  resolveWebinarSessionStatus,
+  type SanityWebinarSessionStatus,
+} from '@/lib/curator/lesson-session';
+import {
   flattenCourseLessons,
   getDistrictCourseContent,
   type CourseLessonContent,
@@ -73,10 +78,17 @@ function hasWatchedProgress(progress: CourseLessonStudentProgress | undefined): 
   return !!(progress?.live_attended_at || progress?.recording_watched_at);
 }
 
-function lessonReadyForSubmit(lesson: CourseLessonContent, progress: CourseLessonStudentProgress | undefined): boolean {
+function lessonReadyForSubmit(
+  lesson: CourseLessonContent,
+  progress: CourseLessonStudentProgress | undefined,
+  sessionStatus?: SanityWebinarSessionStatus,
+): boolean {
   if (!lesson.mandatoryHomework && !lesson.homework) return false;
-  const sessionStatus = lesson.lessonType === 'webinar' ? deriveWebinarSessionStatus(lesson) : 'completed';
-  if (sessionStatus !== 'completed' && !hasWatchedProgress(progress)) return false;
+  const effective =
+    lesson.lessonType === 'webinar'
+      ? (sessionStatus ?? resolveWebinarSessionStatus(lesson.scheduledAt, null))
+      : 'completed';
+  if (effective !== 'completed' && !hasWatchedProgress(progress)) return false;
   return true;
 }
 
@@ -145,6 +157,7 @@ export async function resolveSubmitTargetLesson(
     .sort((a, b) => a.lessonNumber - b.lessonNumber);
 
   const sanityIds = lessons.map((l) => l.sanityId);
+  const sessionMap = await loadSanityLessonSessionMap(admin, sanityIds);
   const [{ data: accessRows }, { data: progressRows }] = await Promise.all([
     admin
       .from('course_lesson_access')
@@ -169,7 +182,11 @@ export async function resolveSubmitTargetLesson(
     const access = accessMap.get(lesson.sanityId);
     if (!access || access === 'revoked') return false;
     const progress = progressMap.get(lesson.sanityId);
-    if (!lessonReadyForSubmit(lesson, progress)) return false;
+    const sessionStatus = resolveWebinarSessionStatus(
+      lesson.scheduledAt,
+      sessionMap.get(lesson.sanityId),
+    );
+    if (!lessonReadyForSubmit(lesson, progress, sessionStatus)) return false;
     const status = progress?.homework_status ?? 'pending';
     return status === 'pending' || status === 'rejected';
   });
@@ -199,7 +216,9 @@ export async function markHomeworkSubmitted(
 
   await assertLessonAccess(admin, telegramId, sanityLessonId);
   const progress = await loadProgress(admin, telegramId, sanityLessonId);
-  if (!lessonReadyForSubmit(lesson, progress ?? undefined)) {
+  const sessionRow = await getSanityLessonSession(admin, sanityLessonId);
+  const sessionStatus = resolveWebinarSessionStatus(lesson.scheduledAt, sessionRow);
+  if (!lessonReadyForSubmit(lesson, progress ?? undefined, sessionStatus)) {
     throw new CourseHomeworkError('Сначала посмотрите запись или посетите вебинар.', 'NOT_READY');
   }
 
@@ -373,14 +392,15 @@ export function mapProgressToCuratorStatus(
   lesson: CourseLessonContent,
   progress: CourseLessonStudentProgress | undefined,
   hasAccess: boolean,
-): HomeworkProgressStatus | 'waiting' {
-  if (!hasAccess) return 'waiting';
+  sessionStatus?: SanityWebinarSessionStatus,
+): HomeworkProgressStatus | 'waiting' | 'upcoming' {
+  if (!hasAccess) return 'upcoming';
   const status = progress?.homework_status ?? 'pending';
   if (status === 'approved') return 'approved';
   if (status === 'submitted') return 'submitted';
   if (status === 'rejected') return 'rejected';
-  if (lessonReadyForSubmit(lesson, progress)) return 'pending';
-  return 'waiting' as const;
+  if (lessonReadyForSubmit(lesson, progress, sessionStatus)) return 'pending';
+  return 'upcoming';
 }
 
 export const HOMEWORK_STATUS_LABELS: Record<HomeworkProgressStatus, { state: string; tone: 'ok' | 'now' }> = {

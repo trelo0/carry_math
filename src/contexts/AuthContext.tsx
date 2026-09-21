@@ -19,7 +19,9 @@ type AuthContextValue = {
   phone: string | null;
   loading: boolean;
   authOpen: boolean;
-  openAuth: () => void;
+  /** Куда перейти после успешного OTP (по умолчанию /cabinet). */
+  loginNext: string | null;
+  openAuth: (next?: string) => void;
   closeAuth: () => void;
 };
 
@@ -29,6 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [phone, setPhone] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authOpen, setAuthOpen] = useState(false);
+  const [loginNext, setLoginNext] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -65,12 +68,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
-  const openAuth = useCallback(() => setAuthOpen(true), []);
-  const closeAuth = useCallback(() => setAuthOpen(false), []);
+  const openAuth = useCallback((next?: string) => {
+    if (next && next.startsWith('/') && !next.startsWith('//')) {
+      setLoginNext(next);
+    }
+    setAuthOpen(true);
+  }, []);
+  const closeAuth = useCallback(() => {
+    setAuthOpen(false);
+    setLoginNext(null);
+  }, []);
 
   return (
     <AuthContext.Provider
-      value={{ phone, loading, authOpen, openAuth, closeAuth }}
+      value={{ phone, loading, authOpen, loginNext, openAuth, closeAuth }}
     >
       {children}
     </AuthContext.Provider>

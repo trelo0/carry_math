@@ -81,10 +81,10 @@ export type DistrictCourseContent = {
   modules: CourseModuleContent[];
 };
 
-type FetchOptions = { preview?: boolean };
+type FetchOptions = { preview?: boolean; includeDrafts?: boolean };
 
-function getClient({ preview }: FetchOptions = {}) {
-  return getSanityClient({ preview, includeDrafts: true });
+function getClient({ preview, includeDrafts }: FetchOptions = {}) {
+  return getSanityClient({ preview, includeDrafts: includeDrafts ?? Boolean(preview) });
 }
 
 function getSanityFetchOptions({ preview }: FetchOptions) {
@@ -217,19 +217,30 @@ function formatAssetSize(bytes: unknown): string | null {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function parsePublishedLessonFiles(raw: unknown): CourseLessonMaterial[] {
+export type CuratorRawLessonFile = {
+  fileName: string | null;
+  fileUrl: string | null;
+  published: boolean;
+};
+
+function mapRawLessonFiles(raw: unknown, requirePublished: boolean): CuratorRawLessonFile[] {
   return ((raw as LessonFileRaw[] | null) ?? [])
-    .filter((f) => f?.published && f.fileUrl)
-    .map((f) => {
-      const fileName = f.fileName ?? 'Файл';
-      return {
-        title: fileName,
-        materialType: 'file' as const,
-        url: f.fileUrl!,
-        fileName,
-        fileSize: formatAssetSize(f.fileSize),
-      };
-    });
+    .filter((f) => f?.fileUrl && (!requirePublished || f.published))
+    .map((f) => ({
+      fileName: f.fileName ?? 'Файл',
+      fileUrl: f.fileUrl ?? null,
+      published: Boolean(f.published),
+    }));
+}
+
+function parsePublishedLessonFiles(raw: unknown): CourseLessonMaterial[] {
+  return mapRawLessonFiles(raw, true).map((f) => ({
+    title: f.fileName ?? 'Файл',
+    materialType: 'file' as const,
+    url: f.fileUrl,
+    fileName: f.fileName,
+    fileSize: null,
+  }));
 }
 
 function buildLessonMaterials(raw: Record<string, unknown>): CourseLessonMaterial[] {
@@ -349,6 +360,50 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     curatorName: (raw.curatorName as string | null) ?? null,
     modules,
   };
+}
+
+const CURATOR_LESSON_FILES_QUERY = groq`*[_type == "districtCourseLesson" && _id in $ids]{
+  "sanityId": _id,
+  lessonMaterials[]{
+    published,
+    "fileUrl": file.asset->url,
+    "fileName": file.asset->originalFilename
+  },
+  lessonHomeworkFiles[]{
+    published,
+    "fileUrl": file.asset->url,
+    "fileName": file.asset->originalFilename
+  }
+}`;
+
+export type CuratorLessonFilesBundle = {
+  materials: CuratorRawLessonFile[];
+  homeworkFiles: CuratorRawLessonFile[];
+};
+
+/** Все файлы занятий (включая неопубликованные) для кабинета куратора. */
+export async function fetchCuratorLessonFilesMap(
+  sanityLessonIds: string[],
+): Promise<Map<string, CuratorLessonFilesBundle>> {
+  const out = new Map<string, CuratorLessonFilesBundle>();
+  if (sanityLessonIds.length === 0) return out;
+
+  const client = getClient({ includeDrafts: true, preview: false });
+  const rows = await client.fetch<
+    {
+      sanityId: string;
+      lessonMaterials?: unknown;
+      lessonHomeworkFiles?: unknown;
+    }[]
+  >(CURATOR_LESSON_FILES_QUERY, { ids: sanityLessonIds }, { cache: 'no-store' });
+
+  for (const row of rows ?? []) {
+    out.set(row.sanityId, {
+      materials: mapRawLessonFiles(row.lessonMaterials, false),
+      homeworkFiles: mapRawLessonFiles(row.lessonHomeworkFiles, false),
+    });
+  }
+  return out;
 }
 
 /** Контент курса из Sanity для кабинета (без фильтра по статусу — фильтруем в коде). */

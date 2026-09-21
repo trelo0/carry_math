@@ -1,18 +1,11 @@
-import AuthForm from '@/components/forms/AuthForm';
+import { redirect } from 'next/navigation';
+import { siteLoginRedirectPath } from '@/lib/auth-login-redirect';
 
-export const metadata = {
-  title: 'Вход — District',
-};
-
-export default function LoginPage() {
-  return (
-    <div className="auth-page">
-      <div className="container">
-        <div className="auth-card signup-form">
-          <h1 className="auth-title">Вход в платформу</h1>
-          <AuthForm />
-        </div>
-      </div>
-    </div>
-  );
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const sp = await searchParams;
+  redirect(siteLoginRedirectPath(sp.next));
 }

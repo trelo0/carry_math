@@ -45,6 +45,7 @@ function mapToCuratorHwStatus(
   if (status === 'submitted') return 'submitted';
   if (status === 'rejected') return 'revision';
   if (status === 'pending') return 'waiting';
+  if (status === 'upcoming') return 'upcoming';
   return 'waiting';
 }
 

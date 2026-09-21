@@ -30,7 +30,8 @@ import {
   type CuratorHomeworkRecord,
   type CuratorStudentRecord,
 } from './curatorData';
-import { getBaseUrlString } from '@/lib/siteUrl';
+import { createCabinetLoginUrl } from '@/lib/cabinet-login';
+import { isBotRole, isCreatorTelegramId, resolveEffectiveRole } from '../roles';
 import {
   approveCourseHomeworkByCurator,
   deductLifeForHomeworkDebtByCurator,
@@ -61,7 +62,7 @@ export const CURATOR_MENU_LABELS = {
   homework: '📝 ДОМАШКИ',
   students: '👨‍🎓 УЧЕНИКИ',
   notifications: '🔔 УВЕДОМЛЕНИЯ',
-  cabinet: '👤 ЛИЧНЫЙ КАБИНЕТ',
+  cabinet: '🌐 КАБИНЕТ',
 } as const;
 
 export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU_LABELS));
@@ -70,12 +71,16 @@ const CURATOR_HOME_TEXT =
   '🧑‍🏫 Кабинет ментора District\n\n' +
   'Разделы — на кнопках меню под полем ввода.';
 
-function curatorCabinetScreen(): { text: string; keyboard: InlineKeyboard } {
+async function curatorCabinetScreen(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/curator');
   return {
-    text: '🌐 Личный кабинет\n\nОткрой кабинет на сайте District:',
+    text: '🌐 Кабинет куратора\n\nЗанятия, материалы, эфиры и проверка ДЗ — на сайте:',
     keyboard: {
       inline_keyboard: [
-        [{ text: '🌐 Открыть личный кабинет', url: `${getBaseUrlString()}/cabinet` }],
+        [{ text: '🌐 Открыть кабинет куратора', url }],
         [backButton('⬅️ Назад', 'c:menu')],
       ],
     },
@@ -414,8 +419,11 @@ export function renderCuratorPreLesson(students: CuratorStudentRecord[]): { text
   };
 }
 
-export function renderCuratorCabinet(): { text: string; keyboard: InlineKeyboard } {
-  return curatorCabinetScreen();
+export async function renderCuratorCabinet(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  return curatorCabinetScreen(admin, telegramId);
 }
 
 // ---------------------------------------------------------------------------
@@ -430,10 +438,9 @@ async function effectiveCuratorRole(admin: SupabaseClient, telegramId: number): 
     .maybeSingle();
   if (error) throw error;
   if (!data) return 'guest';
-  const role = String(data.role);
-  const viewRole = data.view_role as string | null;
-  if (role === 'test' && viewRole && viewRole !== 'test') return viewRole;
-  return role;
+  const role = isBotRole(data.role) ? data.role : 'guest';
+  const viewRole = isBotRole(data.view_role) ? data.view_role : null;
+  return resolveEffectiveRole({ role, viewRole }, telegramId);
 }
 
 async function editCuratorScreen(message: AdminMessage, text: string, keyboard: InlineKeyboard): Promise<void> {
@@ -451,7 +458,7 @@ export async function handleCuratorMessage(
   text: string,
 ): Promise<boolean> {
   const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator') return false;
+  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
 
   let state = null;
   try {
@@ -508,7 +515,7 @@ export async function handleCuratorMessage(
   }
 
   if (text === CURATOR_MENU_LABELS.cabinet) {
-    const screen = renderCuratorCabinet();
+    const screen = await renderCuratorCabinet(admin, telegramId);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
@@ -541,7 +548,7 @@ export async function handleCuratorAttachment(
   fileId: string,
 ): Promise<boolean> {
   const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator') return false;
+  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
 
   let state = null;
   try {
@@ -623,7 +630,7 @@ export async function handleCuratorCallback(
 ): Promise<boolean> {
   if (!data.startsWith('c:')) return false;
   const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator') return false;
+  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
 
   const message: AdminMessage = { chatId, messageId };
   const handled = await routeCuratorCallback(admin, message, telegramId, data.split(':'));
@@ -940,7 +947,7 @@ async function routeCuratorCallback(
     }
 
     case 'cab': {
-      const screen = renderCuratorCabinet();
+      const screen = await renderCuratorCabinet(admin, telegramId);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }

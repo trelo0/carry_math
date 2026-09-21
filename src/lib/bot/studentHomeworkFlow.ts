@@ -13,6 +13,7 @@ import {
   markHomeworkSubmitted,
   resolveSubmitTargetLesson,
 } from '@/lib/bot/education/course-homework';
+import { notifyCuratorHomeworkSubmitted } from '@/lib/curator/homework-events';
 
 type SubmitPayload = AdminPayload & { sanityLessonId?: string };
 
@@ -62,6 +63,7 @@ async function finishSubmit(
   input: { note?: string; fileUrl?: string },
 ): Promise<void> {
   await markHomeworkSubmitted(admin, telegramId, sanityLessonId, input);
+  await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, input);
   await clearStateIfAvailable(admin, telegramId);
   await sendAdminMessage(
     chatId,

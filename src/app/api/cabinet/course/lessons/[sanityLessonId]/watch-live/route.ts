@@ -19,6 +19,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
   try {
     await markLiveAttended(auth.admin, auth.telegramId, { sanityLessonId });
     revalidatePath('/cabinet');
+    revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Progress update failed';

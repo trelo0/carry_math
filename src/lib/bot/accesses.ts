@@ -191,12 +191,9 @@ export async function getUserContext(admin: SupabaseClient, telegramId: number):
     role = member.role;
   }
 
-  // Тест-маска нужна только тестерам: один лёгкий доп. запрос только для role = 'test'.
   let viewRole: BotRole | null = null;
-  if (role === 'test') {
-    const member = await ensureMember(admin, telegramId, {});
-    viewRole = member.viewRole;
-  }
+  const member = await ensureMember(admin, telegramId, {});
+  viewRole = member.viewRole;
 
   let products: AccessProduct[] = [];
   try {

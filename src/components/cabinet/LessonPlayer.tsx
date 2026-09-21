@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import type { SanityWebinarSessionStatus } from '@/lib/curator/lesson-session';
 import { buildYoutubeEmbedUrl, extractYoutubeVideoId } from '@/lib/youtube';
 
-export type LessonPlayerPhase = 'upcoming' | 'live' | 'recording';
+export type LessonPlayerPhase = 'upcoming' | 'live' | 'recording' | 'waiting';
 
 const PLAY_PATH = 'M9 6.5v11l9-5.5-9-5.5z';
 const LIVE_DURATION_MIN = 90;
@@ -37,7 +38,13 @@ export function resolveLessonPhase(
   sessionStartsAt: string | null,
   recordingUrl: string | null,
   durationMinutes = LIVE_DURATION_MIN,
+  webinarSessionStatus?: SanityWebinarSessionStatus | null,
 ): LessonPlayerPhase {
+  if (webinarSessionStatus === 'live') return 'live';
+  if (webinarSessionStatus === 'completed') return recordingUrl ? 'recording' : 'upcoming';
+  if (webinarSessionStatus === 'waiting') return 'waiting';
+  if (webinarSessionStatus === 'scheduled') return 'upcoming';
+
   if (now == null) return recordingUrl && !sessionStartsAt ? 'recording' : 'upcoming';
   const start = sessionStartsAt ? Date.parse(sessionStartsAt) : NaN;
   if (Number.isNaN(start)) return recordingUrl ? 'recording' : 'upcoming';
@@ -69,7 +76,8 @@ export function toEmbedMedia(url: string | null, disableNativeFullscreen = false
   return { kind: 'iframe', src: url };
 }
 
-function startLabel(sessionStartsAt: string | null): string {
+function startLabel(sessionStartsAt: string | null, phase: LessonPlayerPhase): string {
+  if (phase === 'waiting') return 'Ожидаем начала трансляции';
   if (!sessionStartsAt) return 'Дата вебинара уточняется';
   const date = new Date(sessionStartsAt);
   if (Number.isNaN(date.getTime())) return 'Дата вебинара уточняется';
@@ -92,6 +100,7 @@ export default function LessonPlayer({
   onPlay,
   onNavigate,
   disableNativeFullscreen = false,
+  webinarSessionStatus = null,
   children,
 }: {
   title: string;
@@ -101,6 +110,7 @@ export default function LessonPlayer({
   recordingUrl: string | null;
   posterUrl?: string | null;
   durationMinutes?: number;
+  webinarSessionStatus?: SanityWebinarSessionStatus | null;
   onPlay?: (phase: LessonPlayerPhase) => void;
   /** Если задан — кнопка Play открывает страницу занятия вместо встроенного плеера. */
   onNavigate?: () => void;
@@ -111,8 +121,19 @@ export default function LessonPlayer({
   const now = useNow();
   const [manualPlay, setManualPlay] = useState(false);
 
-  const phase = resolveLessonPhase(now, sessionStartsAt, recordingUrl, durationMinutes);
-  const sourceUrl = phase === 'live' ? (liveUrl ?? recordingUrl) : phase === 'recording' ? (recordingUrl ?? liveUrl) : null;
+  const phase = resolveLessonPhase(
+    now,
+    sessionStartsAt,
+    recordingUrl,
+    durationMinutes,
+    webinarSessionStatus,
+  );
+  const sourceUrl =
+    phase === 'live'
+      ? liveUrl ?? null
+      : phase === 'recording'
+        ? recordingUrl ?? liveUrl
+        : null;
   const media = useMemo(
     () => toEmbedMedia(sourceUrl, disableNativeFullscreen),
     [sourceUrl, disableNativeFullscreen],
@@ -180,8 +201,8 @@ export default function LessonPlayer({
                 <PlayIcon />
               </button>
             )}
-            {!media && phase === 'upcoming' && (
-              <span className="cab-lesson-v2-soon">{startLabel(sessionStartsAt)}</span>
+            {!media && (phase === 'upcoming' || phase === 'waiting') && (
+              <span className="cab-lesson-v2-soon">{startLabel(sessionStartsAt, phase)}</span>
             )}
           </>
         )}

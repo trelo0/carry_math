@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCabinetAuth } from '@/lib/cabinet-auth';
 import { CourseHomeworkError, markHomeworkSubmitted } from '@/lib/bot/education/course-homework';
+import { notifyCuratorHomeworkSubmitted } from '@/lib/curator/homework-events';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -50,11 +51,11 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, {
-      note: body.note,
-      fileUrl: body.fileUrl,
-    });
+    const submitInput = { note: body.note, fileUrl: body.fileUrl };
+    const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
+    await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
     revalidatePath('/cabinet');
+    revalidatePath('/cabinet/curator');
     return NextResponse.json({ ok: true, progress });
   } catch (error) {
     if (error instanceof CourseHomeworkError) {

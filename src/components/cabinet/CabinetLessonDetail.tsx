@@ -91,7 +91,7 @@ function LessonStream({
   hasLiveChat: boolean;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
-  onPlay: (watchPhase: 'upcoming' | 'live' | 'recording') => void;
+  onPlay: (watchPhase: 'upcoming' | 'live' | 'recording' | 'waiting') => void;
 }) {
   return (
     <div className="cab-lespage-stream">
@@ -102,6 +102,7 @@ function LessonStream({
           liveUrl={stop.liveUrl}
           recordingUrl={stop.recordingUrl}
           posterUrl={coverUrl}
+          webinarSessionStatus={stop.webinarSessionStatus}
           disableNativeFullscreen={hasLiveChat}
           onPlay={onPlay}
         />
@@ -112,7 +113,21 @@ function LessonStream({
               : 'Просмотр не начат'}
           </span>
           <span className="cab-lespage-video-meta-right">
-            <span>{stop.recordingUrl ? 'Запись' : stop.liveUrl ? 'Трансляция' : 'Скоро'}</span>
+            <span>
+              {stop.webinarSessionStatus === 'live'
+                ? 'Трансляция'
+                : stop.webinarSessionStatus === 'completed'
+                  ? stop.recordingUrl
+                    ? 'Запись'
+                    : 'Завершено'
+                  : stop.webinarSessionStatus === 'waiting'
+                    ? 'Ожидание эфира'
+                    : stop.recordingUrl
+                      ? 'Запись'
+                      : stop.liveUrl
+                        ? 'Запланировано'
+                        : 'Скоро'}
+            </span>
             {hasLiveChat && (
               <button
                 type="button"
@@ -140,8 +155,9 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
   const chips =
     stop.contentChips?.filter(Boolean).length ? stop.contentChips.filter(Boolean) : DEFAULT_LESSON_CONTENT_CHIPS;
 
+  const isLiveSession = stop.webinarSessionStatus === 'live';
   const youtubeLiveId = extractYoutubeVideoId(stop.liveUrl) ?? extractYoutubeVideoId(stop.recordingUrl);
-  const hasLiveChat = Boolean(youtubeLiveId && stop.liveUrl);
+  const hasLiveChat = Boolean(youtubeLiveId && stop.liveUrl && isLiveSession);
 
   useEffect(() => {
     const sync = () => {
@@ -181,7 +197,7 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
     }
   }, []);
 
-  async function markLessonWatched(watchPhase: 'upcoming' | 'live' | 'recording') {
+  async function markLessonWatched(watchPhase: 'upcoming' | 'live' | 'recording' | 'waiting') {
     if (!stop.sanityLessonId) return;
     const endpoint = watchPhase === 'live' ? 'watch-live' : 'watch-recording';
     await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}`, {
