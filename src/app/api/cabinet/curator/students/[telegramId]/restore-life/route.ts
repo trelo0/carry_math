@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCuratorAuth } from '@/lib/cabinet-auth';
 import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
+import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { grantBonusLife } from '@/lib/bot/education/lives';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
@@ -27,6 +28,8 @@ export async function POST(_request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Course not found' }, { status: 404 });
     }
 
+    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId);
+
     const state = await grantBonusLife(auth.admin, {
       telegramId: studentTelegramId,
       courseId,
@@ -35,7 +38,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
     });
 
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     return NextResponse.json({ ok: true, livesCurrent: state.lives_current, livesMax: state.lives_max });
   } catch (error) {
     return curatorJsonError(error, 'Failed to restore life');

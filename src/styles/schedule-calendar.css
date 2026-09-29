@@ -1,0 +1,464 @@
+/* Schedule calendar — ref palette & grid (loads after cabinet.css) */
+
+.staff-cabinet .sched-page {
+  --sched-ref-blue: #5c7cfa;
+  --sched-ref-blue-dark: #4a66d4;
+  --sched-ref-group: #3d5fc7;
+  --sched-ref-course: #7c5cff;
+  --sched-ref-orange: #f2994a;
+  --sched-ref-panel: #12182a;
+  --sched-ref-grid: #0c1220;
+  --sched-ref-grid-line: rgba(255, 255, 255, 0.05);
+}
+
+/* --- Week strip --- */
+.staff-cabinet .sched-page .sched-week-strip {
+  gap: 6px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.staff-cabinet .sched-page .sched-week-day {
+  padding: 10px 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(14, 20, 36, 0.92);
+}
+
+.staff-cabinet .sched-page .sched-week-day.is-selected {
+  border-color: var(--sched-ref-orange);
+  background: rgba(242, 153, 74, 0.07);
+  box-shadow: 0 0 0 1px rgba(242, 153, 74, 0.55), 0 0 16px rgba(242, 153, 74, 0.15);
+}
+
+.staff-cabinet .sched-page .sched-week-day-wd {
+  font-size: 10px;
+  color: rgba(160, 174, 192, 0.85);
+}
+
+.staff-cabinet .sched-page .sched-week-day-num {
+  font-size: 1rem;
+  color: #eef2ff;
+}
+
+.staff-cabinet .sched-page .sched-week-day.is-selected .sched-week-dot {
+  background: var(--sched-ref-orange) !important;
+  box-shadow: 0 0 5px rgba(242, 153, 74, 0.6) !important;
+}
+
+/* --- Day card shell --- */
+.staff-cabinet .sched-page .sched-day-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--sched-ref-panel);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.staff-cabinet .sched-page .sched-day-card-head h2 {
+  color: rgba(160, 174, 192, 0.9);
+  font-size: 0.72rem;
+}
+
+/* --- Time grid --- */
+.staff-cabinet .sched-page .schedule-grid,
+.staff-cabinet .sched-page .sched-day-grid {
+  background: var(--sched-ref-grid) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.staff-cabinet .sched-page .schedule-grid-times {
+  background: rgba(8, 12, 22, 0.85);
+  border-right-color: rgba(255, 255, 255, 0.06);
+}
+
+.staff-cabinet .sched-page .schedule-grid-hour {
+  padding-top: 8px;
+  padding-right: 12px;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.staff-cabinet .sched-page .schedule-grid-column-inner {
+  background: rgba(10, 16, 28, 0.55);
+}
+
+.staff-cabinet .sched-page .schedule-grid-cell {
+  border-bottom-color: var(--sched-ref-grid-line);
+}
+
+.staff-cabinet .sched-page .schedule-availability-band,
+.staff-cabinet .sched-page .sched-avail-band {
+  background: rgba(0, 201, 177, 0.04) !important;
+  border: 1px dashed rgba(0, 201, 177, 0.14) !important;
+  box-shadow: none !important;
+}
+
+/* --- Event cards (ref: solid blue + white stripe) --- */
+.staff-cabinet .sched-page button.sched-grid-event {
+  left: 12px;
+  right: 12px;
+  margin: 0;
+  padding: 10px 12px 10px 22px;
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-family: inherit;
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event .sched-grid-event-accent {
+  width: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 10px 0 0 10px;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event--individual {
+  background: var(--sched-ref-blue) !important;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event--group {
+  background: var(--sched-ref-group) !important;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event--course {
+  background: var(--sched-ref-course) !important;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event .sched-grid-event-kind {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  line-height: 1.15;
+  opacity: 1;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event .sched-grid-event-time {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.95;
+  line-height: 1.1;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event.is-selected {
+  box-shadow:
+    0 0 0 1px var(--sched-ref-orange),
+    0 0 20px rgba(242, 153, 74, 0.35) !important;
+}
+
+.staff-cabinet .sched-page button.sched-grid-event:hover {
+  filter: brightness(1.04);
+}
+
+/* --- Week grid card --- */
+.staff-cabinet .sched-page .sched-week-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--sched-ref-panel);
+}
+
+.staff-cabinet .sched-page .sched-grid-head {
+  background: rgba(10, 16, 28, 0.96);
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.staff-cabinet .sched-page .sched-grid-day-head.is-highlight {
+  background: rgba(242, 153, 74, 0.08);
+  box-shadow: inset 0 -2px 0 var(--sched-ref-orange);
+}
+
+.staff-cabinet .sched-page .sched-grid-day-head.is-highlight strong {
+  color: var(--sched-ref-orange);
+}
+
+/* --- Filters --- */
+.staff-cabinet .sched-page .sched-filter.is-active {
+  background: rgba(242, 153, 74, 0.05);
+  border-color: var(--sched-ref-orange);
+  color: #ffc078;
+  box-shadow: 0 0 0 1px rgba(242, 153, 74, 0.45);
+}
+
+/* --- Day slots on grid --- */
+.staff-cabinet .sched-page .sched-day-slot {
+  left: 12px;
+  right: 12px;
+  border-radius: 10px;
+  background: rgba(12, 18, 32, 0.88);
+  padding-left: 22px;
+}
+
+.staff-cabinet .sched-page .sched-day-slot--free {
+  border-color: rgba(0, 201, 177, 0.28);
+  box-shadow: 0 0 12px rgba(0, 201, 177, 0.08);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  width: auto;
+}
+.staff-cabinet .sched-page button.sched-day-slot--free.is-selected {
+  box-shadow:
+    0 0 0 1px var(--sched-ref-orange),
+    0 0 16px rgba(242, 153, 74, 0.28);
+}
+.staff-cabinet .sched-page .sched-day-slot-time {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e8fffb;
+  font-variant-numeric: tabular-nums;
+}
+.staff-cabinet .sched-page .sched-day-slot--free .sched-day-slot-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(110, 231, 183, 0.9);
+  font-weight: 700;
+}
+
+/* Day aside — free slots */
+.staff-cabinet .sched-page .sched-day-aside-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.staff-cabinet .sched-page .sched-day-aside-wd {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  color: rgba(148, 163, 184, 0.88);
+  font-weight: 700;
+}
+.staff-cabinet .sched-page .sched-day-aside-date {
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  color: #f0f4ff;
+}
+.staff-cabinet .sched-page .sched-free-slot-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.staff-cabinet .sched-page .sched-free-slot-item {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 201, 177, 0.22);
+  background: rgba(0, 201, 177, 0.06);
+  color: #e8fffb;
+  font-weight: 700;
+  font-size: 0.92rem;
+  cursor: pointer;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.15s, background 0.15s;
+}
+.staff-cabinet .sched-page .sched-free-slot-item:hover {
+  border-color: rgba(0, 201, 177, 0.38);
+  background: rgba(0, 201, 177, 0.1);
+}
+
+/* Slot edit panel */
+.staff-cabinet .sched-page .sched-slot-panel-badge {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5eead4;
+  font-weight: 700;
+}
+.staff-cabinet .sched-page .sched-slot-panel-range {
+  margin: 6px 0 14px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #f0f4ff;
+}
+.staff-cabinet .sched-page .sched-slot-panel-card {
+  display: grid;
+  gap: 0;
+}
+.staff-cabinet .sched-page .sched-slot-panel-range {
+  margin: 8px 0 18px;
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #f0f4ff;
+  font-variant-numeric: tabular-nums;
+}
+.staff-cabinet .sched-page .sched-slot-panel-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+.staff-cabinet .sched-page .sched-slot-panel-actions--row {
+  grid-template-columns: 1fr 1fr;
+}
+.staff-cabinet .sched-page .sched-slot-panel-form {
+  margin-top: 4px;
+}
+.staff-cabinet .sched-page .schedule-modal-row label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+  font-weight: 700;
+}
+.staff-cabinet .sched-page input[type="time"].sched-time-input,
+.staff-cabinet .sched-page .schedule-modal-row input[type="time"],
+.staff-cabinet .sched-page .sched-lesson-field input[type="time"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(142, 197, 255, 0.22);
+  background: rgba(4, 10, 24, 0.92);
+  color: #eef4ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+  appearance: none;
+}
+.staff-cabinet .sched-page input[type="time"].sched-time-input::-webkit-calendar-picker-indicator,
+.staff-cabinet .sched-page .schedule-modal-row input[type="time"]::-webkit-calendar-picker-indicator,
+.staff-cabinet .sched-page .sched-lesson-field input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.9) sepia(0.2) saturate(2) hue-rotate(170deg);
+  cursor: pointer;
+  opacity: 0.9;
+}
+.staff-cabinet .sched-page input[type="time"].sched-time-input:focus,
+.staff-cabinet .sched-page .schedule-modal-row input[type="time"]:focus,
+.staff-cabinet .sched-page .sched-lesson-field input[type="time"]:focus {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.55);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.15);
+}
+
+/* Reschedule day picker in side panel */
+.staff-cabinet .sched-page .sched-date-nav--compact {
+  width: 100%;
+}
+.staff-cabinet .sched-page .sched-date-nav--compact .sched-date-pill--compact {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  padding: 8px 10px;
+  text-align: center;
+}
+.staff-cabinet .sched-page .sched-date-nav--compact .sched-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Lesson-from-slot modal */
+.sched-modal--lesson {
+  width: min(480px, 100%);
+  border-color: rgba(0, 201, 177, 0.28);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 0 40px rgba(0, 201, 177, 0.08);
+  padding: 20px;
+}
+.sched-modal--lesson .schedule-modal-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #f5f8ff;
+}
+.sched-lesson-form {
+  gap: 14px;
+}
+.sched-lesson-form-when {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 201, 177, 0.22);
+  background: rgba(0, 201, 177, 0.06);
+}
+.sched-lesson-form-when-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+  font-weight: 700;
+}
+.sched-lesson-form-when strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e8fffb;
+  font-variant-numeric: tabular-nums;
+}
+.sched-modal--lesson .schedule-modal-form label {
+  gap: 8px;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.95);
+  font-weight: 600;
+}
+.sched-modal--lesson .schedule-modal-form input,
+.sched-modal--lesson .schedule-modal-form select,
+.sched-modal--lesson .schedule-modal-form textarea {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(6, 12, 24, 0.9);
+  color: #f0f4ff;
+  font-size: 0.95rem;
+  text-transform: none;
+  font-weight: 500;
+}
+.sched-modal--lesson .schedule-side-actions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* Autofill modal */
+.staff-cabinet .sched-page .sched-autofill-summary {
+  margin: 4px 0 10px;
+  color: rgba(148, 163, 184, 0.95);
+  font-size: 0.9rem;
+}
+.staff-cabinet .sched-page .sched-autofill-summary strong {
+  color: #f0f4ff;
+}
+.staff-cabinet .sched-page .sched-autofill-skipped {
+  color: #ffb347;
+}
+.staff-cabinet .sched-page .schedule-grid--week .sched-day-slot {
+  left: 4px;
+  right: 4px;
+  padding-left: 12px;
+  padding-right: 4px;
+}
+.staff-cabinet .sched-page .schedule-grid--week .sched-day-slot-time,
+.staff-cabinet .sched-page .schedule-grid--week .sched-day-slot-label {
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-cabinet .sched-page .sched-autofill-preview {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(6, 12, 24, 0.55);
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: #dce8ff;
+  font-variant-numeric: tabular-nums;
+}

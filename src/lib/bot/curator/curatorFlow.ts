@@ -75,7 +75,7 @@ async function curatorCabinetScreen(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/curator');
+  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
   return {
     text: '🌐 Кабинет куратора\n\nЗанятия, материалы, эфиры и проверка ДЗ — на сайте:',
     keyboard: {

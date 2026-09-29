@@ -52,17 +52,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refresh();
-
+    let cancelled = false;
     const supabase = createClient();
+
+    const runRefresh = () => {
+      if (!cancelled) void refresh();
+    };
+
+    // Не блокируем первый рендер маркетинговых страниц запросом к Supabase.
+    const idleId =
+      typeof requestIdleCallback !== 'undefined'
+        ? requestIdleCallback(runRefresh, { timeout: 1500 })
+        : null;
+    const timeoutId = idleId === null ? window.setTimeout(runRefresh, 0) : null;
+
     const { data: sub } = supabase.auth.onAuthStateChange(() => {
-      void refresh();
+      runRefresh();
     });
 
-    const onAuthChanged = () => void refresh();
+    const onAuthChanged = () => runRefresh();
     window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
 
     return () => {
+      cancelled = true;
+      if (idleId !== null) cancelIdleCallback(idleId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
       sub.subscription.unsubscribe();
       window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
     };

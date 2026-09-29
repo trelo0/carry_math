@@ -1,16 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { ACCESS_PRODUCT_LABELS } from '../accesses';
-import { fulfillPurchase } from '../purchase-fulfillment';
+import {
+  adminPurchaseRequestKeyboard,
+  confirmPurchaseRequest,
+  formatAdminPurchaseRequestNotification,
+  rejectPurchaseRequest,
+} from '../purchase-confirm';
 import {
   countPendingPurchaseRequests,
   getPurchaseRequest,
   isPurchaseRequestTableError,
   listPendingPurchaseRequests,
-  setPurchaseRequestStatus,
   type PurchaseRequestRow,
 } from '../purchase-requests';
-import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import {
   type AdminMessage,
   type Deliver,
@@ -93,27 +96,15 @@ export async function notifyAdminsOfNewPurchaseRequest(
   request: PurchaseRequestRow,
 ): Promise<number> {
   const userLabel = await getMemberLabel(admin, request.telegram_id);
-  const lines = [
-    '🔔 *Новая заявка на покупку*',
-    '',
-    `👤 ${userLabel}`,
-    `📦 ${request.title}`,
-    `💳 ${formatMoney(Number(request.amount_byn))}`,
-    '',
-    `🕐 ${formatDateTime(request.created_at)}`,
-  ];
-
-  const keyboard = {
-    inline_keyboard: [[{ text: '💳 Открыть заявку', callback_data: `ap:l:${request.id}:p:0` }]],
-  };
+  const text = formatAdminPurchaseRequestNotification(request, userLabel);
+  const keyboard = adminPurchaseRequestKeyboard(request.id);
 
   const chatIds = await getAdminChatIds(admin);
   let sent = 0;
   for (const chatId of chatIds) {
     const result = await telegramSend('sendMessage', {
       chat_id: chatId,
-      text: lines.join('\n'),
-      parse_mode: 'Markdown',
+      text,
       reply_markup: keyboard,
     });
     if (result.ok) sent += 1;
@@ -247,79 +238,13 @@ async function renderPurchaseDetail(
 
   if (request.status === 'pending') {
     keyboard.push(
-      [{ text: '✅ Одобрить и выдать доступ', callback_data: `ap:ok:${request.id}:${filterCode}:${page}` }],
+      [{ text: '✅ Подтвердить оплату', callback_data: `ap:ok:${request.id}:${filterCode}:${page}` }],
       [{ text: '❌ Отклонить', callback_data: `ap:x:${request.id}:${filterCode}:${page}` }],
     );
   }
   keyboard.push([back], [homeButton()]);
 
   await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
-}
-
-async function approvePurchaseRequest(
-  admin: SupabaseClient,
-  request: PurchaseRequestRow,
-  adminTelegramId: number,
-): Promise<{ note: string; verificationLines: string[] }> {
-  if (request.status !== 'pending') {
-    return { note: 'Заявка уже обработана.', verificationLines: [] };
-  }
-
-  const result = await fulfillPurchase(admin, request.telegram_id, {
-    product: request.product,
-    packageIndex: request.package_index,
-    teacherId: request.teacher_id ?? undefined,
-    externalId: `purchase_request:${request.id}`,
-  });
-
-  await setPurchaseRequestStatus(admin, request.id, 'approved', adminTelegramId);
-
-  const cabinetPath =
-    request.product === 'course' ? '/cabinet?section=course' : '/cabinet?section=payments';
-  const cabinetUrl = await createCabinetLoginUrl(admin, request.telegram_id, cabinetPath);
-
-  const studentLines = [
-    '✅ Заявка одобрена',
-    '',
-    request.title,
-    '',
-    'Доступ открыт в личном кабинете. Обновите страницу, если не видите изменений.',
-  ];
-  if (request.product === 'course' && result.snapshot.lessonAccessCount > 0) {
-    studentLines.push('', `Открыто уроков: ${result.snapshot.lessonAccessCount}`);
-  }
-  studentLines.push('', cabinetUrl);
-
-  await telegramSend('sendMessage', {
-    chat_id: request.telegram_id,
-    text: studentLines.join('\n'),
-  });
-
-  const note = result.alreadyFulfilled
-    ? 'Заявка уже была выполнена ранее (idempotency).'
-    : '✅ Доступ выдан, ученик уведомлён.';
-
-  return { note, verificationLines: result.verificationLines };
-}
-
-async function rejectPurchaseRequest(
-  admin: SupabaseClient,
-  request: PurchaseRequestRow,
-  adminTelegramId: number,
-): Promise<string> {
-  if (request.status !== 'pending') return 'Заявка уже обработана.';
-
-  await setPurchaseRequestStatus(admin, request.id, 'rejected', adminTelegramId);
-
-  await telegramSend('sendMessage', {
-    chat_id: request.telegram_id,
-    text:
-      `❌ Заявка отклонена\n\n` +
-      `${request.title}\n\n` +
-      `Если это ошибка — напишите администратору или оформите заявку заново в боте.`,
-  });
-
-  return '❌ Заявка отклонена, ученик уведомлён.';
 }
 
 export function isPurchasesAction(data: string): boolean {
@@ -366,12 +291,11 @@ export async function handlePurchasesAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      const { note, verificationLines } = await approvePurchaseRequest(admin, request, adminTelegramId);
-      const updated = await getPurchaseRequest(admin, id);
-      if (!updated) {
-        await deliver(note, { inline_keyboard: [[homeButton()]] });
-        return true;
-      }
+      const { note, verificationLines, request: updated } = await confirmPurchaseRequest(
+        admin,
+        id,
+        adminTelegramId,
+      );
       const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
       await renderPurchaseDetail(
         admin,
@@ -391,14 +315,9 @@ export async function handlePurchasesAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await rejectPurchaseRequest(admin, request, adminTelegramId);
-      const updated = await getPurchaseRequest(admin, id);
-      if (!updated) {
-        await deliver('❌ Заявка отклонена.', { inline_keyboard: [[homeButton()]] });
-        return true;
-      }
+      const { note, request: updated } = await rejectPurchaseRequest(admin, id, adminTelegramId);
       const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
-      await renderPurchaseDetail(admin, message, updated, filter, Math.max(0, Number(pageRaw) || 0));
+      await renderPurchaseDetail(admin, message, updated, filter, Math.max(0, Number(pageRaw) || 0), [note]);
       return true;
     }
   } catch (error) {

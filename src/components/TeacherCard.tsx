@@ -3,11 +3,11 @@
 import Image from 'next/image';
 import { useEffect, useRef } from 'react';
 import { useForm } from '@/contexts/FormContext';
-import { Teacher } from '@/data/types';
-import { urlFor } from '@/lib/studio/sanityImage';
+import { buildImageUrl } from '@/lib/studio/sanityImage';
+import type { TeacherWithPhoto } from '@/lib/studio/teacherPhotos';
 
 interface TeacherCardProps {
-  teacher: Teacher;
+  teacher: TeacherWithPhoto;
   buttonText?: string;
   expanded: boolean;
   onToggle: (expanded: boolean) => void;
@@ -34,11 +34,9 @@ export default function TeacherCard({ teacher, buttonText, expanded, onToggle }:
   }, [expanded, onToggle]);
 
   const photoSrc =
-    typeof teacher.photo === 'string'
-      ? teacher.photo
-      : teacher.photo
-        ? urlFor(teacher.photo).width(600).height(900).url()
-        : '';
+    teacher.photoUrl ??
+    buildImageUrl(teacher.photo, { width: 600, height: 900 }) ??
+    '';
 
   const descriptionLines = teacher.description
     .split(/(?<=[.!?])\s+/)

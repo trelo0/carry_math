@@ -2241,13 +2241,8 @@ button.init-cta {
   }
 }
 
-/* reveal секций: только opacity — transform при scroll давал артефакты в Chrome */
+/* Секции видны сразу — без задержки при быстрой прокрутке */
 section[data-reveal] {
-  opacity: 0;
-  transition: opacity 0.7s ease;
-}
-
-section[data-reveal].revealed {
   opacity: 1;
 }
 
@@ -2306,23 +2301,13 @@ section[data-reveal].revealed {
   color: var(--gold);
 }
 
-/* анимация skill-баров */
+/* skill-бары — видны сразу */
 .spec-fill {
-  transform: scaleX(0);
+  transform: scaleX(1);
   transform-origin: left center;
-  transition: transform 1.1s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .spec-dot {
-  opacity: 0;
-  transition: opacity 0.4s ease 1s;
-}
-
-.main-teacher.revealed .spec-fill {
-  transform: scaleX(1);
-}
-
-.main-teacher.revealed .spec-dot {
   opacity: 1;
 }
 
@@ -2772,11 +2757,9 @@ section[data-reveal].revealed {
     var(--neon-glow-orange),
     inset 0 0 0 1px rgba(130, 190, 255, 0.06),
     0 10px 26px rgba(2, 6, 18, 0.38);
-  opacity: 0;
-  transform: translateY(20px);
+  opacity: 1;
+  transform: translateY(0);
   transition:
-    opacity 0.55s ease,
-    transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1),
     border-color 0.2s ease,
     box-shadow 0.2s ease;
   z-index: 3;
@@ -2790,11 +2773,6 @@ section[data-reveal].revealed {
   right: 45%;
   height: 2px;
   background: linear-gradient(90deg, rgba(255, 154, 46, 0.75), transparent);
-}
-
-.main-program.revealed .mission-card {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .mission-card:hover {
@@ -3386,5 +3364,16 @@ section[data-reveal].revealed {
     opacity: 1;
     transform: none;
     transition: none;
+  }
+}
+
+/* Тяжёлые декоративные слои — только на десктопе */
+@media (max-width: 768px), (prefers-reduced-motion: reduce) {
+  .atmosphere-lite-hidden {
+    display: none;
+  }
+
+  .stars--near {
+    display: none;
   }
 }

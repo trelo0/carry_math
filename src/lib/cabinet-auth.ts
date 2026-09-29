@@ -1,6 +1,15 @@
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { isBotRole, isCreatorTelegramId, type BotRole } from '@/lib/bot/roles';
+import {
+  hasFullStaffPreview,
+  isBotRole,
+  isCreatorTelegramId,
+  isStaffOnlyMember,
+  loadMemberRoles,
+  memberCanAccessStaffCabinet,
+  memberHasRole,
+  type BotRole,
+} from '@/lib/bot/roles';
 
 export type CabinetAuthContext = {
   phone: string;
@@ -8,16 +17,24 @@ export type CabinetAuthContext = {
   admin: ReturnType<typeof createAdminClient>;
 };
 
-export type CuratorAuthContext = CabinetAuthContext & {
+export type StaffAuthContext = CabinetAuthContext & {
   role: BotRole;
+  roles: BotRole[];
   fullName: string | null;
 };
+
+/** @deprecated используй StaffAuthContext */
+export type CuratorAuthContext = StaffAuthContext;
 
 const CURATOR_ROLES: BotRole[] = ['curator', 'mentor', 'admin'];
 
 export function isCuratorCabinetRole(role: string): boolean {
   const normalized = role === 'mentor' ? 'curator' : role;
   return CURATOR_ROLES.includes(normalized as BotRole);
+}
+
+export function memberCanAccessCuratorCabinet(roles: BotRole[], telegramId: number): boolean {
+  return memberHasRole(roles, 'curator') || hasFullStaffPreview(roles, telegramId);
 }
 
 /** Авторизация кабинета: phone → telegram_id. */
@@ -46,10 +63,10 @@ export async function getCabinetAuth(): Promise<CabinetAuthContext | null> {
   return { phone, telegramId: link.telegram_id as number, admin };
 }
 
-/** Куда отправить после OTP: куратор/admin → /cabinet/curator; создатель → выбор кабинета. */
+/** Куда отправить после OTP с учётом всех ролей участника. */
 export function resolveCabinetEntryPath(
   telegramId: number,
-  role: string,
+  roles: BotRole[],
   preferredPath?: string | null,
 ): string {
   const safe =
@@ -62,18 +79,24 @@ export function resolveCabinetEntryPath(
     return '/cabinet/pick';
   }
 
-  if (isCuratorCabinetRole(role)) {
+  if (isStaffOnlyMember(roles)) {
     if (safe?.startsWith('/cabinet/lesson/') || safe?.startsWith('/cabinet/checkout')) {
       return safe;
     }
-    return '/cabinet/curator';
+    if (safe?.startsWith('/cabinet/staff')) return safe;
+    return '/cabinet/staff';
   }
 
-  if (safe?.startsWith('/cabinet/curator')) return '/cabinet';
+  if (safe?.startsWith('/cabinet/staff') && !memberCanAccessStaffCabinet(roles, telegramId)) {
+    return '/cabinet';
+  }
+  if (safe?.startsWith('/cabinet/curator')) {
+    return safe.replace('/cabinet/curator', '/cabinet/staff');
+  }
   return safe ?? '/cabinet';
 }
 
-/** По телефону — путь входа в кабинет с учётом роли в bot_members. */
+/** По телефону — путь входа в кабинет с учётом ролей в bot_members. */
 export async function resolveCabinetEntryPathForPhone(
   admin: ReturnType<typeof createAdminClient>,
   phone: string,
@@ -93,19 +116,15 @@ export async function resolveCabinetEntryPathForPhone(
   }
 
   const telegramId = link.telegram_id as number;
-  const { data: member } = await admin
-    .from('bot_members')
-    .select('role')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  const role = (member?.role as string | undefined) ?? 'guest';
-  return resolveCabinetEntryPath(telegramId, role, preferredPath);
+  const roles = await loadMemberRoles(admin, telegramId);
+  return resolveCabinetEntryPath(telegramId, roles, preferredPath);
 }
 
-/** Авторизация веб-кабинета куратора: phone → telegram_id + role curator/mentor/admin. */
-export async function getCuratorAuth(): Promise<CuratorAuthContext | null> {
-  const base = await getCabinetAuth();
-  if (!base) return null;
+async function loadStaffMember(
+  base: CabinetAuthContext,
+): Promise<Omit<StaffAuthContext, keyof CabinetAuthContext> | null> {
+  const roles = await loadMemberRoles(base.admin, base.telegramId);
+  if (!memberCanAccessStaffCabinet(roles, base.telegramId)) return null;
 
   const { data: member } = await base.admin
     .from('bot_members')
@@ -115,11 +134,27 @@ export async function getCuratorAuth(): Promise<CuratorAuthContext | null> {
 
   const roleRaw = member?.role as string | undefined;
   const role: BotRole = roleRaw && isBotRole(roleRaw) ? roleRaw : 'guest';
-  if (!isCuratorCabinetRole(role) && !isCreatorTelegramId(base.telegramId)) return null;
 
   return {
-    ...base,
     role,
+    roles,
     fullName: (member?.full_name as string | null) ?? null,
   };
+}
+
+/** Staff-кабинет: curator и/или teacher. */
+export async function getStaffAuth(): Promise<StaffAuthContext | null> {
+  const base = await getCabinetAuth();
+  if (!base) return null;
+  const member = await loadStaffMember(base);
+  if (!member) return null;
+  return { ...base, ...member };
+}
+
+/** @deprecated используй getStaffAuth */
+export async function getCuratorAuth(): Promise<StaffAuthContext | null> {
+  const auth = await getStaffAuth();
+  if (!auth) return null;
+  if (!memberCanAccessCuratorCabinet(auth.roles, auth.telegramId)) return null;
+  return auth;
 }

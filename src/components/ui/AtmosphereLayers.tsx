@@ -2,7 +2,7 @@
 
 // Общие фоновые слои «гильдии» для главной и страницы /individual:
 // звёзды, геометрия, созвездия, HUD-скобки, парящие символы.
-// Стили живут в main.css (классы не привязаны к странице).
+// Тяжёлые слои на мобильных скрываются через CSS (main.css), без JS-переключения.
 
 type BgShape = {
   top: string;
@@ -96,7 +96,7 @@ export default function AtmosphereLayers() {
         <span className="stars stars--near" />
       </div>
 
-      <div className="bg-shapes" aria-hidden="true">
+      <div className="bg-shapes atmosphere-lite-hidden" aria-hidden="true">
         {BG_SHAPES.map((shape, i) => (
           <span
             className={`bg-shape bg-shape--${shape.kind} bg-shape--${shape.tone}`}
@@ -114,7 +114,7 @@ export default function AtmosphereLayers() {
         ))}
       </div>
 
-      <div className="constellations" aria-hidden="true">
+      <div className="constellations atmosphere-lite-hidden" aria-hidden="true">
         {CONSTELLATIONS.map((c, ci) => {
           const stars: Array<[number, number]> = c.points
             .split(' ')
@@ -141,7 +141,7 @@ export default function AtmosphereLayers() {
         })}
       </div>
 
-      <div className="hud-layer" aria-hidden="true">
+      <div className="hud-layer atmosphere-lite-hidden" aria-hidden="true">
         {HUD_MARKS.map((mark, i) => (
           <span
             className={`hud-bracket hud-bracket--${mark.kind}`}
@@ -151,7 +151,7 @@ export default function AtmosphereLayers() {
         ))}
       </div>
 
-      <div className="page-deco" aria-hidden="true">
+      <div className="page-deco atmosphere-lite-hidden" aria-hidden="true">
         {DECO_SYMBOLS.map((d, i) => (
           <span
             className={`deco-sym${d.accent ? ' deco-sym--accent' : ''}`}

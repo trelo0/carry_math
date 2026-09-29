@@ -73,15 +73,27 @@ export function Header({
 
   useEffect(() => {
     const onScroll = () => {
-      setScrolled(window.scrollY > 10);
+      const scrollY = window.scrollY;
+      setScrolled(scrollY > 10);
       const max = document.documentElement.scrollHeight - window.innerHeight;
-      setXp(max > 0 ? Math.min(100, Math.round((window.scrollY / max) * 100)) : 0);
+      setXp(max > 0 ? Math.min(100, Math.round((scrollY / max) * 100)) : 0);
+
+      const offset = 90;
+      let current: string = sectionIds[0];
+      sectionIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.getBoundingClientRect().top - offset <= 0) {
+          current = id;
+        }
+      });
+      setActiveSection(current);
     };
 
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [sectionIds]);
 
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1025px)");
@@ -122,28 +134,6 @@ export function Header({
       html.style.overflow = "";
     };
   }, [menuOpen]);
-
-  useEffect(() => {
-    const onScroll = () => {
-      const offset = 90;
-      let current: string = sectionIds[0];
-
-      sectionIds.forEach((id) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const rect = el.getBoundingClientRect();
-        if (rect.top - offset <= 0) {
-          current = id;
-        }
-      });
-
-      setActiveSection(current);
-    };
-
-    onScroll();
-    window.addEventListener("scroll", onScroll);
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [sectionIds]);
 
   const handleNavClick = (item: NavigationItem, e: React.MouseEvent) => {
     if (item.stub) {

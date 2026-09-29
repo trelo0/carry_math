@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import type { CuratorCabinetData, CuratorLessonView } from '@/lib/curator/cabinet-data';
+import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
+import { runWithKeyedFeedback } from '@/lib/staff/action-feedback';
+import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import {
   formatDate,
   formatDateTime,
@@ -10,13 +13,12 @@ import {
   toDatetimeLocal,
 } from './curator-utils';
 
-type RunAction = (action: () => Promise<string | void>, successText?: string) => Promise<void>;
-
 function FileBlock({
   title,
   files,
   writeEnabled,
   busy,
+  feedback,
   onUpload,
   onToggle,
 }: {
@@ -24,6 +26,7 @@ function FileBlock({
   files: CuratorLessonView['materials'];
   writeEnabled: boolean;
   busy: boolean;
+  feedback?: ActionFeedback | null;
   onUpload: (file: File) => void;
   onToggle: (index: number, published: boolean) => void;
 }) {
@@ -70,6 +73,7 @@ function FileBlock({
           />
         </label>
       ) : null}
+      <CabinetFeedback feedback={feedback} />
     </section>
   );
 }
@@ -85,14 +89,19 @@ function LessonEditor({
   busy: boolean;
   writeEnabled: boolean;
   onBack: () => void;
-  runAction: RunAction;
+  runAction: StaffRunAction;
 }) {
   const [liveUrl, setLiveUrl] = useState(lesson.liveUrl ?? '');
   const [recordingUrl, setRecordingUrl] = useState(lesson.recordingUrl ?? '');
   const [scheduledAt, setScheduledAt] = useState(toDatetimeLocal(lesson.scheduledAt));
+  const [feedbacks, setFeedbacks] = useState<Record<string, ActionFeedback>>({});
 
   const saveFields = () =>
-    runAction(async () => {
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      'save',
+      async () => {
       const res = await fetch(`/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -107,10 +116,16 @@ function LessonEditor({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? 'Не удалось сохранить');
       }
-    }, 'Занятие сохранено');
+    },
+      'Занятие сохранено',
+    );
 
   const sessionAction = (action: 'start' | 'end') =>
-    runAction(async () => {
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      'session',
+      async () => {
       const res = await fetch(
         `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/session`,
         {
@@ -129,15 +144,19 @@ function LessonEditor({
         return body.notify.message ?? 'Эфир начался — ученики видят трансляцию';
       }
     },
-    action === 'start'
-      ? lesson.sessionStatus === 'completed'
-        ? 'Эфир снова запущен — ученики видят трансляцию'
-        : 'Эфир начался — ученики видят трансляцию'
-      : 'Занятие завершено',
-  );
+      action === 'start'
+        ? lesson.sessionStatus === 'completed'
+          ? 'Эфир снова запущен — ученики видят трансляцию'
+          : 'Эфир начался — ученики видят трансляцию'
+        : 'Занятие завершено',
+    );
 
   const notify = (type: 'materials' | 'recording') =>
-    runAction(async () => {
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      `notify-${type}`,
+      async () => {
       const res = await fetch(
         `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/notify`,
         {
@@ -157,7 +176,11 @@ function LessonEditor({
     });
 
   const uploadFile = (field: 'lessonMaterials' | 'lessonHomeworkFiles', file: File) =>
-    runAction(async () => {
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      field,
+      async () => {
       const form = new FormData();
       form.set('field', field);
       form.set('file', file);
@@ -169,14 +192,20 @@ function LessonEditor({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? 'Не удалось загрузить файл');
       }
-    }, 'Файл загружен');
+    },
+      'Файл загружен',
+    );
 
   const togglePublished = (
     field: 'lessonMaterials' | 'lessonHomeworkFiles',
     index: number,
     published: boolean,
   ) =>
-    runAction(async () => {
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      `${field}-${index}`,
+      async () => {
       const res = await fetch(
         `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files`,
         {
@@ -189,7 +218,9 @@ function LessonEditor({
         const body = (await res.json()) as { error?: string };
         throw new Error(body.error ?? 'Не удалось обновить файл');
       }
-    }, published ? 'Файл опубликован' : 'Публикация снята');
+    },
+      published ? 'Файл опубликован' : 'Публикация снята',
+    );
 
   const canStart = lesson.sessionStatus !== 'live';
   const canEnd = lesson.sessionStatus === 'live';
@@ -248,10 +279,11 @@ function LessonEditor({
             />
           </label>
           {writeEnabled ? (
-            <button type="button" className="curator-btn" disabled={busy} onClick={() => void saveFields()}>
+            <button type="button" className="curator-btn" disabled={busy} onClick={saveFields}>
               Сохранить
             </button>
           ) : null}
+          <CabinetFeedback feedback={feedbacks.save} />
         </section>
 
         <section className="curator-card curator-card--actions">
@@ -303,11 +335,14 @@ function LessonEditor({
               type="button"
               className="curator-btn curator-btn-ghost"
               disabled={busy}
-              onClick={() => void notify('recording')}
+              onClick={() => notify('recording')}
             >
               Запись готова
             </button>
           </div>
+          <CabinetFeedback feedback={feedbacks['notify-materials']} />
+          <CabinetFeedback feedback={feedbacks['notify-recording']} />
+          <CabinetFeedback feedback={feedbacks.session} />
         </section>
       </div>
 
@@ -317,18 +352,18 @@ function LessonEditor({
           files={lesson.materials}
           writeEnabled={writeEnabled}
           busy={busy}
-          onUpload={(file) => void uploadFile('lessonMaterials', file)}
-          onToggle={(index, published) => void togglePublished('lessonMaterials', index, published)}
+          feedback={feedbacks.lessonMaterials}
+          onUpload={(file) => uploadFile('lessonMaterials', file)}
+          onToggle={(index, published) => togglePublished('lessonMaterials', index, published)}
         />
         <FileBlock
           title="Домашнее задание"
           files={lesson.homeworkFiles}
           writeEnabled={writeEnabled}
           busy={busy}
-          onUpload={(file) => void uploadFile('lessonHomeworkFiles', file)}
-          onToggle={(index, published) =>
-            void togglePublished('lessonHomeworkFiles', index, published)
-          }
+          feedback={feedbacks.lessonHomeworkFiles}
+          onUpload={(file) => uploadFile('lessonHomeworkFiles', file)}
+          onToggle={(index, published) => togglePublished('lessonHomeworkFiles', index, published)}
         />
       </div>
     </div>
@@ -348,7 +383,7 @@ export default function CuratorLessonsPanel({
   onSelectLesson: (id: string | null) => void;
   onBack: () => void;
   busy: boolean;
-  runAction: RunAction;
+  runAction: StaffRunAction;
 }) {
   const [moduleFilter, setModuleFilter] = useState<number | 'all'>('all');
 

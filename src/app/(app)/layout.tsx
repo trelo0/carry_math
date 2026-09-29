@@ -1,16 +1,13 @@
-import { Suspense } from 'react';
 import { AuthModal } from '@/components';
-import AuthQueryTrigger from '@/components/AuthQueryTrigger';
+import '../../styles/cabinet.css';
+import '../../styles/schedule-calendar.css';
 
-/** Кабинет без маркетинговой шапки, но с модалкой входа. */
+/** Кабинет без маркетинговой шапки; вход — через CabinetLoginGate (?login=1). */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
       <AuthModal />
-      <Suspense fallback={null}>
-        <AuthQueryTrigger />
-      </Suspense>
     </>
   );
 }

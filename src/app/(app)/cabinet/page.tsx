@@ -1,8 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { isCuratorCabinetRole } from '@/lib/cabinet-auth';
-import { isCreatorTelegramId } from '@/lib/bot/roles';
+import { isCreatorTelegramId, isStaffOnlyMember, loadMemberRoles } from '@/lib/bot/roles';
 import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
 import { getCabinetData } from '@/lib/cabinet';
 import CabinetShell from '@/components/cabinet/CabinetShell';
@@ -68,14 +67,9 @@ export default async function CabinetPage({
     if (link?.telegram_id) {
       const telegramId = link.telegram_id as number;
       showCabinetPick = isCreatorTelegramId(telegramId);
-      const { data: member } = await admin
-        .from('bot_members')
-        .select('role')
-        .eq('telegram_id', telegramId)
-        .maybeSingle();
-      const role = (member?.role as string | undefined) ?? 'guest';
-      if (isCuratorCabinetRole(role) && !isCreatorTelegramId(telegramId)) {
-        redirect('/cabinet/curator');
+      const roles = await loadMemberRoles(admin, telegramId);
+      if (isStaffOnlyMember(roles) && !isCreatorTelegramId(telegramId)) {
+        redirect('/cabinet/staff');
       }
     }
   } catch {

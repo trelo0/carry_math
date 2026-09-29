@@ -179,6 +179,8 @@ export function buildCabinetPreviewData(
     courseContent: null,
     group: { title: '10 класс · Алгебра', teacherName: 'Анна Сергеевна' },
     mentors: [{ kind: 'teacher', name: 'Кристина Денисовна' }],
+    ordinaryTeacher: { telegramId: 100001, name: 'Кристина Денисовна' },
+    studentGroup: { id: 1, title: '10 класс · Алгебра' },
     lessons: BASE_LESSONS,
     packages:
       variant === 'full'
@@ -211,6 +213,8 @@ export function buildCabinetPreviewData(
     lives: variant === 'enrolled_locked' || variant === 'full' ? { current: 2, max: 3, accessBlocked: false } : null,
     cabinetPricing: DEFAULT_CABINET_PRICING,
     courseMapViewed: variant !== 'preview' && variant !== 'lessons_only',
+    memberRoles: ['student'],
+    teachingLessons: [],
   };
 }
 

@@ -676,6 +676,21 @@ export async function POST(request: Request) {
       );
       if (adminHandled) return NextResponse.json({ ok: true });
 
+      const callbackData = callbackQuery.data;
+      const callbackId = callbackQuery.id;
+      if (callbackData && callbackId) {
+        const { handleRescheduleCallback } = await import('@/lib/teacher/reschedule-callback');
+        const rescheduleHandled = await handleRescheduleCallback(
+          admin,
+          callbackData,
+          chatId,
+          messageId,
+          from.id,
+          callbackId,
+        );
+        if (rescheduleHandled) return NextResponse.json({ ok: true });
+      }
+
       const purchaseHandled = await handleStudentPurchaseCallback(
         admin,
         data,

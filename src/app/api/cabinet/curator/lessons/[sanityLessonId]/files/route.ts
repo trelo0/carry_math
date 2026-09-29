@@ -37,7 +37,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     const buffer = Buffer.from(await file.arrayBuffer());
     await uploadCourseLessonFile(sanityLessonId, field, buffer, file.name);
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -68,7 +68,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   try {
     await setCourseLessonFilePublished(sanityLessonId, field, index, body.published);
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -94,7 +94,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
   try {
     await deleteCourseLessonFile(sanityLessonId, field, index);
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {

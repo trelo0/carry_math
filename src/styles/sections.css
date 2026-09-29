@@ -337,14 +337,6 @@
   grid-template-columns: 1fr;
   padding: 26px 0 26px 48px;
   border-bottom: 1px solid var(--border);
-  opacity: 0;
-  transform: translateY(20px);
-  transition: opacity 0.5s ease, transform 0.5s ease;
-}
-
-.principle-item.visible {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .principle-numeral {
@@ -442,14 +434,6 @@
 .process-step-alt {
   display: flex;
   margin-bottom: 60px;
-  opacity: 0;
-  transform: translateX(-30px);
-  transition: all 0.5s ease;
-}
-
-.process-step-alt.visible {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .step-left {
@@ -801,7 +785,16 @@ button:focus-visible {
 
 /* сплит-hero: HUD как на референсе — текст слева, выбор пути справа */
 .main-page.sub-page {
-  background: #081e45;
+  background: var(--subpage-bg);
+  --ind-panel-bg: rgba(28, 48, 78, 0.62);
+  --ind-section-bg: rgba(24, 42, 72, 0.52);
+  --ind-glass-top: rgba(32, 52, 84, 0.72);
+  --ind-glass-bottom: rgba(21, 36, 60, 0.62);
+  --ind-glass-fill: linear-gradient(180deg, var(--ind-glass-top), var(--ind-glass-bottom));
+  --ind-glass-glow: radial-gradient(ellipse 90% 70% at 50% 0%, rgba(0, 140, 220, 0.1), transparent 68%);
+  --ind-glass-border: rgba(72, 170, 255, 0.42);
+  --ind-glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --ind-glass-shadow: 0 8px 24px rgba(2, 6, 18, 0.28);
 }
 
 .ind-hero {
@@ -810,9 +803,9 @@ button:focus-visible {
   align-items: stretch;
   padding: calc(var(--header-h) + 48px) 0 clamp(36px, 5vw, 56px);
   background:
-    radial-gradient(900px 520px at 18% 22%, rgba(0, 120, 220, 0.1), transparent 68%),
-    radial-gradient(760px 420px at 82% 68%, rgba(255, 120, 30, 0.07), transparent 72%),
-    #081e45;
+    radial-gradient(900px 520px at 18% 22%, rgba(0, 168, 255, 0.16), transparent 68%),
+    radial-gradient(760px 420px at 82% 68%, rgba(255, 154, 46, 0.1), transparent 72%),
+    var(--subpage-bg-soft);
 }
 
 .ind-hero .hero-content {
@@ -924,19 +917,15 @@ button:focus-visible {
 }
 
 .ind-hero-panel-shell {
-  --ind-panel-bg: rgba(8, 22, 54, 0.82);
   position: relative;
   width: 100%;
   padding: 18px 18px 16px;
-  border: 1px solid rgba(72, 170, 255, 0.52);
+  border: 1px solid var(--ind-glass-border);
   border-radius: 10px;
-  background:
-    radial-gradient(110% 70% at 50% 0%, rgba(0, 120, 220, 0.12), transparent 55%),
-    var(--ind-panel-bg);
-  box-shadow:
-    0 0 10px rgba(0, 168, 255, 0.28),
-    0 0 22px rgba(0, 140, 220, 0.14),
-    inset 0 0 24px rgba(0, 40, 90, 0.14);
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
 }
 
 .ind-hero-panel-mark {
@@ -1160,23 +1149,15 @@ button:focus-visible {
 }
 
 .ind-teacher .teacher-hud {
-  --hud-cut: 14px;
   --teacher-photo-w: clamp(220px, 38%, 280px);
   position: relative;
   grid-template-columns: minmax(0, 1fr) var(--teacher-photo-w);
   align-items: stretch;
   gap: 0;
   padding: 0;
-  border: none;
+  border: 1px solid var(--ind-glass-border);
+  border-radius: 16px;
   background: transparent;
-  clip-path: polygon(
-    var(--hud-cut) 0,
-    100% 0,
-    100% calc(100% - var(--hud-cut)),
-    calc(100% - var(--hud-cut)) 100%,
-    0 100%,
-    0 var(--hud-cut)
-  );
   overflow: hidden;
   isolation: isolate;
 }
@@ -1185,72 +1166,51 @@ button:focus-visible {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: linear-gradient(180deg, rgba(10, 24, 52, 0.88), rgba(8, 18, 42, 0.92));
-  clip-path: polygon(
-    var(--hud-cut) 0,
-    100% 0,
-    100% calc(100% - var(--hud-cut)),
-    calc(100% - var(--hud-cut)) 100%,
-    0 100%,
-    0 var(--hud-cut)
-  );
-  box-shadow: 0 0 0 1px rgba(72, 170, 255, 0.72);
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
 }
 
 .ind-teacher .teacher-hud__fill::after {
   content: "";
   position: absolute;
-  top: var(--hud-cut);
+  top: 14px;
   left: 0;
-  bottom: 0;
+  bottom: 14px;
   width: 2px;
-  background: linear-gradient(180deg, rgba(255, 154, 46, 0.95), rgba(255, 154, 46, 0.45) 88%, transparent);
-  box-shadow: 0 0 8px rgba(255, 154, 46, 0.35);
+  background: linear-gradient(180deg, rgba(255, 154, 46, 0.85), rgba(255, 154, 46, 0.35) 88%, transparent);
+  box-shadow: 0 0 8px rgba(255, 154, 46, 0.25);
 }
 
 .ind-teacher .teacher-hud-corner {
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   pointer-events: none;
   z-index: 5;
 }
 
 .ind-teacher .teacher-hud-corner--tl {
-  top: 0;
-  left: 0;
-  border-top: 1px solid rgba(72, 170, 255, 0.92);
-  border-left: 1px solid rgba(255, 154, 46, 0.92);
-  box-shadow: -1px 0 6px rgba(255, 154, 46, 0.25);
+  top: 10px;
+  left: 10px;
+  border-top: 2px solid rgba(0, 210, 255, 0.78);
+  border-left: 2px solid rgba(255, 154, 46, 0.72);
 }
 
 .ind-teacher .teacher-hud-corner--tl::before {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 10px;
-  height: 10px;
-  border-top: 1px solid rgba(255, 154, 46, 0.78);
-  border-left: 1px solid rgba(255, 154, 46, 0.78);
+  content: none;
 }
 
 .ind-teacher .teacher-hud-corner--br {
-  right: 0;
-  bottom: 0;
-  border-right: 1px solid rgba(72, 170, 255, 0.92);
-  border-bottom: 1px solid rgba(72, 170, 255, 0.92);
+  right: 10px;
+  bottom: 10px;
+  border-right: 2px solid rgba(0, 210, 255, 0.78);
+  border-bottom: 2px solid rgba(255, 154, 46, 0.72);
 }
 
 .ind-teacher .teacher-hud-corner--br::before {
-  content: "";
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 10px;
-  height: 10px;
-  border-right: 1px solid rgba(255, 154, 46, 0.78);
-  border-bottom: 1px solid rgba(255, 154, 46, 0.78);
+  content: none;
 }
 
 .ind-teacher .teacher-hud-body {
@@ -1343,12 +1303,11 @@ button:focus-visible {
 
 .ind-teacher .teacher-hud:hover {
   transform: translateY(-2px);
-  box-shadow: none;
-  border-color: transparent;
+  border-color: rgba(110, 200, 255, 0.72);
 }
 
 .ind-teacher .teacher-hud:hover .teacher-hud__fill {
-  box-shadow: 0 0 0 1px rgba(110, 200, 255, 0.86);
+  box-shadow: var(--ind-glass-inset), 0 10px 28px rgba(2, 6, 18, 0.32);
 }
 
 .ind-teacher .teacher-hud:hover .teacher-hud-photo img {
@@ -1372,7 +1331,8 @@ button:focus-visible {
     min-height: 0;
     max-height: none;
     aspect-ratio: auto;
-    padding: 8px 44px 0 0;
+    padding: 12px 16px 0;
+    margin: 0 auto;
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -1383,8 +1343,9 @@ button:focus-visible {
     inset: auto;
     width: auto;
     height: auto;
-    max-width: 100%;
+    max-width: min(100%, 320px);
     max-height: 100%;
+    margin: 0 auto;
     object-fit: contain;
     object-position: bottom center;
   }
@@ -1404,6 +1365,36 @@ button:focus-visible {
     bottom: auto;
     right: 12px;
   }
+}
+
+/* /individual — тёмные карточки записи в стиле полупрозрачного стекла главной */
+.main-page.sub-page .booking-format-card,
+.main-page.sub-page .booking-format-card--solo,
+.main-page.sub-page .booking-format-card--group {
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: var(--ind-glass-border);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
+}
+
+.main-page.sub-page .booking-group-option,
+.main-page.sub-page .booking-stage-note,
+.main-page.sub-page .booking-stage-note--solo,
+.main-page.sub-page .booking-stage-note--group {
+  background: var(--ind-glass-fill);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.main-page.sub-page .booking-offer-icon,
+.main-page.sub-page .booking-group-icon,
+.main-page.sub-page .booking-trial-mark {
+  background: rgba(28, 48, 78, 0.55);
+}
+
+.main-page.sub-page .booking-trial-panel {
+  background: var(--ind-glass-glow), rgba(24, 42, 72, 0.45);
 }
 
 .ind-reviews {
@@ -1458,7 +1449,10 @@ button:focus-visible {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: linear-gradient(180deg, rgba(10, 24, 52, 0.88), rgba(6, 14, 36, 0.94));
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
   clip-path: polygon(
     12px 0,
     100% 0,
@@ -1917,7 +1911,10 @@ button:focus-visible {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background: linear-gradient(180deg, rgba(10, 24, 52, 0.94), rgba(6, 14, 36, 0.98));
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
   clip-path: polygon(
     var(--ind-process-chamfer) 0,
     100% 0,
@@ -1925,6 +1922,18 @@ button:focus-visible {
     calc(100% - var(--ind-process-chamfer)) 100%,
     0 100%,
     0 var(--ind-process-chamfer)
+  );
+}
+
+/* Правые карточки: скосы зеркально (под перевернутую SVG-рамку) */
+.ind-process-card--right .ind-process-card__fill {
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--ind-process-chamfer)) 0,
+    100% var(--ind-process-chamfer),
+    100% 100%,
+    var(--ind-process-chamfer) 100%,
+    0 calc(100% - var(--ind-process-chamfer))
   );
 }
 
@@ -3718,7 +3727,9 @@ button:focus-visible {
   align-items: flex-start;
   height: 100%;
   padding: clamp(22px, 3vw, 34px) clamp(20px, 3vw, 34px);
-  background: rgba(13, 21, 38, 0.78);
+  background: var(--ind-glass-glow), var(--ind-glass-fill);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .vs-side--solo {
@@ -4319,16 +4330,16 @@ button:focus-visible {
 
 /* ===== Reference-inspired booking cards ===== */
 .ind-signup[data-format='solo'] .format-tab--active {
-  color: #0a0e1a;
+  color: #1a1208;
   border-color: var(--gold);
-  background: linear-gradient(100deg, #ff9f17, var(--gold));
-  box-shadow: 0 0 28px rgba(232, 149, 44, 0.34);
+  background: linear-gradient(180deg, var(--gold-hover), var(--gold));
+  box-shadow: 0 0 28px rgba(255, 154, 46, 0.45);
 }
 .ind-signup[data-format='group'] .format-tab--active {
   color: #041628;
-  border-color: rgba(0, 140, 220, 0.88);
-  background: linear-gradient(100deg, #4db5ff, #1a85d4);
-  box-shadow: 0 0 24px rgba(0, 140, 220, 0.36);
+  border-color: rgba(0, 168, 255, 0.92);
+  background: linear-gradient(180deg, #6ecfff, #1a85d4);
+  box-shadow: 0 0 24px rgba(0, 140, 220, 0.42);
 }
 .booking-stage {
   display: grid;
@@ -4718,25 +4729,45 @@ button:focus-visible {
   overflow: visible;
 }
 .ind-signup .format-tab {
-  min-height: 0;
-  padding: 13px 30px;
+  min-height: 52px;
+  padding: 14px 28px;
   color: var(--text-secondary);
   border: 1.5px solid rgba(0, 168, 255, 0.45);
   border-radius: 12px;
-  background: rgba(13, 21, 38, 0.6);
+  background: rgba(28, 48, 78, 0.58);
   box-shadow: none;
   font-size: 14px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.09em;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease,
+    filter 0.2s ease;
 }
 .ind-signup .format-tab + .format-tab { border-left: 1.5px solid rgba(0, 168, 255, 0.45); }
 .ind-signup .format-tab::before { content: none; display: none; }
+.ind-signup .format-tab:hover:not(.format-tab--active) {
+  color: var(--text-primary);
+  border-color: rgba(0, 168, 255, 0.72);
+  background: rgba(36, 58, 96, 0.78);
+  box-shadow: 0 4px 16px rgba(2, 6, 18, 0.22);
+  transform: translateY(-2px);
+}
+.ind-signup[data-format='group'] .format-tab--active:hover {
+  color: #041628;
+}
 .ind-signup .format-tab--active {
-  color: #0a0e1a;
+  color: #1a1208;
   border-color: var(--gold);
   background: linear-gradient(180deg, var(--gold-hover), var(--gold));
-  box-shadow: 0 0 26px rgba(232, 149, 44, 0.4);
+  box-shadow: 0 0 28px rgba(255, 154, 46, 0.45);
 }
-.ind-signup .format-tab--active:hover { color: #0a0e1a; }
+.ind-signup .format-tab--active:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
 /* Fixed price column: prevents long text or a missing CMS field from covering the service copy. */
 .booking-main-column .booking-offer {
   grid-template-columns: 72px minmax(250px, 1fr) 160px;
@@ -5609,10 +5640,10 @@ button:focus-visible {
 /* ===== Booking: remove solo amber background ===== */
 /* Remove the broad amber fill entirely. Only the existing narrow card rail remains as a structural accent. */
 .booking-format-card--solo {
-  background: linear-gradient(103deg, #091a31 0%, #07162a 64%, #061427 100%) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.025),
-    0 9px 20px rgba(0, 0, 0, 0.13) !important;
+  background: var(--ind-glass-glow), var(--ind-glass-fill) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow) !important;
 }
 
 
@@ -5699,20 +5730,6 @@ button:focus-visible {
 }
 
 
-/* ===== Individual page: staged scroll reveal and mobile guardrails ===== */
-/* Inner elements enter only after their section reaches the viewport. The effect is scoped to markup used by /individual. */
-.main-page.sub-page [data-scroll-reveal]:not(.scroll-revealed) {
-  opacity: 0;
-  transform: translate3d(0, 22px, 0);
-  will-change: opacity, transform;
-}
-.main-page.sub-page [data-scroll-reveal][data-reveal-direction="left"]:not(.scroll-revealed) {
-  transform: translate3d(-22px, 0, 0);
-}
-.main-page.sub-page [data-scroll-reveal][data-reveal-direction="right"]:not(.scroll-revealed) {
-  transform: translate3d(22px, 0, 0);
-}
-
 /* Extra guardrails keep long CMS values contained on narrow screens without changing the format switcher. */
 @media (max-width: 640px) {
   #signup.ind-signup .booking-offer-copy,
@@ -5725,11 +5742,177 @@ button:focus-visible {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .main-page.sub-page [data-scroll-reveal],
-  .main-page.sub-page [data-scroll-reveal]:not(.scroll-revealed) {
-    opacity: 1;
-    transform: none;
-    will-change: auto;
+/* ===== /individual signup: табы и карточки рейда — финальный стиль ===== */
+.main-page.sub-page .ind-signup .format-tabs {
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.main-page.sub-page .ind-signup .format-tab {
+  flex: 1 1 auto;
+  min-width: min(100%, 280px);
+  min-height: 52px;
+  padding: 14px 28px;
+  color: rgba(196, 210, 230, 0.92);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-align: center;
+  background: rgba(28, 48, 78, 0.58);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(72, 170, 255, 0.42);
+  border-radius: 12px;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease,
+    filter 0.2s ease;
+}
+
+.main-page.sub-page .ind-signup .format-tab + .format-tab {
+  border-left: 1.5px solid rgba(72, 170, 255, 0.42);
+}
+
+.main-page.sub-page .ind-signup .format-tab:hover:not(.format-tab--active) {
+  color: var(--text-primary);
+  border-color: rgba(0, 168, 255, 0.72);
+  background: rgba(36, 58, 96, 0.78);
+  box-shadow: 0 4px 16px rgba(2, 6, 18, 0.22);
+  transform: translateY(-2px);
+}
+
+.main-page.sub-page .ind-signup[data-format='solo'] .format-tab.format-tab--active {
+  color: #1a1208;
+  border-color: var(--gold);
+  background: linear-gradient(180deg, var(--gold-hover), var(--gold));
+  box-shadow: 0 0 28px rgba(255, 154, 46, 0.48);
+}
+
+.main-page.sub-page .ind-signup[data-format='group'] .format-tab.format-tab--active {
+  color: #041628;
+  border-color: rgba(0, 168, 255, 0.92);
+  background: linear-gradient(180deg, #6ecfff, #1a85d4);
+  box-shadow: 0 0 24px rgba(0, 140, 220, 0.44);
+}
+
+.main-page.sub-page .ind-signup .format-tab.format-tab--active:hover {
+  filter: brightness(1.06);
+  transform: translateY(-2px);
+}
+
+.main-page.sub-page .ind-signup .booking-format-card--solo,
+.main-page.sub-page .ind-signup .booking-format-card--group {
+  background:
+    radial-gradient(ellipse 85% 120% at 0% 42%, rgba(255, 154, 46, 0.11), transparent 54%),
+    var(--ind-glass-glow),
+    var(--ind-glass-fill) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: var(--ind-glass-border) !important;
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-format-card--group {
+  background:
+    radial-gradient(ellipse 85% 120% at 0% 42%, rgba(0, 168, 255, 0.1), transparent 54%),
+    var(--ind-glass-glow),
+    var(--ind-glass-fill) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-format-card--solo:hover,
+.main-page.sub-page .ind-signup .booking-format-card--solo:focus-within {
+  border-color: rgba(255, 154, 46, 0.52) !important;
+  box-shadow: var(--ind-glass-inset), 0 12px 28px rgba(2, 6, 18, 0.28) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-format-card--group:hover,
+.main-page.sub-page .ind-signup .booking-format-card--group:focus-within {
+  border-color: rgba(0, 168, 255, 0.48) !important;
+  box-shadow: var(--ind-glass-inset), 0 12px 28px rgba(2, 6, 18, 0.28) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-card-header {
+  border-bottom-color: rgba(148, 190, 255, 0.12);
+}
+
+.main-page.sub-page .ind-signup .booking-trial-panel {
+  background: rgba(24, 42, 72, 0.38) !important;
+  border-left-color: rgba(148, 190, 255, 0.18);
+}
+
+/* Постоянные панели под карточками записи — стекло как на главной */
+.main-page.sub-page .ind-signup .booking-trial-guide {
+  border: 1px solid var(--ind-glass-border) !important;
+  border-radius: 12px;
+  background:
+    radial-gradient(ellipse 80% 120% at 0% 40%, rgba(0, 168, 255, 0.1), transparent 55%),
+    var(--ind-glass-glow),
+    var(--ind-glass-fill) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-trial-guide-icon {
+  background: rgba(28, 48, 78, 0.55);
+  border-color: rgba(72, 170, 255, 0.55);
+}
+
+.main-page.sub-page .ind-signup .booking-benefits {
+  border: 1px solid var(--ind-glass-border) !important;
+  border-radius: 12px;
+  background:
+    var(--ind-glass-glow),
+    var(--ind-glass-fill) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow) !important;
+  overflow: hidden;
+}
+
+.main-page.sub-page .ind-signup .booking-benefit + .booking-benefit {
+  border-left-color: rgba(148, 190, 255, 0.14);
+}
+
+.main-page.sub-page .ind-signup .booking-trial-guide:hover {
+  border-color: rgba(0, 168, 255, 0.58) !important;
+  box-shadow: var(--ind-glass-inset), 0 10px 26px rgba(2, 6, 18, 0.26) !important;
+}
+
+.main-page.sub-page .ind-signup .booking-benefit:hover {
+  background: rgba(36, 58, 96, 0.35) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+@media (max-width: 640px) {
+  .main-page.sub-page .ind-signup .format-tabs {
+    gap: 10px;
+    padding: 0 4px;
+  }
+
+  .main-page.sub-page .ind-signup .format-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;
+    padding: 13px 12px;
+    font-size: 12px;
+    letter-spacing: 0.055em;
+    line-height: 1.3;
+  }
+
+  .main-page.sub-page .ind-signup .booking-benefit + .booking-benefit {
+    border-top-color: rgba(148, 190, 255, 0.14);
   }
 }
+

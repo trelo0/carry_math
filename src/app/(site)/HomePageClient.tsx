@@ -1,17 +1,17 @@
 "use client";
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useState } from 'react';
 import Link from 'next/link';
 import DiagnosticSection from '@/components/ui/DiagnosticSection';
 import IndProcessCardFrame from '@/components/ui/IndProcessCardFrame';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import { useForm } from '@/contexts/FormContext';
-import { Principle, ProcessStep, Stat, Teacher } from '@/data/types';
+import { Principle, ProcessStep, Stat } from '@/data/types';
 import { SiteSettings } from '@/lib/studio/sanityData';
 import type { IndividualPageContent, FormatColumn } from '@/data/individualPageContent';
 import { INDIVIDUAL_PAGE_DEFAULTS } from '@/data/individualPageContent';
 import { pickArr, pickStr } from '@/data/mainPageContent';
-import { urlFor } from '@/lib/studio/sanityImage';
+import type { TeacherWithPhoto } from '@/lib/studio/teacherPhotos';
 
 type Format = 'solo' | 'group';
 type VsFocus = 'solo' | 'group' | null;
@@ -169,7 +169,7 @@ export default function HomePageClient({
   siteSettings,
 }: {
   content: IndividualPageContent | null;
-  teachers: Teacher[];
+  teachers: TeacherWithPhoto[];
   stats: Stat[];
   principles: Principle[];
   processSteps: ProcessStep[];
@@ -182,72 +182,6 @@ export default function HomePageClient({
     if (next !== format) setFormat(next);
   };
   const [vsFocus, setVsFocus] = useState<VsFocus>(null);
-
-  useEffect(() => {
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    const targets = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        '[data-reveal], [data-scroll-reveal], .principle-item, .process-step-alt',
-      ),
-    );
-    if (targets.length === 0) return;
-
-    const revealTarget = (target: HTMLElement, animate: boolean) => {
-      const isStagedReveal = target.hasAttribute('data-scroll-reveal');
-      const wasAnimated = target.dataset.scrollRevealPlayed === 'true';
-
-      target.classList.add('revealed');
-      target.classList.add('visible');
-      if (isStagedReveal) target.classList.add('scroll-revealed');
-
-      if (!animate || !isStagedReveal || wasAnimated || typeof target.animate !== 'function') {
-        return;
-      }
-
-      target.dataset.scrollRevealPlayed = 'true';
-      const direction = target.dataset.revealDirection;
-      const origin =
-        direction === 'left'
-          ? 'translate3d(-22px, 0, 0)'
-          : direction === 'right'
-            ? 'translate3d(22px, 0, 0)'
-            : 'translate3d(0, 22px, 0)';
-      const order = Number.parseInt(target.dataset.revealDelay || '0', 10);
-      const delay = Number.isFinite(order) ? Math.max(0, order) * 80 : 0;
-
-      target.animate(
-        [
-          { opacity: 0, transform: origin },
-          { opacity: 1, transform: 'translate3d(0, 0, 0)' },
-        ],
-        {
-          duration: 620,
-          delay,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        },
-      );
-    };
-
-    if (reduceMotion) {
-      targets.forEach((target) => revealTarget(target, false));
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries, currentObserver) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            revealTarget(entry.target as HTMLElement, true);
-            currentObserver.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.12, rootMargin: '0px 0px -6% 0px' },
-    );
-
-    targets.forEach((target) => observer.observe(target));
-    return () => observer.disconnect();
-  }, [format]);
 
   // Контент из Sanity с дефолтами: пустой блок/поле = статический текст.
   const D = INDIVIDUAL_PAGE_DEFAULTS;
@@ -326,7 +260,7 @@ export default function HomePageClient({
   const heroTitleLast = heroTitleWords[heroTitleWords.length - 1];
   const heroTitleRest = heroTitleWords.slice(0, -1).join(' ');
 
-  const getServicesForFormat = (teacher: Teacher, matcher: RegExp) => {
+  const getServicesForFormat = (teacher: TeacherWithPhoto, matcher: RegExp) => {
     const services = Array.isArray(teacher.services) ? teacher.services : [];
     const matched = services.filter((service) => matcher.test(String(service.name || '')));
     return matched.length > 0 ? matched : services;
@@ -500,9 +434,9 @@ export default function HomePageClient({
                     </div>
 
                     <div className="teacher-hud-photo">
-                      {teacher.photo ? (
+                      {teacher.photoUrl ? (
                         <img
-                          src={urlFor(teacher.photo).width(560).height(740).url()}
+                          src={teacher.photoUrl}
                           alt={`${teacher.name} — наставник по математике`}
                         />
                       ) : null}

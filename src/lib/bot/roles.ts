@@ -96,6 +96,145 @@ export function isBotRole(value: string): value is BotRole {
   return (BOT_ROLES as string[]).includes(value);
 }
 
+/** mentor в БД = curator в логике приложения. */
+export function normalizeMemberRole(role: string): BotRole {
+  if (role === 'mentor') return 'curator';
+  return isBotRole(role) ? role : 'guest';
+}
+
+export function combineMemberRoles(primaryRole: string, extraRoles: string[] | null | undefined): BotRole[] {
+  const roles = new Set<BotRole>();
+  roles.add(normalizeMemberRole(primaryRole));
+  for (const raw of extraRoles ?? []) {
+    if (raw) roles.add(normalizeMemberRole(raw));
+  }
+  return [...roles];
+}
+
+export function memberHasRole(roles: BotRole[], role: BotRole): boolean {
+  const target = role === 'mentor' ? 'curator' : role;
+  return roles.some((r) => (r === 'mentor' ? 'curator' : r) === target);
+}
+
+/** Только куратор без других рабочих ролей (legacy). */
+export function isCuratorOnlyMember(roles: BotRole[]): boolean {
+  return (
+    memberHasRole(roles, 'curator') &&
+    !memberHasRole(roles, 'teacher') &&
+    !memberHasRole(roles, 'student')
+  );
+}
+
+/** Staff (куратор / препод / admin) без роли ученика → /cabinet/staff. */
+export function isStaffOnlyMember(roles: BotRole[]): boolean {
+  const isStaff =
+    memberHasRole(roles, 'curator') ||
+    memberHasRole(roles, 'teacher') ||
+    memberHasRole(roles, 'admin');
+  return isStaff && !memberHasRole(roles, 'student');
+}
+
+export function memberCanAccessStaffCabinet(roles: BotRole[], telegramId: number): boolean {
+  return (
+    memberHasRole(roles, 'curator') ||
+    memberHasRole(roles, 'teacher') ||
+    memberHasRole(roles, 'admin') ||
+    isCreatorTelegramId(telegramId)
+  );
+}
+
+/** Создатель или admin — полный preview куратора и преподавателя в staff. */
+export function hasFullStaffPreview(roles: BotRole[], telegramId: number): boolean {
+  return isCreatorTelegramId(telegramId) || memberHasRole(roles, 'admin');
+}
+
+/** API преподавателя: teacher или admin/создатель в preview. */
+export function canManageTeacherCabinet(roles: BotRole[], telegramId: number): boolean {
+  return memberHasRole(roles, 'teacher') || hasFullStaffPreview(roles, telegramId);
+}
+
+export async function loadMemberRoles(admin: SupabaseClient, telegramId: number): Promise<BotRole[]> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('role, extra_roles')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return ['guest'];
+  const extra = Array.isArray(data.extra_roles) ? (data.extra_roles as string[]) : [];
+  return combineMemberRoles(String(data.role ?? 'guest'), extra);
+}
+
+function uniqueExtraRoles(roles: BotRole[]): BotRole[] {
+  const seen = new Set<BotRole>();
+  const out: BotRole[] = [];
+  for (const role of roles) {
+    const normalized = normalizeMemberRole(role);
+    if (normalized === 'mentor' || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+export async function setMemberExtraRoles(
+  admin: SupabaseClient,
+  telegramId: number,
+  extraRoles: BotRole[],
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .update({ extra_roles: uniqueExtraRoles(extraRoles), updated_at: new Date().toISOString() })
+    .eq('telegram_id', telegramId)
+    .select('telegram_id');
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+export async function addMemberExtraRole(
+  admin: SupabaseClient,
+  telegramId: number,
+  role: BotRole,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('role, extra_roles')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+
+  const primary = normalizeMemberRole(String(data.role ?? 'guest'));
+  const normalized = normalizeMemberRole(role);
+  if (normalized === primary) return true;
+
+  const current = Array.isArray(data.extra_roles) ? (data.extra_roles as string[]) : [];
+  const combined = uniqueExtraRoles([...combineMemberRoles(primary, current), normalized].filter((r) => r !== primary));
+  return setMemberExtraRoles(admin, telegramId, combined);
+}
+
+export async function removeMemberExtraRole(
+  admin: SupabaseClient,
+  telegramId: number,
+  role: BotRole,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('role, extra_roles')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+
+  const target = normalizeMemberRole(role);
+  const primary = normalizeMemberRole(String(data.role ?? 'guest'));
+  const current = Array.isArray(data.extra_roles) ? (data.extra_roles as string[]) : [];
+  const next = uniqueExtraRoles(
+    combineMemberRoles(primary, current).filter((r) => r !== target && r !== primary),
+  );
+  return setMemberExtraRoles(admin, telegramId, next);
+}
+
 // Регистрирует участника при первом контакте с ботом.
 // Существующую роль не трогает, а доступные данные Telegram обновляет.
 

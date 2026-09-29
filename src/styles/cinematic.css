@@ -15,45 +15,31 @@
   background: radial-gradient(
     ellipse 118% 92% at 50% 42%,
     transparent 56%,
-    rgba(3, 6, 14, 0.26) 82%,
-    rgba(2, 4, 10, 0.48) 100%
+    rgba(3, 6, 14, 0.14) 82%,
+    rgba(2, 4, 10, 0.28) 100%
   );
 }
 
-/* ---------- Reveal секций: длинная кино-кривая + расфокус ---------- */
-
-section[data-reveal] {
-  transition:
-    opacity 1.05s var(--ease-cine),
-    transform 1.05s var(--ease-cine),
-    filter 1.05s var(--ease-cine);
-  filter: blur(12px);
-}
-
-section[data-reveal].revealed {
-  filter: blur(0);
-}
-
-/* ---------- Ступенчатый вход hero (при загрузке страницы) ---------- */
+/* ---------- Ступенчатый вход hero (короткий, без blur) ---------- */
 
 .main-page .hero-eyebrow {
-  animation: cine-rise 0.9s var(--ease-cine) 0.05s backwards;
+  animation: cine-rise 0.45s var(--ease-cine) 0.02s backwards;
 }
 
 .main-page .hero-brand {
-  animation: cine-rise 1s var(--ease-cine) 0.18s backwards;
+  animation: cine-rise 0.45s var(--ease-cine) 0.08s backwards;
 }
 
 .main-page .hero-headline {
-  animation: cine-rise 1.05s var(--ease-cine) 0.32s backwards;
+  animation: cine-rise 0.45s var(--ease-cine) 0.14s backwards;
 }
 
 .main-page .main-hero-actions {
-  animation: cine-rise 1s var(--ease-cine) 0.5s backwards;
+  animation: cine-rise 0.45s var(--ease-cine) 0.2s backwards;
 }
 
 .main-page .hero-signup {
-  animation: cine-rise 1s var(--ease-cine) 0.62s backwards;
+  animation: cine-rise 0.45s var(--ease-cine) 0.26s backwards;
 }
 
 .main-page .hero-coords,
@@ -61,19 +47,17 @@ section[data-reveal].revealed {
 .main-page .hero-hud-rail,
 .main-page .hero-title-frame,
 .main-page .hero-signup-wrap {
-  animation: cine-fade 1.4s ease 0.9s backwards;
+  animation: cine-fade 0.5s ease 0.2s backwards;
 }
 
 @keyframes cine-rise {
   from {
     opacity: 0;
-    transform: translateY(30px);
-    filter: blur(10px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 

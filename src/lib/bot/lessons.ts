@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { assertLessonCreditAvailable } from './lesson-credits';
 
 export type ScheduledLessonStatus = 'scheduled' | 'completed' | 'cancelled' | 'no_show';
 
@@ -15,39 +16,45 @@ export async function completeScheduledLesson(
     .maybeSingle();
   if (loadError) throw loadError;
   if (!lesson) throw new Error(`Занятие ${lessonId} не найдено.`);
-  if (lesson.status === 'completed' && lesson.consumed_at) {
-    return { consumed: false };
-  }
-
   const now = new Date().toISOString();
-  const shouldConsume = lesson.status !== 'cancelled';
 
-  const { error: updateError } = await admin
+  const { data: updated, error: updateError } = await admin
     .from('scheduled_lessons')
     .update({
       status: 'completed',
       completed_at: now,
       completed_by: completedByTelegramId,
-      consumed_at: shouldConsume && !lesson.consumed_at ? now : lesson.consumed_at,
+      consumed_at: now,
       updated_at: now,
     })
-    .eq('id', lessonId);
+    .eq('id', lessonId)
+    .eq('status', 'scheduled')
+    .is('consumed_at', null)
+    .select('id, package_id')
+    .maybeSingle();
   if (updateError) throw updateError;
-
-  if (!shouldConsume || !lesson.package_id || lesson.consumed_at) {
+  if (!updated?.package_id) {
     return { consumed: false };
   }
 
-  const packageId = lesson.package_id as number;
+  const packageId = updated.package_id as number;
+  const { count, error: countError } = await admin
+    .from('scheduled_lessons')
+    .select('id', { count: 'exact', head: true })
+    .eq('package_id', packageId)
+    .not('consumed_at', 'is', null);
+  if (countError) throw countError;
+
   const { data: pkg, error: pkgError } = await admin
     .from('lesson_packages')
-    .select('id, total_lessons, used_lessons, remaining_lessons, status')
+    .select('id, total_lessons, status')
     .eq('id', packageId)
     .single();
   if (pkgError) throw pkgError;
 
-  const used = (pkg.used_lessons as number) + 1;
-  const remaining = Math.max(0, (pkg.total_lessons as number) - used);
+  const used = count ?? 0;
+  const total = pkg.total_lessons as number;
+  const remaining = Math.max(0, total - used);
   const { error: pkgUpdateError } = await admin
     .from('lesson_packages')
     .update({
@@ -126,15 +133,7 @@ export async function scheduleLesson(
     meetUrl?: string;
   },
 ): Promise<number> {
-  const { data: pkg, error: pkgError } = await admin
-    .from('lesson_packages')
-    .select('id, remaining_lessons, status')
-    .eq('id', params.packageId)
-    .single();
-  if (pkgError) throw pkgError;
-  if (pkg.status !== 'active' || (pkg.remaining_lessons as number) <= 0) {
-    throw new Error('В пакете не осталось занятий для назначения.');
-  }
+  await assertLessonCreditAvailable(admin, params.telegramId, params.kind, params.packageId);
 
   const { data, error } = await admin
     .from('scheduled_lessons')

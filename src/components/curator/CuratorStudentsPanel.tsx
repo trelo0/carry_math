@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import type { CuratorStudentView } from '@/lib/curator/students';
+import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
+import { runWithKeyedFeedback } from '@/lib/staff/action-feedback';
+import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import { hwStatusLabel } from './curator-utils';
-
-type RunAction = (action: () => Promise<string | void>, successText?: string) => Promise<void>;
 
 export default function CuratorStudentsPanel({
   students,
@@ -13,11 +14,12 @@ export default function CuratorStudentsPanel({
 }: {
   students: CuratorStudentView[];
   busy: boolean;
-  runAction: RunAction;
+  runAction: StaffRunAction;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [messageDraft, setMessageDraft] = useState('');
   const [messageTarget, setMessageTarget] = useState<number | null>(null);
+  const [feedbacks, setFeedbacks] = useState<Record<string, ActionFeedback>>({});
 
   if (students.length === 0) {
     return (
@@ -43,6 +45,8 @@ export default function CuratorStudentsPanel({
           const reviewCount = student.homeworks.filter((hw) => hw.status === 'submitted').length;
           const debtCount = student.homeworks.filter((hw) => hw.status === 'waiting').length;
           const visibleHomeworks = student.homeworks.filter((hw) => hw.status !== 'upcoming');
+          const lifeKey = `${student.id}-life`;
+          const messageKey = `${student.id}-message`;
 
           return (
             <li key={student.id} className={`curator-student-card${expanded ? ' is-open' : ''}`}>
@@ -88,21 +92,28 @@ export default function CuratorStudentsPanel({
                       className="curator-btn curator-btn-ghost"
                       disabled={busy || (student.livesCurrent ?? 0) >= (student.livesMax ?? 3)}
                       onClick={() =>
-                        void runAction(async () => {
-                          const res = await fetch(
-                            `/api/cabinet/curator/students/${student.telegramId}/restore-life`,
-                            { method: 'POST' },
-                          );
-                          if (!res.ok) {
-                            const body = (await res.json()) as { error?: string };
-                            throw new Error(body.error ?? 'Не удалось восстановить');
-                          }
-                        }, 'Жизнь восстановлена')
+                        void runWithKeyedFeedback(
+                          runAction,
+                          setFeedbacks,
+                          lifeKey,
+                          async () => {
+                            const res = await fetch(
+                              `/api/cabinet/curator/students/${student.telegramId}/restore-life`,
+                              { method: 'POST' },
+                            );
+                            if (!res.ok) {
+                              const body = (await res.json()) as { error?: string };
+                              throw new Error(body.error ?? 'Не удалось восстановить');
+                            }
+                          },
+                          'Жизнь восстановлена',
+                        )
                       }
                     >
                       +1 жизнь
                     </button>
                   </div>
+                  <CabinetFeedback feedback={feedbacks[lifeKey]} />
 
                   {messageTarget === student.telegramId ? (
                     <div className="curator-message-box">
@@ -118,22 +129,28 @@ export default function CuratorStudentsPanel({
                           className="curator-btn"
                           disabled={busy || !messageDraft.trim()}
                           onClick={() =>
-                            void runAction(async () => {
-                              const res = await fetch(
-                                `/api/cabinet/curator/students/${student.telegramId}/message`,
-                                {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ text: messageDraft.trim() }),
-                                },
-                              );
-                              if (!res.ok) {
-                                const body = (await res.json()) as { error?: string };
-                                throw new Error(body.error ?? 'Не удалось отправить');
-                              }
-                              setMessageTarget(null);
-                              setMessageDraft('');
-                            }, 'Сообщение отправлено')
+                            void runWithKeyedFeedback(
+                              runAction,
+                              setFeedbacks,
+                              messageKey,
+                              async () => {
+                                const res = await fetch(
+                                  `/api/cabinet/curator/students/${student.telegramId}/message`,
+                                  {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ text: messageDraft.trim() }),
+                                  },
+                                );
+                                if (!res.ok) {
+                                  const body = (await res.json()) as { error?: string };
+                                  throw new Error(body.error ?? 'Не удалось отправить');
+                                }
+                                setMessageTarget(null);
+                                setMessageDraft('');
+                              },
+                              'Сообщение отправлено',
+                            )
                           }
                         >
                           Отправить
@@ -146,6 +163,7 @@ export default function CuratorStudentsPanel({
                           Отмена
                         </button>
                       </div>
+                      <CabinetFeedback feedback={feedbacks[messageKey]} />
                     </div>
                   ) : null}
 
@@ -161,38 +179,50 @@ export default function CuratorStudentsPanel({
                     <p className="curator-muted">Пока нет доступных домашних заданий — они появятся после завершения эфиров.</p>
                   ) : null}
                   <ul className="curator-hw-table">
-                    {visibleHomeworks.map((hw) => (
-                      <li key={hw.sanityLessonId}>
-                        <span>№{hw.number}</span>
-                        <span>{hw.title}</span>
-                        <span>{hwStatusLabel(hw.status)}</span>
-                        {hw.status === 'waiting' ? (
-                          <button
-                            type="button"
-                            className="curator-link-btn"
-                            disabled={busy}
-                            onClick={() =>
-                              void runAction(async () => {
-                                const res = await fetch(
-                                  `/api/cabinet/curator/students/${student.telegramId}/deduct-life`,
-                                  {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ sanityLessonId: hw.sanityLessonId }),
-                                  },
-                                );
-                                if (!res.ok) {
-                                  const body = (await res.json()) as { error?: string };
-                                  throw new Error(body.error ?? 'Не удалось снять жизнь');
+                    {visibleHomeworks.map((hw) => {
+                      const hwKey = `${student.id}-hw-${hw.sanityLessonId}`;
+                      return (
+                        <li key={hw.sanityLessonId}>
+                          <span>№{hw.number}</span>
+                          <span>{hw.title}</span>
+                          <span>{hwStatusLabel(hw.status)}</span>
+                          {hw.status === 'waiting' ? (
+                            <span className="curator-hw-action">
+                              <button
+                                type="button"
+                                className="curator-link-btn"
+                                disabled={busy}
+                                onClick={() =>
+                                  void runWithKeyedFeedback(
+                                    runAction,
+                                    setFeedbacks,
+                                    hwKey,
+                                    async () => {
+                                      const res = await fetch(
+                                        `/api/cabinet/curator/students/${student.telegramId}/deduct-life`,
+                                        {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ sanityLessonId: hw.sanityLessonId }),
+                                        },
+                                      );
+                                      if (!res.ok) {
+                                        const body = (await res.json()) as { error?: string };
+                                        throw new Error(body.error ?? 'Не удалось снять жизнь');
+                                      }
+                                    },
+                                    'Жизнь снята',
+                                  )
                                 }
-                              }, 'Жизнь снята')
-                            }
-                          >
-                            Снять жизнь
-                          </button>
-                        ) : null}
-                      </li>
-                    ))}
+                              >
+                                Снять жизнь
+                              </button>
+                              <CabinetFeedback feedback={feedbacks[hwKey]} />
+                            </span>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null}

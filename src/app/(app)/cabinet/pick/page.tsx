@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
-import { isCreatorTelegramId } from '@/lib/bot/roles';
+import { isCreatorTelegramId, loadMemberRoles, memberHasRole } from '@/lib/bot/roles';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
 
@@ -53,7 +53,8 @@ export default async function CabinetPickPage({
   }
 
   const telegramId = link.telegram_id as number;
-  if (!isCreatorTelegramId(telegramId)) {
+  const roles = await loadMemberRoles(admin, telegramId);
+  if (!isCreatorTelegramId(telegramId) && !memberHasRole(roles, 'admin')) {
     redirect('/cabinet');
   }
 
@@ -68,9 +69,9 @@ export default async function CabinetPickPage({
               <strong>Ученик</strong>
               <span>Курс, занятия, оплата</span>
             </Link>
-            <Link href="/cabinet/curator" className="cab-btn cab-btn--join cab-pick-card">
-              <strong>Куратор</strong>
-              <span>Уроки, ученики, домашки</span>
+            <Link href="/cabinet/staff?section=course-overview" className="cab-btn cab-btn--join cab-pick-card">
+              <strong>Staff</strong>
+              <span>Куратор / преподаватель</span>
             </Link>
           </div>
         </section>

@@ -1,12 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import {
+  addMemberExtraRole,
   canManageBotRoles,
   ensureMember,
   isAdminEnv,
   isBotRole,
   isCreatorTelegramId,
   listMembers,
+  removeMemberExtraRole,
   ROLE_LABELS,
   setRole,
   setViewRole,
@@ -100,6 +102,32 @@ export async function handlePrivilegedBotCommands(
 
   const args = text.slice('/role'.length).trim().split(/\s+/).filter(Boolean);
 
+  if (args.length >= 3 && (args[0] === 'add' || args[0] === 'remove') && /^\d+$/.test(args[1]) && isBotRole(args[2])) {
+    const targetId = Number(args[1]);
+    let extraRole = args[2] as BotRole;
+    if (extraRole === 'mentor') extraRole = 'curator';
+    if (extraRole === 'guest' || extraRole === 'admin' || extraRole === 'test') {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: 'Дополнительной ролью может быть student, curator или teacher.',
+      });
+      return true;
+    }
+    const found =
+      args[0] === 'add'
+        ? await addMemberExtraRole(admin, targetId, extraRole)
+        : await removeMemberExtraRole(admin, targetId, extraRole);
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: found
+        ? args[0] === 'add'
+          ? `✅ Доп. роль «${ROLE_LABELS[extraRole]}» добавлена для ${targetId}.`
+          : `✅ Доп. роль «${ROLE_LABELS[extraRole]}» снята с ${targetId}.`
+        : 'Такого участника нет — пусть сначала напишет боту.',
+    });
+    return true;
+  }
+
   if (args.length === 1 && args[0] === 'reset' && isCreatorTelegramId(fromId)) {
     await setRole(admin, fromId, 'admin');
     await setViewRole(admin, fromId, null);
@@ -129,7 +157,7 @@ export async function handlePrivilegedBotCommands(
     const resetHint = isCreatorTelegramId(fromId) ? '\n/role reset — вернуть admin (создатель).' : '';
     await telegramSend('sendMessage', {
       chat_id: chatId,
-      text: `Формат: /role me <роль> или /role <id> <роль>. Роли: ${ASSIGNABLE_ROLE_NAMES.join(', ')}.${resetHint}`,
+      text: `Формат: /role me <роль>, /role <id> <роль>, /role add <id> <роль>, /role remove <id> <роль>. Роли: ${ASSIGNABLE_ROLE_NAMES.join(', ')}.${resetHint}`,
     });
     return true;
   }

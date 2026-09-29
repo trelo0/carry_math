@@ -21,7 +21,7 @@ export default function CuratorSettingsPanel({
         <h2>Профиль</h2>
         <p>{curatorName ?? 'Куратор'}</p>
         <p className="curator-muted">Курс: {courseTitle}</p>
-        <button type="button" className="curator-link" onClick={() => openAuth('/cabinet/curator')}>
+        <button type="button" className="curator-link" onClick={() => openAuth('/cabinet/staff')}>
           Сменить аккаунт
         </button>
       </section>

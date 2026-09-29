@@ -42,7 +42,6 @@ export default function CuratorShell({
   const [section, setSection] = useState<CuratorSection>(initialSection ?? 'dashboard');
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState('');
   const [rejectTarget, setRejectTarget] = useState<CuratorHomeworkQueueItem | null>(null);
 
@@ -54,13 +53,16 @@ export default function CuratorShell({
   const runAction = useCallback(
     async (action: () => Promise<string | void>, successText?: string) => {
       setBusy(true);
-      setMessage(null);
       try {
         const resultText = await action();
         await refresh();
-        setMessage(resultText ?? successText ?? null);
+        const message = resultText ?? successText;
+        return message ? { type: 'success' as const, message } : null;
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : 'Ошибка');
+        return {
+          type: 'error' as const,
+          message: error instanceof Error ? error.message : 'Ошибка',
+        };
       } finally {
         setBusy(false);
       }
@@ -107,9 +109,6 @@ export default function CuratorShell({
       </aside>
 
       <main className="curator-main">
-        {message ? (
-          <div className={`curator-toast${message.includes('Ошиб') ? ' is-error' : ''}`}>{message}</div>
-        ) : null}
         {!data.sanityWriteEnabled ? (
           <div className="curator-warn">
             SANITY_API_WRITE_TOKEN не настроен — редактирование ссылок и файлов в Sanity недоступно.
@@ -147,45 +146,11 @@ export default function CuratorShell({
           <CuratorHomeworkPanel
             board={data.homeworkBoard}
             busy={busy}
+            runAction={runAction}
             rejectTarget={rejectTarget}
             rejectNote={rejectNote}
             onRejectNote={setRejectNote}
             onRejectTarget={setRejectTarget}
-            onApprove={(item) =>
-              runAction(async () => {
-                const res = await fetch('/api/cabinet/curator/homework/approve', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    studentTelegramId: item.studentTelegramId,
-                    lessonNumber: item.number,
-                  }),
-                });
-                if (!res.ok) {
-                  const body = (await res.json()) as { error?: string };
-                  throw new Error(body.error ?? 'Не удалось принять');
-                }
-              }, 'Домашка принята')
-            }
-            onReject={(item) =>
-              runAction(async () => {
-                const res = await fetch('/api/cabinet/curator/homework/reject', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    studentTelegramId: item.studentTelegramId,
-                    lessonNumber: item.number,
-                    note: rejectNote.trim() || undefined,
-                  }),
-                });
-                if (!res.ok) {
-                  const body = (await res.json()) as { error?: string };
-                  throw new Error(body.error ?? 'Не удалось отклонить');
-                }
-                setRejectTarget(null);
-                setRejectNote('');
-              }, 'Домашка отправлена на доработку')
-            }
           />
         ) : null}
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { telegramSend } from '@/lib/telegram';
 
@@ -31,6 +32,8 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId);
+
     const { data: member, error } = await auth.admin
       .from('bot_members')
       .select('chat_id')

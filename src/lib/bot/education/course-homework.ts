@@ -125,7 +125,7 @@ async function assertLessonAccess(
   }
 }
 
-async function assertCuratorAssigned(
+export async function assertCuratorAssigned(
   admin: SupabaseClient,
   curatorTelegramId: number,
   studentTelegramId: number,

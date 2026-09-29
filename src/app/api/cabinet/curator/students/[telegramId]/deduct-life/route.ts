@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       body.sanityLessonId,
     );
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return curatorJsonError(error, 'Failed to deduct life');

@@ -16,7 +16,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Skip static assets, run on everything else so sessions stay fresh
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Обновление сессии Supabase только там, где нужна авторизация.
+    // На маркетинговых страницах (/ , /individual, …) middleware не запускается —
+    // иначе каждый переход ждёт getUser() ~0.8–1.5 с.
+    "/cabinet/:path*",
+    "/auth/:path*",
+    "/login",
+    "/account",
   ],
 };

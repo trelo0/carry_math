@@ -38,6 +38,13 @@ export type ReviewsBlockContent = {
   sectionTitle?: string;
 };
 
+export type MainPageReviewItem = {
+  _id: string;
+  name: string;
+  result: string;
+  text: string;
+};
+
 export type InitStepItem = {
   icon?: string;
   title: string;
@@ -79,6 +86,7 @@ export type MainPageContent = {
   mentor?: MentorBlockContent;
   program?: ProgramBlockContent;
   reviews?: ReviewsBlockContent;
+  reviewItems?: MainPageReviewItem[];
   init?: InitBlockContent;
   faq?: FaqBlockContent;
   faqItems?: FaqItemContent[];
@@ -250,6 +258,7 @@ export const MAIN_PAGE_DEFAULTS = {
     ] as PathColumn[],
     ctaText: 'Узнать больше',
   },
+  reviewItems: [],
 } satisfies Required<MainPageContent>;
 
 // ---------- Хелперы подстановки с дефолтами ----------

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Manrope, Oswald } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "../styles/globals.css";
 import { FormProvider } from "@/contexts/FormContext";
@@ -7,17 +6,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { buildSiteMetadata } from "@/lib/siteMetadata";
 import { getBaseUrlString } from "@/lib/siteUrl";
 import { normalizeBrandName } from "@/lib/brand";
-
-const manrope = Manrope({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const oswald = Oswald({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-heading",
-});
+import { manrope, oswald } from "@/lib/fonts";
 
 export async function generateMetadata(): Promise<Metadata> {
   return buildSiteMetadata();
@@ -35,8 +24,8 @@ export default function RootLayout({
   const title = normalizeBrandName();
 
   return (
-    <html lang="ru">
-      <body className={`${manrope.className} ${oswald.variable}`}>
+    <html lang="ru" className={`${manrope.variable} ${oswald.variable}`}>
+      <body>
         <AuthProvider>
         <FormProvider>
           <script

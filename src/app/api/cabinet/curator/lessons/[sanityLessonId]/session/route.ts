@@ -53,14 +53,14 @@ export async function POST(request: Request, { params }: RouteParams) {
       const session = await startSanityLessonSession(auth.admin, sanityLessonId, auth.telegramId);
       const notify = await notifyStudentsLessonEvent(auth.admin, sanityLessonId, 'live');
       revalidatePath('/cabinet');
-      revalidatePath('/cabinet/curator');
+      revalidatePath('/cabinet/staff');
       revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
       return NextResponse.json({ ok: true, session, notify });
     }
 
     const session = await endSanityLessonSession(auth.admin, sanityLessonId, auth.telegramId);
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true, session });
   } catch (error) {

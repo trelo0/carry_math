@@ -105,6 +105,28 @@ export async function setPurchaseRequestStatus(
   if (error) throw error;
 }
 
+/** Обновляет статус только если заявка ещё pending. Возвращает false, если уже обработана. */
+export async function markPurchaseRequestResolved(
+  admin: SupabaseClient,
+  id: string,
+  status: Exclude<PurchaseRequestStatus, 'pending'>,
+  resolvedBy?: number,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('purchase_requests')
+    .update({
+      status,
+      resolved_at: new Date().toISOString(),
+      resolved_by: resolvedBy ?? null,
+    })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
 export async function listPendingPurchaseRequests(
   admin: SupabaseClient,
   limit = 50,

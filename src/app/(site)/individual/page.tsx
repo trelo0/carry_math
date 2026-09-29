@@ -2,52 +2,27 @@ import HomePageClient from '../HomePageClient';
 
 import { draftMode } from 'next/headers';
 
-import {
-  getIndividualPageContent,
-  getPrinciples,
-  getProcessSteps,
-  getStats,
-  getTeachers,
-  getSiteSettings,
-} from '@/lib/studio/sanityData';
+import { getIndividualPageBundle, getSiteSettings } from '@/lib/studio/sanityData';
+import { withTeacherPhotoUrls } from '@/lib/studio/teacherPhotos';
 
 export default async function IndividualPage() {
   const { isEnabled } = await draftMode();
 
-  const [
-    contentResult,
-    teachersResult,
-    statsResult,
-    principlesResult,
-    processStepsResult,
-    siteSettingsResult,
-  ] = await Promise.allSettled([
-    getIndividualPageContent({ preview: isEnabled }),
-    getTeachers({ preview: isEnabled }),
-    getStats({ preview: isEnabled }),
-    getPrinciples({ preview: isEnabled }),
-    getProcessSteps({ preview: isEnabled }),
+  const [bundleResult, siteSettingsResult] = await Promise.allSettled([
+    getIndividualPageBundle({ preview: isEnabled }),
     getSiteSettings({ preview: isEnabled }),
   ]);
 
-  const content =
-    contentResult.status === 'fulfilled' ? contentResult.value : null;
-
-  const teachers =
-    teachersResult.status === 'fulfilled' ? teachersResult.value : [];
-
-  const stats =
-    statsResult.status === 'fulfilled' ? statsResult.value : [];
-
-  const principles =
-    principlesResult.status === 'fulfilled'
-      ? principlesResult.value
-      : [];
-
-  const processSteps =
-    processStepsResult.status === 'fulfilled'
-      ? processStepsResult.value
-      : [];
+  const bundle =
+    bundleResult.status === 'fulfilled'
+      ? bundleResult.value
+      : {
+          content: null,
+          teachers: [],
+          stats: [],
+          principles: [],
+          processSteps: [],
+        };
 
   const siteSettings =
     siteSettingsResult.status === 'fulfilled'
@@ -56,11 +31,11 @@ export default async function IndividualPage() {
 
   return (
     <HomePageClient
-      content={content}
-      teachers={teachers}
-      stats={stats}
-      principles={principles}
-      processSteps={processSteps}
+      content={bundle.content}
+      teachers={withTeacherPhotoUrls(bundle.teachers, { width: 560, height: 740 })}
+      stats={bundle.stats}
+      principles={bundle.principles}
+      processSteps={bundle.processSteps}
       siteSettings={siteSettings}
     />
   );

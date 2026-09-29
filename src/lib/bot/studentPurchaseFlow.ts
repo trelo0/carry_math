@@ -287,7 +287,8 @@ async function submitPurchaseRequest(
     `✅ Заявка отправлена\n\n` +
     `${offer.title}\n` +
     `Сумма: ${formatMoney(offer.amountByn)}\n\n` +
-    `Администратор свяжется с вами для оплаты. Статус заявки — в разделе «Оплаты» личного кабинета.`;
+    `Для оплаты свяжитесь с администратором или выполните перевод по указанным реквизитам.\n\n` +
+    `После оплаты администратор подтвердит покупку. Статус заявки — в разделе «Оплаты» личного кабинета.`;
 
   if (message) await editPurchaseMessage(message, text);
   else await sendPurchaseMessage(chatId, text);

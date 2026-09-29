@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       approved: true,
     });
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${lesson.sanityId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {

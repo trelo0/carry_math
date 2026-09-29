@@ -2,10 +2,34 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCuratorAuth } from '@/lib/cabinet-auth';
 import { curatorJsonError } from '@/lib/curator/api-errors';
+import { getCourseLessonDetail } from '@/lib/curator/lesson-detail';
 import { syncSessionAfterScheduleSave } from '@/lib/curator/lesson-session';
 import { patchCourseLesson, type LessonPatchFields } from '@/lib/studio/courseContentWrite';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
+
+export async function GET(_request: Request, { params }: RouteParams) {
+  const auth = await getCuratorAuth();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { sanityLessonId } = await params;
+  try {
+    const detail = await getCourseLessonDetail(
+      auth.admin,
+      auth.telegramId,
+      auth.fullName,
+      sanityLessonId,
+    );
+    if (!detail) {
+      return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
+    }
+    return NextResponse.json(detail);
+  } catch (error) {
+    return curatorJsonError(error, 'Failed to load lesson');
+  }
+}
 
 type Body = {
   liveUrl?: string | null;
@@ -60,7 +84,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       }
     }
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {

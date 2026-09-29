@@ -5,6 +5,7 @@ import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { CabinetCourseProgress, CabinetData, CabinetCourseCatalog, CabinetCourseModulePreview, CabinetCourseStop, CourseCabinetState } from '@/lib/cabinet';
+import BookingPanel from '@/components/cabinet/BookingPanel';
 import {
   buildModulesFromCatalogPreviews,
   buildStopsFromCatalogPreviews,
@@ -188,23 +189,23 @@ function parseLessonDate(date: string, time: string): Date {
   return new Date(y, m - 1, d, hh, mm, 0, 0);
 }
 
+type SectionId = 'course' | 'lessons' | 'schedule' | 'payments' | 'settings';
+
 const NAV_GROUPS = [
   {
     label: 'Обучение',
     items: [
-      { id: 'course', label: 'Курс', icon: 'course' },
-      { id: 'lessons', label: 'Занятия', icon: 'individual' },
-      { id: 'schedule', label: 'Расписание', icon: 'schedule' },
-      { id: 'payments', label: 'Оплаты', icon: 'payments' },
+      { id: 'course' as const, label: 'Курс', icon: 'course' },
+      { id: 'lessons' as const, label: 'Занятия', icon: 'individual' },
+      { id: 'schedule' as const, label: 'Расписание', icon: 'schedule' },
+      { id: 'payments' as const, label: 'Оплаты', icon: 'payments' },
     ],
   },
   {
     label: 'Аккаунт',
-    items: [{ id: 'settings', label: 'Настройки', icon: 'settings' }],
+    items: [{ id: 'settings' as const, label: 'Настройки', icon: 'settings' }],
   },
 ] as const;
-
-type SectionId = (typeof NAV_GROUPS)[number]['items'][number]['id'];
 
 /* -------------------------------------------------------------------------- */
 
@@ -1314,6 +1315,8 @@ export default function CabinetShell({
   const hadGroup = hadAccess(data, 'group');
   const hadCurrentIndKind = indKind === 'individual' ? hadIndividual : hadGroup;
   const hasCurrentIndKind = indKind === 'individual' ? hasIndividual : hasGroup;
+  const activeIndPackage = myPackages.find((p) => p.product === indKind && p.active);
+  const indCreditsRemaining = activeIndPackage?.remaining ?? 0;
   const nextLesson = hadCurrentIndKind ? (kindLessons.find((l) => l.status === 'upcoming') ?? null) : null;
   const nextDate = nextLesson ? dateParts(nextLesson.date) : null;
   const nextLessonNeedsPay = !!nextLesson && (!nextLesson.paid || !hasCurrentIndKind);
@@ -2038,7 +2041,16 @@ export default function CabinetShell({
                           href: packagesHref(indKind),
                         }}
                       />
-                    ) : !nextLesson ? (
+                    ) : (
+                      <>
+                        <BookingPanel
+                          kind={indKind}
+                          teacherTelegramId={data.ordinaryTeacher?.telegramId ?? null}
+                          groupId={indKind === 'group' ? data.studentGroup?.id ?? null : null}
+                          remaining={indCreditsRemaining}
+                          paymentsHref={packagesHref(indKind)}
+                        />
+                        {!nextLesson ? (
                       <section className="cab-panel cab-lnx cab-lnx--wait">
                         <div className="cab-lnx-top">
                           <div className="cab-lnx-media">
@@ -2398,6 +2410,8 @@ export default function CabinetShell({
                         <p className="cab-note">Занятий этого типа пока нет.</p>
                       )}
                     </div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -2815,7 +2829,7 @@ export default function CabinetShell({
                           className={`cab-h-status${h.status === 'pending' ? ' is-pending' : h.status === 'rejected' ? ' is-rejected' : ''}`}
                         >
                           {h.status === 'pending'
-                            ? 'На рассмотрении'
+                            ? 'Ожидает оплаты'
                             : h.status === 'rejected'
                               ? 'Отклонено'
                               : 'Оплачено'}

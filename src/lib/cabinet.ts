@@ -24,6 +24,8 @@ import {
   isPurchaseRequestTableError,
   listPurchaseRequestsForUser,
 } from '@/lib/bot/purchase-requests';
+import { getStudentTeacher } from '@/lib/bot/education/assignments';
+import { loadMemberRoles, memberHasRole, type BotRole } from '@/lib/bot/roles';
 
 export function formatModulePeriodFromLessons(lessons: { lessonDate: string | null }[]): string | null {
   const dates = lessons
@@ -108,6 +110,16 @@ export type CabinetMentor = {
   name: string;
 };
 
+export type CabinetOrdinaryTeacher = {
+  telegramId: number;
+  name: string | null;
+};
+
+export type CabinetStudentGroup = {
+  id: number;
+  title: string;
+};
+
 export type CabinetLesson = {
   id: string;
   kind: 'individual' | 'group';
@@ -126,6 +138,10 @@ export type CabinetLesson = {
     tone: 'ok' | 'now';
     downloadUrl: string;
   } | null;
+};
+
+export type CabinetTeachingLesson = CabinetLesson & {
+  studentName: string | null;
 };
 
 export type CabinetPackage = {
@@ -228,6 +244,10 @@ export type CabinetData = {
   courseContent: DistrictCourseContent | null;
   group: CabinetGroup | null;
   mentors: CabinetMentor[];
+  /** Преподаватель для ordinary booking (individual/group). */
+  ordinaryTeacher: CabinetOrdinaryTeacher | null;
+  /** Активная группа ученика для group booking. */
+  studentGroup: CabinetStudentGroup | null;
   lessons: CabinetLesson[];
   packages: CabinetPackage[];
   payments: CabinetPayment[];
@@ -240,6 +260,10 @@ export type CabinetData = {
   cabinetPricing: CabinetPricing;
   /** Нажал «Посмотреть карту курса» в превью (student_profiles.course_map_viewed_at). */
   courseMapViewed: boolean;
+  /** Все роли участника: основная + extra_roles. */
+  memberRoles: BotRole[];
+  /** Занятия, где пользователь назначен преподавателем. */
+  teachingLessons: CabinetTeachingLesson[];
 };
 
 export function hasActiveAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
@@ -362,6 +386,7 @@ type ScheduledLessonRow = {
   status: string;
   is_paid: boolean;
   meet_url: string | null;
+  telegram_id?: number;
   lesson_materials: LessonMaterialRow[] | null;
   homework_assignments: HomeworkRow[] | null;
 };
@@ -420,6 +445,53 @@ async function loadLessons(
             downloadUrl: cabinetLessonFileUrl(lessonId, hw.id, 'homework'),
           }
         : null,
+    };
+  });
+}
+
+async function loadTeachingLessons(
+  admin: ReturnType<typeof createAdminClient>,
+  teacherTelegramId: number,
+): Promise<CabinetTeachingLesson[]> {
+  const { data, error } = await admin
+    .from('scheduled_lessons')
+    .select('id, kind, starts_at, topic, status, is_paid, meet_url, telegram_id')
+    .eq('teacher_telegram_id', teacherTelegramId)
+    .neq('status', 'cancelled')
+    .order('starts_at', { ascending: false });
+  if (error) throw error;
+
+  const rows = (data ?? []) as ScheduledLessonRow[];
+  const studentIds = [...new Set(rows.map((row) => row.telegram_id).filter((id): id is number => typeof id === 'number'))];
+  const nameById = new Map<number, string>();
+  if (studentIds.length > 0) {
+    const { data: members } = await admin
+      .from('bot_members')
+      .select('telegram_id, full_name')
+      .in('telegram_id', studentIds);
+    for (const member of members ?? []) {
+      if (member.full_name) nameById.set(member.telegram_id as number, member.full_name as string);
+    }
+  }
+
+  const now = Date.now();
+  return rows.map((row) => {
+    const { date, time } = formatLessonDateTime(row.starts_at);
+    const isDone = row.status === 'completed';
+    const isUpcoming = row.status === 'scheduled' && new Date(row.starts_at).getTime() > now;
+    const studentId = row.telegram_id;
+    return {
+      id: String(row.id),
+      kind: row.kind,
+      date,
+      time,
+      topic: row.topic,
+      status: isDone ? 'done' : isUpcoming ? 'upcoming' : 'done',
+      paid: row.is_paid,
+      meetUrl: row.meet_url,
+      materials: [],
+      homework: null,
+      studentName: typeof studentId === 'number' ? (nameById.get(studentId) ?? null) : null,
     };
   });
 }
@@ -784,6 +856,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     courseContent: null,
     group: null,
     mentors: [],
+    ordinaryTeacher: null,
+    studentGroup: null,
     lessons: [],
     packages: [],
     payments: [],
@@ -794,6 +868,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     lives: null,
     cabinetPricing: await getCabinetPricing(),
     courseMapViewed: false,
+    memberRoles: ['guest'],
+    teachingLessons: [],
   };
 
   let admin: ReturnType<typeof createAdminClient>;
@@ -813,13 +889,20 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
   if (linkError || !link?.telegram_id) return empty;
   const telegramId = link.telegram_id as number;
 
-  // Имя ученика из профиля бота (если заполнено).
-  const { data: member } = await admin
-    .from('bot_members')
-    .select('full_name')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  const studentName = member?.full_name ?? null;
+  // Имя и роли участника из профиля бота.
+  let memberRoles: BotRole[] = ['guest'];
+  let studentName: string | null = null;
+  try {
+    memberRoles = await loadMemberRoles(admin, telegramId);
+    const { data: member } = await admin
+      .from('bot_members')
+      .select('full_name')
+      .eq('telegram_id', telegramId)
+      .maybeSingle();
+    studentName = member?.full_name ?? null;
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
 
   // Активные продуктовые доступы.
   const { data: accessRows, error: accessError } = await admin
@@ -927,18 +1010,23 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
   // Активная группа + преподаватель группы.
   const { data: memberRows, error: memberError } = await admin
     .from('group_members')
-    .select('groups(title, teacher_telegram_id)')
+    .select('groups(id, title, teacher_telegram_id)')
     .eq('telegram_id', telegramId)
     .eq('status', ACTIVE)
     .order('joined_at', { ascending: false })
     .limit(1);
   let group: CabinetGroup | null = null;
+  let studentGroup: CabinetStudentGroup | null = null;
   if (!memberError && memberRows?.[0]) {
-    const g = memberRows[0].groups as
-      | { title?: string; teacher_telegram_id?: number | null }
+    const row = memberRows[0];
+    const g = row.groups as
+      | { id?: number; title?: string; teacher_telegram_id?: number | null }
       | null;
     if (g?.title) {
       group = { title: g.title, teacherName: null };
+      if (typeof g.id === 'number') {
+        studentGroup = { id: g.id, title: g.title };
+      }
       if (g.teacher_telegram_id) {
         const { data: teacher } = await admin
           .from('bot_members')
@@ -948,6 +1036,16 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
         if (teacher?.full_name) group.teacherName = teacher.full_name;
       }
     }
+  }
+
+  let ordinaryTeacher: CabinetOrdinaryTeacher | null = null;
+  try {
+    const teacher = await getStudentTeacher(admin, telegramId);
+    if (teacher) {
+      ordinaryTeacher = { telegramId: teacher.telegramId, name: teacher.fullName };
+    }
+  } catch {
+    ordinaryTeacher = null;
   }
 
   // Активные наставники (преподаватель/куратор).
@@ -975,6 +1073,7 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
   }
 
   let lessons: CabinetLesson[] = [];
+  let teachingLessons: CabinetTeachingLesson[] = [];
   let packages: CabinetPackage[] = [];
   let payments: CabinetPayment[] = [];
   let profile: CabinetProfile | null = null;
@@ -990,6 +1089,13 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     lessons = await loadLessons(admin, telegramId);
   } catch (error) {
     if (!isCabinetTableError(error)) throw error;
+  }
+  if (memberHasRole(memberRoles, 'teacher')) {
+    try {
+      teachingLessons = await loadTeachingLessons(admin, telegramId);
+    } catch (error) {
+      if (!isCabinetTableError(error)) throw error;
+    }
   }
   try {
     packages = await loadPackages(admin, telegramId);
@@ -1074,6 +1180,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     courseContent,
     group,
     mentors,
+    ordinaryTeacher,
+    studentGroup,
     lessons,
     packages,
     payments,
@@ -1084,6 +1192,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     lives,
     cabinetPricing,
     courseMapViewed,
+    memberRoles,
+    teachingLessons,
   };
 }
 

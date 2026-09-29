@@ -13,11 +13,6 @@ import {
   formatSpecLabel,
 } from '@/data/mainPageContent';
 
-// Платный курс пока не подключён: кнопка записи показывает сообщение
-// и предлагает бесплатный пробный вебинар (Telegram).
-const COURSE_UNAVAILABLE_NOTICE =
-  'Запись на платный курс пока недоступна. Запишись на бесплатный пробный вебинар, чтобы познакомиться с форматом.';
-
 // Заголовок: «Готовим» белым, последнее слово — оранжевым неоном.
 function HeroHeadline({ text }: { text: string }) {
   const words = text.trim().split(/\s+/);
@@ -353,55 +348,6 @@ export default function MainPageClient({
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', sync);
-    };
-  }, []);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const els = Array.from(root.querySelectorAll('[data-reveal]'));
-    if (els.length === 0) return;
-
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      els.forEach((el) => el.classList.add('revealed'));
-      return;
-    }
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('revealed');
-            io.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    const deco = root?.querySelector<HTMLElement>('.page-deco');
-    if (!deco) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-
-    let raf = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        deco.style.transform = `translateY(${window.scrollY * -0.05}px)`;
-      });
-    };
-
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      cancelAnimationFrame(raf);
     };
   }, []);
 
@@ -862,7 +808,7 @@ export default function MainPageClient({
               <button
                 type="button"
                 className="init-cta"
-                onClick={() => openForm({ variant: 'webinar', notice: COURSE_UNAVAILABLE_NOTICE })}
+                onClick={() => openForm({ variant: 'webinar' })}
               >
                 {initButtonText}
               </button>

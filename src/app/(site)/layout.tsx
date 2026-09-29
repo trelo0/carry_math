@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { draftMode } from "next/headers";
-import { Header, ModalPopup, BackToTop, AuthModal, CinematicFX, WebinarEntryPopup } from "@/components";
+import { Header, BackToTop, CinematicFX } from "@/components";
+import SiteOverlays from "@/components/ui/SiteOverlays";
 import AuthQueryTrigger from "@/components/AuthQueryTrigger";
 import { getSiteSettings } from "@/lib/studio/sanityData";
 import { normalizeBrandName } from "@/lib/brand";
@@ -162,9 +163,7 @@ export default async function SiteLayout({
           </p>
         </div>
       </footer>
-      <ModalPopup modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
-      <WebinarEntryPopup />
-      <AuthModal />
+      <SiteOverlays modalTitle={modalTitle} modalSubmitButtonText={modalSubmitButtonText} />
       <Suspense fallback={null}>
         <AuthQueryTrigger />
       </Suspense>

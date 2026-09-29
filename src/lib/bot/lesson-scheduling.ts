@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { LessonCreditError, resolveActivePackage } from './lesson-credits';
 import { scheduleLesson } from './lessons';
 import { resolveTelegramIdByPhone } from './purchase-fulfillment';
 
@@ -43,59 +44,6 @@ export class LessonScheduleError extends Error {
   }
 }
 
-type LessonPackageRow = {
-  id: number;
-  product: string;
-  remaining_lessons: number;
-  status: string;
-};
-
-async function resolveActivePackage(
-  admin: SupabaseClient,
-  telegramId: number,
-  kind: 'individual' | 'group',
-  packageId?: number,
-): Promise<LessonPackageRow> {
-  if (packageId != null) {
-    const { data, error } = await admin
-      .from('lesson_packages')
-      .select('id, product, remaining_lessons, status')
-      .eq('id', packageId)
-      .eq('telegram_id', telegramId)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) {
-      throw new LessonScheduleError(`Пакет ${packageId} не найден у ученика.`, 'NO_PACKAGE');
-    }
-    if (data.product !== kind) {
-      throw new LessonScheduleError(
-        `Пакет «${data.product}» не подходит для занятия «${kind}».`,
-        'PACKAGE_MISMATCH',
-      );
-    }
-    if (data.status !== 'active' || (data.remaining_lessons as number) <= 0) {
-      throw new LessonScheduleError('В пакете не осталось занятий для назначения.', 'NO_PACKAGE');
-    }
-    return data as LessonPackageRow;
-  }
-
-  const { data, error } = await admin
-    .from('lesson_packages')
-    .select('id, product, remaining_lessons, status')
-    .eq('telegram_id', telegramId)
-    .eq('product', kind)
-    .eq('status', 'active')
-    .gt('remaining_lessons', 0)
-    .order('purchased_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) {
-    throw new LessonScheduleError(`Нет активного пакета «${kind}».`, 'NO_PACKAGE');
-  }
-  return data as LessonPackageRow;
-}
-
 function assertHttpUrl(
   url: string,
   label: string,
@@ -123,7 +71,15 @@ export async function scheduleStudentLesson(
     assertHttpUrl(input.homework.url, `Домашка «${input.homework.name}»`, 'INVALID_HOMEWORK');
   }
 
-  const pkg = await resolveActivePackage(admin, telegramId, input.kind, input.packageId);
+  let pkg;
+  try {
+    pkg = await resolveActivePackage(admin, telegramId, input.kind, input.packageId);
+  } catch (error) {
+    if (error instanceof LessonCreditError) {
+      throw new LessonScheduleError(error.message, error.code === 'PACKAGE_MISMATCH' ? 'PACKAGE_MISMATCH' : 'NO_PACKAGE');
+    }
+    throw error;
+  }
 
   const lessonId = await scheduleLesson(admin, {
     telegramId,

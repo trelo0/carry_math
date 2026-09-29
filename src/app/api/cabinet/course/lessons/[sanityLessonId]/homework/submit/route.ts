@@ -55,7 +55,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
     await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
     revalidatePath('/cabinet');
-    revalidatePath('/cabinet/curator');
+    revalidatePath('/cabinet/staff');
     return NextResponse.json({ ok: true, progress });
   } catch (error) {
     if (error instanceof CourseHomeworkError) {

@@ -95,3 +95,24 @@
     display: none;
   }
 }
+
+.site-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40vh;
+  padding: 48px 16px;
+}
+
+.site-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(148, 190, 255, 0.15);
+  border-top-color: var(--accent, #00a8ff);
+  border-radius: 50%;
+  animation: site-loading-spin 0.7s linear infinite;
+}
+
+@keyframes site-loading-spin {
+  to { transform: rotate(360deg); }
+}
