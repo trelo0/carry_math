@@ -40,7 +40,7 @@ export default async function CabinetLessonPage({
   if (!pageData) return <CabinetTelegramGate />;
 
   const { stop, courseModules, courseCatalog, courseState } = pageData;
-  const locked = stop.status === 'locked';
+  const locked = stop.status === 'locked' && courseState !== 'full';
   const module = courseModules[stop.module] ?? null;
 
   return (
@@ -48,7 +48,7 @@ export default async function CabinetLessonPage({
       <div className="cab-lespage-inner">
         <header className="cab-lespage-head">
           <Link href="/cabinet?section=course" className="cab-lespage-back">
-            ← Личный кабинет
+            ← Кабинет курса
           </Link>
           <span className="cab-k">
             {`M${stop.module + 1} · ${String(stop.numInModule).padStart(2, '0')} · ${module?.name ?? 'Модуль'}`}

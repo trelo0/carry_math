@@ -35,12 +35,12 @@ export const STUDENT_BUY_LABEL = '💳 Купить';
 // Возврат из раздела к выбору направления (только при двух направлениях).
 export const STUDENT_BACK_LABEL = '⬅️ Назад';
 
-const COURSE_DIRECTION_LABEL = '🎓 КУРС';
-const LESSONS_INDIVIDUAL_LABEL = '📚 ИНДИВИДУАЛЬНЫЕ ЗАНЯТИЯ';
-const LESSONS_MIXED_LABEL = '👥 МОИ ЗАНЯТИЯ';
+export const COURSE_DIRECTION_LABEL = '🎓 КУРС';
+export const LESSONS_INDIVIDUAL_LABEL = '📚 ИНДИВИДУАЛЬНЫЕ ЗАНЯТИЯ';
+export const LESSONS_MIXED_LABEL = '👥 МОИ ЗАНЯТИЯ';
 
-const COURSE_ACTIONS = ['📚 Сдать ДЗ ментору', '🆘 Получить помощь', '📅 Ближайшее занятие'] as const;
-const LESSONS_ACTIONS = ['📅 Следующее занятие', '💬 Задать вопрос наставнику', '📝 Сдать домашку'] as const;
+export const COURSE_ACTIONS = ['📚 Сдать ДЗ ментору', '🆘 Получить помощь', '📅 Ближайшее занятие'] as const;
+export const LESSONS_ACTIONS = ['📅 Следующее занятие', '💬 Задать вопрос наставнику', '📝 Сдать домашку'] as const;
 
 const SUPPORT_ACTIONS = new Set(['🆘 Получить помощь', '💬 Задать вопрос наставнику']);
 const HOMEWORK_ACTIONS = new Set(['📚 Сдать ДЗ ментору', '📝 Сдать домашку']);

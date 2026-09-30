@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
-import { buildLocalIso, durationFromRange, formatTimeRange } from '@/lib/teacher/schedule-utils';
+import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
+import {
+  buildLocalIso,
+  durationFromRange,
+  formatTimeRange,
+  validateLessonPlacementClient,
+} from '@/lib/teacher/schedule-utils';
 import {
   addTeacherLesson,
   createOptimisticLesson,
@@ -15,6 +22,8 @@ import CabinetFeedback from '@/components/ui/CabinetFeedback';
 type Props = {
   data: TeacherCabinetData;
   slot: TeacherDaySlot;
+  events: ScheduleEvent[];
+  daySlots: TeacherDaySlot[];
   busy: boolean;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   onClose: () => void;
@@ -30,7 +39,16 @@ function formatSlotDate(slotDate: string): string {
   return `${d} ${months[m - 1]} ${y}`;
 }
 
-export default function ScheduleLessonFromSlotModal({ data, slot, busy, patchTeacher, onClose, runAction }: Props) {
+export default function ScheduleLessonFromSlotModal({
+  data,
+  slot,
+  events,
+  daySlots,
+  busy,
+  patchTeacher,
+  onClose,
+  runAction,
+}: Props) {
   const [kind, setKind] = useState<'individual' | 'group'>('individual');
   const [studentId, setStudentId] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -44,6 +62,19 @@ export default function ScheduleLessonFromSlotModal({ data, slot, busy, patchTea
   );
 
   const submit = () => {
+    const placementError = validateLessonPlacementClient({
+      slotDate: slot.slotDate,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      events,
+      daySlots,
+      fromSlotId: slot.id,
+    });
+    if (placementError) {
+      setFeedback({ type: 'error', message: placementError });
+      return;
+    }
+
     const startsAt = buildLocalIso(slot.slotDate, slot.startTime);
 
     const durationMinutes = durationFromRange(slot.startTime, slot.endTime);
@@ -74,7 +105,7 @@ export default function ScheduleLessonFromSlotModal({ data, slot, busy, patchTea
       });
       const body = (await res.json()) as { error?: string; lessonId?: number; lessonIds?: number[] };
       if (!res.ok) {
-        throw new Error(body.error ?? 'Не удалось создать занятие');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось создать занятие', res.status));
       }
       const lessonId = body.lessonId ?? body.lessonIds?.[0];
       if (lessonId && patchTeacher) {

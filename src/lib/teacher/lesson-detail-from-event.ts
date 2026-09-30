@@ -42,6 +42,7 @@ export function buildOrdinaryDetailFromEvent(
       student,
       group: null,
       materials,
+      homework: null,
     };
   }
 
@@ -75,5 +76,6 @@ export function buildOrdinaryDetailFromEvent(
         }
       : null,
     materials,
+    homework: null,
   };
 }

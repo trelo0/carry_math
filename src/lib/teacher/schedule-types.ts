@@ -3,7 +3,7 @@ import type { TeacherLessonView } from '@/lib/teacher/cabinet-data';
 
 export type ScheduleEventKind = 'individual' | 'group' | 'course';
 export type ScheduleEventStatus = 'scheduled' | 'completed' | 'cancelled' | 'no_show';
-export type ScheduleFilter = 'all' | 'course' | 'ordinary' | 'individual' | 'group';
+export type ScheduleFilter = 'all' | 'course' | 'ordinary' | 'individual' | 'group' | 'history';
 export type ScheduleViewMode = 'week' | 'day';
 
 export type TeacherAvailabilitySlot = {

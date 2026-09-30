@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import { addTeacherDaySlots } from '@/lib/teacher/schedule-optimistic';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
 import {
   dateKey,
   formatTimeRange,
@@ -46,26 +47,20 @@ export default function ScheduleAutoFillModal({
   }, [slotDate, durationMinutes, firstStart, lastStart, breakMinutes, events, daySlots]);
 
   const createAll = () => {
+    if (firstStart > lastStart) {
+      setFeedback({ type: 'error', message: 'Последний старт должен быть не раньше первого' });
+      return;
+    }
     if (preview.creatable.length === 0) {
       setFeedback({ type: 'error', message: 'Нет слотов для создания — все пересекаются с занятиями или слотами' });
       return;
     }
 
-    const optimisticSlots: TeacherDaySlot[] = preview.creatable.map((slot, index) => ({
-      id: -(Date.now() + index),
-      slotDate,
-      startTime: slot.startTime,
-      endTime: slot.endTime,
-      slotKind: 'extra',
-      label: null,
-    }));
-    patchTeacher?.((prev) => addTeacherDaySlots(prev, optimisticSlots));
-    onClose();
-
     void runWithFeedback(
       runAction,
       setFeedback,
       async () => {
+        let created = 0;
         for (const slot of preview.creatable) {
           const res = await fetch('/api/cabinet/teacher/day-slots', {
             method: 'POST',
@@ -77,15 +72,25 @@ export default function ScheduleAutoFillModal({
               slotKind: 'extra',
             }),
           });
+          const body = (await res.json()) as { error?: string; slot?: TeacherDaySlot };
           if (!res.ok) {
-            const body = (await res.json()) as { error?: string };
-            throw new Error(body.error ?? 'Не удалось создать слоты');
+            const msg = formatScheduleApiError(body.error, 'Не удалось создать слот', res.status);
+            if (created > 0) {
+              throw new Error(`${msg}. Успело создаться: ${created} из ${preview.creatable.length} — обновите календарь`);
+            }
+            throw new Error(msg);
+          }
+          if (body.slot) {
+            patchTeacher?.((prev) => addTeacherDaySlots(prev, [body.slot!]));
+            created += 1;
           }
         }
+        onClose();
       },
       preview.skipped > 0
         ? `Создано ${preview.creatable.length}, пропущено ${preview.skipped}`
         : `Создано ${preview.creatable.length} слотов`,
+      { refresh: 'none' },
     );
   };
 

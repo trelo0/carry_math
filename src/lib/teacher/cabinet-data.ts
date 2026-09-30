@@ -3,10 +3,9 @@ import type { BotRole } from '@/lib/bot/roles';
 import { hasFullStaffPreview, memberHasRole } from '@/lib/bot/roles';
 import { getCuratorCabinetData, type CuratorCabinetData } from '@/lib/curator/cabinet-data';
 import { formatLessonDateTime } from '@/lib/teacher/format';
-import { findCurrentLesson } from '@/lib/teacher/lesson-utils';
-import type { TeacherAvailabilitySlot } from '@/lib/teacher/schedule-types';
-import { isLessonBookingTableError, listTeacherBookings } from '@/lib/teacher/booking';
-import type { LessonBookingView } from '@/lib/teacher/booking-types';
+import { dedupeGroupLessons, findCurrentLesson } from '@/lib/teacher/lesson-utils';
+import type { StudentPackageCredits } from '@/lib/teacher/package-credits';
+import { loadStudentPackageCredits } from '@/lib/teacher/package-credits';
 
 export type TeacherLessonView = {
   id: number;
@@ -37,6 +36,7 @@ export type TeacherStudentView = {
   groupCount: number;
   nextLessonAt: string | null;
   lessons: TeacherLessonView[];
+  packageCredits: StudentPackageCredits;
 };
 
 export type TeacherDaySlot = {
@@ -73,9 +73,6 @@ export type TeacherCabinetData = {
   students: TeacherStudentView[];
   groups: TeacherGroupView[];
   daySlots: TeacherDaySlot[];
-  availability: TeacherAvailabilitySlot[];
-  pendingReschedules: number;
-  bookingRequests: LessonBookingView[];
 };
 
 export type StaffCabinetData = {
@@ -157,18 +154,6 @@ function mapLessonRow(
     durationMinutes: row.duration_minutes ?? 60,
     isUpcoming: row.status === 'scheduled' && startsMs > now,
   };
-}
-
-function dedupeGroupLessons(lessons: TeacherLessonView[]): TeacherLessonView[] {
-  const seen = new Set<string>();
-  const result: TeacherLessonView[] = [];
-  for (const lesson of lessons) {
-    const key = `${lesson.groupId ?? 'none'}:${lesson.startsAt}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(lesson);
-  }
-  return result;
 }
 
 export async function getTeacherCabinetData(
@@ -296,6 +281,7 @@ export async function getTeacherCabinetData(
         groupCount: lesson.kind === 'group' ? 1 : 0,
         nextLessonAt: lesson.isUpcoming ? lesson.startsAt : null,
         lessons: [lesson],
+        packageCredits: { individual: null, group: null },
       });
       continue;
     }
@@ -320,8 +306,15 @@ export async function getTeacherCabinetData(
         groupCount: 0,
         nextLessonAt: null,
         lessons: [],
+        packageCredits: { individual: null, group: null },
       });
     }
+  }
+
+  const packageCreditsMap = await loadStudentPackageCredits(admin, [...studentsMap.keys()]);
+  for (const student of studentsMap.values()) {
+    student.packageCredits =
+      packageCreditsMap.get(student.telegramId) ?? { individual: null, group: null };
   }
 
   const students = [...studentsMap.values()].sort((a, b) =>
@@ -344,8 +337,6 @@ export async function getTeacherCabinetData(
     };
   });
 
-  const availability: TeacherAvailabilitySlot[] = [];
-
   const daySlots: TeacherDaySlot[] = (daySlotRows ?? []).map((row) => ({
     id: row.id as number,
     slotDate: String(row.slot_date),
@@ -354,25 +345,6 @@ export async function getTeacherCabinetData(
     slotKind: (row.slot_kind as 'extra' | 'blocked' | 'break' | null) ?? 'extra',
     label: (row.label as string | null) ?? null,
   }));
-
-  const lessonIds = rows.map((r) => r.id);
-  let pendingReschedules = 0;
-  if (lessonIds.length > 0) {
-    const { count } = await admin
-      .from('lesson_reschedule_proposals')
-      .select('id', { count: 'exact', head: true })
-      .in('lesson_id', lessonIds)
-      .eq('status', 'pending')
-      .eq('proposed_by', teacherTelegramId);
-    pendingReschedules = count ?? 0;
-  }
-
-  let bookingRequests: LessonBookingView[] = [];
-  try {
-    bookingRequests = await listTeacherBookings(admin, teacherTelegramId);
-  } catch (error) {
-    if (!isLessonBookingTableError(error)) throw error;
-  }
 
   return {
     staffName,
@@ -384,9 +356,6 @@ export async function getTeacherCabinetData(
     students,
     groups: groupsView,
     daySlots,
-    availability,
-    pendingReschedules,
-    bookingRequests,
   };
 }
 

@@ -1,12 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import {
-  clearStateIfAvailable,
-  getState,
-  isConversationStateTableError,
-  saveState,
-  sendAdminMessage,
-} from './admin/core';
+import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
+import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
 
 export async function beginStudentSupport(
   admin: SupabaseClient,
@@ -14,7 +9,7 @@ export async function beginStudentSupport(
   chatId: number,
 ): Promise<void> {
   try {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:support', {});
+    await saveClientDialogState(admin, telegramId, chatId, 'student:support', {});
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
@@ -97,13 +92,13 @@ export async function handleStudentSupportMessage(
 
   const trimmed = text.trim();
   if (!trimmed || /^отмена$/i.test(trimmed)) {
-    await clearStateIfAvailable(admin, telegramId);
+    await resetClientDialogToHub(admin, telegramId);
     await sendAdminMessage(chatId, 'Обращение отменено.');
     return true;
   }
 
   await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
-  await clearStateIfAvailable(admin, telegramId);
+  await resetClientDialogToHub(admin, telegramId);
   await sendAdminMessage(
     chatId,
     '✅ Сообщение отправлено в поддержку.\n\nМы ответим в Telegram или по телефону из профиля.',
@@ -133,7 +128,7 @@ export async function handleStudentSupportAttachment(
   await Promise.all(
     adminChatIds.map((id) => telegramSend('sendMessage', { chat_id: id, text: body }).catch(() => undefined)),
   );
-  await clearStateIfAvailable(admin, telegramId);
+  await resetClientDialogToHub(admin, telegramId);
   await sendAdminMessage(chatId, '✅ Вложение отправлено в поддержку.');
   return true;
 }

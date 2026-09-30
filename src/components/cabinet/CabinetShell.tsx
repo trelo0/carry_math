@@ -5,18 +5,17 @@ import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type { CabinetCourseProgress, CabinetData, CabinetCourseCatalog, CabinetCourseModulePreview, CabinetCourseStop, CourseCabinetState } from '@/lib/cabinet';
-import BookingPanel from '@/components/cabinet/BookingPanel';
+import CourseCabinetGate from '@/components/cabinet/CourseCabinetGate';
 import {
   buildModulesFromCatalogPreviews,
   buildStopsFromCatalogPreviews,
   getCourseCabinetState,
-  hadAccess,
-  hasActiveAccess,
+  hasCourseCatalogOffer,
   lessonPathForStop,
   mapContentToCourseModules,
   mapContentToStructureStops,
+  shouldShowCourseCabinetGate,
 } from '@/lib/cabinet';
-import { priceForTeacher } from '@/lib/studio/cabinetSettings';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
@@ -51,8 +50,6 @@ type CourseStop = {
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
 };
 
-const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-const WEEKDAYS = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const SANITY_PLACEHOLDER = 'ВВЕДИТЕ ТЕКСТ';
 
 function sanityText(value: string | null | undefined, fallback = '—'): string {
@@ -69,51 +66,6 @@ function sanityList(value: string | null | undefined): string[] {
       .filter((s) => s && s.toUpperCase() !== SANITY_PLACEHOLDER) ?? [];
   return items.length ? items : [];
 }
-
-/* Дата следующего занятия из дд.мм.гггг → «24 / Сентября / вторник». */
-function dateParts(date: string): { day: string; month: string; weekday: string } {
-  const [, d, m] = date.match(/^(\d{2})\.(\d{2})\./) ?? [];
-  const parsed = new Date(Number(date.slice(6, 10)), Number(m) - 1, Number(d));
-  return {
-    day: d ?? '—',
-    month: m ? MONTHS_GEN[Number(m) - 1] : '—',
-    weekday: Number.isNaN(parsed.getTime()) ? '—' : WEEKDAYS[parsed.getDay()],
-  };
-}
-
-/* ---------------------------- Страница расписания ------------------------- */
-/* Только реальные занятия: scheduled_lessons (ind/group) и course_lesson_sessions. */
-type SchedKind = 'course' | 'individual' | 'group';
-type SchedLesson = {
-  id: string;
-  date: Date;
-  time: string;
-  duration: number;
-  title: string;
-  kind: SchedKind;
-  teacher: string;
-};
-
-const SCHED_GROUP_TEACHER = 'Анна Сергеевна';
-
-const DAY_HEADERS = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
-const MONTHS_NOM = ['ЯНВАРЬ', 'ФЕВРАЛЬ', 'МАРТ', 'АПРЕЛЬ', 'МАЙ', 'ИЮНЬ', 'ИЮЛЬ', 'АВГУСТ', 'СЕНТЯБРЬ', 'ОКТЯБРЬ', 'НОЯБРЬ', 'ДЕКАБРЬ'];
-
-function dayKey(d: Date): string {
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
-
-function minutesOf(time: string): number {
-  const [hh, mm] = time.split(':').map(Number);
-  return hh * 60 + mm;
-}
-
-const SCHED_KIND_LABEL: Record<SchedKind, string> = {
-  course: 'Курс',
-  individual: 'Индивидуальное',
-  group: 'Групповое',
-};
-
 
 function pluralLessons(n: number): string {
   const mod10 = n % 10;
@@ -143,38 +95,12 @@ const STUDY_GOALS = [
   'Другое',
 ];
 
-/* Доступные варианты пополнения пакетов (fallback, если Sanity недоступен). */
-type TeacherId = string;
-
-const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-
-/** Ссылка на экран «Пакеты» с опциональным фокусом на продукте. */
-function packagesHref(product?: 'course' | 'individual' | 'group'): string {
-  const q = new URLSearchParams({ section: 'payments' });
-  if (product) q.set('product', product);
-  return `/cabinet?${q}`;
+function packagesHref(): string {
+  return '/cabinet?section=payments';
 }
 
-function checkoutHref(
-  product: 'course' | 'individual' | 'group',
-  options?: { package?: number; teacher?: string },
-): string {
-  const q = new URLSearchParams({ product });
-  if (options?.package != null) q.set('package', String(options.package));
-  if (options?.teacher) q.set('teacher', options.teacher);
-  return `/cabinet/checkout?${q}`;
-}
-
-/** Количество занятий из названия пакета («4 занятия» → 4). */
-function lessonCount(name: string): number | null {
-  const m = /\d+/.exec(name);
-  return m ? Number(m[0]) : null;
-}
-
-/** Цена в BYN без лишних нулей: 22.5 → «22,5», 25 → «25». */
-function formatByn(value: number): string {
-  const rounded = Math.round(value * 100) / 100;
-  return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0$/, '')).replace('.', ',');
+function checkoutHref(): string {
+  return '/cabinet/checkout?product=course';
 }
 
 function applyCourseProgress(stops: CourseStop[], progress: CabinetCourseProgress[]): CourseStop[] {
@@ -183,21 +109,13 @@ function applyCourseProgress(stops: CourseStop[], progress: CabinetCourseProgres
   return stops.map((s) => ({ ...s, status: map.get(s.id - 1) ?? 'locked' }));
 }
 
-function parseLessonDate(date: string, time: string): Date {
-  const [d, m, y] = date.split('.').map(Number);
-  const [hh, mm] = time.split(':').map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0);
-}
-
-type SectionId = 'course' | 'lessons' | 'schedule' | 'payments' | 'settings';
+type SectionId = 'course' | 'payments' | 'settings';
 
 const NAV_GROUPS = [
   {
     label: 'Обучение',
     items: [
       { id: 'course' as const, label: 'Курс', icon: 'course' },
-      { id: 'lessons' as const, label: 'Занятия', icon: 'individual' },
-      { id: 'schedule' as const, label: 'Расписание', icon: 'schedule' },
       { id: 'payments' as const, label: 'Оплаты', icon: 'payments' },
     ],
   },
@@ -794,8 +712,6 @@ const MODULE_STATUS_LABELS: Record<'current' | 'done' | 'locked' | 'empty', stri
   empty: '—',
 };
 
-const COURSE_TEACHER = 'Кристина Денисовна';
-
 /* Переключатель курсов — появляется, когда курсов больше одного. */
 function CourseSwitcher({
   courses,
@@ -964,22 +880,6 @@ function CoursePreviewPanel({
   );
 }
 
-/* Пустое расписание: карточка справа от календаря. */
-function SchedEmptyPanel({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="cab-sched-empty-v2">
-      <span className="cab-sched-empty-v2-art" aria-hidden="true">
-        <Icon d={ICONS.schedule} />
-      </span>
-      <h3>{title}</h3>
-      <p>{text}</p>
-      <a className="cab-btn cab-btn--line cab-sched-empty-v2-btn" href={packagesHref()}>
-        <Icon d={ICONS.cart} /> Перейти к оплате <Icon d={ICONS.chevron} />
-      </a>
-    </div>
-  );
-}
-
 function homeworkReviewText(stop: CabinetCourseStop): string {
   if (stop.homeworkReviewNote?.trim()) return stop.homeworkReviewNote.trim();
   if (stop.homeworkStatus === 'rejected') {
@@ -1075,37 +975,22 @@ function EnrollConfirmModal({
   );
 }
 
-/* Панель «не куплено / не оплачено»: замок, текст, CTA на покупку. */
-function CabLocked({ title, text, note, cta }: { title: string; text: string; note?: string; cta: { label: string; href: string } }) {
-  return (
-    <section className="cab-panel cab-locked">
-      <span className="cab-locked-ico" aria-hidden="true">
-        <Icon d={ICONS.lock} />
-      </span>
-      <h3>{title}</h3>
-      <p>{text}</p>
-      {note && <span className="cab-locked-note">{note}</span>}
-      <a className="cab-btn cab-btn--join cab-locked-cta" href={cta.href}>
-        {cta.label} <Icon d={ICONS.chevron} />
-      </a>
-    </section>
-  );
-}
-
 export default function CabinetShell({
   data,
   initialSection,
-  initialProduct,
   showCabinetPick,
 }: {
   data: CabinetData;
   initialSection?: SectionId;
-  initialProduct?: 'course' | 'individual' | 'group';
   /** Создатель из ADMIN_TELEGRAM_IDS — ссылка на выбор кабинета. */
   showCabinetPick?: boolean;
 }) {
   const router = useRouter();
-  const [section, setSection] = useState<SectionId>(initialSection ?? 'course');
+  const normalizedInitial: SectionId =
+    initialSection === 'course' || initialSection === 'payments' || initialSection === 'settings'
+      ? initialSection
+      : 'course';
+  const [section, setSection] = useState<SectionId>(normalizedInitial);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [hwReviewStop, setHwReviewStop] = useState<CabinetCourseStop | null>(null);
   const [enrolling, setEnrolling] = useState(false);
@@ -1166,7 +1051,6 @@ export default function CabinetShell({
           }))
         : courseModulesFromCatalog;
   const cabinetPricing = data.cabinetPricing;
-  const cabinetTeachers = cabinetPricing.teachers;
   const courseStopsFromSanity: CourseStop[] = data.courseContent
     ? mapContentToStructureStops(data.courseContent).map((s) => ({
         id: s.id,
@@ -1227,18 +1111,6 @@ export default function CabinetShell({
   const [activeCourseId, setActiveCourseId] = useState<number | null>(
     () => data.courseCatalog?.id ?? data.enrollment?.courseId ?? null,
   );
-  const [indLessonId, setIndLessonId] = useState<string>(() => data.lessons[0]?.id ?? '');
-  const [indTab, setIndTab] = useState<'upcoming' | 'done'>('upcoming');
-  const [indListExpanded, setIndListExpanded] = useState(false);
-  const [indListPage, setIndListPage] = useState(0);
-  const [indKind, setIndKind] = useState<'individual' | 'group'>('individual');
-  const [schedFilter, setSchedFilter] = useState<'all' | SchedKind>('all');
-  const [monthCursor, setMonthCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const [monthSelected, setMonthSelected] = useState<string | null>(null);
-  const [shopChoice, setShopChoice] = useState<{ individual: number; group: number }>({ individual: 0, group: 0 });
-  const [shopTeacher, setShopTeacher] = useState<TeacherId>(
-    () => data.cabinetPricing.teachers[0]?.teacherId ?? 'kristina',
-  );
   const [pkgHistoryAll, setPkgHistoryAll] = useState(false);
   const [profileSaved, setProfileSaved] = useState({
     name: data.profile?.name ?? '',
@@ -1251,17 +1123,13 @@ export default function CabinetShell({
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileDraft, setProfileDraft] = useState<{ name: string; klass: string; goal: string; resultType: 'ct' | 'grade'; resultValue: number | null } | null>(null);
 
-  useEffect(() => {
-    if (!cabinetTeachers.some((t) => t.teacherId === shopTeacher)) {
-      setShopTeacher(cabinetTeachers[0]?.teacherId ?? 'kristina');
-    }
-  }, [cabinetTeachers, shopTeacher]);
-
   const displayName = profileSaved.name || data.studentName || 'Ученик';
   const days = daysInSystem(data.createdAt);
-  const teacher = data.mentors.find((m) => m.kind === 'teacher') ?? null;
-  const teacherName = teacher?.name ?? 'Кристина Денисовна';
   const courseState: CourseCabinetState = getCourseCabinetState(data);
+  const courseCabinetGate = shouldShowCourseCabinetGate(data);
+  const noCourseCatalog = !hasCourseCatalogOffer(data);
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+  const botUrl = botUsername ? `https://t.me/${botUsername}` : null;
   const courseName = data.courseCatalog?.title ?? data.courseContent?.title ?? null;
   const courseHeadline = data.courseCatalog?.cabinetEyebrow ?? data.courseContent?.cabinetEyebrow ?? null;
   const courseDescription = data.courseCatalog?.description ?? data.courseContent?.description ?? null;
@@ -1288,9 +1156,14 @@ export default function CabinetShell({
   );
   const mapCourseStops = courseStops;
 
-  const lessons = data.lessons;
   const myPackages = data.packages;
   const pkgHistory = data.payments;
+  const coursePackage = myPackages.find((p) => p.product === 'course');
+  const coursePaymentHistory = pkgHistory.filter(
+    (h) =>
+      h.title.toLowerCase().includes('курс') ||
+      (coursePackage?.title && h.title.includes(coursePackage.title)),
+  );
 
   const emptyStopModule = { name: '—', color: '#ccc', count: 0, about: '' };
   const stop = courseStops.find((s) => s.id === stopId) ?? courseStops[0] ?? null;
@@ -1299,120 +1172,7 @@ export default function CabinetShell({
     : emptyStopModule;
   const selectedCabinetStop = data.courseStops.find((s) => s.id === stopId) ?? data.courseStops[0];
   const trialStopId = courseStops.find((s) => s.status !== 'locked')?.id ?? courseStops[0]?.id ?? 1;
-  const kindLessons = lessons.filter((l) => l.kind === indKind);
-  const indLesson = kindLessons.find((l) => l.id === indLessonId) ?? kindLessons[0];
-  const IND_LIST_PAGE_SIZE = 4;
-  const filteredIndLessons = kindLessons.filter((l) => l.status === indTab);
-  const indListPages = Math.max(1, Math.ceil(filteredIndLessons.length / IND_LIST_PAGE_SIZE));
-  const visibleIndLessons = indListExpanded
-    ? filteredIndLessons
-    : filteredIndLessons.slice(indListPage * IND_LIST_PAGE_SIZE, (indListPage + 1) * IND_LIST_PAGE_SIZE);
-
   const hasCourse = courseState === 'full';
-  const hasIndividual = hasActiveAccess(data, 'individual');
-  const hasGroup = hasActiveAccess(data, 'group');
-  const hadIndividual = hadAccess(data, 'individual');
-  const hadGroup = hadAccess(data, 'group');
-  const hadCurrentIndKind = indKind === 'individual' ? hadIndividual : hadGroup;
-  const hasCurrentIndKind = indKind === 'individual' ? hasIndividual : hasGroup;
-  const activeIndPackage = myPackages.find((p) => p.product === indKind && p.active);
-  const indCreditsRemaining = activeIndPackage?.remaining ?? 0;
-  const nextLesson = hadCurrentIndKind ? (kindLessons.find((l) => l.status === 'upcoming') ?? null) : null;
-  const nextDate = nextLesson ? dateParts(nextLesson.date) : null;
-  const nextLessonNeedsPay = !!nextLesson && (!nextLesson.paid || !hasCurrentIndKind);
-  const packsRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (initialProduct === 'individual' || initialProduct === 'group') {
-      setIndKind(initialProduct);
-    }
-  }, [initialProduct]);
-
-  useEffect(() => {
-    if (initialSection === 'payments' && initialProduct && packsRef.current) {
-      packsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [initialSection, initialProduct]);
-
-  useEffect(() => {
-    if (!hadCurrentIndKind) return;
-    const done = lessons.filter((l) => l.kind === indKind && l.status === 'done');
-    if (done.length && (!nextLesson || nextLessonNeedsPay)) {
-      setIndTab('done');
-      setIndLessonId(done[0].id);
-    }
-  }, [hadCurrentIndKind, indKind, nextLesson?.id, nextLessonNeedsPay]);
-
-  function switchIndKind(kind: 'individual' | 'group') {
-    setIndKind(kind);
-    setIndListExpanded(false);
-    setIndListPage(0);
-    const first =
-      lessons.find((l) => l.kind === kind && l.status === 'upcoming') ??
-      lessons.find((l) => l.kind === kind);
-    if (first) setIndLessonId(first.id);
-  }
-
-  /* ——— Расписание: только реальные назначенные занятия (ind/group + сессии курса) ——— */
-  const now = new Date();
-  const todayKey = dayKey(now);
-  const schedFromDb: SchedLesson[] = lessons
-    .filter((l) => l.status === 'upcoming')
-    .map((l) => ({
-      id: l.id,
-      date: parseLessonDate(l.date, l.time),
-      time: l.time,
-      duration: 60,
-      title: l.topic,
-      kind: l.kind,
-      teacher: l.kind === 'group' ? (data.group?.teacherName ?? SCHED_GROUP_TEACHER) : teacherName,
-    }));
-  const schedFromCourse: SchedLesson[] = [];
-  for (const s of data.courseStops) {
-    if (!s.sessionStartsAt || s.status === 'locked') continue;
-    const d = new Date(s.sessionStartsAt);
-    if (Number.isNaN(d.getTime())) continue;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    schedFromCourse.push({
-      id: `course-${s.lessonId}`,
-      date: d,
-      time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
-      duration: 90,
-      title: s.title,
-      kind: 'course',
-      teacher: COURSE_TEACHER,
-    });
-  }
-  const schedLessons = [...schedFromDb, ...schedFromCourse].filter(
-    (l) => schedFilter === 'all' || l.kind === schedFilter,
-  );
-  const schedUpcoming = schedLessons.filter((l) => l.date.getTime() >= now.getTime()).sort((a, b) => a.date.getTime() - b.date.getTime());
-  const schedNext = schedUpcoming[0] ?? null;
-  const schedLabel = `${MONTHS_NOM[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`;
-
-  function shiftSched(dir: 1 | -1) {
-    setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + dir, 1));
-  }
-
-  function goSchedToday() {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    setMonthCursor(new Date(d.getFullYear(), d.getMonth(), 1));
-    setMonthSelected(null);
-  }
-
-  /* месячная сетка: пустые ячейки до 1-го числа + дни месяца */
-  const monthCells: (Date | null)[] = [
-    ...Array.from({ length: (monthCursor.getDay() + 6) % 7 }, () => null),
-    ...Array.from(
-      { length: new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0).getDate() },
-      (_, i) => new Date(monthCursor.getFullYear(), monthCursor.getMonth(), i + 1)
-    ),
-  ];
-  const monthSelectedDate = monthSelected ? new Date(monthSelected) : null;
-  const monthDayLessons = monthSelectedDate
-    ? schedLessons.filter((l) => dayKey(l.date) === dayKey(monthSelectedDate)).sort((a, b) => minutesOf(a.time) - minutesOf(b.time))
-    : [];
 
   /* ——— Настройки профиля ——— */
   /* TEMP: класс и цель пока хранятся локально — для записи в базу потребуется
@@ -1600,7 +1360,7 @@ export default function CabinetShell({
           </button>
           <a className="cab-home-link" href="/" title="Вернуться на главную">
             <Icon d={ICONS.back} />
-            <h1>Личный кабинет</h1>
+            <h1>Кабинет курса</h1>
           </a>
           <button
             type="button"
@@ -1617,7 +1377,16 @@ export default function CabinetShell({
 
         <div className="cab-body">
           <main className="cab-content">
-            {section === 'course' && courseState === 'preview' && (
+            {section === 'course' && courseCabinetGate && (
+              <CourseCabinetGate
+                courseTitle={courseName}
+                botUrl={botUrl}
+                noCatalog={noCourseCatalog}
+                onOpenPayments={() => setSection('payments')}
+              />
+            )}
+
+            {section === 'course' && !courseCabinetGate && courseState === 'preview' && (
               <>
                 <header className="cab-sched-head">
                   <div>
@@ -1634,7 +1403,7 @@ export default function CabinetShell({
               </>
             )}
 
-            {section === 'course' && courseState !== 'preview' && (
+            {section === 'course' && !courseCabinetGate && courseState !== 'preview' && (
               <div className="cab-stack cab-course-screen">
                 <section className="cab-panel cab-course-shell">
                   <div className="cab-course-hero">
@@ -1967,7 +1736,7 @@ export default function CabinetShell({
                         Это занятие откроется после покупки курса. Оформи доступ, чтобы смотреть вебинары,
                         скачивать материалы и сдавать домашние задания.
                       </p>
-                      <a className="cab-btn cab-btn--join" href={packagesHref('course')}>
+                      <a className="cab-btn cab-btn--join" href={packagesHref()}>
                         <Icon d={ICONS.cart} /> Купить курс
                       </a>
                     </section>
@@ -1976,679 +1745,27 @@ export default function CabinetShell({
               </div>
             )}
 
-            {section === 'lessons' && (
-              <>
-                <header className="cab-sched-head cab-sched-head--lessons">
-                  <div>
-                    <h2>Занятия</h2>
-                    <p>Индивидуальные и групповые занятия с преподавателем</p>
-                  </div>
-                </header>
-                {(hadIndividual || hadGroup) && (
-                  <div className="cab-lessons-tabs" role="tablist" aria-label="Тип занятий">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={indKind === 'individual'}
-                      className={`cab-lessons-tab${indKind === 'individual' ? ' is-active' : ''}`}
-                      onClick={() => switchIndKind('individual')}
-                    >
-                      <Icon d={ICONS.individual} className="cab-lessons-tab-ico" />
-                      Индивидуальные
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={indKind === 'group'}
-                      className={`cab-lessons-tab${indKind === 'group' ? ' is-active' : ''}`}
-                      onClick={() => switchIndKind('group')}
-                    >
-                      <Icon d={ICONS.users} className="cab-lessons-tab-ico" />
-                      Групповые
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-
-            {section === 'lessons' && (
-              <div className={`cab-stack cab-ind-scope${indKind === 'group' ? ' kind-group' : ''}`}>
-                {!hadCurrentIndKind ? (
-                  <CabLocked
-                    title={indKind === 'group' ? 'Групповые занятия' : 'Индивидуальные занятия'}
-                    text={
-                      indKind === 'group'
-                        ? 'Запишись на групповое занятие — здесь появятся расписание, материалы и домашка.'
-                        : 'Запишись на индивидуальное занятие — здесь появятся расписание, материалы и домашка.'
-                    }
-                    cta={{
-                      label: indKind === 'group' ? 'Купить групповое занятие' : 'Купить индивидуальное занятие',
-                      href: packagesHref(indKind),
-                    }}
-                  />
-                ) : (
-                  <>
-                    {!hasCurrentIndKind ? (
-                      <CabLocked
-                        title="Пакет занятий закончился"
-                        text={
-                          indKind === 'group'
-                            ? 'Пополни групповой пакет, чтобы записаться на следующее занятие.'
-                            : 'Пополни индивидуальный пакет, чтобы записаться на следующее занятие.'
-                        }
-                        cta={{
-                          label: 'Пополнить пакет',
-                          href: packagesHref(indKind),
-                        }}
-                      />
-                    ) : (
-                      <>
-                        <BookingPanel
-                          kind={indKind}
-                          teacherTelegramId={data.ordinaryTeacher?.telegramId ?? null}
-                          groupId={indKind === 'group' ? data.studentGroup?.id ?? null : null}
-                          remaining={indCreditsRemaining}
-                          paymentsHref={packagesHref(indKind)}
-                        />
-                        {!nextLesson ? (
-                      <section className="cab-panel cab-lnx cab-lnx--wait">
-                        <div className="cab-lnx-top">
-                          <div className="cab-lnx-media">
-                            <span className="cab-lnx-tag">Следующее занятие</span>
-                            <span className="cab-lnx-media-title">
-                              <b>{indKind === 'group' ? 'Групповое занятие' : 'Индивидуальное занятие'}</b>
-                              <em>Ожидает назначения</em>
-                            </span>
-                          </div>
-                          <div className="cab-lnx-info">
-                            <div className="cab-lnx-info-head">
-                              <span className="cab-lnx-badge is-ok">Оплачено</span>
-                            </div>
-                            <h3 className="cab-lnx-title">Занятие появится после назначения</h3>
-                            <p className="cab-note">
-                              {indKind === 'group'
-                                ? 'Наставник назначит групповое занятие — оно сразу появится здесь и в расписании.'
-                                : 'Наставник назначит индивидуальное занятие — оно сразу появится здесь и в расписании.'}
-                            </p>
-                            <div className="cab-lnx-meta">
-                              <div>
-                                <span className="cab-k">Наставник</span>
-                                <span className="cab-ind-teacher">
-                                  <i>{initials(teacherName)}</i>
-                                  {teacherName}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="cab-lnx-foot">
-                          <div className="cab-lnx-status">
-                            <span className="cab-lnx-status-text">
-                              <Icon d={ICONS.spark} />
-                              Ожидаем назначения
-                            </span>
-                            <span className="cab-lnx-bar" aria-hidden="true">
-                              <i style={{ width: '20%' }} />
-                            </span>
-                          </div>
-                          <a
-                            className="cab-btn cab-btn--join cab-lnx-cta"
-                            href={tgBotUrl('mentor')}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            Связаться с наставником <Icon d={ICONS.chevron} />
-                          </a>
-                        </div>
-                      </section>
-                    ) : (
-                      <section className="cab-panel cab-lnx">
-                        <div className="cab-lnx-top">
-                          <div className="cab-lnx-media">
-                            <span className="cab-lnx-tag">Следующее занятие</span>
-                            <span className="cab-lnx-media-title">
-                              <b>{indKind === 'group' ? 'Групповое занятие' : 'Индивидуальное занятие'}</b>
-                              <em>{nextLesson.topic}</em>
-                            </span>
-                          </div>
-
-                          <div className="cab-lnx-info">
-                            <div className="cab-lnx-info-head">
-                              <span className="cab-lnx-badge">
-                                {indKind === 'group' ? 'Групповое' : 'Индивидуальное'} занятие
-                              </span>
-                              {nextLessonNeedsPay ? (
-                                <span className="cab-lnx-badge is-warn">Не оплачено</span>
-                              ) : (
-                                <span className="cab-lnx-badge is-ok">Оплачено</span>
-                              )}
-                            </div>
-                            <h3 className="cab-lnx-title">{nextLesson.topic}</h3>
-                            <div className="cab-lnx-row">
-                              <div className="cab-lnx-pills">
-                                <div className="cab-lnx-pill">
-                                  <Icon d={ICONS.schedule} />
-                                  <span>
-                                    <b>
-                                      {nextDate?.day} {nextDate?.month}
-                                    </b>
-                                    <em>{nextDate?.weekday}</em>
-                                  </span>
-                                </div>
-                                <div className="cab-lnx-pill">
-                                  <Icon d={ICONS.clock} />
-                                  <span>
-                                    <b>{nextLesson.time}</b>
-                                    <em>60 минут</em>
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="cab-lnx-meta">
-                                <div>
-                                  <span className="cab-k">Тема занятия</span>
-                                  <strong>{nextLesson.topic}</strong>
-                                </div>
-                                <div>
-                                  <span className="cab-k">Преподаватель</span>
-                                  <span className="cab-ind-teacher">
-                                    <i>
-                                      {initials(
-                                        indKind === 'group'
-                                          ? (data.group?.teacherName ?? teacherName)
-                                          : teacherName,
-                                      )}
-                                    </i>
-                                    {indKind === 'group' ? (data.group?.teacherName ?? teacherName) : teacherName}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="cab-lnx-foot">
-                          <div className="cab-lnx-status">
-                            <span className="cab-lnx-status-text">
-                              <Icon d={ICONS.spark} />
-                              {nextLessonNeedsPay ? 'Ожидает оплаты' : 'Готово к прохождению'}
-                            </span>
-                            <span className="cab-lnx-bar" aria-hidden="true">
-                              <i style={{ width: nextLessonNeedsPay ? '35%' : '70%' }} />
-                            </span>
-                          </div>
-                          {nextLessonNeedsPay ? (
-                            <a className="cab-btn cab-btn--join cab-lnx-cta" href={packagesHref(indKind)}>
-                              Оплатить занятие <Icon d={ICONS.chevron} />
-                            </a>
-                          ) : (
-                            <div className="cab-lnx-cta-row">
-                              {nextLesson.meetUrl ? (
-                                <a
-                                  className="cab-btn cab-btn--join cab-lnx-cta"
-                                  href={nextLesson.meetUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  <Icon d={ICONS.play} /> Подключиться <Icon d={ICONS.chevron} />
-                                </a>
-                              ) : (
-                                <button type="button" className="cab-btn cab-btn--join cab-lnx-cta" disabled>
-                                  <Icon d={ICONS.play} /> Подключиться <Icon d={ICONS.chevron} />
-                                </button>
-                              )}
-                              {nextLesson.status === 'upcoming' && (
-                                <a
-                                  className="cab-btn cab-btn--line cab-lnx-cta"
-                                  href={tgBotUrl('mentor_hw')}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  <Icon d={ICONS.homework} /> Сдать домашку
-                                </a>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </section>
-                    )}
-
-                    <div className="cab-ind-grid">
-                      <section className="cab-panel cab-my-lessons">
-                        <header className="cab-panel-head cab-my-lessons-head">
-                          <div>
-                            <h3>Мои занятия</h3>
-                            <span className="cab-panel-hint">выбери, чтобы увидеть материалы и домашку</span>
-                          </div>
-                          <button
-                            type="button"
-                            className="cab-my-lessons-cal"
-                            title="Открыть расписание"
-                            onClick={() => setSection('schedule')}
-                          >
-                            <Icon d={ICONS.schedule} />
-                          </button>
-                        </header>
-                        <div className="cab-ind-tabs" role="tablist" aria-label="Фильтр занятий">
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={indTab === 'upcoming'}
-                            className={`cab-ind-tab${indTab === 'upcoming' ? ' is-active' : ''}`}
-                            onClick={() => {
-                              setIndTab('upcoming');
-                              setIndListPage(0);
-                              setIndListExpanded(false);
-                              const first = kindLessons.find((l) => l.status === 'upcoming');
-                              if (first) setIndLessonId(first.id);
-                            }}
-                          >
-                            Предстоящие <b>{kindLessons.filter((l) => l.status === 'upcoming').length}</b>
-                          </button>
-                          <button
-                            type="button"
-                            role="tab"
-                            aria-selected={indTab === 'done'}
-                            className={`cab-ind-tab${indTab === 'done' ? ' is-active' : ''}`}
-                            onClick={() => {
-                              setIndTab('done');
-                              setIndListPage(0);
-                              setIndListExpanded(false);
-                              const first = kindLessons.find((l) => l.status === 'done');
-                              if (first) setIndLessonId(first.id);
-                            }}
-                          >
-                            Завершённые <b>{kindLessons.filter((l) => l.status === 'done').length}</b>
-                          </button>
-                        </div>
-                        <div className={`cab-ind-list${indListExpanded ? ' is-expanded' : ''}`}>
-                          {visibleIndLessons.map((l) => {
-                            const monthIdx = Number(l.date.slice(3, 5)) - 1;
-                            return (
-                              <button
-                                key={l.id}
-                                type="button"
-                                className={`cab-ind-row${indLessonId === l.id ? ' is-selected' : ''}`}
-                                onClick={() => setIndLessonId(l.id)}
-                              >
-                                <span className="cab-ind-row-date" aria-hidden="true">
-                                  <b>{l.date.slice(0, 2)}</b>
-                                  <em>{MONTHS_SHORT[monthIdx] ?? l.date.slice(3, 5)}</em>
-                                </span>
-                                <span className="cab-ind-cell-main">
-                                  <strong>{l.time}</strong>
-                                  <span>{l.topic}</span>
-                                </span>
-                                <span
-                                  className={`cab-ind-status is-${l.status === 'upcoming' ? 'upcoming' : 'done'}`}
-                                >
-                                  {l.status === 'upcoming'
-                                    ? l.paid === false
-                                      ? 'Ожидает оплаты'
-                                      : 'Предстоит'
-                                    : 'Завершено'}
-                                </span>
-                                <Icon d={ICONS.chevron} className="cab-ind-chev" />
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {filteredIndLessons.length > 0 && (
-                          <div className="cab-my-lessons-foot">
-                            <button
-                              type="button"
-                              className="cab-my-lessons-more"
-                              onClick={() => {
-                                setIndListExpanded((v) => !v);
-                                setIndListPage(0);
-                              }}
-                            >
-                              {indListExpanded ? 'Свернуть список' : 'Показать все занятия'}
-                              <Icon d={ICONS.chevron} />
-                            </button>
-                            {!indListExpanded && indListPages > 1 && (
-                              <div className="cab-my-lessons-pager">
-                                <button
-                                  type="button"
-                                  className="cab-my-lessons-pager-btn"
-                                  disabled={indListPage <= 0}
-                                  aria-label="Предыдущая страница"
-                                  onClick={() => setIndListPage((p) => Math.max(0, p - 1))}
-                                >
-                                  <Icon d={ICONS.back} />
-                                </button>
-                                <span>
-                                  {indListPage + 1} / {indListPages}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="cab-my-lessons-pager-btn"
-                                  disabled={indListPage >= indListPages - 1}
-                                  aria-label="Следующая страница"
-                                  onClick={() => setIndListPage((p) => Math.min(indListPages - 1, p + 1))}
-                                >
-                                  <Icon d={ICONS.chevron} />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </section>
-
-                      {indLesson ? (
-                      <div key={indLesson.id} className="cab-ind-side cab-anim-pop">
-                        <section className="cab-panel">
-                          <header className="cab-panel-head">
-                            <h3>Материалы с уроков</h3>
-                          </header>
-                          {indLesson.status === 'done' && indLesson.materials.length > 0 ? (
-                            <div className="cab-files cab-files--plain">
-                              {indLesson.materials.map((f) => (
-                                <div key={f.id} className="cab-file">
-                                  <Icon d={ICONS.file} className="cab-file-ico" />
-                                  <span className="cab-file-name">{f.name}</span>
-                                  <span className="cab-file-size">{f.size}</span>
-                                  <a
-                                    href={f.downloadUrl}
-                                    className="cab-file-dl"
-                                    aria-label={`Скачать ${f.name}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    <Icon d={ICONS.download} />
-                                  </a>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="cab-note cab-note--materials-wait">
-                              Материалы для изучения занятия появятся после проведения вебинара.
-                            </p>
-                          )}
-                        </section>
-
-                        <section className="cab-panel">
-                          <header className="cab-panel-head">
-                            <h3>Домашнее задание</h3>
-                          </header>
-                          {/* сдать домашку можно только за ближайшее занятие — кнопка в блоке выше */}
-                          {indLesson.status === 'upcoming' ? (
-                            <div className="cab-hw">
-                              <p className="cab-note">
-                                Домашку по ближайшему занятию можно сдать через Telegram-бот.
-                              </p>
-                              <a
-                                className="cab-btn cab-btn--line"
-                                href={tgBotUrl('mentor_hw')}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <Icon d={ICONS.homework} /> Сдать домашку в Telegram
-                              </a>
-                            </div>
-                          ) : indLesson.homework ? (
-                            <div className="cab-hw">
-                              <div className="cab-file cab-file--big">
-                                <Icon d={ICONS.file} className="cab-file-ico" />
-                                <span className="cab-file-name">{indLesson.homework.name}</span>
-                                <span className="cab-file-size">{indLesson.homework.size}</span>
-                              </div>
-                              <a
-                                href={indLesson.homework.downloadUrl}
-                                className="cab-btn cab-btn--line"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                Открыть файл домашки <Icon d={ICONS.download} />
-                              </a>
-                            </div>
-                          ) : (
-                            <p className="cab-note">Домашка появится здесь после занятия.</p>
-                          )}
-                        </section>
-                      </div>
-                      ) : (
-                        <p className="cab-note">Занятий этого типа пока нет.</p>
-                      )}
-                    </div>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {section === 'schedule' && (
-              <div className="cab-stack cab-sched-scope">
-                <header className="cab-sched-head">
-                  <div>
-                    <h2>Расписание</h2>
-                    <p>Твои предстоящие занятия</p>
-                  </div>
-                </header>
-
-                {/* чипы-фильтры слева, переключатель периода — справа */}
-                <div className="cab-sched-top">
-                  <div className="cab-sched-filters" role="tablist" aria-label="Фильтр занятий">
-                    <button type="button" role="tab" aria-selected={schedFilter === 'all'} className={`cab-sched-filter${schedFilter === 'all' ? ' is-active' : ''}`} onClick={() => setSchedFilter('all')}>
-                      <Icon d={ICONS.check} className="cab-sched-filter-ico" />
-                      Все
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={schedFilter === 'course'}
-                      className={`cab-sched-filter${schedFilter === 'course' ? ' is-active' : ''}`}
-                      onClick={() => setSchedFilter('course')}
-                    >
-                      <Icon d={ICONS.course} className="cab-sched-filter-ico" />
-                      Курс
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={schedFilter === 'individual'}
-                      className={`cab-sched-filter${schedFilter === 'individual' ? ' is-active' : ''}`}
-                      onClick={() => setSchedFilter('individual')}
-                    >
-                      <Icon d={ICONS.individual} className="cab-sched-filter-ico" />
-                      Индивидуальные
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={schedFilter === 'group'}
-                      className={`cab-sched-filter${schedFilter === 'group' ? ' is-active' : ''}`}
-                      onClick={() => setSchedFilter('group')}
-                    >
-                      <Icon d={ICONS.users} className="cab-sched-filter-ico" />
-                      Групповые
-                    </button>
-                  </div>
-                  <div className="cab-sched-nav">
-                    <button type="button" className="cab-sched-arrow" onClick={() => shiftSched(-1)} aria-label="Назад">
-                      <Icon d={ICONS.back} />
-                    </button>
-                    {/*suppressHydrationWarning: даты считаются на клиенте*/}
-                    <strong suppressHydrationWarning>{schedLabel}</strong>
-                    <button type="button" className="cab-sched-arrow" onClick={() => shiftSched(1)} aria-label="Вперёд">
-                      <Icon d={ICONS.chevron} />
-                    </button>
-                    <button type="button" className="cab-btn cab-btn--line cab-sched-today" onClick={goSchedToday}>
-                      Сегодня
-                    </button>
-                  </div>
-                </div>
-
-                <div className="cab-sched-layout">
-                  <div className="cab-sched-main">
-                    <section className="cab-panel cab-sched-cal">
-                      <header className="cab-sched-calhead">
-                        <h3>Календарь</h3>
-                      </header>
-
-                      <div className="cab-sched-month">
-                        <div className="cab-sched-month-head" aria-hidden="true">
-                          {DAY_HEADERS.map((d) => (
-                            <span key={d}>{d}</span>
-                          ))}
-                        </div>
-                        <div className="cab-sched-month-grid">
-                          {monthCells.map((d, i) =>
-                            d ? (
-                              <button
-                                key={i}
-                                type="button"
-                                className={`cab-sched-cell${dayKey(d) === todayKey ? ' is-today' : ''}${monthSelected === dayKey(d) ? ' is-selected' : ''}`}
-                                onClick={() => setMonthSelected(monthSelected === dayKey(d) ? null : dayKey(d))}
-                              >
-                                {/*suppressHydrationWarning: даты считаются на клиенте*/}
-                                <b suppressHydrationWarning>{d.getDate()}</b>
-                                <span className="cab-sched-dots">
-                                  {schedLessons
-                                    .filter((l) => dayKey(l.date) === dayKey(d))
-                                    .slice(0, 3)
-                                    .map((l) => (
-                                      <i key={l.id} className={`k-${l.kind}`} />
-                                    ))}
-                                </span>
-                              </button>
-                            ) : (
-                              <span key={i} className="cab-sched-cell is-blank" />
-                            )
-                          )}
-                        </div>
-                        <div className="cab-sched-legend" aria-hidden="true">
-                          <span>
-                            <i className="cab-kind-dot k-course" /> Занятия курса
-                          </span>
-                          <span>
-                            <i className="cab-kind-dot k-individual" /> Индивидуальные
-                          </span>
-                          <span>
-                            <i className="cab-kind-dot k-group" /> Групповые
-                          </span>
-                        </div>
-                      </div>
-                    </section>
-
-                    {monthSelectedDate ? (
-                      monthDayLessons.length > 0 ? (
-                        <section className="cab-panel cab-sched-day">
-                          <header className="cab-panel-head">
-                            <h3>
-                              Занятия · {monthSelectedDate.getDate()} {MONTHS_GEN[monthSelectedDate.getMonth()]}
-                            </h3>
-                          </header>
-                          <ul className="cab-day-lessons">
-                            {monthDayLessons.map((l) => (
-                              <li key={l.id}>
-                                <em>{l.time}</em>
-                                <i className={`cab-kind-dot k-${l.kind}`} aria-hidden="true" />
-                                <span className="cab-day-title">
-                                  <strong>{l.title}</strong>
-                                  <small>
-                                    {l.teacher} · {l.duration} минут
-                                  </small>
-                                </span>
-                                <span className={`cab-schedule-kind k-${l.kind}`}>{SCHED_KIND_LABEL[l.kind]}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </section>
-                      ) : (
-                        <section className="cab-panel cab-sched-day cab-sched-day--empty">
-                          <span className="cab-sched-day-empty-ico" aria-hidden="true">
-                            <Icon d={ICONS.schedule} />
-                          </span>
-                          <h4>В этот день занятий нет</h4>
-                          <p className="cab-note">Выбери другой день в календаре или запишись на новое занятие.</p>
-                        </section>
-                      )
-                    ) : schedNext ? (
-                      <section className="cab-panel cab-next-card is-now">
-                        <header className="cab-panel-head">
-                          <h3>Ближайшее занятие</h3>
-                        </header>
-                        <div className="cab-next-card-body">
-                          <span className="cab-next-card-date" aria-hidden="true">
-                            {/*suppressHydrationWarning: даты считаются на клиенте*/}
-                            <b suppressHydrationWarning>{schedNext.date.getDate()}</b>
-                            <em>{MONTHS_SHORT[schedNext.date.getMonth()]}</em>
-                          </span>
-                          <span className="cab-next-card-main">
-                            <strong>{schedNext.title}</strong>
-                            {/*suppressHydrationWarning: даты считаются на клиенте*/}
-                            <em suppressHydrationWarning>
-                              {WEEKDAYS[schedNext.date.getDay()]}, {schedNext.time} · {schedNext.duration} минут ·{' '}
-                              <span className={`cab-next-card-kind k-${schedNext.kind}`}>{SCHED_KIND_LABEL[schedNext.kind]}</span>
-                            </em>
-                          </span>
-                        </div>
-                      </section>
-                    ) : null}
-                  </div>
-
-                  <section className="cab-panel cab-sched-detail">
-                    {!schedNext ? (
-                      <SchedEmptyPanel
-                        title="Пока что занятий нет"
-                        text="Запишись на занятие или выбери день в календаре, чтобы увидеть расписание."
-                      />
-                    ) : (
-                      <div className="cab-sched-near">
-                        <h3 className="cab-near-head">Ближайшие занятия</h3>
-                        {schedUpcoming.slice(0, 4).map((l) => (
-                          <article
-                            key={l.id}
-                            className={`cab-near-tile${l.id === schedNext.id ? ' is-now' : ''}`}
-                          >
-                            <span className="cab-near-date" aria-hidden="true">
-                              <b>{l.date.getDate()}</b>
-                              <em>{MONTHS_SHORT[l.date.getMonth()]}</em>
-                            </span>
-                            <span className="cab-near-time">
-                              <strong>{l.time}</strong>
-                              <em>{l.duration} мин</em>
-                            </span>
-                            <span className="cab-near-main">
-                              <strong>{l.title}</strong>
-                              <em>{l.teacher}</em>
-                            </span>
-                            <span className={`cab-schedule-kind k-${l.kind}`}>{SCHED_KIND_LABEL[l.kind]}</span>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                </div>
-              </div>
-            )}
 
             {section === 'payments' && (
-              <div className="cab-stack">
+              <div className="cab-stack cab-payments-course">
                 <header className="cab-sched-head">
                   <div>
-                    <h2>Пополнение занятий</h2>
-                    <p>Доступ к курсу, пакеты занятий и история покупок</p>
+                    <h2>Оплата курса</h2>
+                    <p>Доступ к онлайн-курсу и история платежей</p>
                   </div>
                 </header>
 
-                {/* 01 — доступные пакеты: курс отдельно, занятия — с выбором преподавателя */}
-                <section ref={packsRef} className="cab-panel cab-pack-block">
-                  <header className="cab-set-head">
-                    <span className="cab-set-num">01 · Доступные пакеты</span>
-                  </header>
-
-                  <article className="cab-pack-course">
+                <section className="cab-panel cab-pack-block cab-course-pay-hero">
+                  <article className="cab-pack-course cab-pack-course--hero">
                     <span className="cab-pack-course-ico" aria-hidden="true">
                       <Icon d={ICONS.course} />
                     </span>
                     <div className="cab-pack-course-main">
                       <div className="cab-pack-course-copy">
                         <strong>{cabinetPricing.course.label}</strong>
-                        {cabinetPricing.course.offer.description && (
+                        {cabinetPricing.course.offer.description ? (
                           <em>{cabinetPricing.course.offer.description}</em>
-                        )}
+                        ) : null}
                       </div>
                       <ul className="cab-pack-course-chips">
                         {[
@@ -2664,179 +1781,77 @@ export default function CabinetShell({
                         ))}
                       </ul>
                     </div>
-                    <span className="cab-pack-price">
+                    <span className="cab-pack-price cab-pack-price--hero">
                       {String(cabinetPricing.course.offer.priceByn)} <em>BYN</em>
                     </span>
-                    <a className="cab-btn cab-btn--join" href={checkoutHref('course')}>
-                      Купить курс <Icon d={ICONS.chevron} />
+                    <a className="cab-btn cab-btn--join cab-btn--hero" href={checkoutHref()}>
+                      Оплатить курс <Icon d={ICONS.chevron} />
                     </a>
                   </article>
-
-                  {/* занятия — с преподавателем на выбор */}
-                  <div className="cab-pack-sep">
-                    <h4 className="cab-pack-sep-title">Занятия с преподавателем</h4>
-                    {cabinetTeachers.length > 1 && (
-                      <div
-                        className={`cab-pack-teacher is-count-${Math.min(Math.max(cabinetTeachers.length, 1), 4)}`}
-                        role="tablist"
-                        aria-label="Преподаватель"
-                      >
-                        {cabinetTeachers.map((teacher) => (
-                          <button
-                            key={teacher.teacherId}
-                            type="button"
-                            role="tab"
-                            aria-selected={shopTeacher === teacher.teacherId}
-                            className={`cab-pack-teacher-btn${shopTeacher === teacher.teacherId ? ' is-active' : ''}`}
-                            onClick={() => setShopTeacher(teacher.teacherId)}
-                          >
-                            <Icon d={ICONS.users} className="cab-pack-teacher-ico" />
-                            <span>{teacher.name}</span>
-                            {shopTeacher === teacher.teacherId && (
-                              <Icon d={ICONS.check} className="cab-pack-teacher-check" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="cab-pack-grid">
-                    {(['individual', 'group'] as const).map((t) => {
-                      const pack = cabinetPricing[t];
-                      const options = pack.options;
-                      const chosen = Math.min(shopChoice[t], Math.max(0, options.length - 1));
-                      const option = options[chosen];
-                      if (!option) return null;
-                      const priceNum = (o: (typeof options)[number]) => priceForTeacher(o, shopTeacher, cabinetTeachers);
-                      const priceOf = (o: (typeof options)[number]) => {
-                        const price = priceNum(o);
-                        return price != null ? String(price) : '—';
-                      };
-                      return (
-                        <article key={`${t}-${shopTeacher}`} className="cab-pack-card cab-pack-flash">
-                          <header className="cab-pack-card-head">
-                            <strong className="cab-pack-title">{pack.label}</strong>
-                            <span className="cab-pack-sub">
-                              {t === 'individual'
-                                ? 'Личный подход и максимальный результат'
-                                : 'Эффективная подготовка в команде'}
-                            </span>
-                          </header>
-                          <div className="cab-pack-options" role="radiogroup" aria-label="Объём пакета">
-                            {options.map((o, oi) => {
-                              const price = priceNum(o);
-                              const count = lessonCount(o.name);
-                              const per = price != null && count ? price / count : null;
-                              const chip = o.savingsChip;
-                              return (
-                                <button
-                                  key={o.name}
-                                  type="button"
-                                  role="radio"
-                                  aria-checked={chosen === oi}
-                                  className={`cab-pack-opt${chosen === oi ? ' is-active' : ''}`}
-                                  onClick={() => setShopChoice({ ...shopChoice, [t]: oi })}
-                                >
-                                  <i className="cab-pack-opt-radio" aria-hidden="true" />
-                                  <span className="cab-pack-opt-main">
-                                    <b>{o.name}</b>
-                                    {per != null && <em>{formatByn(per)} BYN / занятие</em>}
-                                  </span>
-                                  <span className="cab-pack-opt-right">
-                                    <span className="cab-pack-opt-price">{priceOf(o)} BYN</span>
-                                    {chip ? <span className="cab-pack-opt-save">{chip}</span> : null}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div className="cab-pack-foot">
-                            <span className="cab-pack-total">
-                              <span className="cab-k">Итого</span>
-                              <b>
-                                {priceOf(option)} <em>BYN</em>
-                              </b>
-                              <small>{option.name}</small>
-                            </span>
-                            <a
-                              className="cab-btn cab-btn--join"
-                              href={checkoutHref(t, { package: chosen, teacher: shopTeacher })}
-                            >
-                              Продолжить <Icon d={ICONS.chevron} />
-                            </a>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
                 </section>
 
-                {/* 02 — мои пакеты: активные покупки компактно */}
                 <section className="cab-panel cab-mypkg-block">
                   <header className="cab-set-head">
-                    <span className="cab-set-num">02 · Мои пакеты</span>
+                    <span className="cab-set-num">Ваш пакет курса</span>
                   </header>
-                  {myPackages.length === 0 && (
-                    <p className="cab-note cab-pkg-empty-note">Активных пакетов пока нет — выбери тариф выше.</p>
+                  {coursePackage ? (
+                    <div className="cab-course-pkg-summary">
+                      <strong>{coursePackage.title}</strong>
+                      <p className="cab-note">
+                        Осталось оплаченных занятий курса:{' '}
+                        <b>
+                          {coursePackage.remaining} / {coursePackage.total}
+                        </b>{' '}
+                        {pluralLessons(coursePackage.total)}
+                      </p>
+                      {coursePackage.active ? (
+                        <span className="cab-pkg-status is-active">
+                          <i aria-hidden="true" />
+                          Активен
+                        </span>
+                      ) : (
+                        <span className="cab-pkg-status">Завершён</span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="cab-note cab-pkg-empty-note">
+                      Пакет курса появится после первой оплаты. Нажми «Оплатить курс» выше или оформи заявку через
+                      Telegram-бот.
+                    </p>
                   )}
-                  <ul className="cab-mypkgs">
-                    {myPackages.map((p) => {
-                      const product = p.product;
-                      return (
-                        <li key={p.id} className={p.active ? '' : 'is-done'}>
-                          <span className="cab-mypkg-info">
-                            <strong>{p.title}</strong>
-                            <em>{p.sub}</em>
-                          </span>
-                          <span className="cab-mypkg-left" title="Осталось до следующей оплаты">
-                            <b>{p.remaining}</b>
-                            <span>
-                              / {p.total} {pluralLessons(p.total)}
-                            </span>
-                          </span>
-                          <span className={`cab-pkg-status${p.active ? ' is-active' : ''}`}>
-                            <i aria-hidden="true" />
-                            {p.active ? 'Активен' : 'Завершён'}
-                          </span>
-                          <a className="cab-btn cab-btn--line" href={checkoutHref(product)}>
-                            {p.active ? 'Пополнить' : 'Купить новый'} <Icon d={ICONS.chevron} />
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
                 </section>
 
-                {/* 03 — история покупок */}
                 <section className="cab-panel cab-pkg-block">
                   <header className="cab-set-head">
-                    <span className="cab-set-num">03 · История покупок</span>
-                    <button type="button" className="cab-pkg-history-all" onClick={() => setPkgHistoryAll((v) => !v)}>
-                      {pkgHistoryAll ? 'Свернуть' : 'Показать все'} <Icon d={ICONS.chevron} />
-                    </button>
+                    <span className="cab-set-num">История оплат курса</span>
+                    {coursePaymentHistory.length > 2 ? (
+                      <button type="button" className="cab-pkg-history-all" onClick={() => setPkgHistoryAll((v) => !v)}>
+                        {pkgHistoryAll ? 'Свернуть' : 'Показать все'} <Icon d={ICONS.chevron} />
+                      </button>
+                    ) : null}
                   </header>
-                  {pkgHistory.length === 0 && (
-                    <p className="cab-note cab-pkg-empty-note">История покупок появится после первой оплаты.</p>
+                  {coursePaymentHistory.length === 0 ? (
+                    <p className="cab-note cab-pkg-empty-note">Здесь появятся платежи за онлайн-курс.</p>
+                  ) : (
+                    <ul className="cab-pkg-history">
+                      {(pkgHistoryAll ? coursePaymentHistory : coursePaymentHistory.slice(0, 5)).map((h) => (
+                        <li key={h.id}>
+                          <span className="cab-h-date">{h.date}</span>
+                          <span className="cab-h-title">{h.title}</span>
+                          <span className="cab-h-price">{h.price} BYN</span>
+                          <span
+                            className={`cab-h-status${h.status === 'pending' ? ' is-pending' : h.status === 'rejected' ? ' is-rejected' : ''}`}
+                          >
+                            {h.status === 'pending'
+                              ? 'Ожидает оплаты'
+                              : h.status === 'rejected'
+                                ? 'Отклонено'
+                                : 'Оплачено'}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                  <ul className="cab-pkg-history">
-                    {(pkgHistoryAll ? pkgHistory : pkgHistory.slice(0, 2)).map((h) => (
-                      <li key={h.id}>
-                        <span className="cab-h-date">{h.date}</span>
-                        <span className="cab-h-title">{h.title}</span>
-                        <span className="cab-h-price">{h.price} BYN</span>
-                        <span
-                          className={`cab-h-status${h.status === 'pending' ? ' is-pending' : h.status === 'rejected' ? ' is-rejected' : ''}`}
-                        >
-                          {h.status === 'pending'
-                            ? 'Ожидает оплаты'
-                            : h.status === 'rejected'
-                              ? 'Отклонено'
-                              : 'Оплачено'}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
                 </section>
               </div>
             )}

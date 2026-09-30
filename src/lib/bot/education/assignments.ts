@@ -197,7 +197,51 @@ export async function getStudentTeacher(
       };
     }
   }
+
+  const { data: lessonRow } = await admin
+    .from('scheduled_lessons')
+    .select('teacher_telegram_id')
+    .eq('telegram_id', telegramId)
+    .not('teacher_telegram_id', 'is', null)
+    .neq('status', 'cancelled')
+    .order('starts_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const fromLesson = lessonRow?.teacher_telegram_id as number | null | undefined;
+  if (fromLesson) {
+    return {
+      telegramId: fromLesson,
+      fullName: await memberName(admin, fromLesson),
+      source: 'personal',
+    };
+  }
+
   return null;
+}
+
+/** Преподаватели ordinary-занятий ученика (назначение + группы + факт из расписания). */
+export async function getStudentOrdinaryTeacherIds(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<Set<number>> {
+  const ids = new Set<number>();
+  for (const row of await getStudentAssignments(admin, telegramId, 'teacher')) {
+    ids.add(row.mentor_telegram_id);
+  }
+  for (const group of await getStudentGroups(admin, telegramId)) {
+    if (group.teacher_telegram_id) ids.add(group.teacher_telegram_id);
+  }
+  const { data: lessonTeachers } = await admin
+    .from('scheduled_lessons')
+    .select('teacher_telegram_id')
+    .eq('telegram_id', telegramId)
+    .not('teacher_telegram_id', 'is', null)
+    .neq('status', 'cancelled');
+  for (const row of lessonTeachers ?? []) {
+    const id = row.teacher_telegram_id as number | null;
+    if (id) ids.add(id);
+  }
+  return ids;
 }
 
 // «Мой куратор»: сначала персональное назначение

@@ -16,6 +16,9 @@ export async function completeScheduledLesson(
     .maybeSingle();
   if (loadError) throw loadError;
   if (!lesson) throw new Error(`Занятие ${lessonId} не найдено.`);
+  if (lesson.status !== 'scheduled') {
+    throw new Error('Завершить можно только запланированное занятие');
+  }
   const now = new Date().toISOString();
 
   const { data: updated, error: updateError } = await admin
@@ -33,7 +36,10 @@ export async function completeScheduledLesson(
     .select('id, package_id')
     .maybeSingle();
   if (updateError) throw updateError;
-  if (!updated?.package_id) {
+  if (!updated) {
+    throw new Error('Не удалось завершить занятие');
+  }
+  if (!updated.package_id) {
     return { consumed: false };
   }
 
@@ -73,14 +79,17 @@ export async function completeScheduledLesson(
 export async function cancelScheduledLesson(
   admin: SupabaseClient,
   lessonId: number,
-): Promise<void> {
+): Promise<boolean> {
   const now = new Date().toISOString();
-  const { error } = await admin
+  const { data, error } = await admin
     .from('scheduled_lessons')
     .update({ status: 'cancelled', updated_at: now })
     .eq('id', lessonId)
-    .eq('status', 'scheduled');
+    .eq('status', 'scheduled')
+    .select('id')
+    .maybeSingle();
   if (error) throw error;
+  return Boolean(data);
 }
 
 /** Пересчёт remaining из фактически завершённых занятий пакета. */

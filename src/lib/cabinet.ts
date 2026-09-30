@@ -19,13 +19,11 @@ import {
 } from '@/lib/studio/courseContent';
 import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
 import { HOMEWORK_STATUS_LABELS } from '@/lib/bot/education/course-homework';
-import { cabinetLessonFileUrl } from '@/lib/cabinet-lesson-files';
 import {
   isPurchaseRequestTableError,
   listPurchaseRequestsForUser,
 } from '@/lib/bot/purchase-requests';
-import { getStudentTeacher } from '@/lib/bot/education/assignments';
-import { loadMemberRoles, memberHasRole, type BotRole } from '@/lib/bot/roles';
+import { loadMemberRoles, type BotRole } from '@/lib/bot/roles';
 
 export function formatModulePeriodFromLessons(lessons: { lessonDate: string | null }[]): string | null {
   const dates = lessons
@@ -100,48 +98,9 @@ export type CabinetCourseCatalog = {
   modulePreviews: CabinetCourseModulePreview[];
 };
 
-export type CabinetGroup = {
-  title: string;
-  teacherName: string | null;
-};
-
 export type CabinetMentor = {
   kind: 'teacher' | 'curator';
   name: string;
-};
-
-export type CabinetOrdinaryTeacher = {
-  telegramId: number;
-  name: string | null;
-};
-
-export type CabinetStudentGroup = {
-  id: number;
-  title: string;
-};
-
-export type CabinetLesson = {
-  id: string;
-  kind: 'individual' | 'group';
-  date: string;
-  time: string;
-  topic: string;
-  status: 'upcoming' | 'done';
-  paid: boolean;
-  meetUrl: string | null;
-  materials: { id: number; name: string; size: string; downloadUrl: string }[];
-  homework: {
-    id: number;
-    name: string;
-    size: string;
-    state: string;
-    tone: 'ok' | 'now';
-    downloadUrl: string;
-  } | null;
-};
-
-export type CabinetTeachingLesson = CabinetLesson & {
-  studentName: string | null;
 };
 
 export type CabinetPackage = {
@@ -242,13 +201,9 @@ export type CabinetData = {
   courseCatalogs?: CabinetCourseCatalog[];
   /** Контент курса из Sanity (структура модулей/уроков). */
   courseContent: DistrictCourseContent | null;
-  group: CabinetGroup | null;
   mentors: CabinetMentor[];
-  /** Преподаватель для ordinary booking (individual/group). */
-  ordinaryTeacher: CabinetOrdinaryTeacher | null;
-  /** Активная группа ученика для group booking. */
-  studentGroup: CabinetStudentGroup | null;
-  lessons: CabinetLesson[];
+  /** Ind/group: были занятия в scheduled_lessons (для gate без полной загрузки lessons). */
+  hasOrdinaryStudentTrack: boolean;
   packages: CabinetPackage[];
   payments: CabinetPayment[];
   profile: CabinetProfile | null;
@@ -262,25 +217,40 @@ export type CabinetData = {
   courseMapViewed: boolean;
   /** Все роли участника: основная + extra_roles. */
   memberRoles: BotRole[];
-  /** Занятия, где пользователь назначен преподавателем. */
-  teachingLessons: CabinetTeachingLesson[];
 };
 
 export function hasActiveAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
-  return data.accesses.some((a) => a.product === product);
+  if (data.accesses.some((a) => a.product === product)) return true;
+  if (product === 'course') return hasCoursePayment(data);
+  if (data.packages.some((p) => p.product === product && p.active)) return true;
+  return false;
 }
 
 export function hadAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
-  return data.accessHistory.includes(product);
+  if (data.accessHistory.includes(product)) return true;
+  if (hasActiveAccess(data, product)) return true;
+  if (data.packages.some((p) => p.product === product && p.total > 0)) return true;
+  if (product === 'course') {
+    return data.packages.some((p) => p.product === 'course' && p.total > 0) || data.enrollment != null;
+  }
+  if (product === 'individual' || product === 'group') {
+    return data.hasOrdinaryStudentTrack;
+  }
+  return false;
 }
 
 export function hadAnyLessonsProduct(data: CabinetData): boolean {
-  return hadAccess(data, 'individual') || hadAccess(data, 'group');
+  if (data.accessHistory.includes('individual') || data.accessHistory.includes('group')) return true;
+  if (data.accesses.some((a) => a.product === 'individual' || a.product === 'group')) return true;
+  if (data.packages.some((p) => (p.product === 'individual' || p.product === 'group') && p.total > 0)) {
+    return true;
+  }
+  return data.hasOrdinaryStudentTrack;
 }
 
 /** Оплата курса: доступ product=course или активный пакет занятий курса. */
 export function hasCoursePayment(data: Pick<CabinetData, 'accesses' | 'packages'>): boolean {
-  if (hasActiveAccess(data as CabinetData, 'course')) return true;
+  if (data.accesses.some((a) => a.product === 'course')) return true;
   return data.packages.some((p) => p.product === 'course' && p.active && p.total > 0);
 }
 
@@ -311,11 +281,29 @@ export function shouldShowCourseCurator(data: CabinetData): boolean {
   return false;
 }
 
-/** Наставник ind/group — только если есть назначенные занятия или персональное назначение. */
-export function shouldShowLessonsMentor(data: CabinetData): boolean {
-  const hasScheduled = data.lessons.length > 0;
-  const hasTeacher = data.mentors.some((m) => m.kind === 'teacher');
-  return hasScheduled || hasTeacher;
+/** В Sanity/Supabase есть предложение онлайн-курса для кабинета. */
+export function hasCourseCatalogOffer(data: Pick<CabinetData, 'courseCatalog' | 'courseContent'>): boolean {
+  if (data.courseCatalog) return true;
+  return (data.courseContent?.modules.length ?? 0) > 0;
+}
+
+/** Ученик начал путь онлайн-курса (запись, оплата или открытие карты). */
+export function hasStartedCourseCabinetTrack(
+  data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages' | 'enrollment'>,
+): boolean {
+  if (data.enrollment != null) return true;
+  if (hasCoursePayment(data)) return true;
+  return data.courseMapViewed;
+}
+
+/**
+ * Экран «кабинет только для курса»: ind/group без онлайн-курса
+ * или нет данных каталога — не показываем карту/превью.
+ */
+export function shouldShowCourseCabinetGate(data: CabinetData): boolean {
+  if (!hasCourseCatalogOffer(data)) return true;
+  if (hasStartedCourseCabinetTrack(data)) return false;
+  return hadAnyLessonsProduct(data);
 }
 
 const ACTIVE = 'active';
@@ -337,15 +325,6 @@ function isCabinetTableError(error: unknown): boolean {
   );
 }
 
-function formatLessonDateTime(iso: string): { date: string; time: string } {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`,
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
-  };
-}
-
 function formatPaymentDate(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -358,142 +337,29 @@ const PRODUCT_LABELS: Record<CabinetAccessProduct, string> = {
   group: 'Групповые занятия',
 };
 
-const HW_REVIEW_LABELS: Record<string, { state: string; tone: 'ok' | 'now' }> = {
-  pending: { state: 'Не сдано', tone: 'now' },
-  submitted: { state: 'На проверке', tone: 'now' },
-  reviewing: { state: 'На проверке', tone: 'now' },
-  done: { state: 'Проверено', tone: 'ok' },
-};
-
-type LessonMaterialRow = {
-  id: number;
-  file_name: string;
-  file_size: string | null;
-  sort_order: number;
-};
-type HomeworkRow = {
-  id: number;
-  file_name: string;
-  file_size: string | null;
-  review_status: string;
-};
-
-type ScheduledLessonRow = {
-  id: number;
-  kind: 'individual' | 'group';
-  starts_at: string;
-  topic: string;
-  status: string;
-  is_paid: boolean;
-  meet_url: string | null;
-  telegram_id?: number;
-  lesson_materials: LessonMaterialRow[] | null;
-  homework_assignments: HomeworkRow[] | null;
-};
-
-async function loadLessons(
-  admin: ReturnType<typeof createAdminClient>,
-  telegramId: number,
-): Promise<CabinetLesson[]> {
-  const { data, error } = await admin
-    .from('scheduled_lessons')
-    .select(
-      'id, kind, starts_at, topic, status, is_paid, meet_url, lesson_materials(id, file_name, file_size, sort_order), homework_assignments(id, file_name, file_size, review_status)',
-    )
-    .eq('telegram_id', telegramId)
-    .neq('status', 'cancelled')
-    .order('starts_at', { ascending: false });
-  if (error) throw error;
-
-  const now = Date.now();
-  return ((data ?? []) as ScheduledLessonRow[]).map((row) => {
-    const { date, time } = formatLessonDateTime(row.starts_at);
-    const isDone = row.status === 'completed';
-    const isUpcoming = row.status === 'scheduled' && new Date(row.starts_at).getTime() > now;
-    const rawMaterials = row.lesson_materials;
-    const materialList = Array.isArray(rawMaterials) ? rawMaterials : rawMaterials ? [rawMaterials] : [];
-    const lessonId = String(row.id);
-    const materials = materialList
-      .sort((a, b) => a.sort_order - b.sort_order)
-      .map((m) => ({
-        id: m.id,
-        name: m.file_name,
-        size: m.file_size ?? '—',
-        downloadUrl: cabinetLessonFileUrl(lessonId, m.id, 'material'),
-      }));
-    const rawHw = row.homework_assignments;
-    const hw = Array.isArray(rawHw) ? rawHw[0] : rawHw ?? null;
-    const hwMeta = hw ? HW_REVIEW_LABELS[hw.review_status] ?? HW_REVIEW_LABELS.pending : null;
-
-    return {
-      id: lessonId,
-      kind: row.kind,
-      date,
-      time,
-      topic: row.topic,
-      status: isDone ? 'done' : isUpcoming ? 'upcoming' : 'done',
-      paid: row.is_paid,
-      meetUrl: row.meet_url,
-      materials,
-      homework: hw
-        ? {
-            id: hw.id,
-            name: hw.file_name,
-            size: hw.file_size ?? '—',
-            state: hwMeta!.state,
-            tone: hwMeta!.tone,
-            downloadUrl: cabinetLessonFileUrl(lessonId, hw.id, 'homework'),
-          }
-        : null,
-    };
-  });
+function mergeAccessHistoryFromPurchases(
+  history: CabinetAccessProduct[],
+  packages: CabinetPackage[],
+): CabinetAccessProduct[] {
+  const set = new Set(history);
+  for (const pkg of packages) {
+    if (pkg.total > 0) set.add(pkg.product);
+  }
+  return [...set];
 }
 
-async function loadTeachingLessons(
+async function loadHasOrdinaryStudentTrack(
   admin: ReturnType<typeof createAdminClient>,
-  teacherTelegramId: number,
-): Promise<CabinetTeachingLesson[]> {
-  const { data, error } = await admin
+  telegramId: number,
+): Promise<boolean> {
+  const { count, error } = await admin
     .from('scheduled_lessons')
-    .select('id, kind, starts_at, topic, status, is_paid, meet_url, telegram_id')
-    .eq('teacher_telegram_id', teacherTelegramId)
-    .neq('status', 'cancelled')
-    .order('starts_at', { ascending: false });
+    .select('id', { count: 'exact', head: true })
+    .eq('telegram_id', telegramId)
+    .in('kind', ['individual', 'group'])
+    .neq('status', 'cancelled');
   if (error) throw error;
-
-  const rows = (data ?? []) as ScheduledLessonRow[];
-  const studentIds = [...new Set(rows.map((row) => row.telegram_id).filter((id): id is number => typeof id === 'number'))];
-  const nameById = new Map<number, string>();
-  if (studentIds.length > 0) {
-    const { data: members } = await admin
-      .from('bot_members')
-      .select('telegram_id, full_name')
-      .in('telegram_id', studentIds);
-    for (const member of members ?? []) {
-      if (member.full_name) nameById.set(member.telegram_id as number, member.full_name as string);
-    }
-  }
-
-  const now = Date.now();
-  return rows.map((row) => {
-    const { date, time } = formatLessonDateTime(row.starts_at);
-    const isDone = row.status === 'completed';
-    const isUpcoming = row.status === 'scheduled' && new Date(row.starts_at).getTime() > now;
-    const studentId = row.telegram_id;
-    return {
-      id: String(row.id),
-      kind: row.kind,
-      date,
-      time,
-      topic: row.topic,
-      status: isDone ? 'done' : isUpcoming ? 'upcoming' : 'done',
-      paid: row.is_paid,
-      meetUrl: row.meet_url,
-      materials: [],
-      homework: null,
-      studentName: typeof studentId === 'number' ? (nameById.get(studentId) ?? null) : null,
-    };
-  });
+  return (count ?? 0) > 0;
 }
 
 async function loadPackages(
@@ -854,11 +720,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     enrollment: null,
     courseCatalog: null,
     courseContent: null,
-    group: null,
     mentors: [],
-    ordinaryTeacher: null,
-    studentGroup: null,
-    lessons: [],
+    hasOrdinaryStudentTrack: false,
     packages: [],
     payments: [],
     profile: null,
@@ -869,7 +732,6 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     cabinetPricing: await getCabinetPricing(),
     courseMapViewed: false,
     memberRoles: ['guest'],
-    teachingLessons: [],
   };
 
   let admin: ReturnType<typeof createAdminClient>;
@@ -923,7 +785,7 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     .from('user_accesses')
     .select('product')
     .eq('telegram_id', telegramId);
-  const accessHistory = [
+  let accessHistory: CabinetAccessProduct[] = [
     ...new Set((historyRows ?? []).map((row) => row.product as CabinetAccessProduct)),
   ];
 
@@ -1007,47 +869,6 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     };
   }
 
-  // Активная группа + преподаватель группы.
-  const { data: memberRows, error: memberError } = await admin
-    .from('group_members')
-    .select('groups(id, title, teacher_telegram_id)')
-    .eq('telegram_id', telegramId)
-    .eq('status', ACTIVE)
-    .order('joined_at', { ascending: false })
-    .limit(1);
-  let group: CabinetGroup | null = null;
-  let studentGroup: CabinetStudentGroup | null = null;
-  if (!memberError && memberRows?.[0]) {
-    const row = memberRows[0];
-    const g = row.groups as
-      | { id?: number; title?: string; teacher_telegram_id?: number | null }
-      | null;
-    if (g?.title) {
-      group = { title: g.title, teacherName: null };
-      if (typeof g.id === 'number') {
-        studentGroup = { id: g.id, title: g.title };
-      }
-      if (g.teacher_telegram_id) {
-        const { data: teacher } = await admin
-          .from('bot_members')
-          .select('full_name')
-          .eq('telegram_id', g.teacher_telegram_id)
-          .maybeSingle();
-        if (teacher?.full_name) group.teacherName = teacher.full_name;
-      }
-    }
-  }
-
-  let ordinaryTeacher: CabinetOrdinaryTeacher | null = null;
-  try {
-    const teacher = await getStudentTeacher(admin, telegramId);
-    if (teacher) {
-      ordinaryTeacher = { telegramId: teacher.telegramId, name: teacher.fullName };
-    }
-  } catch {
-    ordinaryTeacher = null;
-  }
-
   // Активные наставники (преподаватель/куратор).
   const { data: mentorRows, error: mentorError } = await admin
     .from('mentor_assignments')
@@ -1072,9 +893,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     }
   }
 
-  let lessons: CabinetLesson[] = [];
-  let teachingLessons: CabinetTeachingLesson[] = [];
   let packages: CabinetPackage[] = [];
+  let hasOrdinaryStudentTrack = false;
   let payments: CabinetPayment[] = [];
   let profile: CabinetProfile | null = null;
   let courseMapViewed = false;
@@ -1086,21 +906,21 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
   const courseIdForMap = enrolledCourseId ?? resolvedCourseId ?? courseCatalog?.id ?? null;
 
   try {
-    lessons = await loadLessons(admin, telegramId);
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
-  }
-  if (memberHasRole(memberRoles, 'teacher')) {
-    try {
-      teachingLessons = await loadTeachingLessons(admin, telegramId);
-    } catch (error) {
-      if (!isCabinetTableError(error)) throw error;
-    }
-  }
-  try {
     packages = await loadPackages(admin, telegramId);
   } catch (error) {
     if (!isCabinetTableError(error)) throw error;
+  }
+  accessHistory = mergeAccessHistoryFromPurchases(accessHistory, packages);
+  const lessonsTrackFromRecords =
+    accessHistory.includes('individual') ||
+    accessHistory.includes('group') ||
+    packages.some((p) => (p.product === 'individual' || p.product === 'group') && p.total > 0);
+  if (!lessonsTrackFromRecords) {
+    try {
+      hasOrdinaryStudentTrack = await loadHasOrdinaryStudentTrack(admin, telegramId);
+    } catch (error) {
+      if (!isCabinetTableError(error)) throw error;
+    }
   }
   try {
     payments = await loadPayments(admin, telegramId);
@@ -1178,11 +998,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     enrollment,
     courseCatalog,
     courseContent,
-    group,
     mentors,
-    ordinaryTeacher,
-    studentGroup,
-    lessons,
+    hasOrdinaryStudentTrack,
     packages,
     payments,
     profile,
@@ -1193,7 +1010,6 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     cabinetPricing,
     courseMapViewed,
     memberRoles,
-    teachingLessons,
   };
 }
 

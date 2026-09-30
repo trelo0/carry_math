@@ -76,5 +76,6 @@ export async function POST(
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   revalidatePath('/cabinet/staff');
+  revalidatePath('/cabinet');
   return NextResponse.json({ ok: true });
 }

@@ -38,6 +38,9 @@ export default function TeacherGroupsPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [groupOpen, setGroupOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newGroupTitle, setNewGroupTitle] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const visibleGroups = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -90,6 +93,31 @@ export default function TeacherGroupsPanel({
 
   const hasAside = Boolean(selectedListGroup);
 
+  const submitCreateGroup = () => {
+    const title = newGroupTitle.trim();
+    if (!title) {
+      setCreateError('Укажите название');
+      return;
+    }
+    setCreateError(null);
+    void runAction(
+      async () => {
+        const res = await fetch('/api/cabinet/teacher/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        });
+        const body = (await res.json()) as { error?: string; id?: number };
+        if (!res.ok) throw new Error(body.error ?? 'Не удалось создать группу');
+        setCreateOpen(false);
+        setNewGroupTitle('');
+        if (body.id != null) selectGroup(body.id);
+      },
+      'Группа создана',
+      { refresh: 'teacher' },
+    );
+  };
+
   useEffect(() => {
     if (initialGroupId != null) {
       setSelectedId(initialGroupId);
@@ -104,6 +132,9 @@ export default function TeacherGroupsPanel({
       <header className="staff-directory-head sched-head">
         <h1 className="sched-head-title">Группы</h1>
         <div className="staff-directory-toolbar sched-head-subrow">
+          <button type="button" className="sched-btn sched-btn--outline-teal" onClick={() => setCreateOpen(true)}>
+            + Группа
+          </button>
           <label className="staff-directory-search">
             <span className="visually-hidden">Поиск группы</span>
             <input
@@ -160,6 +191,39 @@ export default function TeacherGroupsPanel({
           <StaffGroupPreview group={selectedListGroup} onOpenGroup={openGroupProfile} />
         ) : null}
       </div>
+
+      {createOpen ? (
+        <div className="schedule-modal-overlay" role="dialog" aria-modal="true">
+          <div className="schedule-modal sched-modal">
+            <header className="schedule-modal-head">
+              <h2>Новая группа</h2>
+              <button type="button" className="sched-icon-btn" onClick={() => setCreateOpen(false)} aria-label="Закрыть">
+                ✕
+              </button>
+            </header>
+            <div className="schedule-modal-form">
+              <label className="sched-lesson-field">
+                Название
+                <input
+                  type="text"
+                  value={newGroupTitle}
+                  onChange={(e) => setNewGroupTitle(e.target.value)}
+                  placeholder="Например, 10 класс · алгебра"
+                />
+              </label>
+              {createError ? <p className="schedule-detail-error">{createError}</p> : null}
+              <div className="schedule-modal-actions">
+                <button type="button" className="sched-btn sched-btn--primary" disabled={busy} onClick={submitCreateGroup}>
+                  Создать
+                </button>
+                <button type="button" className="sched-btn sched-btn--ghost" onClick={() => setCreateOpen(false)}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {groupOpen && selectedId != null ? (
         <div className="staff-directory-overlay" role="dialog" aria-modal="true">

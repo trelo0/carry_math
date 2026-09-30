@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getStaffAuth } from '@/lib/cabinet-auth';
 import { canManageTeacherCabinet } from '@/lib/bot/roles';
+import { assignTeacher, getStudentAssignments } from '@/lib/bot/education/assignments';
 import { scheduleLesson } from '@/lib/bot/lessons';
 import { assertLessonCreditAvailable, LessonCreditError } from '@/lib/bot/lesson-credits';
 import { notifyStudentLessonScheduled } from '@/lib/bot/student-notifications';
@@ -27,9 +28,32 @@ export async function POST(request: Request) {
     endTime?: string;
     lessonPlan?: string;
     fromSlotId?: number;
+    replacesLessonId?: number;
   };
 
   const { admin, telegramId } = auth;
+
+  async function ensureTeacherAssignment(studentTelegramId: number) {
+    const assignments = await getStudentAssignments(admin, studentTelegramId, 'teacher');
+    const linked = assignments.some((a) => a.mentor_telegram_id === telegramId);
+    if (!linked) {
+      try {
+        await assignTeacher(admin, studentTelegramId, telegramId);
+      } catch {
+        /* назначение не блокирует запись занятия */
+      }
+    }
+  }
+
+  async function consumeReplacedLesson(replacesLessonId?: number) {
+    if (!replacesLessonId || !Number.isFinite(replacesLessonId)) return;
+    await admin
+      .from('scheduled_lessons')
+      .delete()
+      .eq('id', replacesLessonId)
+      .eq('teacher_telegram_id', telegramId)
+      .eq('status', 'cancelled');
+  }
   async function consumeFreeSlot(slotId?: number) {
     if (!slotId) return;
     await admin
@@ -86,7 +110,9 @@ export async function POST(request: Request) {
       .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     await consumeFreeSlot(body.fromSlotId);
+    await consumeReplacedLesson(body.replacesLessonId);
     revalidatePath('/cabinet/staff');
+    revalidatePath('/cabinet');
     return NextResponse.json({ lessonId: data.id });
   }
 
@@ -109,7 +135,9 @@ export async function POST(request: Request) {
       .single();
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     await consumeFreeSlot(body.fromSlotId);
+    await consumeReplacedLesson(body.replacesLessonId);
     revalidatePath('/cabinet/staff');
+    revalidatePath('/cabinet');
     return NextResponse.json({ lessonId: data.id });
   }
 
@@ -167,6 +195,7 @@ export async function POST(request: Request) {
           durationMinutes,
         });
         lessonIds.push(lessonId);
+        await ensureTeacherAssignment(telegramId);
         if (body.lessonPlan?.trim()) {
           await auth.admin
             .from('scheduled_lessons')
@@ -199,7 +228,9 @@ export async function POST(request: Request) {
     }
 
     await consumeFreeSlot(body.fromSlotId);
+    await consumeReplacedLesson(body.replacesLessonId);
     revalidatePath('/cabinet/staff');
+    revalidatePath('/cabinet');
     return NextResponse.json({ lessonIds, skippedCount: skipped.length });
   }
 
@@ -229,6 +260,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    await ensureTeacherAssignment(studentTelegramId);
     const lessonId = await scheduleLesson(auth.admin, {
       telegramId: studentTelegramId,
       kind,
@@ -253,7 +285,9 @@ export async function POST(request: Request) {
       meetUrl: body.meetUrl,
     });
     await consumeFreeSlot(body.fromSlotId);
+    await consumeReplacedLesson(body.replacesLessonId);
     revalidatePath('/cabinet/staff');
+    revalidatePath('/cabinet');
     return NextResponse.json({ lessonId });
   } catch (error) {
     return NextResponse.json(

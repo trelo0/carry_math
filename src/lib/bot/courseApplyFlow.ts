@@ -13,6 +13,7 @@ import {
   saveState,
   sendAdminMessage,
 } from '@/lib/bot/admin/core';
+import { refreshClientMenu } from '@/lib/bot/client-flow';
 import {
   createPurchaseRequest,
   findPendingPurchaseRequest,
@@ -175,6 +176,8 @@ async function sendApplicationSuccess(
       inline_keyboard: [[{ text: '🌐 Открыть личный кабинет', url: cabinetUrl }]],
     },
   });
+
+  await refreshClientMenu(admin, telegramId, chatId, 'student');
 }
 
 export async function promptCourseApplyPhoneLink(

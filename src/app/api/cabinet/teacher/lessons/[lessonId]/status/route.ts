@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getStaffAuth } from '@/lib/cabinet-auth';
-import { canManageTeacherCabinet } from '@/lib/bot/roles';
+import { canManageTeacherCabinet, hasFullStaffPreview } from '@/lib/bot/roles';
+import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 import { completeScheduledLesson } from '@/lib/bot/lessons';
 
 export async function POST(
@@ -19,42 +20,47 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid lesson id' }, { status: 400 });
   }
 
-  const body = (await request.json()) as { status?: 'completed' | 'no_show' };
+  const body = (await request.json()) as { status?: 'completed' };
   const status = body.status;
-  if (status !== 'completed' && status !== 'no_show') {
-    return NextResponse.json({ error: 'status must be completed or no_show' }, { status: 400 });
+  if (status !== 'completed') {
+    return NextResponse.json({ error: 'status must be completed' }, { status: 400 });
   }
 
   const { data: lesson } = await auth.admin
     .from('scheduled_lessons')
-    .select('id, teacher_telegram_id, status')
+    .select('id, teacher_telegram_id, telegram_id, status')
     .eq('id', id)
     .maybeSingle();
   if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
-  if (lesson.teacher_telegram_id !== auth.telegramId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  const lessonTeacherId = lesson.teacher_telegram_id as number | null;
+  const studentId = lesson.telegram_id as number | null;
+  const isLessonTeacher = lessonTeacherId === auth.telegramId;
+  const staffPreview = hasFullStaffPreview(auth.roles, auth.telegramId);
+  if (!isLessonTeacher && !staffPreview) {
+    const ownsStudent =
+      typeof studentId === 'number' &&
+      (await teacherOwnsStudent(auth.admin, auth.telegramId, studentId));
+    if (!ownsStudent) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
+  if (lesson.status !== 'scheduled') {
+    return NextResponse.json(
+      { error: 'Изменить статус можно только у запланированного занятия' },
+      { status: 409 },
+    );
   }
 
-  const now = new Date().toISOString();
-
-  if (status === 'completed') {
-    try {
-      await completeScheduledLesson(auth.admin, id, auth.telegramId);
-    } catch (error) {
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Complete failed' },
-        { status: 400 },
-      );
-    }
-  } else {
-    const { error } = await auth.admin
-      .from('scheduled_lessons')
-      .update({ status: 'no_show', updated_at: now })
-      .eq('id', id)
-      .eq('status', 'scheduled');
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  try {
+    await completeScheduledLesson(auth.admin, id, auth.telegramId);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Complete failed' },
+      { status: 400 },
+    );
   }
 
   revalidatePath('/cabinet/staff');
+  revalidatePath('/cabinet');
   return NextResponse.json({ ok: true });
 }

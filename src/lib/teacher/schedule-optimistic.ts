@@ -86,6 +86,11 @@ export function addTeacherLesson(data: TeacherCabinetData, lesson: TeacherLesson
   return recomputeTeacherDerived(data, allLessons);
 }
 
+export function removeTeacherLesson(data: TeacherCabinetData, lessonId: number): TeacherCabinetData {
+  const allLessons = data.allLessons.filter((lesson) => lesson.id !== lessonId);
+  return recomputeTeacherDerived(data, allLessons);
+}
+
 export function removeTeacherDaySlot(data: TeacherCabinetData, slotId: number): TeacherCabinetData {
   return {
     ...data,

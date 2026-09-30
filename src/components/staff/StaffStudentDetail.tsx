@@ -14,10 +14,11 @@ type Props = {
   showOrdinary: boolean;
   showCourse: boolean;
   busy: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   onOpenLesson: (lesson: TeacherLessonView) => void;
   onOpenCourseSection?: () => void;
   runAction: StaffRunAction;
+  embedded?: boolean;
 };
 
 function CourseStudentSection({
@@ -102,37 +103,60 @@ export default function StaffStudentDetail({
   onOpenLesson,
   onOpenCourseSection,
   runAction,
+  embedded = false,
 }: Props) {
   const tgUrl = `https://t.me/${process.env.NEXT_PUBLIC_BOT_USERNAME ?? 'district_math_bot'}?start=contact_${student.telegramId}`;
 
   return (
-    <div className="staff-student-detail">
-      <header className="teacher-student-card-head">
-        <div>
-          <h2>{student.name}</h2>
-          <p className="curator-muted">
-            {student.phone ? `Телефон: ${student.phone}` : null}
-            {student.phone ? ' · ' : ''}
-            Telegram ID: {student.telegramId}
-          </p>
+    <div className={`staff-student-detail${embedded ? ' staff-student-detail--embedded' : ''}`}>
+      {!embedded ? (
+        <>
+          <header className="teacher-student-card-head">
+            <div>
+              <h2>{student.name}</h2>
+              <p className="curator-muted">
+                {student.phone ? `Телефон: ${student.phone}` : null}
+                {student.phone ? ' · ' : ''}
+                Telegram ID: {student.telegramId}
+              </p>
+            </div>
+            {onClose ? (
+              <button type="button" className="curator-btn" onClick={onClose}>
+                Закрыть
+              </button>
+            ) : null}
+          </header>
+
+          <div className="staff-student-context-tags">
+            {student.hasOrdinary ? (
+              <span className="schedule-side-kind schedule-side-kind--individual">Обычные занятия</span>
+            ) : null}
+            {student.hasCourse ? <span className="schedule-side-kind schedule-side-kind--course">Курс</span> : null}
+          </div>
+
+          <div className="teacher-student-card-actions">
+            <a href={tgUrl} className="curator-btn curator-btn--primary" target="_blank" rel="noopener noreferrer">
+              Telegram
+            </a>
+          </div>
+        </>
+      ) : (
+        <div className="staff-student-detail-embedded-meta">
+          {student.phone ? <p className="curator-muted">Телефон: {student.phone}</p> : null}
+          <p className="curator-muted">Telegram ID: {student.telegramId}</p>
+          <div className="staff-student-context-tags">
+            {student.hasOrdinary ? (
+              <span className="schedule-side-kind schedule-side-kind--individual">Обычные занятия</span>
+            ) : null}
+            {student.hasCourse ? <span className="schedule-side-kind schedule-side-kind--course">Курс</span> : null}
+          </div>
+          <div className="teacher-student-card-actions">
+            <a href={tgUrl} className="curator-btn curator-btn--primary" target="_blank" rel="noopener noreferrer">
+              Написать в Telegram
+            </a>
+          </div>
         </div>
-        <button type="button" className="curator-btn" onClick={onClose}>
-          Закрыть
-        </button>
-      </header>
-
-      <div className="staff-student-context-tags">
-        {student.hasOrdinary ? (
-          <span className="schedule-side-kind schedule-side-kind--individual">Обычные занятия</span>
-        ) : null}
-        {student.hasCourse ? <span className="schedule-side-kind schedule-side-kind--course">Курс</span> : null}
-      </div>
-
-      <div className="teacher-student-card-actions">
-        <a href={tgUrl} className="curator-btn curator-btn--primary" target="_blank" rel="noopener noreferrer">
-          Telegram
-        </a>
-      </div>
+      )}
 
       {showOrdinary && student.teacher ? (
         <section className="staff-student-context staff-student-context--ordinary">
@@ -144,7 +168,7 @@ export default function StaffStudentDetail({
             student={student.teacher}
             busy={busy}
             embedded
-            onClose={onClose}
+            onClose={onClose ?? (() => {})}
             onOpenLesson={onOpenLesson}
             runAction={runAction}
           />

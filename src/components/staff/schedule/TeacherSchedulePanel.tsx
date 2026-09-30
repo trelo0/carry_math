@@ -16,6 +16,7 @@ import {
   filterScheduleEvents,
   formatNavDateLong,
   freeSlotsForDay,
+  hideReplacedCancelledEvents,
   getWeekDays,
   mapTeacherLessonToEvent,
   startOfWeek,
@@ -30,6 +31,7 @@ import ScheduleSidePanel from './ScheduleSidePanel';
 import ScheduleSlotFormModal from './ScheduleSlotFormModal';
 import ScheduleSlotSidePanel from './ScheduleSlotSidePanel';
 import ScheduleWeekStrip from './ScheduleWeekStrip';
+import ScheduleHistoryList from './ScheduleHistoryList';
 import { IconCalendar } from './ScheduleIcons';
 
 type Props = {
@@ -43,6 +45,8 @@ type Props = {
   onOpenStudent?: (telegramId: number) => void;
   onOpenGroup?: (groupId: number) => void;
   startedLessonIds?: ReadonlySet<number>;
+  focusLessonId?: number | null;
+  onFocusLessonHandled?: () => void;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   busy: boolean;
   runAction: StaffRunAction;
@@ -59,6 +63,8 @@ export default function TeacherSchedulePanel({
   onOpenStudent,
   onOpenGroup,
   startedLessonIds,
+  focusLessonId,
+  onFocusLessonHandled,
   patchTeacher,
   busy,
   runAction,
@@ -74,6 +80,15 @@ export default function TeacherSchedulePanel({
   const [lessonFromSlot, setLessonFromSlot] = useState<TeacherDaySlot | null>(null);
   const [slotFormOpen, setSlotFormOpen] = useState(false);
   const [autoFillOpen, setAutoFillOpen] = useState(false);
+  const [replacementDraft, setReplacementDraft] = useState<{
+    date: Date;
+    startTime: string;
+    endTime: string;
+    kind: 'individual' | 'group';
+    studentTelegramId?: number | null;
+    groupId?: number | null;
+    replacesLessonId?: number;
+  } | null>(null);
   const activeFilter = isScheduleFilterValid(mode, filter) ? filter : 'all';
 
   const scheduleRunAction: StaffRunAction = useCallback(
@@ -108,9 +123,28 @@ export default function TeacherSchedulePanel({
     if (updated) setSelectedSlot(updated);
   }, [daySlots, selectedSlot?.id]);
 
+  useEffect(() => {
+    if (focusLessonId == null) return;
+    const match = allEvents.find((event) => event.lessonId === focusLessonId);
+    if (!match) {
+      onFocusLessonHandled?.();
+      return;
+    }
+    setViewMode('day');
+    setSelectedDay(new Date(match.startsAt));
+    setSelectedEvent(match);
+    setSelectedSlot(null);
+    onFocusLessonHandled?.();
+  }, [focusLessonId, allEvents, onFocusLessonHandled]);
+
   const visibleEvents = useMemo(
     () => filterScheduleEvents(allEvents, activeFilter),
     [allEvents, activeFilter],
+  );
+
+  const calendarEvents = useMemo(
+    () => hideReplacedCancelledEvents(visibleEvents),
+    [visibleEvents],
   );
 
   const freeSlots = useMemo(
@@ -140,16 +174,12 @@ export default function TeacherSchedulePanel({
     setSelectedEvent(null);
   };
 
-  const openAdd = (kind: ScheduleFormKind) => {
-    setAddKind(kind);
-    setAddOpen(true);
-  };
-
   const openAddLessonFromSlot = (slot: TeacherDaySlot) => {
     setLessonFromSlot(slot);
   };
 
   const isDayView = viewMode === 'day';
+  const isHistoryView = activeFilter === 'history';
   const showTeacherSettings = Boolean(teacherData);
 
   return (
@@ -192,6 +222,19 @@ export default function TeacherSchedulePanel({
             <button type="button" className="sched-btn sched-btn--accent" onClick={goToday}>
               Сегодня
             </button>
+            {showTeacherSettings ? (
+              <button
+                type="button"
+                className="sched-btn sched-btn--outline-teal"
+                onClick={() => {
+                  setReplacementDraft(null);
+                  setAddKind('individual');
+                  setAddOpen(true);
+                }}
+              >
+                + Занятие
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -213,12 +256,24 @@ export default function TeacherSchedulePanel({
 
       <div className="sched-body">
         <div className="sched-main">
-          {isDayView ? (
+          {isHistoryView ? (
+            <div className="sched-day-card sched-history-card">
+              <header className="sched-day-card-head">
+                <h2>История</h2>
+                <p className="sched-history-lead">Завершённые, отменённые и прошедшие занятия</p>
+              </header>
+              <ScheduleHistoryList
+                events={calendarEvents}
+                selectedEventId={selectedEvent?.id ?? null}
+                onSelectEvent={selectEvent}
+              />
+            </div>
+          ) : isDayView ? (
             <div className="sched-day-card">
               <ScheduleWeekStrip
                 days={weekDays}
                 selectedDay={selectedDay}
-                events={allEvents}
+                events={calendarEvents}
                 onSelectDay={pickDay}
               />
               <header className="sched-day-card-head">
@@ -226,7 +281,7 @@ export default function TeacherSchedulePanel({
               </header>
               <ScheduleDayGrid
                 day={selectedDay}
-                events={visibleEvents}
+                events={calendarEvents}
                 daySlots={daySlots}
                 selectedEventId={selectedEvent?.id ?? null}
                 selectedSlotId={selectedSlot?.id ?? null}
@@ -237,7 +292,7 @@ export default function TeacherSchedulePanel({
           ) : (
             <ScheduleGrid
               days={weekDays}
-              events={visibleEvents}
+              events={calendarEvents}
               daySlots={daySlots}
               selectedDay={selectedDay}
               selectedEventId={selectedEvent?.id ?? null}
@@ -264,6 +319,12 @@ export default function TeacherSchedulePanel({
             onLessonFinished={onLessonFinished}
             onOpenStudent={onOpenStudent}
             onOpenGroup={onOpenGroup}
+            onPlanReplacementLesson={(draft) => {
+              setReplacementDraft(draft);
+              setAddKind(draft.kind);
+              setAddOpen(true);
+              setSelectedEvent(null);
+            }}
             runAction={scheduleRunAction}
           />
         ) : selectedSlot && showTeacherSettings ? (
@@ -278,6 +339,10 @@ export default function TeacherSchedulePanel({
             onDeleted={() => setSelectedSlot(null)}
             onAddLesson={openAddLessonFromSlot}
           />
+        ) : isHistoryView ? (
+          <aside className="sched-aside">
+            <p className="sched-aside-muted">Выберите занятие в списке, чтобы открыть детали.</p>
+          </aside>
         ) : (
           <ScheduleDaySettingsPanel
             day={selectedDay}
@@ -292,12 +357,29 @@ export default function TeacherSchedulePanel({
 
       {addOpen && teacherData ? (
         <ScheduleAddModal
+          key={
+            replacementDraft
+              ? `replace-${replacementDraft.startTime}-${replacementDraft.endTime}`
+              : `add-${addKind}`
+          }
           data={teacherData}
-          initialDate={selectedDay}
-          initialKind={addKind}
+          events={allEvents}
+          daySlots={daySlots}
+          initialDate={replacementDraft?.date ?? selectedDay}
+          initialKind={replacementDraft?.kind ?? addKind}
+          initialStartTime={replacementDraft?.startTime}
+          initialEndTime={replacementDraft?.endTime}
+          initialStudentId={
+            replacementDraft?.studentTelegramId ? String(replacementDraft.studentTelegramId) : ''
+          }
+          initialGroupId={replacementDraft?.groupId ? String(replacementDraft.groupId) : ''}
+          replacesLessonId={replacementDraft?.replacesLessonId}
           busy={busy}
           patchTeacher={patchTeacher}
-          onClose={() => setAddOpen(false)}
+          onClose={() => {
+            setAddOpen(false);
+            setReplacementDraft(null);
+          }}
           runAction={scheduleRunAction}
         />
       ) : null}
@@ -306,6 +388,8 @@ export default function TeacherSchedulePanel({
         <ScheduleLessonFromSlotModal
           data={teacherData}
           slot={lessonFromSlot}
+          events={allEvents}
+          daySlots={daySlots}
           busy={busy}
           patchTeacher={patchTeacher}
           onClose={() => {

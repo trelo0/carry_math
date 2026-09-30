@@ -1,14 +1,23 @@
 import type { TeacherLessonView } from '@/lib/teacher/cabinet-data';
 
+const LIVE_EARLY_MS = 10 * 60_000;
+
+export function isLessonInLiveWindow(
+  lesson: Pick<TeacherLessonView, 'status' | 'startsAt' | 'durationMinutes'>,
+  nowMs = Date.now(),
+): boolean {
+  if (lesson.status !== 'scheduled') return false;
+  const start = new Date(lesson.startsAt).getTime();
+  const end = start + lesson.durationMinutes * 60_000;
+  return nowMs >= start - LIVE_EARLY_MS && nowMs <= end;
+}
+
 export function findCurrentLesson(
   lessons: TeacherLessonView[],
   nowMs = Date.now(),
 ): TeacherLessonView | null {
   for (const lesson of lessons) {
-    if (lesson.status !== 'scheduled') continue;
-    const start = new Date(lesson.startsAt).getTime();
-    const end = start + lesson.durationMinutes * 60_000;
-    if (nowMs >= start - 10 * 60_000 && nowMs <= end) return lesson;
+    if (isLessonInLiveWindow(lesson, nowMs)) return lesson;
   }
   return null;
 }
@@ -27,6 +36,19 @@ export function minutesToTime(total: number): string {
   const hh = Math.floor(total / 60);
   const mm = total % 60;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+/** Одна карточка на групповой слот (несколько строк БД на одно время). */
+export function dedupeGroupLessons(lessons: TeacherLessonView[]): TeacherLessonView[] {
+  const seen = new Set<string>();
+  const result: TeacherLessonView[] = [];
+  for (const lesson of lessons) {
+    const key = `${lesson.groupId ?? 'none'}:${lesson.startsAt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(lesson);
+  }
+  return result;
 }
 
 export function mergeDayTimeline(

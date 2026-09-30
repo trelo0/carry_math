@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import { addTeacherDaySlot } from '@/lib/teacher/schedule-optimistic';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
 import { dateKey, findDaySlotConflict } from '@/lib/teacher/schedule-utils';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithFeedback } from '@/lib/staff/action-feedback';
@@ -48,7 +49,7 @@ export default function ScheduleSlotFormModal({
       });
       const body = (await res.json()) as { error?: string; slot?: TeacherDaySlot };
       if (!res.ok) {
-        throw new Error(body.error ?? 'Не удалось сохранить');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить', res.status));
       }
       if (body.slot) {
         patchTeacher?.((prev) => addTeacherDaySlot(prev, body.slot!));

@@ -16,7 +16,7 @@ export default function ScheduleWeekStrip({ days, selectedDay, events, onSelectD
   return (
     <div className="sched-week-strip" role="tablist" aria-label="Дни недели">
       {days.map((day) => {
-        const dayEvents = eventsForDay(events, day).filter((e) => e.status !== 'cancelled');
+        const dayEvents = eventsForDay(events, day);
         const selected = isSameDay(day, selectedDay);
         const today = isToday(day);
         const wd = WEEKDAY_SHORT[day.getDay() === 0 ? 6 : day.getDay() - 1];

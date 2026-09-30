@@ -5,7 +5,6 @@
 
 import {
   TEACHER_MENU_LABEL_SET,
-  renderCabinet,
   renderGroupCard,
   renderGroupHomework,
   renderGroupHomeworkList,
@@ -208,10 +207,7 @@ function main(): void {
 
   console.log('Тест 10: личный кабинет');
   {
-    const screen = renderCabinet();
-    check('без выдуманного URL', !/https?:\/\//.test(screen.text));
-    check('подключим позже', screen.text.includes('будет подключена после готовности сайта'));
-    check('назад в меню', callbacksOf(screen.keyboard).includes('t:menu'));
+    check('пункт меню «Личный кабинет»', TEACHER_MENU_LABEL_SET.has('👤 ЛИЧНЫЙ КАБИНЕТ'));
   }
 
   console.log('Тест 11: навигационные маршруты (§15)');
@@ -233,7 +229,6 @@ function main(): void {
       renderHomeworkSelect(),
       renderIndividualHomework(),
       renderGroupHomeworkList(),
-      renderCabinet(),
       ...getMockIndividualStudents().map((s) => renderStudentCard(s)),
       ...getMockGroups().map((g) => renderGroupCard(g)),
       ...getMockGroups().map((g) => renderGroupMembers(g)),
@@ -299,7 +294,7 @@ function main(): void {
       homework: [...MOCK_INDIVIDUAL_HOMEWORK, ...MOCK_GROUP_HOMEWORK],
       screens: [
         renderIndividualList(), renderGroupList(), renderHomeworkSelect(),
-        renderIndividualHomework(), renderGroupHomeworkList(), renderCabinet(),
+        renderIndividualHomework(), renderGroupHomeworkList(),
       ].map((s) => s.text),
     });
     // В MOCK-слое допустимы только поля сущностей — без контактов.

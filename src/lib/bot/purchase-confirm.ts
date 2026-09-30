@@ -7,6 +7,8 @@ import {
   markPurchaseRequestResolved,
   type PurchaseRequestRow,
 } from './purchase-requests';
+import { refreshClientMenu } from './client-flow';
+import { getMember, type BotRole } from './roles';
 
 export function purchaseRequestExternalId(requestId: string): string {
   return `purchase_request:${requestId}`;
@@ -122,6 +124,16 @@ export async function confirmPurchaseRequest(
 
   if (!result.alreadyFulfilled) {
     await notifyStudentPurchaseConfirmed(admin, updated, result.offer.lessons);
+    const member = await getMember(admin, updated.telegram_id);
+    const { data: chatRow } = await admin
+      .from('bot_members')
+      .select('chat_id')
+      .eq('telegram_id', updated.telegram_id)
+      .maybeSingle();
+    const chatId = chatRow?.chat_id as number | undefined;
+    if (chatId) {
+      await refreshClientMenu(admin, updated.telegram_id, chatId, member?.role as BotRole | undefined);
+    }
   }
 
   const note = result.alreadyFulfilled

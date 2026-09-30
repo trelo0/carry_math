@@ -61,6 +61,22 @@ export type AdminPayload = {
   sanityLessonId?: string;
   mentorTelegramId?: number;
   homework?: boolean;
+  hubMessageId?: number;
+  screen?: string;
+  clientHubChatId?: number;
+  clientHubMessageId?: number;
+  clientScreen?: string;
+  leadFormat?: 'individual' | 'group';
+  leadStudentName?: string;
+  leadGrade?: string;
+  leadWishes?: string;
+  leadContact?: string;
+  leadStep?: 'name' | 'grade' | 'wishes' | 'contact' | 'confirm';
+  leadSubmittedAt?: string;
+  leadSubmitting?: boolean;
+  hwLessonId?: number;
+  hwDraftText?: string;
+  hwDraftFiles?: Array<{ ref: string; kind: 'photo' | 'document'; name?: string }>;
 };
 
 export type ConversationStep =
@@ -99,7 +115,10 @@ export type ConversationStep =
   | 'student:support'
   | 'student:mentor'
   | 'student:course-hw-submit'
-  | 'course-apply:link-phone';
+  | 'course-apply:link-phone'
+  | 'client:hub'
+  | 'client:lead-form'
+  | 'client:lesson-hw-submit';
 
 export type ConversationState = {
   telegram_id: number;

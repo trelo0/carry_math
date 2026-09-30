@@ -8,7 +8,7 @@ import type { CourseCabinetState } from '@/lib/cabinet';
 
 const DEMO_CREATED_AT = new Date(Date.now() - 17 * 86_400_000).toISOString();
 
-const VARIANTS = ['preview', 'enrolled_locked', 'full', 'lessons_only'] as const;
+const VARIANTS = ['preview', 'enrolled_locked', 'full'] as const;
 type PreviewVariant = (typeof VARIANTS)[number] | CourseCabinetState;
 
 function parseVariant(value: string | undefined): PreviewVariant {
@@ -19,7 +19,7 @@ function parseVariant(value: string | undefined): PreviewVariant {
 }
 
 // Dev-страница превью кабинета. На проде недоступна.
-// ?state=preview|enrolled_locked|full|lessons_only
+// ?state=preview|enrolled_locked|full
 export default async function CabinetPreviewPage({
   searchParams,
 }: {
@@ -37,11 +37,9 @@ export default async function CabinetPreviewPage({
     <CabinetShell
       data={data}
       initialSection={
-        sp.section === 'lessons' || sp.section === 'course' || sp.section === 'payments'
+        sp.section === 'course' || sp.section === 'payments' || sp.section === 'settings'
           ? sp.section
-          : variant === 'lessons_only'
-            ? 'lessons'
-            : 'course'
+          : 'course'
       }
     />
   );

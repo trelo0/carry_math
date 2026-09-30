@@ -13,6 +13,7 @@ import {
   type PurchaseRequestRow,
 } from './purchase-requests';
 import { notifyAdminsOfNewPurchaseRequest } from './admin/purchases';
+import { refreshClientMenu } from './client-flow';
 import { getCabinetPricing, type CabinetPricing } from '@/lib/studio/cabinetSettings';
 import { resolvePurchaseOffer } from './purchase-fulfillment';
 
@@ -292,6 +293,8 @@ async function submitPurchaseRequest(
 
   if (message) await editPurchaseMessage(message, text);
   else await sendPurchaseMessage(chatId, text);
+
+  await refreshClientMenu(admin, telegramId, chatId);
 }
 
 export async function beginStudentPurchase(

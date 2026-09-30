@@ -17,6 +17,7 @@ export function getScheduleFilters(mode: StaffScheduleMode): { id: ScheduleFilte
       { id: 'all', label: 'Все' },
       { id: 'individual', label: 'Индивидуальные' },
       { id: 'group', label: 'Групповые' },
+      { id: 'history', label: 'История' },
       { id: 'course', label: 'Курс' },
     ];
   }
@@ -30,6 +31,7 @@ export function getScheduleFilters(mode: StaffScheduleMode): { id: ScheduleFilte
     { id: 'all', label: 'Все' },
     { id: 'individual', label: 'Индивидуальные' },
     { id: 'group', label: 'Групповые' },
+    { id: 'history', label: 'История' },
   ];
 }
 

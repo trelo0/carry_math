@@ -1,19 +1,19 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CuratorStudentView } from '@/lib/curator/students';
 import {
   filterStaffStudents,
   getStaffStudentFilters,
   mergeStaffStudents,
   searchStaffStudents,
+  type MergedStaffStudent,
   type StaffStudentFilter,
 } from '@/lib/staff/students-merge';
 import type { StaffScheduleMode } from '@/lib/teacher/schedule-config';
 import type { TeacherCabinetData, TeacherLessonView } from '@/lib/teacher/cabinet-data';
 import type { StaffRunAction } from '@/lib/staff/run-action';
 import StaffStudentDetail from './StaffStudentDetail';
-import StaffStudentPreview from './StaffStudentPreview';
 import { studentContextLine, studentSubtitle } from './staff-directory-utils';
 import TeacherStudentCard from './TeacherStudentCard';
 
@@ -29,6 +29,22 @@ type Props = {
   runAction: StaffRunAction;
 };
 
+function detailFlags(
+  student: MergedStaffStudent,
+  mode: StaffScheduleMode,
+  filter: StaffStudentFilter,
+  hasTeacherData: boolean,
+) {
+  const showOrdinary =
+    Boolean(student.hasOrdinary && hasTeacherData) &&
+    (mode === 'teacher' || filter === 'all' || filter === 'ordinary');
+  const showCourse =
+    Boolean(student.hasCourse) && (mode === 'curator' || filter === 'all' || filter === 'course');
+  const useFullTeacherCard =
+    Boolean(student.teacher && showOrdinary && !showCourse && mode !== 'curator');
+  return { showOrdinary, showCourse, useFullTeacherCard };
+}
+
 export default function StaffStudentsPanel({
   mode,
   teacherData,
@@ -43,8 +59,11 @@ export default function StaffStudentsPanel({
   const filters = useMemo(() => getStaffStudentFilters(mode), [mode]);
   const [filter, setFilter] = useState<StaffStudentFilter>('all');
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<number | null>(initialStudentId ?? null);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(initialStudentId ?? null);
+
+  useEffect(() => {
+    if (initialStudentId != null) setExpandedId(initialStudentId);
+  }, [initialStudentId]);
 
   const mergedStudents = useMemo(
     () =>
@@ -62,23 +81,14 @@ export default function StaffStudentsPanel({
     return searchStaffStudents(filtered, search);
   }, [mergedStudents, filter, search]);
 
-  const selected =
-    visibleStudents.find((student) => student.telegramId === selectedId) ??
-    mergedStudents.find((student) => student.telegramId === selectedId) ??
-    null;
+  const toggleStudent = (telegramId: number) => {
+    setExpandedId((prev) => (prev === telegramId ? null : telegramId));
+  };
 
-  const showOrdinaryDetail =
-    Boolean(selected?.hasOrdinary && teacherData) &&
-    (mode === 'teacher' || filter === 'all' || filter === 'ordinary');
-  const showCourseDetail =
-    Boolean(selected?.hasCourse) && (mode === 'curator' || filter === 'all' || filter === 'course');
-  const useFullTeacherCard =
-    Boolean(selected?.teacher && showOrdinaryDetail && !showCourseDetail && mode !== 'curator');
-
-  const hasAside = Boolean(selected);
+  const hasTeacherData = Boolean(teacherData);
 
   return (
-    <div className={`staff-directory-page sched-page${hasAside ? ' has-aside' : ''}`}>
+    <div className="staff-directory-page sched-page">
       <header className="staff-directory-head sched-head">
         <h1 className="sched-head-title">Ученики</h1>
         <div className="staff-directory-toolbar sched-head-subrow">
@@ -108,78 +118,69 @@ export default function StaffStudentsPanel({
         </div>
       </header>
 
-      <div className="sched-body">
-        <div className="staff-directory-main sched-main">
-          <ul className="staff-directory-student-list">
-            {visibleStudents.length === 0 ? (
-              <li className="staff-directory-empty">Ученики не найдены.</li>
-            ) : (
-              visibleStudents.map((student) => {
-                const subtitle = studentSubtitle(student, courseTitle);
-                return (
-                  <li key={student.telegramId}>
-                    <button
-                      type="button"
-                      className={`staff-directory-student-row${selectedId === student.telegramId ? ' is-active' : ''}`}
-                      onClick={() => {
-                        setSelectedId(student.telegramId);
-                        setProfileOpen(false);
-                      }}
-                    >
-                      <span className="staff-directory-student-main">
-                        <strong>{student.name}</strong>
-                        {subtitle ? <em>{subtitle}</em> : null}
-                        <span className="staff-directory-student-context">{studentContextLine(student)}</span>
-                      </span>
-                      <span className="staff-directory-row-arrow" aria-hidden>
-                        →
-                      </span>
-                    </button>
-                  </li>
-                );
-              })
-            )}
-          </ul>
-        </div>
+      <div className="staff-directory-main staff-directory-main--accordion">
+        <ul className="staff-directory-student-list">
+          {visibleStudents.length === 0 ? (
+            <li className="staff-directory-empty">Ученики не найдены.</li>
+          ) : (
+            visibleStudents.map((student) => {
+              const subtitle = studentSubtitle(student, courseTitle);
+              const expanded = expandedId === student.telegramId;
+              const flags = detailFlags(student, mode, filter, hasTeacherData);
 
-        {selected ? (
-          <StaffStudentPreview
-            student={selected}
-            courseTitle={courseTitle}
-            showOrdinary={showOrdinaryDetail}
-            showCourse={showCourseDetail}
-            onOpenProfile={() => setProfileOpen(true)}
-          />
-        ) : null}
+              return (
+                <li
+                  key={student.telegramId}
+                  className={`staff-directory-student-item${expanded ? ' is-expanded' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className={`staff-directory-student-row${expanded ? ' is-active' : ''}`}
+                    aria-expanded={expanded}
+                    onClick={() => toggleStudent(student.telegramId)}
+                  >
+                    <span className="staff-directory-student-main">
+                      <strong>{student.name}</strong>
+                      {subtitle ? <em>{subtitle}</em> : null}
+                      <span className="staff-directory-student-context">{studentContextLine(student)}</span>
+                    </span>
+                    <span className={`staff-directory-row-arrow${expanded ? ' is-open' : ''}`} aria-hidden>
+                      ▾
+                    </span>
+                  </button>
+
+                  {expanded ? (
+                    <div className="staff-directory-student-expand">
+                      {flags.useFullTeacherCard && student.teacher ? (
+                        <TeacherStudentCard
+                          student={student.teacher}
+                          busy={busy}
+                          embedded
+                          onClose={() => setExpandedId(null)}
+                          onOpenLesson={onOpenLesson}
+                          runAction={runAction}
+                        />
+                      ) : (
+                        <StaffStudentDetail
+                          student={student}
+                          courseTitle={courseTitle}
+                          showOrdinary={flags.showOrdinary}
+                          showCourse={flags.showCourse}
+                          busy={busy}
+                          embedded
+                          onOpenLesson={onOpenLesson}
+                          onOpenCourseSection={onOpenCourseSection}
+                          runAction={runAction}
+                        />
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })
+          )}
+        </ul>
       </div>
-
-      {profileOpen && selected ? (
-        <div className="staff-directory-overlay" role="dialog" aria-modal="true">
-          <div className="staff-directory-overlay-panel">
-            {useFullTeacherCard && selected.teacher ? (
-              <TeacherStudentCard
-                student={selected.teacher}
-                busy={busy}
-                onClose={() => setProfileOpen(false)}
-                onOpenLesson={onOpenLesson}
-                runAction={runAction}
-              />
-            ) : (
-              <StaffStudentDetail
-                student={selected}
-                courseTitle={courseTitle}
-                showOrdinary={showOrdinaryDetail}
-                showCourse={showCourseDetail}
-                busy={busy}
-                onClose={() => setProfileOpen(false)}
-                onOpenLesson={onOpenLesson}
-                onOpenCourseSection={onOpenCourseSection}
-                runAction={runAction}
-              />
-            )}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

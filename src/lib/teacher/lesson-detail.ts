@@ -4,6 +4,9 @@ import {
   listTeacherLessonMaterials,
   type TeacherLessonMaterialView,
 } from '@/lib/teacher/lesson-materials';
+import { getLessonHomework, type LessonHomeworkRow } from '@/lib/lesson-homework';
+
+export type TeacherLessonHomeworkView = LessonHomeworkRow;
 
 export type { TeacherLessonMaterialView };
 
@@ -33,6 +36,7 @@ export type TeacherLessonDetailView = {
     members: TeacherLessonMemberView[];
   } | null;
   materials: TeacherLessonMaterialView[];
+  homework: TeacherLessonHomeworkView | null;
 };
 
 type ScheduledDetailRow = {
@@ -89,7 +93,10 @@ export async function getTeacherLessonDetail(
 
   const lesson = row as ScheduledDetailRow;
   const { date, time } = formatLessonDateTime(lesson.starts_at);
-  const materials = await listTeacherLessonMaterials(admin, lesson.id);
+  const [materials, homework] = await Promise.all([
+    listTeacherLessonMaterials(admin, lesson.id),
+    getLessonHomework(admin, lesson.id),
+  ]);
 
   if (lesson.kind === 'individual') {
     const members = await loadMembers(admin, [lesson.telegram_id]);
@@ -114,6 +121,7 @@ export async function getTeacherLessonDetail(
       student,
       group: null,
       materials,
+      homework,
     };
   }
 
@@ -134,6 +142,7 @@ export async function getTeacherLessonDetail(
       student: null,
       group: null,
       materials,
+      homework,
     };
   }
 
@@ -184,5 +193,6 @@ export async function getTeacherLessonDetail(
         }
       : null,
     materials,
+    homework,
   };
 }

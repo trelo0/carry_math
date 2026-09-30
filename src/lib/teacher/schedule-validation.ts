@@ -15,6 +15,7 @@ export class ScheduleValidationError extends Error {
   }
 }
 
+/** Занятия только текущего преподавателя — чужие teacher_telegram_id не участвуют в проверке. */
 async function loadTeacherLessons(
   admin: SupabaseClient,
   teacherTelegramId: number,
@@ -22,12 +23,14 @@ async function loadTeacherLessons(
   const { data, error } = await admin
     .from('scheduled_lessons')
     .select(
-      'id, kind, starts_at, topic, status, telegram_id, group_id, meet_url, board_url, lesson_plan, cancel_reason, duration_minutes',
+      'id, kind, starts_at, topic, status, telegram_id, group_id, meet_url, board_url, lesson_plan, cancel_reason, duration_minutes, teacher_telegram_id',
     )
     .eq('teacher_telegram_id', teacherTelegramId);
   if (error) throw error;
 
-  return (data ?? []).map((row) => {
+  return (data ?? [])
+    .filter((row) => (row.teacher_telegram_id as number | null) === teacherTelegramId)
+    .map((row) => {
     const startsAt = row.starts_at as string;
     const d = new Date(startsAt);
     const pad = (n: number) => String(n).padStart(2, '0');

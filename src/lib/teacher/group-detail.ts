@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { formatLessonDateTime } from '@/lib/teacher/format';
 import type { TeacherGroupMemberView, TeacherGroupView, TeacherLessonView } from '@/lib/teacher/cabinet-data';
+import { dedupeGroupLessons } from '@/lib/teacher/lesson-utils';
 
 type ScheduledRow = {
   id: number;
@@ -16,18 +17,6 @@ type ScheduledRow = {
   cancel_reason: string | null;
   duration_minutes: number;
 };
-
-function dedupeGroupLessons(lessons: TeacherLessonView[]): TeacherLessonView[] {
-  const seen = new Set<string>();
-  const result: TeacherLessonView[] = [];
-  for (const lesson of lessons) {
-    const key = `${lesson.groupId ?? 'none'}:${lesson.startsAt}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(lesson);
-  }
-  return result;
-}
 
 function mapLessonRow(row: ScheduledRow, now: number): TeacherLessonView {
   const { date, time } = formatLessonDateTime(row.starts_at);

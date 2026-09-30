@@ -39,8 +39,20 @@ export async function POST(
   if (lesson.teacher_telegram_id !== auth.telegramId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+  if (lesson.status !== 'scheduled') {
+    return NextResponse.json(
+      { error: 'Отменить можно только запланированное занятие' },
+      { status: 409 },
+    );
+  }
 
-  await cancelScheduledLesson(auth.admin, id);
+  const cancelled = await cancelScheduledLesson(auth.admin, id);
+  if (!cancelled) {
+    return NextResponse.json(
+      { error: 'Занятие уже отменено или проведено — обновите календарь' },
+      { status: 409 },
+    );
+  }
   if (cancelReason) {
     await auth.admin
       .from('scheduled_lessons')
@@ -54,5 +66,6 @@ export async function POST(
   });
 
   revalidatePath('/cabinet/staff');
+  revalidatePath('/cabinet');
   return NextResponse.json({ ok: true });
 }

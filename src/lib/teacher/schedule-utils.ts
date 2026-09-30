@@ -202,7 +202,7 @@ export function slotOverlapsLesson(
 ): boolean {
   const startsAt = buildLocalIso(slotDate, startTime);
   const endsAt = buildLocalIso(slotDate, endTime);
-  return findScheduleConflict(events, startsAt, endsAt) !== null;
+  return findScheduleConflict(ordinaryScheduleEvents(events), startsAt, endsAt) !== null;
 }
 
 export function findDaySlotConflict(
@@ -216,7 +216,7 @@ export function findDaySlotConflict(
   if (startTime >= endTime) return 'Время начала должно быть раньше окончания';
 
   const lessonConflict = findScheduleConflict(
-    events,
+    ordinaryScheduleEvents(events),
     buildLocalIso(slotDate, startTime),
     buildLocalIso(slotDate, endTime),
   );
@@ -382,10 +382,21 @@ export function buildScheduleEvents(
   return [...lessonEvents, ...courseEvents].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
+export function isPastScheduleEvent(event: ScheduleEvent, nowMs = Date.now()): boolean {
+  if (event.kind === 'course') return false;
+  if (event.status !== 'scheduled') return true;
+  return new Date(event.endsAt).getTime() < nowMs;
+}
+
 export function filterScheduleEvents(events: ScheduleEvent[], filter: ScheduleFilter): ScheduleEvent[] {
   if (filter === 'all') return events;
   if (filter === 'course') return events.filter((e) => e.kind === 'course');
   if (filter === 'ordinary') return events.filter((e) => e.kind === 'individual' || e.kind === 'group');
+  if (filter === 'history') {
+    return events.filter(
+      (e) => (e.kind === 'individual' || e.kind === 'group') && isPastScheduleEvent(e),
+    );
+  }
   return events.filter((e) => e.kind === filter);
 }
 
@@ -393,8 +404,38 @@ export function eventsForDay(events: ScheduleEvent[], day: Date): ScheduleEvent[
   return events.filter((e) => isSameDay(new Date(e.startsAt), day));
 }
 
+/** Отменённое не показываем, если на то же время уже стоит другое (не отменённое) занятие. */
+export function hideReplacedCancelledEvents(events: ScheduleEvent[]): ScheduleEvent[] {
+  const active = events.filter(
+    (e) => e.status !== 'cancelled' && (e.kind === 'individual' || e.kind === 'group'),
+  );
+  return events.filter((event) => {
+    if (event.status !== 'cancelled') return true;
+    if (event.kind !== 'individual' && event.kind !== 'group') return true;
+    const start = new Date(event.startsAt).getTime();
+    const end = new Date(event.endsAt).getTime();
+    if (Number.isNaN(start) || Number.isNaN(end)) return true;
+    for (const other of active) {
+      const oStart = new Date(other.startsAt).getTime();
+      const oEnd = new Date(other.endsAt).getTime();
+      if (overlaps(start, end, oStart, oEnd)) return false;
+    }
+    return true;
+  });
+}
+
 export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
+}
+
+/** Только запланированные события блокируют новое время (прошлые completed/no_show — нет). */
+export function eventBlocksScheduleTime(event: ScheduleEvent): boolean {
+  return event.status === 'scheduled';
+}
+
+/** События для проверки конфликтов личного расписания преподавателя (без вебинаров курса). */
+export function ordinaryScheduleEvents(events: ScheduleEvent[]): ScheduleEvent[] {
+  return events.filter((e) => e.kind === 'individual' || e.kind === 'group');
 }
 
 export function findScheduleConflict(
@@ -405,13 +446,70 @@ export function findScheduleConflict(
 ): ScheduleEvent | null {
   const start = new Date(startsAt).getTime();
   const end = new Date(endsAt).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
   for (const event of events) {
     if (excludeId && event.id === excludeId) continue;
-    if (event.status === 'cancelled') continue;
+    if (!eventBlocksScheduleTime(event)) continue;
     const eStart = new Date(event.startsAt).getTime();
     const eEnd = new Date(event.endsAt).getTime();
     if (overlaps(start, end, eStart, eEnd)) return event;
   }
+  return null;
+}
+
+/** Проверка перед созданием/переносом занятия (те же правила, что на сервере, по данным календаря). */
+export function validateLessonPlacementClient(params: {
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  events: ScheduleEvent[];
+  daySlots: TeacherDaySlot[];
+  excludeLessonId?: number;
+  fromSlotId?: number;
+}): string | null {
+  if (params.startTime >= params.endTime) {
+    return 'Время окончания должно быть позже начала';
+  }
+
+  const startsAt = buildLocalIso(params.slotDate, params.startTime);
+  const endsAt = buildLocalIso(params.slotDate, params.endTime);
+  if (Number.isNaN(new Date(startsAt).getTime())) {
+    return 'Некорректная дата и время';
+  }
+
+  const excludeId = params.excludeLessonId ? `lesson-${params.excludeLessonId}` : undefined;
+  const conflict = findScheduleConflict(ordinaryScheduleEvents(params.events), startsAt, endsAt, excludeId);
+  if (conflict) {
+    const who = conflict.participantLabel ? ` (${conflict.participantLabel})` : '';
+    return `Конфликт с занятием «${conflict.title}»${who}`;
+  }
+
+  const startMin = timeToMinutes(params.startTime);
+  const endMin = timeToMinutes(params.endTime);
+
+  if (params.fromSlotId) {
+    const source = params.daySlots.find((s) => s.id === params.fromSlotId);
+    if (!source || source.slotKind !== 'extra') {
+      return 'Свободный слот не найден — обновите календарь';
+    }
+    const slotStart = timeToMinutes(source.startTime);
+    const slotEnd = timeToMinutes(source.endTime);
+    if (startMin < slotStart || endMin > slotEnd) {
+      return 'Занятие должно умещаться в выбранный слот';
+    }
+  }
+
+  for (const slot of params.daySlots) {
+    if (slot.slotDate !== params.slotDate) continue;
+    if (slot.slotKind !== 'blocked' && slot.slotKind !== 'break') continue;
+    const blockStart = timeToMinutes(slot.startTime);
+    const blockEnd = timeToMinutes(slot.endTime);
+    if (startMin < blockEnd && endMin > blockStart) {
+      const label = slot.label?.trim() || 'Занято';
+      return `Время пересекается с блоком «${label}»`;
+    }
+  }
+
   return null;
 }
 

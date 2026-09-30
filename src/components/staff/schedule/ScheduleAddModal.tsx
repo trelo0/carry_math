@@ -1,23 +1,38 @@
 'use client';
 
-import { useState } from 'react';
-import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
-import type { ScheduleFormKind } from '@/lib/teacher/schedule-types';
-import { buildLocalIso, dateKey, durationFromRange } from '@/lib/teacher/schedule-utils';
+import { useEffect, useState } from 'react';
+import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
+import type { ScheduleEvent, ScheduleFormKind } from '@/lib/teacher/schedule-types';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
+import {
+  buildLocalIso,
+  dateKey,
+  durationFromRange,
+  findDaySlotConflict,
+  validateLessonPlacementClient,
+} from '@/lib/teacher/schedule-utils';
+import { formatPackageCreditLine } from '@/lib/teacher/package-credits';
 import {
   addTeacherDaySlot,
   addTeacherLesson,
   createOptimisticLesson,
+  removeTeacherLesson,
 } from '@/lib/teacher/schedule-optimistic';
-import type { TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
 
 type Props = {
   data: TeacherCabinetData;
+  events: ScheduleEvent[];
+  daySlots: TeacherDaySlot[];
   initialDate?: Date;
   initialKind?: ScheduleFormKind;
+  initialStartTime?: string;
+  initialEndTime?: string;
+  initialStudentId?: string;
+  initialGroupId?: string;
+  replacesLessonId?: number;
   busy: boolean;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   onClose: () => void;
@@ -34,8 +49,15 @@ const TITLES: Record<ScheduleFormKind, string> = {
 
 export default function ScheduleAddModal({
   data,
+  events,
+  daySlots,
   initialDate,
   initialKind = 'individual',
+  initialStartTime,
+  initialEndTime,
+  initialStudentId = '',
+  initialGroupId = '',
+  replacesLessonId,
   busy,
   patchTeacher,
   onClose,
@@ -43,14 +65,35 @@ export default function ScheduleAddModal({
 }: Props) {
   const [formKind, setFormKind] = useState<ScheduleFormKind>(initialKind);
   const [slotDate, setSlotDate] = useState(dateKey(initialDate ?? new Date()));
-  const [startTime, setStartTime] = useState('10:00');
-  const [endTime, setEndTime] = useState('11:00');
-  const [studentId, setStudentId] = useState('');
-  const [groupId, setGroupId] = useState('');
+  const [startTime, setStartTime] = useState(initialStartTime ?? '10:00');
+  const [endTime, setEndTime] = useState(initialEndTime ?? '11:00');
+  const [studentId, setStudentId] = useState(initialStudentId);
+  const [groupId, setGroupId] = useState(initialGroupId);
+
+  useEffect(() => {
+    setFormKind(initialKind);
+    setSlotDate(dateKey(initialDate ?? new Date()));
+    setStartTime(initialStartTime ?? '10:00');
+    setEndTime(initialEndTime ?? '11:00');
+    setStudentId(initialStudentId);
+    setGroupId(initialGroupId);
+  }, [
+    initialDate,
+    initialKind,
+    initialStartTime,
+    initialEndTime,
+    initialStudentId,
+    initialGroupId,
+  ]);
   const [topic, setTopic] = useState('');
   const [comment, setComment] = useState('');
   const [busyLabel, setBusyLabel] = useState('Занято');
   const [feedback, setFeedback] = useState<ActionFeedback | null>(null);
+
+  const selectedStudent =
+    formKind === 'individual' && studentId
+      ? data.students.find((s) => String(s.telegramId) === studentId)
+      : undefined;
 
   const submit = () => {
     if (startTime >= endTime) {
@@ -60,6 +103,11 @@ export default function ScheduleAddModal({
 
     if (formKind === 'free' || formKind === 'break' || formKind === 'busy') {
       const slotKind = formKind === 'free' ? 'extra' : formKind === 'break' ? 'break' : 'blocked';
+      const slotConflict = findDaySlotConflict(slotDate, startTime, endTime, events, daySlots);
+      if (slotConflict) {
+        setFeedback({ type: 'error', message: slotConflict });
+        return;
+      }
       void runWithFeedback(runAction, setFeedback, async () => {
         const res = await fetch('/api/cabinet/teacher/day-slots', {
           method: 'POST',
@@ -74,13 +122,25 @@ export default function ScheduleAddModal({
         });
         const body = (await res.json()) as { error?: string; slot?: TeacherDaySlot };
         if (!res.ok) {
-          throw new Error(body.error ?? 'Не удалось сохранить');
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить', res.status));
         }
         if (body.slot) {
           patchTeacher?.((prev) => addTeacherDaySlot(prev, body.slot!));
         }
         onClose();
       }, 'Сохранено', { refresh: 'none' });
+      return;
+    }
+
+    const placementError = validateLessonPlacementClient({
+      slotDate,
+      startTime,
+      endTime,
+      events,
+      daySlots,
+    });
+    if (placementError) {
+      setFeedback({ type: 'error', message: placementError });
       return;
     }
 
@@ -104,6 +164,9 @@ export default function ScheduleAddModal({
       if (formKind === 'group' && groupId) {
         payload.groupId = Number(groupId);
       }
+      if (replacesLessonId) {
+        payload.replacesLessonId = replacesLessonId;
+      }
 
       const res = await fetch('/api/cabinet/teacher/schedule', {
         method: 'POST',
@@ -112,12 +175,12 @@ export default function ScheduleAddModal({
       });
       const body = (await res.json()) as { error?: string; lessonId?: number; lessonIds?: number[] };
       if (!res.ok) {
-        throw new Error(body.error ?? 'Не удалось создать занятие');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось создать занятие', res.status));
       }
       const lessonId = body.lessonId ?? body.lessonIds?.[0];
       if (lessonId && patchTeacher) {
-        patchTeacher((prev) =>
-          addTeacherLesson(
+        patchTeacher((prev) => {
+          let next = addTeacherLesson(
             prev,
             createOptimisticLesson({
               id: lessonId,
@@ -131,8 +194,12 @@ export default function ScheduleAddModal({
               groupTitle: group?.title ?? null,
               lessonPlan: comment.trim() || null,
             }),
-          ),
-        );
+          );
+          if (replacesLessonId) {
+            next = removeTeacherLesson(next, replacesLessonId);
+          }
+          return next;
+        });
       }
       onClose();
     }, 'Занятие создано');
@@ -142,7 +209,7 @@ export default function ScheduleAddModal({
     <div className="schedule-modal-overlay" role="dialog" aria-modal="true">
       <div className="schedule-modal sched-modal">
         <header className="schedule-modal-head">
-          <h2>{TITLES[formKind]}</h2>
+          <h2>{replacesLessonId ? 'Новое занятие вместо отменённого' : TITLES[formKind]}</h2>
           <button type="button" className="sched-icon-btn" onClick={onClose} aria-label="Закрыть">
             ✕
           </button>
@@ -208,6 +275,11 @@ export default function ScheduleAddModal({
                   ))}
                 </select>
               </label>
+              {selectedStudent ? (
+                <p className="sched-aside-muted">
+                  {formatPackageCreditLine(selectedStudent.packageCredits.individual, 'Пакет')}
+                </p>
+              ) : null}
               <label>
                 Предмет / тема
                 <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} />

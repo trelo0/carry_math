@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import { addTeacherDaySlot, patchTeacherDaySlot, removeTeacherDaySlot } from '@/lib/teacher/schedule-optimistic';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
 import { findDaySlotConflict, formatTimeRange } from '@/lib/teacher/schedule-utils';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithFeedback } from '@/lib/staff/action-feedback';
@@ -72,7 +73,7 @@ export default function ScheduleSlotSidePanel({
           patchTeacherDaySlot(prev, slotId, { startTime: slot.startTime, endTime: slot.endTime }),
         );
         const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось сохранить');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить', res.status));
       }
     }, 'Слот обновлён', { refresh: 'none' });
   };
@@ -86,7 +87,7 @@ export default function ScheduleSlotSidePanel({
       if (!res.ok) {
         patchTeacher?.((prev) => addTeacherDaySlot(prev, slot));
         const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось удалить');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось удалить', res.status));
       }
     }, 'Слот удалён', { refresh: 'none' });
   };

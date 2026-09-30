@@ -126,7 +126,7 @@ export default function TeacherGroupCard({
                   {lesson.topic ? <span> — {lesson.topic}</span> : null}
                 </div>
                 <button type="button" className="curator-link" onClick={() => onOpenLesson(lesson)}>
-                  Открыть
+                  В расписании
                 </button>
               </li>
             ))}

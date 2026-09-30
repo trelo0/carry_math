@@ -9,22 +9,23 @@ import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
 
 export const metadata = {
-  title: 'Личный кабинет — District',
+  title: 'Кабинет курса — District',
 };
 
 export const dynamic = 'force-dynamic';
 
-const SECTIONS = ['course', 'lessons', 'schedule', 'payments', 'settings'] as const;
+const SECTIONS = ['course', 'payments', 'settings'] as const;
 type CabinetSection = (typeof SECTIONS)[number];
-const PRODUCTS = ['course', 'individual', 'group'] as const;
-type CabinetProduct = (typeof PRODUCTS)[number];
+
+const LEGACY_SECTION_MAP: Record<string, CabinetSection> = {
+  lessons: 'course',
+  schedule: 'course',
+};
 
 function parseSection(value: string | undefined): CabinetSection | undefined {
-  return SECTIONS.includes(value as CabinetSection) ? (value as CabinetSection) : undefined;
-}
-
-function parseProduct(value: string | undefined): CabinetProduct | undefined {
-  return PRODUCTS.includes(value as CabinetProduct) ? (value as CabinetProduct) : undefined;
+  if (!value) return undefined;
+  if (SECTIONS.includes(value as CabinetSection)) return value as CabinetSection;
+  return LEGACY_SECTION_MAP[value];
 }
 
 // Личный кабинет ученика: отдельная часть сайта со своим прикладным
@@ -32,7 +33,7 @@ function parseProduct(value: string | undefined): CabinetProduct | undefined {
 export default async function CabinetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; product?: string; login?: string }>;
+  searchParams: Promise<{ section?: string; login?: string }>;
 }) {
   const sp = await searchParams;
   const supabase = await createClient();
@@ -80,7 +81,6 @@ export default async function CabinetPage({
     <CabinetShell
       data={cabinet}
       initialSection={parseSection(sp.section)}
-      initialProduct={parseProduct(sp.product)}
       showCabinetPick={showCabinetPick}
     />
   );

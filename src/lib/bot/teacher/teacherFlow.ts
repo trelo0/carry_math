@@ -14,6 +14,7 @@ import {
   saveState,
   sendAdminMessage,
 } from '../admin/core';
+import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { isBotRole, isCreatorTelegramId, resolveEffectiveRole } from '../roles';
 import {
   getGroupHomeworkForGroup,
@@ -57,10 +58,7 @@ export const TEACHER_MENU_LABEL_SET = new Set<string>(Object.values(TEACHER_MENU
 
 const TEACHER_HOME_TEXT =
   '👨‍🏫 Кабинет преподавателя District\n\n' +
-  'Разделы — на кнопках меню под полем ввода. Сейчас интерфейс работает на тестовых данных.';
-
-const TEACHER_CABINET_TEXT =
-  '🌐 Личный кабинет\n\nСсылка на личный кабинет будет подключена после готовности сайта.';
+  'Разделы — на кнопках меню под полем ввода. Расписание и ученики — на сайте (кнопка «Личный кабинет»).';
 
 const TEACHER_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
@@ -300,10 +298,19 @@ export function renderHomeworkCard(submission: HomeworkSubmission): { text: stri
   return { text, keyboard };
 }
 
-export function renderCabinet(): { text: string; keyboard: InlineKeyboard } {
+export async function teacherCabinetScreen(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
   return {
-    text: TEACHER_CABINET_TEXT,
-    keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 't:menu')]] },
+    text: '🌐 Личный кабинет\n\nРасписание, ученики и группы — на сайте:',
+    keyboard: {
+      inline_keyboard: [
+        [{ text: '🌐 Открыть кабинет', url }],
+        [backButton('⬅️ Назад', 't:menu')],
+      ],
+    },
   };
 }
 
@@ -413,7 +420,7 @@ export async function handleTeacherMessage(
   }
 
   if (text === TEACHER_MENU_LABELS.cabinet) {
-    const cabinet = renderCabinet();
+    const cabinet = await teacherCabinetScreen(admin, telegramId);
     await sendAdminMessage(chatId, cabinet.text, cabinet.keyboard);
     return true;
   }
@@ -640,7 +647,7 @@ async function routeTeacherCallback(
     }
 
     case 'cab': {
-      const screen = renderCabinet();
+      const screen = await teacherCabinetScreen(admin, telegramId);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }

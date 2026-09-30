@@ -198,11 +198,11 @@ export function Header({
         phone ? (
           <a href="/cabinet" className="header-account" title={phone}>
             <span className="header-account-dot" aria-hidden="true" />
-            Личный кабинет
+            Кабинет курса
           </a>
         ) : (
           <button type="button" className="header-cta btn btn-gold" onClick={() => openAuth()}>
-            Вход
+            Войти на курс
           </button>
         )
       ) : null}
@@ -261,7 +261,7 @@ export function Header({
               onClick={() => setMenuOpen(false)}
             >
               <span className="header-account-dot" aria-hidden="true" />
-              Личный кабинет
+              Кабинет курса
             </a>
           ) : (
             <button
@@ -272,7 +272,7 @@ export function Header({
                 openAuth();
               }}
             >
-              Вход
+              Войти на курс
             </button>
           )
         ) : null}

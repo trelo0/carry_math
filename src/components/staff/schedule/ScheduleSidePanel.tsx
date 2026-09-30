@@ -5,13 +5,20 @@ import { sessionLabel } from '@/components/curator/curator-utils';
 import type { CourseLessonDetailView } from '@/lib/curator/lesson-detail';
 import type { TeacherCabinetData, TeacherDaySlot, TeacherLessonView } from '@/lib/teacher/cabinet-data';
 import { buildOrdinaryDetailFromEvent } from '@/lib/teacher/lesson-detail-from-event';
-import type { TeacherLessonDetailView, TeacherLessonMaterialView } from '@/lib/teacher/lesson-detail';
+import { isLessonInLiveWindow } from '@/lib/teacher/lesson-utils';
+import type {
+  TeacherLessonDetailView,
+  TeacherLessonHomeworkView,
+  TeacherLessonMaterialView,
+} from '@/lib/teacher/lesson-detail';
+import { homeworkReviewStatusLabel } from '@/lib/lesson-homework';
 import { patchTeacherLesson } from '@/lib/teacher/schedule-optimistic';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import { CANCEL_REASONS } from '@/lib/teacher/schedule-types';
+import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
 import {
   addDays,
   buildLocalIso,
@@ -22,7 +29,10 @@ import {
   freeSlotsForDay,
   isoToTimeLabel,
   kindBadgeLabel,
+  minutesToTime,
   statusLabel,
+  timeToMinutes,
+  validateLessonPlacementClient,
 } from '@/lib/teacher/schedule-utils';
 
 type Props = {
@@ -39,6 +49,15 @@ type Props = {
   onLessonFinished?: (lessonId: number) => void;
   onOpenStudent?: (telegramId: number) => void;
   onOpenGroup?: (groupId: number) => void;
+  onPlanReplacementLesson?: (draft: {
+    date: Date;
+    startTime: string;
+    endTime: string;
+    kind: 'individual' | 'group';
+    studentTelegramId?: number | null;
+    groupId?: number | null;
+    replacesLessonId?: number;
+  }) => void;
   runAction: StaffRunAction;
 };
 
@@ -80,6 +99,7 @@ export default function ScheduleSidePanel({
   onLessonFinished,
   onOpenStudent,
   onOpenGroup,
+  onPlanReplacementLesson,
   runAction,
 }: Props) {
   const isCourse = event.kind === 'course';
@@ -87,7 +107,12 @@ export default function ScheduleSidePanel({
   const [error, setError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null);
   const [materialFeedback, setMaterialFeedback] = useState<ActionFeedback | null>(null);
+  const [homeworkFeedback, setHomeworkFeedback] = useState<ActionFeedback | null>(null);
   const [materials, setMaterials] = useState<TeacherLessonMaterialView[]>([]);
+  const [homework, setHomework] = useState<TeacherLessonHomeworkView | null>(null);
+  const [hwInstruction, setHwInstruction] = useState('');
+  const [hwDue, setHwDue] = useState('');
+  const [hwReviewComment, setHwReviewComment] = useState('');
   const [courseDetail, setCourseDetail] = useState<CourseLessonDetailView | null>(null);
   const [rescheduleDate, setRescheduleDate] = useState(dateKey(new Date(event.startsAt)));
   const [rescheduleStart, setRescheduleStart] = useState(isoToTimeLabel(event.startsAt));
@@ -103,6 +128,29 @@ export default function ScheduleSidePanel({
     [event, isCourse, teacherData, materials],
   );
 
+  const activeStatus = ordinaryDetail?.status ?? event.status;
+  const courseSessionStatus = courseDetail?.sessionStatus;
+  const sessionStarted = Boolean(event.lessonId && startedLessonIds.has(event.lessonId));
+  const isOrdinaryLive = Boolean(
+    ordinaryDetail &&
+      activeStatus === 'scheduled' &&
+      (sessionStarted ||
+        isLessonInLiveWindow({
+          status: ordinaryDetail.status,
+          startsAt: ordinaryDetail.startsAt,
+          durationMinutes: ordinaryDetail.durationMinutes,
+        })),
+  );
+  const isCourseLive = courseSessionStatus === 'live';
+  const canManageOrdinary = Boolean(ordinaryDetail && activeStatus === 'scheduled' && !isOrdinaryLive);
+  const canEditOrdinaryCard = Boolean(
+    ordinaryDetail && (activeStatus === 'scheduled' || isOrdinaryLive),
+  );
+  const canEditCourse =
+    courseSessionStatus === 'scheduled' ||
+    courseSessionStatus === 'waiting' ||
+    courseSessionStatus === 'live';
+
   useEffect(() => {
     setMode('view');
     setConfirmStartOpen(false);
@@ -115,6 +163,7 @@ export default function ScheduleSidePanel({
   useEffect(() => {
     if (isCourse || !event.lessonId) {
       setMaterials([]);
+      setHomework(null);
       return;
     }
     let cancelled = false;
@@ -125,6 +174,9 @@ export default function ScheduleSidePanel({
         const detail = (await res.json()) as TeacherLessonDetailView;
         if (cancelled) return;
         setMaterials(detail.materials ?? []);
+        setHomework(detail.homework ?? null);
+        setHwInstruction(detail.homework?.instructionText ?? '');
+        setHwDue(detail.homework?.dueAt ? detail.homework.dueAt.slice(0, 16) : '');
         setMeetUrl(detail.meetUrl ?? '');
         setBoardUrl(detail.boardUrl ?? '');
       } catch {
@@ -209,7 +261,7 @@ export default function ScheduleSidePanel({
           });
           if (!res.ok) {
             const body = (await res.json()) as { error?: string };
-            throw new Error(body.error ?? 'Не удалось перенести');
+            throw new Error(formatScheduleApiError(body.error, 'Не удалось перенести', res.status));
           }
           setMode('view');
         },
@@ -221,6 +273,20 @@ export default function ScheduleSidePanel({
 
     if (!event.lessonId || !selectedSlot) return;
     const startsAt = buildLocalIso(selectedSlot.slotDate, selectedSlot.startTime);
+    const lessonEndTime = minutesToTime(timeToMinutes(selectedSlot.startTime) + lessonDuration);
+    const placementError = validateLessonPlacementClient({
+      slotDate: selectedSlot.slotDate,
+      startTime: selectedSlot.startTime,
+      endTime: lessonEndTime,
+      events: allEvents,
+      daySlots,
+      excludeLessonId: event.lessonId,
+    });
+    if (placementError) {
+      setActionFeedback({ type: 'error', message: placementError });
+      return;
+    }
+
     const lessonId = event.lessonId;
     patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { startsAt }));
     setMode('view');
@@ -240,7 +306,7 @@ export default function ScheduleSidePanel({
           }),
         );
         const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось перенести');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось перенести', res.status));
       }
     }, 'Занятие перенесено');
   };
@@ -250,10 +316,14 @@ export default function ScheduleSidePanel({
     const reasonText = cancelNote.trim() ? `${reasonLabel}: ${cancelNote.trim()}` : reasonLabel;
 
     if (!event.lessonId) return;
+    if (activeStatus !== 'scheduled') {
+      setActionFeedback({
+        type: 'error',
+        message: 'Отменить можно только запланированное занятие',
+      });
+      return;
+    }
     const lessonId = event.lessonId;
-    patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: 'cancelled', cancelReason: reasonText }));
-    onLessonFinished?.(lessonId);
-    onClose();
     void runWithFeedback(runAction, setActionFeedback, async () => {
       const res = await fetch(`/api/cabinet/teacher/lessons/${lessonId}/cancel`, {
         method: 'POST',
@@ -261,13 +331,30 @@ export default function ScheduleSidePanel({
         body: JSON.stringify({ reason: cancelReason, reasonNote: reasonText }),
       });
       if (!res.ok) {
-        patchTeacher?.((prev) =>
-          patchTeacherLesson(prev, lessonId, { status: 'scheduled', cancelReason: null }),
-        );
         const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось отменить');
+        throw new Error(formatScheduleApiError(body.error, 'Не удалось отменить', res.status));
       }
+      patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: 'cancelled', cancelReason: reasonText }));
+      onLessonFinished?.(lessonId);
+      setMode('view');
     }, 'Занятие отменено');
+  };
+
+  const planReplacementLesson = () => {
+    if (!ordinaryDetail || !onPlanReplacementLesson || !event.lessonId) return;
+    const lessonId = event.lessonId;
+    const start = new Date(event.startsAt);
+    const end = new Date(event.endsAt);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    onPlanReplacementLesson({
+      date: start,
+      startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+      kind: ordinaryDetail.kind === 'group' ? 'group' : 'individual',
+      studentTelegramId: ordinaryDetail.student?.telegramId ?? null,
+      groupId: ordinaryDetail.group?.id ?? null,
+      replacesLessonId: lessonId,
+    });
   };
 
   const saveLinks = () => {
@@ -292,7 +379,7 @@ export default function ScheduleSidePanel({
             patchTeacherLesson(prev, lessonId, { meetUrl: prevMeet, boardUrl: prevBoard }),
           );
           const body = (await res.json()) as { error?: string };
-          throw new Error(body.error ?? 'Не удалось сохранить');
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить', res.status));
         }
       },
       'Ссылки сохранены',
@@ -318,7 +405,7 @@ export default function ScheduleSidePanel({
         if (!res.ok) {
           setMaterials((prev) => prev.filter((item) => item.id !== tempId));
           const body = (await res.json()) as { error?: string };
-          throw new Error(body.error ?? 'Не удалось загрузить файл');
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось загрузить файл', res.status));
         }
         const created = (await res.json()) as TeacherLessonMaterialView;
         setMaterials((prev) => prev.map((item) => (item.id === tempId ? created : item)));
@@ -343,7 +430,7 @@ export default function ScheduleSidePanel({
         if (!res.ok) {
           setMaterials(snapshot);
           const body = (await res.json()) as { error?: string };
-          throw new Error(body.error ?? 'Не удалось удалить файл');
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось удалить файл', res.status));
         }
       },
       'Файл удалён',
@@ -353,6 +440,13 @@ export default function ScheduleSidePanel({
 
   const completeLesson = () => {
     if (!event.lessonId) return;
+    if (activeStatus !== 'scheduled' && !isOrdinaryLive) {
+      setActionFeedback({
+        type: 'error',
+        message: 'Завершить можно только идущее или запланированное занятие',
+      });
+      return;
+    }
     const lessonId = event.lessonId;
     patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: 'completed' }));
     onLessonFinished?.(lessonId);
@@ -368,7 +462,7 @@ export default function ScheduleSidePanel({
         if (!res.ok) {
           patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: 'scheduled' }));
           const body = (await res.json()) as { error?: string };
-          throw new Error(body.error ?? 'Не удалось завершить');
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось завершить', res.status));
         }
       },
       'Занятие завершено',
@@ -387,7 +481,9 @@ export default function ScheduleSidePanel({
           body: JSON.stringify({ action }),
         });
         const body = (await res.json()) as { error?: string; notify?: { message?: string; sent?: number } };
-        if (!res.ok) throw new Error(body.error ?? 'Не удалось обновить статус');
+        if (!res.ok) {
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось обновить статус', res.status));
+        }
         if (action === 'start' && body.notify && (body.notify.sent ?? 0) === 0) {
           throw new Error(body.notify.message ?? 'Уведомления не отправлены');
         }
@@ -396,21 +492,6 @@ export default function ScheduleSidePanel({
       { refresh: 'full' },
     );
   };
-
-  const activeStatus = ordinaryDetail?.status ?? event.status;
-  const courseSessionStatus = courseDetail?.sessionStatus;
-  const isOrdinaryLive = Boolean(
-    event.lessonId && activeStatus === 'scheduled' && startedLessonIds.has(event.lessonId),
-  );
-  const isCourseLive = courseSessionStatus === 'live';
-  const canManageOrdinary = Boolean(ordinaryDetail && activeStatus === 'scheduled' && !isOrdinaryLive);
-  const canEditOrdinaryCard = Boolean(
-    ordinaryDetail && (activeStatus === 'scheduled' || isOrdinaryLive),
-  );
-  const canEditCourse =
-    courseSessionStatus === 'scheduled' ||
-    courseSessionStatus === 'waiting' ||
-    courseSessionStatus === 'live';
 
   const lessonSource = event.sourceLesson;
   const confirmStartLesson = () => {
@@ -466,7 +547,24 @@ export default function ScheduleSidePanel({
   };
 
   const renderOrdinaryActions = () => {
-    if (!ordinaryDetail || activeStatus === 'cancelled') return null;
+    if (!ordinaryDetail) return null;
+
+    if (activeStatus === 'cancelled') {
+      return (
+        <div className="sched-lesson-cancelled-block">
+          <StatusBadge label="ЗАНЯТИЕ ОТМЕНЕНО" tone="cancelled" />
+          {ordinaryDetail.cancelReason ? (
+            <p className="sched-lesson-muted sched-lesson-cancelled-reason">{ordinaryDetail.cancelReason}</p>
+          ) : null}
+          <p className="sched-lesson-muted">Это время снова свободно — можно поставить новое занятие.</p>
+          {onPlanReplacementLesson ? (
+            <button type="button" className="sched-btn sched-btn--primary sched-lesson-cta" disabled={busy} onClick={planReplacementLesson}>
+              Добавить занятие на это время
+            </button>
+          ) : null}
+        </div>
+      );
+    }
 
     if (activeStatus === 'completed') {
       return (
@@ -476,10 +574,6 @@ export default function ScheduleSidePanel({
           <p className="sched-lesson-done-line">Занятие списано</p>
         </div>
       );
-    }
-
-    if (activeStatus === 'no_show') {
-      return <StatusBadge label={statusLabel('no_show').toUpperCase()} tone="completed" />;
     }
 
     if (isOrdinaryLive) {
@@ -576,6 +670,127 @@ export default function ScheduleSidePanel({
           {meetHref ? <ExternalLinkRow label="Открыть конференцию" href={meetHref} /> : null}
           {boardHref ? <ExternalLinkRow label="Открыть доску" href={boardHref} /> : null}
         </div>
+      </div>
+    );
+  };
+
+  const uploadHomework = (file: File) => {
+    if (!event.lessonId) return;
+    void runWithFeedback(
+      runAction,
+      setHomeworkFeedback,
+      async () => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('instructionText', hwInstruction);
+        if (hwDue.trim()) form.append('dueAt', new Date(hwDue).toISOString());
+        const res = await fetch(`/api/cabinet/teacher/lessons/${event.lessonId}/homework`, {
+          method: 'POST',
+          body: form,
+        });
+        if (!res.ok) {
+          const body = (await res.json()) as { error?: string };
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить ДЗ', res.status));
+        }
+        const created = (await res.json()) as TeacherLessonHomeworkView;
+        setHomework(created);
+      },
+      'Домашнее задание сохранено',
+      { refresh: 'none' },
+    );
+  };
+
+  const reviewHomework = (action: 'approve' | 'revision') => {
+    if (!event.lessonId) return;
+    void runWithFeedback(
+      runAction,
+      setHomeworkFeedback,
+      async () => {
+        const res = await fetch(`/api/cabinet/teacher/lessons/${event.lessonId}/homework/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, comment: hwReviewComment }),
+        });
+        if (!res.ok) {
+          const body = (await res.json()) as { error?: string };
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось обновить статус', res.status));
+        }
+        const updated = (await res.json()) as TeacherLessonHomeworkView;
+        setHomework(updated);
+        setHwReviewComment('');
+      },
+      action === 'approve' ? 'Работа принята' : 'Отправлено на доработку',
+      { refresh: 'none' },
+    );
+  };
+
+  const renderHomeworkSection = () => {
+    if (isCourse || !ordinaryDetail || !event.lessonId) return null;
+    const canEdit = canEditOrdinaryCard;
+    const onReview =
+      homework && (homework.reviewStatus === 'submitted' || homework.reviewStatus === 'reviewing');
+
+    return (
+      <div className="sched-lesson-section">
+        <h3 className="sched-lesson-section-label">Домашнее задание</h3>
+        {homework ? (
+          <div className="sched-lesson-files">
+            <p className="sched-lesson-muted">
+              {homework.fileName} · {homeworkReviewStatusLabel(homework.reviewStatus)}
+            </p>
+            {homework.submittedAt ? (
+              <p className="sched-lesson-muted">
+                Сдано: {new Date(homework.submittedAt).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' })}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="sched-lesson-muted">Задание не выдано</p>
+        )}
+
+        {canEdit ? (
+          <>
+            <label className="sched-lesson-field">
+              <span>Условие (текст)</span>
+              <textarea value={hwInstruction} onChange={(e) => setHwInstruction(e.target.value)} rows={3} />
+            </label>
+            <label className="sched-lesson-field">
+              <span>Срок сдачи</span>
+              <input type="datetime-local" value={hwDue} onChange={(e) => setHwDue(e.target.value)} />
+            </label>
+            <label className="sched-lesson-upload">
+              <span className="sched-btn sched-btn--ghost sched-btn--sm">
+                {homework ? 'Заменить файл задания' : '+ Загрузить файл задания'}
+              </span>
+              <input
+                type="file"
+                hidden
+                disabled={busy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadHomework(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </>
+        ) : null}
+
+        {onReview && canEdit ? (
+          <div className="sched-lesson-secondary-actions">
+            <label className="sched-lesson-field">
+              <span>Комментарий</span>
+              <textarea value={hwReviewComment} onChange={(e) => setHwReviewComment(e.target.value)} rows={2} />
+            </label>
+            <button type="button" className="sched-btn sched-btn--primary" disabled={busy} onClick={() => reviewHomework('approve')}>
+              Принять
+            </button>
+            <button type="button" className="sched-btn sched-btn--ghost" disabled={busy} onClick={() => reviewHomework('revision')}>
+              На доработку
+            </button>
+          </div>
+        ) : null}
+        <CabinetFeedback feedback={homeworkFeedback} />
       </div>
     );
   };
@@ -826,8 +1041,9 @@ export default function ScheduleSidePanel({
               </div>
             ) : null}
 
-            {renderConnectionSection()}
-            {renderMaterialsSection()}
+            {activeStatus !== 'cancelled' ? renderConnectionSection() : null}
+            {activeStatus !== 'cancelled' ? renderMaterialsSection() : null}
+            {activeStatus !== 'cancelled' ? renderHomeworkSection() : null}
 
             {isCourse && courseDetail ? (
               <div className="sched-lesson-section">
@@ -887,7 +1103,11 @@ export default function ScheduleSidePanel({
                     <StatusBadge label="ЗАПЛАНИРОВАНО" tone="scheduled" />
                   </div>
                 ) : null}
-                {renderOrdinaryActions()}
+                {activeStatus === 'cancelled' ? (
+                  <div className="sched-lesson-section">{renderOrdinaryActions()}</div>
+                ) : (
+                  renderOrdinaryActions()
+                )}
               </>
             )}
 

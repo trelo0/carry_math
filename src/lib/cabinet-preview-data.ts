@@ -48,92 +48,13 @@ const COURSE_CATALOG: CabinetCourseCatalog = {
   ],
 };
 
-const BASE_LESSONS: CabinetData['lessons'] = [
-  {
-    id: 'u1',
-    kind: 'individual',
-    date: '24.09.2024',
-    time: '18:30',
-    topic: 'Квадратные уравнения',
-    status: 'upcoming',
-    paid: false,
-    meetUrl: 'https://meet.google.com/demo-upcoming',
-    materials: [],
-    homework: null,
-  },
-  {
-    id: 'd1',
-    kind: 'individual',
-    date: '20.09.2024',
-    time: '18:30',
-    topic: 'Дробно-рациональные выражения',
-    status: 'done',
-    paid: true,
-    meetUrl: null,
-    materials: [
-      {
-        id: 1,
-        name: 'Презентация.pdf',
-        size: '2.1 MB',
-        downloadUrl: '/api/cabinet/lessons/d1/files/1?kind=material',
-      },
-    ],
-    homework: {
-      id: 1,
-      name: 'ДЗ.pdf',
-      size: '0.8 MB',
-      state: 'Проверено',
-      tone: 'ok',
-      downloadUrl: '/api/cabinet/lessons/d1/files/1?kind=homework',
-    },
-  },
-  {
-    id: 'u3',
-    kind: 'group',
-    date: '05.10.2024',
-    time: '17:00',
-    topic: 'Групповой интенсив: параметры',
-    status: 'upcoming',
-    paid: false,
-    meetUrl: null,
-    materials: [],
-    homework: null,
-  },
-  {
-    id: 'd3',
-    kind: 'group',
-    date: '13.09.2024',
-    time: '17:00',
-    topic: 'Групповой интенсив: планиметрия',
-    status: 'done',
-    paid: true,
-    meetUrl: null,
-    materials: [
-      {
-        id: 2,
-        name: 'Конспект.docx',
-        size: '1.2 MB',
-        downloadUrl: '/api/cabinet/lessons/d3/files/2?kind=material',
-      },
-    ],
-    homework: {
-      id: 2,
-      name: 'ДЗ.pdf',
-      size: '0.6 MB',
-      state: 'Проверено',
-      tone: 'ok',
-      downloadUrl: '/api/cabinet/lessons/d3/files/2?kind=homework',
-    },
-  },
-];
-
 /** Демо-данные для /cabinet-preview (без Supabase). */
 export function buildCabinetPreviewData(
   createdAt: string,
-  variant: CourseCabinetState | 'lessons_only' = 'full',
+  variant: CourseCabinetState = 'full',
 ): CabinetData {
   const enrollment =
-    variant === 'preview' || variant === 'lessons_only'
+    variant === 'preview'
       ? null
       : {
           courseId: COURSE_CATALOG.id,
@@ -144,28 +65,13 @@ export function buildCabinetPreviewData(
 
   const accesses =
     variant === 'full'
-      ? [
-          { product: 'course' as const, expiresAt: null },
-          { product: 'individual' as const, expiresAt: null },
-          { product: 'group' as const, expiresAt: null },
-        ]
-      : variant === 'lessons_only'
-        ? [
-            { product: 'individual' as const, expiresAt: null },
-            { product: 'group' as const, expiresAt: null },
-          ]
-        : variant === 'enrolled_locked'
-          ? []
-          : [];
+      ? [{ product: 'course' as const, expiresAt: null }]
+      : variant === 'enrolled_locked'
+        ? []
+        : [];
 
   const accessHistory: CabinetData['accessHistory'] =
-    variant === 'full'
-      ? ['course', 'individual', 'group']
-      : variant === 'lessons_only'
-        ? ['individual', 'group']
-        : variant === 'enrolled_locked'
-          ? []
-          : [];
+    variant === 'full' ? ['course'] : variant === 'enrolled_locked' ? [] : [];
 
   return {
     phone: '+7 700 000-00-00',
@@ -177,28 +83,25 @@ export function buildCabinetPreviewData(
     enrollment,
     courseCatalog: COURSE_CATALOG,
     courseContent: null,
-    group: { title: '10 класс · Алгебра', teacherName: 'Анна Сергеевна' },
-    mentors: [{ kind: 'teacher', name: 'Кристина Денисовна' }],
-    ordinaryTeacher: { telegramId: 100001, name: 'Кристина Денисовна' },
-    studentGroup: { id: 1, title: '10 класс · Алгебра' },
-    lessons: BASE_LESSONS,
+    mentors: [{ kind: 'curator', name: 'Кристина Денисовна' }],
+    hasOrdinaryStudentTrack: false,
     packages:
       variant === 'full'
         ? [
-            { id: '1', product: 'course', title: 'Курс District', sub: 'Алгебра + Геометрия', remaining: 5, total: 8, active: true },
-            { id: '2', product: 'individual', title: 'Индивидуальные', sub: 'Кристина Денисовна', remaining: 2, total: 4, active: true },
+            {
+              id: '1',
+              product: 'course',
+              title: 'Курс District',
+              sub: 'Алгебра + Геометрия',
+              remaining: 5,
+              total: 8,
+              active: true,
+            },
           ]
-        : variant === 'lessons_only'
-          ? [
-              { id: '2', product: 'individual', title: 'Индивидуальные', sub: 'Кристина Денисовна', remaining: 2, total: 4, active: true },
-            ]
-          : [],
+        : [],
     payments:
       variant === 'full'
-        ? [
-            { id: '1', date: '24.09.2026', title: 'Курс District', price: '120', status: 'paid' },
-            { id: '2', date: '12.09.2026', title: 'Индивидуальные занятия', price: '90', status: 'paid' },
-          ]
+        ? [{ id: '1', date: '24.09.2026', title: 'Курс District', price: '120', status: 'paid' }]
         : [],
     profile: {
       name: 'Иван Петров',
@@ -212,9 +115,8 @@ export function buildCabinetPreviewData(
     courseStops: [],
     lives: variant === 'enrolled_locked' || variant === 'full' ? { current: 2, max: 3, accessBlocked: false } : null,
     cabinetPricing: DEFAULT_CABINET_PRICING,
-    courseMapViewed: variant !== 'preview' && variant !== 'lessons_only',
+    courseMapViewed: variant !== 'preview',
     memberRoles: ['student'],
-    teachingLessons: [],
   };
 }
 

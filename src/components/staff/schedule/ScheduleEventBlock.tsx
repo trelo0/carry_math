@@ -22,7 +22,9 @@ export default function ScheduleEventBlock({ event, isSelected, top, height, onC
       onClick={onClick}
     >
       <span className="sched-grid-event-accent" aria-hidden />
-      <span className="sched-grid-event-kind">{kindBadgeLabel(event.kind)}</span>
+      <span className="sched-grid-event-kind">
+        {event.status === 'cancelled' ? 'ОТМЕНЕНО' : kindBadgeLabel(event.kind)}
+      </span>
       <span className="sched-grid-event-time">{startTime}</span>
     </button>
   );

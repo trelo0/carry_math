@@ -14,13 +14,11 @@ import CourseHistoryPanel from './CourseHistoryPanel';
 import CourseListPanel from './CourseListPanel';
 import StaffContextHeader from './StaffContextHeader';
 import TeacherGroupsPanel from './TeacherGroupsPanel';
-import TeacherLessonRoom from './TeacherLessonRoom';
 import TeacherLiveBanner from './TeacherLiveBanner';
 import StaffStudentsPanel from './StaffStudentsPanel';
 import TeacherSchedulePanel from './schedule/TeacherSchedulePanel';
 import { resolveStaffScheduleMode } from '@/lib/teacher/schedule-config';
 import type { TeacherCabinetData, TeacherLessonView } from '@/lib/teacher/cabinet-data';
-import { readStartedLessonIds, writeStartedLessonIds } from '@/lib/teacher/started-lessons';
 import type { StaffRefreshScope, StaffRunAction } from '@/lib/staff/run-action';
 
 export type StaffSection =
@@ -55,7 +53,6 @@ const LEGACY_SECTION_MAP: Record<string, StaffSection> = {
   'teacher-home': 'teacher-calendar',
   'teacher-schedule': 'teacher-calendar',
   'teacher-availability': 'teacher-calendar',
-  'teacher-bookings': 'teacher-calendar',
   dashboard: 'course-overview',
   lessons: 'course-lessons',
   students: 'course-students',
@@ -209,13 +206,9 @@ export default function StaffShell({
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
   const [selectedTeacherStudentId, setSelectedTeacherStudentId] = useState<number | null>(null);
   const [selectedTeacherGroupId, setSelectedTeacherGroupId] = useState<number | null>(null);
-  const [openTeacherLesson, setOpenTeacherLesson] = useState<TeacherLessonView | null>(null);
+  const [scheduleFocusLessonId, setScheduleFocusLessonId] = useState<number | null>(null);
   const [startedLessonIds, setStartedLessonIds] = useState<Set<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    setStartedLessonIds(readStartedLessonIds());
-  }, []);
   const [rejectNote, setRejectNote] = useState('');
   const [rejectTarget, setRejectTarget] = useState<CuratorHomeworkQueueItem | null>(null);
 
@@ -280,15 +273,15 @@ export default function StaffShell({
     setSection('teacher-groups');
   }, []);
 
-  const openTeacherLessonRoom = useCallback((lesson: TeacherLessonView) => {
-    setOpenTeacherLesson(lesson);
+  const openTeacherLessonInSchedule = useCallback((lesson: TeacherLessonView) => {
+    setScheduleFocusLessonId(lesson.id);
+    setSection('teacher-calendar');
   }, []);
 
   const markLessonStarted = useCallback((lessonId: number) => {
     setStartedLessonIds((prev) => {
       const next = new Set(prev);
       next.add(lessonId);
-      writeStartedLessonIds(next);
       return next;
     });
   }, []);
@@ -298,10 +291,8 @@ export default function StaffShell({
       if (!prev.has(lessonId)) return prev;
       const next = new Set(prev);
       next.delete(lessonId);
-      writeStartedLessonIds(next);
       return next;
     });
-    setOpenTeacherLesson((prev) => (prev?.id === lessonId ? null : prev));
   }, []);
 
   const startTeacherLesson = useCallback(
@@ -315,14 +306,6 @@ export default function StaffShell({
     setSection('course-lessons');
     setSelectedLessonId(sanityId);
   }, []);
-
-  useEffect(() => {
-    if (!openTeacherLesson || !data.teacher) return;
-    const all = [...data.teacher.individualLessons, ...data.teacher.groupLessons];
-    const updated = all.find((lesson) => lesson.id === openTeacherLesson.id);
-    if (updated) setOpenTeacherLesson(updated);
-    else setOpenTeacherLesson(null);
-  }, [data.teacher, openTeacherLesson?.id]);
 
   const showTeacherLive =
     data.teacher?.currentLesson &&
@@ -432,6 +415,8 @@ export default function StaffShell({
               onOpenStudent={openTeacherStudent}
               onOpenGroup={openTeacherGroup}
               startedLessonIds={startedLessonIds}
+              focusLessonId={scheduleFocusLessonId}
+              onFocusLessonHandled={() => setScheduleFocusLessonId(null)}
               patchTeacher={patchTeacher}
               busy={busy}
               runAction={runAction}
@@ -453,7 +438,7 @@ export default function StaffShell({
               busy={busy}
               runAction={runAction}
               initialStudentId={selectedTeacherStudentId}
-              onOpenLesson={openTeacherLessonRoom}
+              onOpenLesson={openTeacherLessonInSchedule}
               onOpenCourseSection={() => setSection('course-students')}
             />
           </>
@@ -468,7 +453,7 @@ export default function StaffShell({
               busy={busy}
               runAction={runAction}
               onOpenStudent={openTeacherStudent}
-              onOpenLesson={openTeacherLessonRoom}
+              onOpenLesson={openTeacherLessonInSchedule}
               onOpenSchedule={() => setSection('teacher-calendar')}
               initialGroupId={selectedTeacherGroupId}
             />
@@ -549,15 +534,8 @@ export default function StaffShell({
             curatorName={data.staffName}
             courseTitle={courseTitle}
             sanityWriteEnabled={data.curator?.sanityWriteEnabled ?? false}
-          />
-        ) : null}
-
-        {openTeacherLesson ? (
-          <TeacherLessonRoom
-            lesson={openTeacherLesson}
-            busy={busy}
-            onClose={() => setOpenTeacherLesson(null)}
-            runAction={runAction}
+            showTeacher={canShowTeacher(data)}
+            showCurator={canShowCurator(data)}
           />
         ) : null}
       </main>

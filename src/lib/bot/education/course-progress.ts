@@ -151,6 +151,12 @@ function resolveLessonAccess(params: {
   if (params.courseState === 'preview') {
     return { hasAccess: false, accessStatus: null };
   }
+  if (params.courseState === 'full' && params.hasCourseProductAccess) {
+    return {
+      hasAccess: true,
+      accessStatus: params.accessStatus ?? 'available',
+    };
+  }
   if (params.accessStatus === 'available' || params.accessStatus === 'blocked_lives') {
     return { hasAccess: true, accessStatus: params.accessStatus };
   }

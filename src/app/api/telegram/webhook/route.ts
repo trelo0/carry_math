@@ -2,11 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { maskPhone } from '@/lib/phone';
 import { telegramSend } from '@/lib/telegram';
-import {
-  renderMainMenu,
-  handleGuestCallback,
-  handleGuestTextMessage,
-} from '@/lib/bot/guestFlow';
+import { renderMainMenu, handleGuestCallback } from '@/lib/bot/guestFlow';
 import {
   handleAdminCallback,
   handleAdminDocument,
@@ -14,7 +10,7 @@ import {
   sendAdminStart,
 } from '@/lib/bot/admin';
 import { analyzeUserMessage, enforceModerationRestrictions } from '@/lib/bot/moderation';
-import { handleStudentMessage, sendStudentStart } from '@/lib/bot/studentFlow';
+import { handleStudentMessage } from '@/lib/bot/studentFlow';
 import { beginStudentPurchase, handleStudentPurchaseCallback, parsePayStartPayload } from '@/lib/bot/studentPurchaseFlow';
 import {
   beginCourseHomeworkSubmit,
@@ -56,6 +52,21 @@ import {
 import { handlePrivilegedBotCommands } from '@/lib/bot/privilegedCommands';
 import { linkTelegramToPhone } from '@/lib/bot/telegram-account-link';
 import { isAccessProduct } from '@/lib/bot/accesses';
+import {
+  handleClientCallback,
+  handleClientMessage,
+  handleClientUnknownText,
+  refreshClientMenu,
+  sendClientStart,
+} from '@/lib/bot/client-flow';
+import { handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
+import {
+  handleClientLessonHomeworkAttachment,
+  handleClientLessonHomeworkMessage,
+} from '@/lib/bot/client-lesson-homework-flow';
+import { usesClientBotUi } from '@/lib/bot/client-state';
+import { handleClientLegacyReply } from '@/lib/bot/client-legacy-reply';
+import { bridgeGuestCallbackForClient } from '@/lib/bot/client-guest-bridge';
 
 type TgFrom = {
   id: number;
@@ -155,12 +166,19 @@ export async function POST(request: Request) {
       update.message?.chat &&
       update.message.from
     ) {
-      await ensureMember(
+      const adMember = await ensureMember(
         admin,
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await renderMainMenu(update.message.chat.id);
+      const adRole = resolveEffectiveRoleWithFooter(adMember, update.message.from.id).role;
+      if (usesClientBotUi(adRole)) {
+        await sendClientStart(admin, update.message.from.id, update.message.chat.id, {
+          memberRole: adMember.role,
+        });
+      } else {
+        await renderMainMenu(update.message.chat.id);
+      }
       return NextResponse.json({ ok: true });
     }
 
@@ -185,7 +203,7 @@ export async function POST(request: Request) {
       update.message?.chat &&
       update.message.from
     ) {
-      await ensureMember(
+      const payMember = await ensureMember(
         admin,
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
@@ -326,7 +344,7 @@ export async function POST(request: Request) {
             .from('telegram_link_tokens')
             .update({ used_at: new Date().toISOString() })
             .eq('token', token);
-          await ensureMember(admin, telegramId, {
+          const linkedMember = await ensureMember(admin, telegramId, {
             phone: row.phone,
             ...(update.callback_query.from && chatId
               ? memberPatch(update.callback_query.from, chatId)
@@ -346,6 +364,7 @@ export async function POST(request: Request) {
           }
           if (chatId) {
             await tryCompleteCourseApplyAfterExternalLink(admin, telegramId, chatId);
+            await refreshClientMenu(admin, telegramId, chatId, linkedMember.role);
           }
         } else {
           await telegramSend('answerCallbackQuery', {
@@ -403,10 +422,13 @@ export async function POST(request: Request) {
         }
       } else if (role === 'curator') {
         await sendCuratorStart(update.message.chat.id, footer);
-      } else if (role === 'student') {
-        await sendStudentStart(admin, from.id, update.message.chat.id, footer);
       } else if (role === 'teacher') {
         await sendTeacherStart(update.message.chat.id, footer);
+      } else if (usesClientBotUi(role)) {
+        await sendClientStart(admin, from.id, update.message.chat.id, {
+          testFooter: footer,
+          memberRole: member.role,
+        });
       } else {
         await renderMainMenu(update.message.chat.id, footer);
       }
@@ -416,6 +438,18 @@ export async function POST(request: Request) {
 
     // Вложения админа (документ или фото): шаблон уведомления или рассылка.
     if (update.message?.document?.file_id && update.message.chat && update.message.from) {
+      const clientLessonHwDoc = await handleClientLessonHomeworkAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        {
+          fileId: update.message.document.file_id,
+          kind: 'document',
+          fileName: update.message.document.file_name,
+        },
+      );
+      if (clientLessonHwDoc) return NextResponse.json({ ok: true });
+
       const studentDocHandled = await handleStudentHomeworkAttachment(
         admin,
         update.message.from.id,
@@ -461,6 +495,14 @@ export async function POST(request: Request) {
     if (update.message?.photo?.length && update.message.chat && update.message.from) {
       const largest = update.message.photo[update.message.photo.length - 1];
       if (largest?.file_id) {
+        const clientLessonHwPhoto = await handleClientLessonHomeworkAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (clientLessonHwPhoto) return NextResponse.json({ ok: true });
+
         const studentPhotoHandled = await handleStudentHomeworkAttachment(
           admin,
           update.message.from.id,
@@ -587,13 +629,59 @@ export async function POST(request: Request) {
       );
       if (supportHandled) return NextResponse.json({ ok: true });
 
-      const handled = await handleStudentMessage(
+      const memberInfo = await ensureMember(
         admin,
         update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
+        memberPatch(update.message.from, update.message.chat.id),
       );
-      if (handled) return NextResponse.json({ ok: true });
+      const effectiveClientRole = resolveEffectiveRoleWithFooter(
+        memberInfo,
+        update.message.from.id,
+      ).role;
+
+      if (usesClientBotUi(effectiveClientRole)) {
+        const leadHandled = await handleClientLeadMessage(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+        );
+        if (leadHandled) return NextResponse.json({ ok: true });
+
+        const lessonHwHandled = await handleClientLessonHomeworkMessage(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+        );
+        if (lessonHwHandled) return NextResponse.json({ ok: true });
+
+        const clientHandled = await handleClientMessage(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+          memberInfo.role,
+        );
+        if (clientHandled) return NextResponse.json({ ok: true });
+
+        const legacyHandled = await handleClientLegacyReply(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+          memberInfo.role,
+        );
+        if (legacyHandled) return NextResponse.json({ ok: true });
+      } else {
+        const handled = await handleStudentMessage(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+        );
+        if (handled) return NextResponse.json({ ok: true });
+      }
     }
 
     // Reply Keyboard преподавателя: разделы меню и ввод «сообщения ученику».
@@ -700,6 +788,39 @@ export async function POST(request: Request) {
       );
       if (purchaseHandled) return NextResponse.json({ ok: true });
 
+      const callbackMember = await ensureMember(
+        admin,
+        from.id,
+        memberPatch(from, chatId),
+      );
+      const clientCallbackHandled = await handleClientCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+        callbackMember.role,
+      );
+      if (clientCallbackHandled) return NextResponse.json({ ok: true });
+
+      const effectiveCallbackRole = resolveEffectiveRoleWithFooter(
+        callbackMember,
+        from.id,
+      ).role;
+      if (usesClientBotUi(effectiveCallbackRole)) {
+        const guestBridged = await bridgeGuestCallbackForClient(
+          admin,
+          data,
+          chatId,
+          messageId,
+          from.id,
+          id,
+          callbackMember.role,
+        );
+        if (guestBridged) return NextResponse.json({ ok: true });
+      }
+
       const guestHandled = await handleGuestCallback(
         admin,
         data,
@@ -733,7 +854,6 @@ export async function POST(request: Request) {
       if (curatorHandled) return NextResponse.json({ ok: true });
     }
 
-        // Обычный текст гостя не запускает новый сценарий: старые кнопки деактивируются.
     if (
       update.message?.text &&
       !update.message.text.startsWith('/') &&
@@ -746,9 +866,13 @@ export async function POST(request: Request) {
         memberPatch(update.message.from, update.message.chat.id),
       );
       const effective = resolveEffectiveRoleWithFooter(member, update.message.from.id).role;
-      const guestView = effective === 'guest';
-      if (guestView) {
-        await handleGuestTextMessage(update.message.chat.id);
+      if (usesClientBotUi(effective)) {
+        await handleClientUnknownText(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          member.role,
+        );
         return NextResponse.json({ ok: true });
       }
     }

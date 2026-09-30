@@ -19,54 +19,68 @@ export default function TeacherStudentsPanel({
   runAction,
   onOpenLesson,
 }: Props) {
-  const [selectedId, setSelectedId] = useState<number | null>(initialStudentId ?? null);
+  const [expandedId, setExpandedId] = useState<number | null>(initialStudentId ?? null);
 
   useEffect(() => {
-    if (initialStudentId != null) setSelectedId(initialStudentId);
+    if (initialStudentId != null) setExpandedId(initialStudentId);
   }, [initialStudentId]);
 
-  const selected = data.students.find((s) => s.telegramId === selectedId) ?? null;
-
   return (
-    <div className="curator-panel">
-      <h1 className="curator-title">Мои ученики</h1>
-      <p className="curator-muted">Ученики с индивидуальными и групповыми занятиями.</p>
+    <div className="curator-panel staff-directory-page sched-page">
+      <h1 className="sched-head-title">Мои ученики</h1>
+      <p className="curator-muted">Нажмите на карточку — под ней откроются подробности.</p>
 
-      <div className="teacher-students-layout">
-        <ul className="teacher-students-list">
-          {data.students.length === 0 ? (
-            <li className="curator-muted">Пока нет назначенных учеников.</li>
-          ) : (
-            data.students.map((student) => (
-              <li key={student.telegramId}>
+      <ul className="staff-directory-student-list">
+        {data.students.length === 0 ? (
+          <li className="staff-directory-empty">Пока нет назначенных учеников.</li>
+        ) : (
+          data.students.map((student) => {
+            const expanded = expandedId === student.telegramId;
+            return (
+              <li
+                key={student.telegramId}
+                className={`staff-directory-student-item${expanded ? ' is-expanded' : ''}`}
+              >
                 <button
                   type="button"
-                  className={`teacher-student-btn${selectedId === student.telegramId ? ' is-active' : ''}`}
-                  onClick={() => setSelectedId(student.telegramId)}
+                  className={`staff-directory-student-row${expanded ? ' is-active' : ''}`}
+                  aria-expanded={expanded}
+                  onClick={() =>
+                    setExpandedId((prev) => (prev === student.telegramId ? null : student.telegramId))
+                  }
                 >
-                  <strong>{student.name ?? `ID ${student.telegramId}`}</strong>
-                  <span>
-                    инд. {student.individualCount} · груп. {student.groupCount}
+                  <span className="staff-directory-student-main">
+                    <strong>{student.name ?? `ID ${student.telegramId}`}</strong>
+                    <em>
+                      инд. {student.individualCount} · груп. {student.groupCount}
+                    </em>
+                    {student.nextLessonAt ? (
+                      <span className="staff-directory-student-context">
+                        Ближайшее: {new Date(student.nextLessonAt).toLocaleString('ru-RU')}
+                      </span>
+                    ) : null}
                   </span>
-                  {student.nextLessonAt ? (
-                    <em>Ближайшее: {new Date(student.nextLessonAt).toLocaleString('ru-RU')}</em>
-                  ) : null}
+                  <span className={`staff-directory-row-arrow${expanded ? ' is-open' : ''}`} aria-hidden>
+                    ▾
+                  </span>
                 </button>
+                {expanded ? (
+                  <div className="staff-directory-student-expand">
+                    <TeacherStudentCard
+                      student={student}
+                      busy={busy}
+                      embedded
+                      onClose={() => setExpandedId(null)}
+                      onOpenLesson={onOpenLesson}
+                      runAction={runAction}
+                    />
+                  </div>
+                ) : null}
               </li>
-            ))
-          )}
-        </ul>
-
-        {selected ? (
-          <TeacherStudentCard
-            student={selected}
-            busy={busy}
-            onClose={() => setSelectedId(null)}
-            onOpenLesson={onOpenLesson}
-            runAction={runAction}
-          />
-        ) : null}
-      </div>
+            );
+          })
+        )}
+      </ul>
     </div>
   );
 }

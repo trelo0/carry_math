@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import type { TeacherStudentView, TeacherLessonView } from '@/lib/teacher/cabinet-data';
 import { formatLessonDateTimeRu } from '@/lib/teacher/format';
+import { formatPackageCreditLine } from '@/lib/teacher/package-credits';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithKeyedFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
@@ -97,6 +98,20 @@ export default function TeacherStudentCard({
       }));
       return;
     }
+    const credit =
+      assignKind === 'individual'
+        ? student.packageCredits.individual
+        : student.packageCredits.group;
+    if (!credit || credit.remaining <= 0) {
+      setFeedbacks((prev) => ({
+        ...prev,
+        assign: {
+          type: 'error',
+          message: `Нет занятий в пакете (${assignKind === 'individual' ? 'индивидуальные' : 'групповые'})`,
+        },
+      }));
+      return;
+    }
     void runWithKeyedFeedback(runAction, setFeedbacks, 'assign', async () => {
       const res = await fetch('/api/cabinet/teacher/schedule', {
         method: 'POST',
@@ -129,11 +144,24 @@ export default function TeacherStudentCard({
             <p className="curator-muted">
               Индивидуальных: {student.individualCount} · Групповых: {student.groupCount}
             </p>
+            <p className="curator-muted teacher-package-credits">
+              {formatPackageCreditLine(student.packageCredits.individual, 'Индив.')}
+              {' · '}
+              {formatPackageCreditLine(student.packageCredits.group, 'Группа')}
+            </p>
           </div>
           <button type="button" className="curator-btn" onClick={onClose}>
             Закрыть
           </button>
         </header>
+      ) : null}
+
+      {embedded ? (
+        <p className="curator-muted teacher-package-credits">
+          {formatPackageCreditLine(student.packageCredits.individual, 'Индив.')}
+          {' · '}
+          {formatPackageCreditLine(student.packageCredits.group, 'Группа')}
+        </p>
       ) : null}
 
       <div className="teacher-student-card-actions">
@@ -222,7 +250,7 @@ export default function TeacherStudentCard({
                 </div>
                 <div className="teacher-timeline-actions">
                   <button type="button" className="curator-link" onClick={() => onOpenLesson(lesson)}>
-                    Открыть
+                    В расписании
                   </button>
                   <button type="button" className="curator-link" disabled={busy} onClick={() => setRescheduleLesson(lesson)}>
                     Перенос
