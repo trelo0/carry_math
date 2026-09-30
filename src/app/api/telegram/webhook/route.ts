@@ -27,7 +27,13 @@ import {
   handleStudentSupportAttachment,
   handleStudentSupportMessage,
 } from '@/lib/bot/studentSupportFlow';
-import { handleTeacherCallback, handleTeacherMessage, sendTeacherStart } from '@/lib/bot/teacher';
+import {
+  handleTeacherAttachment,
+  handleTeacherCallback,
+  handleTeacherMessage,
+  sendTeacherStart,
+} from '@/lib/bot/teacher';
+import { handleCombinedStaffCallback, handleCombinedStaffMessage, sendStaffStart } from '@/lib/bot/staff/staff-combined-flow';
 import {
   handleCuratorAttachment,
   handleCuratorCallback,
@@ -238,7 +244,21 @@ export async function POST(request: Request) {
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id);
+      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id, {
+        context: 'lessons',
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (startSource === 'mentor_course' && update.message?.chat && update.message.from) {
+      await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id, {
+        context: 'course',
+      });
       return NextResponse.json({ ok: true });
     }
 
@@ -420,10 +440,12 @@ export async function POST(request: Request) {
               footer,
           });
         }
+      } else if (await sendStaffStart(admin, update.message.chat.id, from.id, footer)) {
+        /* combined staff menu */
       } else if (role === 'curator') {
-        await sendCuratorStart(update.message.chat.id, footer);
+        await sendCuratorStart(admin, update.message.chat.id, from.id, footer);
       } else if (role === 'teacher') {
-        await sendTeacherStart(update.message.chat.id, footer);
+        await sendTeacherStart(admin, update.message.chat.id, from.id, footer);
       } else if (usesClientBotUi(role)) {
         await sendClientStart(admin, from.id, update.message.chat.id, {
           testFooter: footer,
@@ -450,6 +472,26 @@ export async function POST(request: Request) {
       );
       if (clientLessonHwDoc) return NextResponse.json({ ok: true });
 
+      const teacherDocHandled = await handleTeacherAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        {
+          fileId: update.message.document.file_id,
+          kind: 'document',
+        },
+      );
+      if (teacherDocHandled) return NextResponse.json({ ok: true });
+
+      const curatorDocHandled = await handleCuratorAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        'document',
+        update.message.document.file_id,
+      );
+      if (curatorDocHandled) return NextResponse.json({ ok: true });
+
       const studentDocHandled = await handleStudentHomeworkAttachment(
         admin,
         update.message.from.id,
@@ -467,6 +509,7 @@ export async function POST(request: Request) {
         update.message.from.id,
         update.message.chat.id,
         update.message.caption ?? update.message.document.file_name ?? 'Документ',
+        { fileId: update.message.document.file_id, kind: 'document' },
       );
       if (mentorDocHandled) return NextResponse.json({ ok: true });
 
@@ -503,6 +546,14 @@ export async function POST(request: Request) {
         );
         if (clientLessonHwPhoto) return NextResponse.json({ ok: true });
 
+        const teacherPhotoHandled = await handleTeacherAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (teacherPhotoHandled) return NextResponse.json({ ok: true });
+
         const studentPhotoHandled = await handleStudentHomeworkAttachment(
           admin,
           update.message.from.id,
@@ -516,6 +567,7 @@ export async function POST(request: Request) {
           update.message.from.id,
           update.message.chat.id,
           update.message.caption ?? 'Фото',
+          { fileId: largest.file_id, kind: 'photo' },
         );
         if (mentorPhotoHandled) return NextResponse.json({ ok: true });
 
@@ -684,9 +736,23 @@ export async function POST(request: Request) {
       }
     }
 
+    // Combined staff (teacher + curator): единое Reply-меню.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const combinedHandled = await handleCombinedStaffMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (combinedHandled) return NextResponse.json({ ok: true });
+    }
+
     // Reply Keyboard преподавателя: разделы меню и ввод «сообщения ученику».
-    // Стоит до контроля переписки, чтобы нажатия кнопок и черновики
-    // сообщений не анализировались детектором.
     if (
       update.message?.text &&
       !update.message.text.startsWith('/') &&
@@ -830,6 +896,16 @@ export async function POST(request: Request) {
         id,
       );
       if (guestHandled) return NextResponse.json({ ok: true });
+
+      const combinedHandled = await handleCombinedStaffCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (combinedHandled) return NextResponse.json({ ok: true });
 
       // Inline-навигация кабинета преподавателя (префикс t:).
       const teacherHandled = await handleTeacherCallback(

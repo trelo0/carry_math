@@ -31,7 +31,35 @@ import {
   type CuratorStudentRecord,
 } from './curatorData';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
-import { isBotRole, isCreatorTelegramId, resolveEffectiveRole } from '../roles';
+import { loadStaffCapabilities } from '../staff/capabilities';
+import {
+  deliverStaffToStudent,
+  listCuratorThreads,
+  loadCuratorThreadMessages,
+  markCuratorThreadRead,
+  staffStudentLabel,
+} from '../staff/messaging';
+import {
+  renderCuratorMessagesInbox,
+  renderCuratorMessageThread,
+  renderCuratorUnreadThreadsInbox,
+} from '../staff/curator-messages-screens';
+import {
+  collectCuratorHomeworkQueue,
+  renderCuratorHomeworkHub,
+  renderCuratorHomeworkList,
+  type CuratorHomeworkQueueKind,
+} from '../staff/curator-homework-screens';
+import { loadCuratorActivitySnapshot } from '../staff/curator-activity-data';
+import {
+  pendingHomeworkFromStudents,
+  renderCuratorActivityHome,
+  renderCuratorActivityReviewList,
+  renderCuratorLowActivityList,
+  renderCuratorLowLivesList,
+} from '../staff/curator-activity-screens';
+import { formatTelegramFileRef } from '../studentHomeworkFlow';
+import { enrichCuratorStudentCard } from '../staff/curator-student-enrich';
 import {
   approveCourseHomeworkByCurator,
   deductLifeForHomeworkDebtByCurator,
@@ -46,6 +74,25 @@ import {
   notifyStudentHomeworkReviewed,
   sendSubmissionToCurator,
 } from '../studentHomeworkFlow';
+import { COMBINED_HOME_TEXT } from '../staff/staff-combined-flow';
+import {
+  COMBINED_CURATOR_HW_NAV,
+  COMBINED_CURATOR_MSG_NAV,
+  type StaffScreenNav,
+} from '../staff/staff-screen-nav';
+import {
+  CURATOR_BOT_MENU_LABELS,
+  isStaffMenuLabel,
+  resolveStaffBotMode,
+  staffReplyKeyboard,
+} from '../staff/staff-menu';
+import { clearConflictingStaffStates } from '../staff/staff-reply-state';
+import {
+  CURATOR_REJECT_PHOTO_STEP,
+  CURATOR_REJECT_TEXT_STEP,
+  CURATOR_REJECT_VOICE_STEP,
+  STAFF_CURATOR_REPLY_STEP,
+} from '../staff/staff-steps';
 
 // ---------------------------------------------------------------------------
 // Кабинет куратора курса (role = curator). Данные — Supabase + Sanity.
@@ -58,18 +105,17 @@ import {
 //
 // ---------------------------------------------------------------------------
 
-export const CURATOR_MENU_LABELS = {
-  homework: '📝 ДОМАШКИ',
-  students: '👨‍🎓 УЧЕНИКИ',
-  notifications: '🔔 УВЕДОМЛЕНИЯ',
-  cabinet: '🌐 КАБИНЕТ',
-} as const;
+export { STAFF_CURATOR_REPLY_STEP } from '../staff/staff-steps';
+
+type CuratorReplyPayload = AdminPayload & { studentTelegramId?: number };
+
+export const CURATOR_MENU_LABELS = CURATOR_BOT_MENU_LABELS;
 
 export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU_LABELS));
 
 const CURATOR_HOME_TEXT =
-  '🧑‍🏫 Кабинет ментора District\n\n' +
-  'Разделы — на кнопках меню под полем ввода.';
+  '🧑‍🏫 Кабинет куратора District\n\n' +
+  'Быстрые действия — кнопками ниже. Подробная работа — в «Панели управления» внизу.';
 
 async function curatorCabinetScreen(
   admin: SupabaseClient,
@@ -90,10 +136,9 @@ async function curatorCabinetScreen(
 const CURATOR_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
 
-// Шаги диалогов отклонения ДЗ (общая таблица bot_conversation_states).
-const STEP_REJECT_TEXT = 'curator:reject-text';
-const STEP_REJECT_VOICE = 'curator:reject-voice';
-const STEP_REJECT_PHOTO = 'curator:reject-photo';
+const STEP_REJECT_TEXT = CURATOR_REJECT_TEXT_STEP;
+const STEP_REJECT_VOICE = CURATOR_REJECT_VOICE_STEP;
+const STEP_REJECT_PHOTO = CURATOR_REJECT_PHOTO_STEP;
 
 type RejectPayload = AdminPayload & { studentId?: string; hwNumber?: number };
 
@@ -101,24 +146,77 @@ type RejectPayload = AdminPayload & { studentId?: string; hwNumber?: number };
 // Главное меню (Reply Keyboard)
 // ---------------------------------------------------------------------------
 
+/** @deprecated используй staffReplyKeyboard через sendCuratorStart */
 export function curatorReplyKeyboard(): ReplyKeyboard {
   return {
     keyboard: [
-      [{ text: CURATOR_MENU_LABELS.homework }],
-      [{ text: CURATOR_MENU_LABELS.students }],
-      [{ text: CURATOR_MENU_LABELS.notifications }],
+      [
+        { text: CURATOR_MENU_LABELS.students },
+        { text: CURATOR_MENU_LABELS.homework },
+      ],
+      [
+        { text: CURATOR_MENU_LABELS.messages },
+        { text: CURATOR_MENU_LABELS.course },
+      ],
       [{ text: CURATOR_MENU_LABELS.cabinet }],
     ],
     resize_keyboard: true,
   };
 }
 
+async function canUseCuratorBot(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  return caps.canCuratorBot;
+}
+
+async function curatorCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
+  try {
+    return await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+  } catch {
+    return null;
+  }
+}
+
+async function beginCuratorReply(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+  chatId: number,
+  studentTelegramId: number,
+): Promise<void> {
+  await clearConflictingStaffStates(admin, curatorTelegramId, 'curator_reply');
+  try {
+    await saveState(
+      admin,
+      curatorTelegramId,
+      { chatId, messageId: 0 },
+      STAFF_CURATOR_REPLY_STEP as never,
+      { studentTelegramId } as never,
+    );
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    await sendAdminMessage(chatId, migrationText('bot_conversation_states.sql'));
+    return;
+  }
+  const label = await staffStudentLabel(admin, studentTelegramId);
+  await sendAdminMessage(
+    chatId,
+    `✏️ Сообщение для ${label}\n\nВведите текст или отправьте фото/документ.\n\nОтмена — «Отмена».`,
+    { inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `c:msg:d:${studentTelegramId}` }]] },
+  );
+}
+
 // /start для роли curator: приветствие + постоянное меню.
-export async function sendCuratorStart(chatId: number, testFooter = ''): Promise<void> {
+export async function sendCuratorStart(
+  admin: SupabaseClient,
+  chatId: number,
+  telegramId: number,
+  testFooter = '',
+): Promise<void> {
+  const caps = await loadStaffCapabilities(admin, telegramId);
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: CURATOR_HOME_TEXT + testFooter,
-    reply_markup: curatorReplyKeyboard(),
+    reply_markup: staffReplyKeyboard(caps),
   });
 }
 
@@ -215,11 +313,11 @@ export async function renderCuratorLibraryFile(taskId: string): Promise<{ text: 
 export function renderCuratorStudentsList(students: CuratorStudentRecord[]): { text: string; keyboard: InlineKeyboard } {
   if (students.length === 0) {
     return {
-      text: '👨‍🎓 УЧЕНИКИ\n\nПока нет закреплённых учеников.',
+      text: '👤 МОИ УЧЕНИКИ\n\nПока нет закреплённых учеников.',
       keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
     };
   }
-  const text = `👨‍🎓 УЧЕНИКИ\n\n${students.map((s) => listCuratorStudentLabel(s)).join('\n')}`;
+  const text = `👤 МОИ УЧЕНИКИ\n\n${students.map((s) => listCuratorStudentLabel(s)).join('\n')}`;
   return {
     text,
     keyboard: {
@@ -239,7 +337,17 @@ export function renderCuratorStudentProfile(
 ): { text: string; keyboard: InlineKeyboard } {
   const summary = summarizeCuratorStudent(student);
 
-  const parts = [`👨‍🎓 ${student.name}`, '', `❤️ Жизни на Арене: ${lives ?? '—'}`, ''];
+  const enrich = enrichCuratorStudentCard(student);
+  const parts = [
+    `👨‍🎓 ${student.name}`,
+    '',
+    `❤️ Жизни на Арене: ${lives ?? '—'}`,
+    enrich.progressLine,
+    '',
+  ];
+  if (enrich.activeHomeworkLine) {
+    parts.push(enrich.activeHomeworkLine, '');
+  }
   if (summary.debtCount > 0) {
     parts.push(
       `🔴 Задолженность: ${summary.debtCount} ДЗ`,
@@ -265,7 +373,11 @@ export function renderCuratorStudentProfile(
   return {
     text,
     keyboard: {
-      inline_keyboard: [...hwButtons, [backButton('⬅️ Назад', 'c:stud')]],
+      inline_keyboard: [
+        [{ text: '💬 Написать ученику', callback_data: `c:msg:w:${student.telegramId}` }],
+        ...hwButtons,
+        [backButton('⬅️ Назад', 'c:stud')],
+      ],
     },
   };
 }
@@ -426,23 +538,6 @@ export async function renderCuratorCabinet(
   return curatorCabinetScreen(admin, telegramId);
 }
 
-// ---------------------------------------------------------------------------
-// Эффективная роль: тестер с маской /as curator видит кабинет ментора.
-// ---------------------------------------------------------------------------
-
-async function effectiveCuratorRole(admin: SupabaseClient, telegramId: number): Promise<string> {
-  const { data, error } = await admin
-    .from('bot_members')
-    .select('role, view_role')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return 'guest';
-  const role = isBotRole(data.role) ? data.role : 'guest';
-  const viewRole = isBotRole(data.view_role) ? data.view_role : null;
-  return resolveEffectiveRole({ role, viewRole }, telegramId);
-}
-
 async function editCuratorScreen(message: AdminMessage, text: string, keyboard: InlineKeyboard): Promise<void> {
   await editAdminMessage(message, text, keyboard);
 }
@@ -457,8 +552,9 @@ export async function handleCuratorMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
-  const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
+  if (!(await canUseCuratorBot(admin, telegramId))) return false;
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const staffMode = resolveStaffBotMode(caps);
 
   let state = null;
   try {
@@ -467,8 +563,37 @@ export async function handleCuratorMessage(
     if (!isConversationStateTableError(error)) throw error;
   }
 
-  // Комментарий при отклонении ДЗ текстом (§11).
   const step = state?.step as string | undefined;
+
+  if (state && step === STAFF_CURATOR_REPLY_STEP) {
+    const payload = state.payload as CuratorReplyPayload;
+    const studentId = payload.studentTelegramId;
+    if (!studentId) return false;
+    if (isStaffMenuLabel(text, caps)) {
+      await clearStateIfAvailable(admin, telegramId);
+      return false;
+    }
+    if (/^отмена$/i.test(text.trim())) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Отправка отменена.');
+      return true;
+    }
+    try {
+      await deliverStaffToStudent(admin, {
+        staffTelegramId: telegramId,
+        staffRole: 'curator',
+        studentTelegramId: studentId,
+        body: text.trim(),
+      });
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, '✅ Сообщение отправлено ученику.');
+    } catch (error) {
+      await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
+    }
+    return true;
+  }
+
+  // Комментарий при отклонении ДЗ текстом (§11).
   if (state && step === STEP_REJECT_TEXT) {
     await clearStateIfAvailable(admin, telegramId);
     const payload = state.payload as RejectPayload;
@@ -509,29 +634,42 @@ export async function handleCuratorMessage(
     return true;
   }
 
+  if (staffMode === 'combined') return false;
+
   if (!CURATOR_MENU_LABEL_SET.has(text)) {
+    if (state && (step === STAFF_CURATOR_REPLY_STEP || step === STEP_REJECT_TEXT)) {
+      return false;
+    }
     await sendAdminMessage(chatId, CURATOR_UNKNOWN_TEXT);
     return true;
   }
+
+  const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
 
   if (text === CURATOR_MENU_LABELS.cabinet) {
     const screen = await renderCuratorCabinet(admin, telegramId);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
-  if (text === CURATOR_MENU_LABELS.homework) {
-    const screen = await renderCuratorLibrary();
+  if (text === CURATOR_MENU_LABELS.messages) {
+    const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+    const screen = renderCuratorMessagesInbox(threads, storageEnabled, cabinetUrl);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
-  if (text === CURATOR_MENU_LABELS.students) {
-    const students = await loadCuratorStudents(admin, telegramId);
-    const screen = renderCuratorStudentsList(students);
+  if (text === CURATOR_MENU_LABELS.homework) {
+    const screen = renderCuratorHomeworkHub(cabinetUrl);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+    return true;
+  }
+  if (text === CURATOR_MENU_LABELS.course) {
+    const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
+    const screen = renderCuratorActivityHome(snapshot, cabinetUrl);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
   const students = await loadCuratorStudents(admin, telegramId);
-  const screen = await renderCuratorNotifications(admin, telegramId, students);
+  const screen = renderCuratorStudentsList(students);
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
   return true;
 }
@@ -544,19 +682,43 @@ export async function handleCuratorAttachment(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
-  kind: 'voice' | 'photo',
+  kind: 'voice' | 'photo' | 'document',
   fileId: string,
 ): Promise<boolean> {
-  const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
+  if (!(await canUseCuratorBot(admin, telegramId))) return false;
 
   let state = null;
   try {
     state = await getState(admin, telegramId);
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
+    return false;
   }
   const step = state?.step as string | undefined;
+
+  if (state && step === STAFF_CURATOR_REPLY_STEP && (kind === 'photo' || kind === 'document')) {
+    const payload = state.payload as CuratorReplyPayload;
+    const studentId = payload.studentTelegramId;
+    if (!studentId) return false;
+    try {
+      await deliverStaffToStudent(admin, {
+        staffTelegramId: telegramId,
+        staffRole: 'curator',
+        studentTelegramId: studentId,
+        body: '',
+        attachmentRef: formatTelegramFileRef(fileId),
+        attachmentKind: kind,
+      });
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, '✅ Вложение отправлено ученику.');
+    } catch (error) {
+      await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
+    }
+    return true;
+  }
+
+  if (kind === 'document') return false;
+
   const expected = kind === 'voice' ? STEP_REJECT_VOICE : STEP_REJECT_PHOTO;
   if (!state || step !== expected) return false;
 
@@ -629,8 +791,7 @@ export async function handleCuratorCallback(
   callbackQueryId?: string,
 ): Promise<boolean> {
   if (!data.startsWith('c:')) return false;
-  const role = await effectiveCuratorRole(admin, telegramId);
-  if (role !== 'curator' && !isCreatorTelegramId(telegramId)) return false;
+  if (!(await canUseCuratorBot(admin, telegramId))) return false;
 
   const message: AdminMessage = { chatId, messageId };
   const handled = await routeCuratorCallback(admin, message, telegramId, data.split(':'));
@@ -662,10 +823,101 @@ async function routeCuratorCallback(
 ): Promise<boolean> {
   const [, action, id, subId] = parts;
   const hwNumber = Number(subId);
+  const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const combined = resolveStaffBotMode(caps) === 'combined';
+  const hwNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_HW_NAV : undefined;
+  const msgNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_MSG_NAV : undefined;
 
   switch (action) {
     case 'menu': {
-      await editCuratorScreen(message, CURATOR_HOME_TEXT, { inline_keyboard: [] });
+      if (combined) {
+        await editCuratorScreen(message, COMBINED_HOME_TEXT, { inline_keyboard: [] });
+      } else {
+        await editCuratorScreen(message, CURATOR_HOME_TEXT, { inline_keyboard: [] });
+      }
+      return true;
+    }
+
+    case 'hw': {
+      if (id === 'q' && subId) {
+        const queue = subId as CuratorHomeworkQueueKind;
+        const students = await loadCuratorStudents(admin, telegramId);
+        const items = collectCuratorHomeworkQueue(students, queue);
+        const screen = renderCuratorHomeworkList(queue, items, cabinetUrl, hwNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      const hub = renderCuratorHomeworkHub(cabinetUrl, hwNav);
+      await editCuratorScreen(message, hub.text, hub.keyboard);
+      return true;
+    }
+
+    case 'act': {
+      const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
+      if (id === 'review') {
+        const students = await loadCuratorStudents(admin, telegramId);
+        const screen = renderCuratorActivityReviewList(pendingHomeworkFromStudents(students), cabinetUrl);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'msg') {
+        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+        const screen = renderCuratorUnreadThreadsInbox(threads, storageEnabled, cabinetUrl, msgNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'lives') {
+        const screen = renderCuratorLowLivesList(snapshot.lowLives, cabinetUrl);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'low') {
+        const screen = renderCuratorLowActivityList(snapshot.lowActivityStudents, cabinetUrl);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      const home = renderCuratorActivityHome(snapshot, cabinetUrl);
+      await editCuratorScreen(message, home.text, home.keyboard);
+      return true;
+    }
+
+    case 'msg': {
+      if (id === 'l') {
+        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+        const screen = renderCuratorMessagesInbox(threads, storageEnabled, cabinetUrl, msgNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'u') {
+        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+        const screen = renderCuratorUnreadThreadsInbox(threads, storageEnabled, cabinetUrl, msgNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'd' && subId) {
+        const studentId = Number(subId);
+        if (!Number.isFinite(studentId)) return true;
+        await markCuratorThreadRead(admin, telegramId, studentId);
+        const label = await staffStudentLabel(admin, studentId);
+        const { messages, storageEnabled } = await loadCuratorThreadMessages(admin, telegramId, studentId);
+        const screen = renderCuratorMessageThread(
+          label,
+          messages,
+          storageEnabled,
+          cabinetUrl,
+          studentId,
+          msgNav,
+        );
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'w' && subId) {
+        const studentId = Number(subId);
+        if (!Number.isFinite(studentId)) return true;
+        await beginCuratorReply(admin, telegramId, message.chatId, studentId);
+        return true;
+      }
       return true;
     }
 
@@ -799,15 +1051,15 @@ async function routeCuratorCallback(
       const prompts: Record<string, { step: string; text: string }> = {
         rejt: {
           step: STEP_REJECT_TEXT,
-          text: '✏️ Напишите комментарий ученику.\n\nПосле отправки он будет показан как тестовое сообщение.\n\n⬅️ Отмена',
+          text: '✏️ Напишите комментарий ученику.\n\nОн увидит его в Telegram после отклонения ДЗ.\n\n⬅️ Отмена',
         },
         rejv: {
           step: STEP_REJECT_VOICE,
-          text: '🎤 Отправьте голосовое сообщение.\n\nВ тестовой версии обработка голосовых является заглушкой.\n\n⬅️ Отмена',
+          text: '🎤 Отправьте голосовое сообщение.\n\nОно будет переслано ученику вместе с отклонением ДЗ.\n\n⬅️ Отмена',
         },
         rejp: {
           step: STEP_REJECT_PHOTO,
-          text: '📷 Отправьте фотографию.\n\nВ тестовой версии изображение не будет отправлено ученику.\n\n⬅️ Отмена',
+          text: '📷 Отправьте фото с комментарием.\n\nФото будет переслано ученику вместе с отклонением ДЗ.\n\n⬅️ Отмена',
         },
       };
       const prompt = prompts[action];

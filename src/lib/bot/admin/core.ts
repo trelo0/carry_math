@@ -60,6 +60,8 @@ export type AdminPayload = {
   targetGroupId?: number;
   sanityLessonId?: string;
   mentorTelegramId?: number;
+  /** Кому пишет ученик: teacher | curator (student:mentor). */
+  staffRole?: 'teacher' | 'curator';
   homework?: boolean;
   hubMessageId?: number;
   screen?: string;

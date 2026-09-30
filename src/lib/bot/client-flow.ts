@@ -36,6 +36,7 @@ import {
   sendHubMessage,
 } from './client-nav';
 import type { BotRole } from './roles';
+import { beginStudentMentorQuestion } from './studentMentorFlow';
 
 function courseInfoUrl(): string {
   return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || `${getBaseUrlString()}/cabinet`;
@@ -89,6 +90,7 @@ async function showOnlineCourseScreen(
   if (state.hasActiveCourse) {
     const cabinetUrl = await createCabinetLoginUrl(admin, state.telegramId, '/cabinet?section=course');
     keyboard.inline_keyboard.push([{ text: '🌐 Открыть курс в кабинете', url: cabinetUrl }]);
+    keyboard.inline_keyboard.push([{ text: '💬 Вопрос куратору по курсу', callback_data: 'cl:course:ask' }]);
   } else {
     keyboard.inline_keyboard.push([{ text: '🌐 Подробнее на сайте', url: courseInfoUrl() }]);
   }
@@ -262,7 +264,8 @@ export async function handleClientCallback(
     data === 'cl:course:site' ||
     data === 'cl:buy:course' ||
     data === 'cl:buy:individual' ||
-    data === 'cl:buy:group';
+    data === 'cl:buy:group' ||
+    data === 'cl:course:ask';
 
   if (callbackQueryId) {
     await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
@@ -311,6 +314,19 @@ export async function handleClientCallback(
 
   if (data === 'cl:buy:group') {
     await showBuyFormatHub(admin, telegramId, chatId, 'group');
+    return true;
+  }
+
+  if (data === 'cl:course:ask') {
+    if (!state.hasActiveCourse) {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: 'Раздел доступен после подключения онлайн-курса.',
+        reply_markup: buildClientReplyKeyboard(state),
+      });
+      return true;
+    }
+    await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'course' });
     return true;
   }
 

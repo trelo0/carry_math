@@ -3,7 +3,6 @@ import { telegramSend } from '@/lib/telegram';
 import {
   type AdminMessage,
   type AdminPayload,
-  type InlineButton,
   type InlineKeyboard,
   type ReplyKeyboard,
   clearStateIfAvailable,
@@ -15,361 +14,184 @@ import {
   sendAdminMessage,
 } from '../admin/core';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
-import { isBotRole, isCreatorTelegramId, resolveEffectiveRole } from '../roles';
+import { getLessonHomework } from '@/lib/lesson-homework';
+import { loadStaffCapabilities } from '../staff/capabilities';
+import { COMBINED_HOME_TEXT } from '../staff/staff-combined-flow';
 import {
-  getGroupHomeworkForGroup,
-  getHomeworkSubmission,
-  getIndividualHomeworkByStatus,
-  getMockGroup,
-  getMockGroupHomeworkSummaries,
-  getMockGroupMember,
-  getMockGroups,
-  getMockIndividualStudents,
-  getMockStudent,
-  type HomeworkSubmission,
-  type MockGroup,
-  type MockGroupMember,
-  type MockStudent,
-} from './mock-data';
+  COMBINED_TEACHER_HW_NAV,
+  COMBINED_TEACHER_MSG_NAV,
+  type StaffScreenNav,
+} from '../staff/staff-screen-nav';
+import {
+  isStaffMenuLabel,
+  resolveStaffBotMode,
+  staffReplyKeyboard,
+  TEACHER_BOT_MENU_LABELS,
+} from '../staff/staff-menu';
+import { clearConflictingStaffStates } from '../staff/staff-reply-state';
+import {
+  STAFF_TEACHER_HW_REVISION_STEP,
+  STAFF_TEACHER_REPLY_STEP,
+} from '../staff/staff-steps';
+import {
+  deliverStaffToStudent,
+  listTeacherThreads,
+  loadThreadMessages,
+  markTeacherThreadRead,
+  staffStudentLabel,
+} from '../staff/messaging';
+import {
+  approveTeacherHomework,
+  filterHomeworkByQueue,
+  loadTeacherHomeworkItems,
+  renderHomeworkCardText,
+  revisionTeacherHomework,
+  sendHomeworkSubmissionPreview,
+  type TeacherHomeworkQueueKind,
+} from '../staff/teacher-homework';
+import {
+  renderTeacherHomeworkCardActions,
+  renderTeacherHomeworkHub,
+  renderTeacherHomeworkList,
+  renderTeacherMessagesInbox,
+  renderTeacherMessageThread,
+  renderTeacherUnreadMessagesInbox,
+} from '../staff/teacher-messages-screens';
+import {
+  findGroup,
+  findLesson,
+  findStudent,
+  loadTeacherBotSnapshot,
+} from '../staff/teacher-data';
+import {
+  notFoundKeyboard,
+  renderTeacherGroupCard,
+  renderTeacherGroupList,
+  renderTeacherGroupMemberCard,
+  renderTeacherGroupMembers,
+  renderTeacherIndividualList,
+  renderTeacherLessonCard,
+  renderTeacherScheduleHome,
+  renderTeacherScheduleToday,
+  renderTeacherScheduleUpcoming,
+  renderTeacherStudentCard,
+  renderTeacherStudentsHub,
+} from '../staff/teacher-screens';
+import { formatTelegramFileRef } from '../studentHomeworkFlow';
+import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 
-// ---------------------------------------------------------------------------
-// Интерфейс преподавателя (role = teacher) — этап проверки UX на MOCK-данных.
-//
-// Архитектура та же, что у админки:
-// • Reply Keyboard — постоянное главное меню под полем ввода;
-// • Inline Keyboard — экраны внутри разделов, навигация через editMessageText
-//   (текущий блок обновляется локально, чат не заспамливается);
-// • новое сообщение — результаты действий (ответ на введённый текст,
-//   тестовые результаты проверок ДЗ), чтобы ответ был под сообщением
-//   преподавателя.
-//
-// Все данные — mock-data.ts: ничего не пишется в Supabase, сообщения
-// «ученикам» не доставляются, реальные Telegram ID не используются.
-// ---------------------------------------------------------------------------
+export { STAFF_TEACHER_REPLY_STEP, STAFF_TEACHER_HW_REVISION_STEP } from '../staff/staff-steps';
 
-export const TEACHER_MENU_LABELS = {
-  individual: '👤 МОИ ИНДИВИДУАЛЬНЫЕ',
-  groups: '👥 МОИ МИНИ-ГРУППЫ',
-  homework: '📝 ДОМАШНИЕ ЗАДАНИЯ',
-  cabinet: '👤 ЛИЧНЫЙ КАБИНЕТ',
-} as const;
+type ReplyPayload = AdminPayload & { studentTelegramId?: number };
+type HwRevisionPayload = AdminPayload & { lessonId?: number };
+
+export const TEACHER_MENU_LABELS = TEACHER_BOT_MENU_LABELS;
 
 export const TEACHER_MENU_LABEL_SET = new Set<string>(Object.values(TEACHER_MENU_LABELS));
 
 const TEACHER_HOME_TEXT =
   '👨‍🏫 Кабинет преподавателя District\n\n' +
-  'Разделы — на кнопках меню под полем ввода. Расписание и ученики — на сайте (кнопка «Личный кабинет»).';
+  'Быстрые действия — кнопками ниже. Сложные операции — в «Панели управления» внизу.';
 
 const TEACHER_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
 
-// Шаг диалога «сообщение ученику»: в payload хранится mock-id ученика.
-const TEACHER_MESSAGE_STEP = 'teacher:message';
-
-const STUDENT_STATUS_LABEL = 'активный';
-const GROUP_STATUS_LABEL = 'активная';
-
-// ---------------------------------------------------------------------------
-// Главное меню (Reply Keyboard)
-// ---------------------------------------------------------------------------
-
 export function teacherReplyKeyboard(): ReplyKeyboard {
   return {
     keyboard: [
-      [{ text: TEACHER_MENU_LABELS.individual }],
-      [{ text: TEACHER_MENU_LABELS.groups }],
-      [{ text: TEACHER_MENU_LABELS.homework }],
+      [
+        { text: TEACHER_MENU_LABELS.schedule },
+        { text: TEACHER_MENU_LABELS.students },
+      ],
+      [
+        { text: TEACHER_MENU_LABELS.messages },
+        { text: TEACHER_MENU_LABELS.homework },
+      ],
       [{ text: TEACHER_MENU_LABELS.cabinet }],
     ],
     resize_keyboard: true,
   };
 }
 
-// /start для роли teacher: приветствие + постоянное меню.
-export async function sendTeacherStart(chatId: number, testFooter = ''): Promise<void> {
+export async function sendTeacherStart(
+  admin: SupabaseClient,
+  chatId: number,
+  telegramId: number,
+  testFooter = '',
+): Promise<void> {
+  const caps = await loadStaffCapabilities(admin, telegramId);
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: TEACHER_HOME_TEXT + testFooter,
-    reply_markup: teacherReplyKeyboard(),
+    reply_markup: staffReplyKeyboard(caps),
   });
 }
 
-// ---------------------------------------------------------------------------
-// Построители экранов (чистые функции — используются и в тестах).
-// Колбэки: префикс t:, лимит Telegram 64 байта соблюдается.
-// ---------------------------------------------------------------------------
-
-function backButton(text: string, callback: string): InlineButton {
-  return { text, callback_data: callback };
+async function canUseTeacherBot(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  return caps.canTeacherBot;
 }
 
-function notFoundKeyboard(backText: string, backCallback: string): InlineKeyboard {
-  return { inline_keyboard: [[backButton(`⬅️ ${backText}`, backCallback)]] };
-}
-
-export function renderIndividualList(): { text: string; keyboard: InlineKeyboard } {
-  const students = getMockIndividualStudents();
-  const text = `👤 МОИ ИНДИВИДУАЛЬНЫЕ\n\n${students.map((student) => student.name).join('\n')}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...students.map((student): InlineButton[] => [
-        { text: student.name, callback_data: `t:st:${student.id}` },
-      ]),
-      [backButton('⬅️ Назад', 't:menu')],
-    ],
-  };
-  return { text, keyboard };
-}
-
-export function renderStudentCard(student: MockStudent): { text: string; keyboard: InlineKeyboard } {
-  const text =
-    `👤 ${student.name}\n\n` +
-    'Формат: индивидуальные занятия\n' +
-    `Статус: ${STUDENT_STATUS_LABEL}\n` +
-    `Домашних заданий: ${student.homeworkCount}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      [{ text: '📝 Домашние задания', callback_data: `t:shw:${student.id}` }],
-      [{ text: '💬 Написать ученику', callback_data: `t:msg:${student.id}` }],
-      [backButton('⬅️ Назад', 't:list:i')],
-    ],
-  };
-  return { text, keyboard };
-}
-
-export function renderGroupList(): { text: string; keyboard: InlineKeyboard } {
-  const groups = getMockGroups();
-  const text = `👥 МОИ МИНИ-ГРУППЫ\n\n${groups.map((group) => group.title).join('\n')}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...groups.map((group): InlineButton[] => [{ text: group.title, callback_data: `t:gr:${group.id}` }]),
-      [backButton('⬅️ Назад', 't:menu')],
-    ],
-  };
-  return { text, keyboard };
-}
-
-export function renderGroupCard(group: MockGroup): { text: string; keyboard: InlineKeyboard } {
-  const text =
-    `👥 ${group.title}\n\n` +
-    `Ученики: ${group.members.length}\n` +
-    `Статус: ${GROUP_STATUS_LABEL}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      [{ text: '👤 Ученики', callback_data: `t:gm:${group.id}` }],
-      [{ text: '📝 Домашние задания', callback_data: `t:ghw:${group.id}` }],
-      [backButton('⬅️ Назад', 't:list:g')],
-    ],
-  };
-  return { text, keyboard };
-}
-
-export function renderGroupMembers(group: MockGroup): { text: string; keyboard: InlineKeyboard } {
-  const list = group.members.map((member, index) => `${index + 1}. ${member.name}`).join('\n');
-  const text = `👥 Ученики группы ${group.title}\n\n${list}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...group.members.map((member): InlineButton[] => [
-        { text: member.name, callback_data: `t:gs:${group.id}:${member.id}` },
-      ]),
-      [backButton('⬅️ Назад', `t:gr:${group.id}`)],
-    ],
-  };
-  return { text, keyboard };
-}
-
-// Карточка ученика мини-группы: тот же безопасный формат, без контактов.
-export function renderGroupMemberCard(
-  group: MockGroup,
-  member: MockGroupMember,
-): { text: string; keyboard: InlineKeyboard } {
-  const text =
-    `👤 ${member.name}\n\n` +
-    'Формат: мини-группа\n' +
-    `Группа: ${group.title}\n` +
-    `Статус: ${STUDENT_STATUS_LABEL}`;
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      [{ text: '📝 Домашние задания', callback_data: `t:ghw:${group.id}` }],
-      [{ text: '💬 Написать ученику', callback_data: `t:gmsg:${group.id}:${member.id}` }],
-      [backButton('⬅️ Назад', `t:gm:${group.id}`)],
-    ],
-  };
-  return { text, keyboard };
-}
-
-export function renderHomeworkSelect(): { text: string; keyboard: InlineKeyboard } {
-  return {
-    text: '📝 ДОМАШНИЕ ЗАДАНИЯ',
-    keyboard: {
-      inline_keyboard: [
-        [{ text: '👤 ИНДИВИДУАЛЬНЫЕ', callback_data: 't:hw:i' }],
-        [{ text: '👥 МИНИ-ГРУППЫ', callback_data: 't:hw:g' }],
-        [backButton('⬅️ Назад', 't:menu')],
-      ],
-    },
-  };
-}
-
-export function renderIndividualHomework(): { text: string; keyboard: InlineKeyboard } {
-  const pending = getIndividualHomeworkByStatus('pending');
-  const checked = getIndividualHomeworkByStatus('checked');
-  const parts = [
-    '📝 ИНДИВИДУАЛЬНЫЕ',
-    '',
-    `🔴 Требуют проверки — ${pending.length}`,
-    '',
-    ...pending.map((item) => `${item.studentName} — ДЗ №${item.number}`),
-    '',
-    `🟢 Проверены — ${checked.length}`,
-    '',
-    ...checked.map((item) => `${item.studentName} — ДЗ №${item.number}`),
-  ];
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...[...pending, ...checked].map((item): InlineButton[] => [
-        { text: `${item.studentName} — ДЗ №${item.number}`, callback_data: `t:hwv:${item.id}` },
-      ]),
-      [backButton('⬅️ Назад', 't:hw')],
-    ],
-  };
-  return { text: parts.join('\n'), keyboard };
-}
-
-export function renderGroupHomeworkList(): { text: string; keyboard: InlineKeyboard } {
-  const summaries = getMockGroupHomeworkSummaries();
-  const parts = ['📝 ДОМАШНИЕ ЗАДАНИЯ — МИНИ-ГРУППЫ', '', '🔴 Требуют проверки'];
-  for (const summary of summaries) {
-    parts.push('', summary.groupTitle, `${summary.pendingCount} ${pluralWorks(summary.pendingCount)}`);
+async function teacherCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
+  try {
+    return await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+  } catch {
+    return null;
   }
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...summaries.map((summary): InlineButton[] => [
-        { text: summary.groupTitle, callback_data: `t:ghw:${summary.groupId}` },
-      ]),
-      [backButton('⬅️ Назад', 't:hw')],
-    ],
-  };
-  return { text: parts.join('\n'), keyboard };
-}
-
-export function renderGroupHomework(group: MockGroup): { text: string; keyboard: InlineKeyboard } {
-  const works = getGroupHomeworkForGroup(group.id);
-  const pending = works.filter((item) => item.status === 'pending');
-  const parts = [
-    `👥 ${group.title}`,
-    '',
-    `🔴 Требуют проверки: ${pending.length}`,
-    '',
-    ...pending.map((item) => `${item.studentName} — ДЗ №${item.number}`),
-  ];
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      ...pending.map((item): InlineButton[] => [
-        { text: `${item.studentName} — ДЗ №${item.number}`, callback_data: `t:hwv:${item.id}` },
-      ]),
-      [backButton('⬅️ Назад', 't:hw:g')],
-    ],
-  };
-  return { text: parts.join('\n'), keyboard };
-}
-
-export function renderHomeworkCard(submission: HomeworkSubmission): { text: string; keyboard: InlineKeyboard } {
-  const statusLabel = submission.status === 'pending' ? '🔴 Требует проверки' : '🟢 Проверено';
-  const formatLabel = submission.format === 'individual' ? 'индивидуальные занятия' : 'мини-группа';
-  const groupLine = submission.groupTitle ? `\nГруппа: ${submission.groupTitle}` : '';
-  const text =
-    '📝 ДОМАШНЕЕ ЗАДАНИЕ\n\n' +
-    `Ученик: ${submission.studentName}\n` +
-    `Формат: ${formatLabel}${groupLine}\n` +
-    `Задание: №${submission.number}\n` +
-    `Статус: ${statusLabel}\n\n` +
-    '📎 Файл ученика';
-  const backCallback = submission.format === 'individual' ? 't:hw:i' : 't:hw:g';
-  const keyboard: InlineKeyboard = {
-    inline_keyboard: [
-      [{ text: '👀 Посмотреть', callback_data: `t:hwa:view:${submission.id}` }],
-      [{ text: '✅ Проверено', callback_data: `t:hwa:check:${submission.id}` }],
-      [{ text: '💬 Написать комментарий', callback_data: `t:hwa:comment:${submission.id}` }],
-      [{ text: '❌ Вернуть на доработку', callback_data: `t:hwa:return:${submission.id}` }],
-      [backButton('⬅️ Назад', backCallback)],
-    ],
-  };
-  return { text, keyboard };
 }
 
 export async function teacherCabinetScreen(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+  const url = await teacherCabinetUrl(admin, telegramId);
   return {
-    text: '🌐 Личный кабинет\n\nРасписание, ученики и группы — на сайте:',
+    text: '🌐 Панель управления\n\nРасписание, группы и домашние задания — на сайте:',
     keyboard: {
       inline_keyboard: [
-        [{ text: '🌐 Открыть кабинет', url }],
-        [backButton('⬅️ Назад', 't:menu')],
+        ...(url ? [[{ text: '🌐 Открыть кабинет', url }]] : []),
+        [{ text: '⬅️ Главное меню', callback_data: 't:menu' }],
       ],
     },
   };
-}
-
-function pluralWorks(count: number): string {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'работа';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'работы';
-  return 'работ';
-}
-
-// Тестовый результат действия с ДЗ: новое сообщение под сообщением
-// преподавателя + возврат к списку работ.
-const HOMEWORK_ACTION_LABELS: Record<string, string> = {
-  view: '👀 Просмотр работы',
-  check: '✅ Отметка «Проверено»',
-  comment: '💬 Комментарий к работе',
-  return: '❌ Возврат на доработку',
-};
-
-function renderHomeworkActionResult(action: string, submission: HomeworkSubmission): {
-  text: string;
-  keyboard: InlineKeyboard;
-} {
-  const backCallback = submission.format === 'individual' ? 't:hw:i' : 't:hw:g';
-  return {
-    text:
-      `${HOMEWORK_ACTION_LABELS[action] ?? 'Действие с ДЗ'}\n\n` +
-      'Это тестовая функция проверки ДЗ.\n' +
-      `Работа: ${submission.studentName} — ДЗ №${submission.number}`,
-    keyboard: { inline_keyboard: [[backButton('⬅️ К списку работ', backCallback)]] },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Эффективная роль: тестер с маской /as teacher видит кабинет преподавателя.
-// ---------------------------------------------------------------------------
-
-async function effectiveTeacherRole(admin: SupabaseClient, telegramId: number): Promise<string> {
-  const { data, error } = await admin
-    .from('bot_members')
-    .select('role, view_role')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return 'guest';
-  const role = isBotRole(data.role) ? data.role : 'guest';
-  const viewRole = isBotRole(data.view_role) ? data.view_role : null;
-  return resolveEffectiveRole({ role, viewRole }, telegramId);
 }
 
 async function editTeacherScreen(message: AdminMessage, text: string, keyboard: InlineKeyboard): Promise<void> {
   await editAdminMessage(message, text, keyboard);
 }
 
-// ---------------------------------------------------------------------------
-// Текст Reply Keyboard: разделы главного меню + ввод сообщения ученику.
-// Возвращает false для чужого текста (дальше — контроль переписки).
-// ---------------------------------------------------------------------------
+async function beginTeacherReply(
+  admin: SupabaseClient,
+  teacherTelegramId: number,
+  chatId: number,
+  studentTelegramId: number,
+): Promise<void> {
+  const ok = await teacherOwnsStudent(admin, teacherTelegramId, studentTelegramId);
+  if (!ok) {
+    await sendAdminMessage(chatId, 'Нет доступа к этому ученику.');
+    return;
+  }
+  await clearConflictingStaffStates(admin, teacherTelegramId, 'teacher_reply');
+  const label = await staffStudentLabel(admin, studentTelegramId);
+  try {
+    await saveState(
+      admin,
+      teacherTelegramId,
+      { chatId, messageId: 0 },
+      STAFF_TEACHER_REPLY_STEP as never,
+      { studentTelegramId } as never,
+    );
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    await sendAdminMessage(chatId, migrationText('bot_conversation_states.sql'));
+    return;
+  }
+  await sendAdminMessage(
+    chatId,
+    `✏️ Сообщение для ${label}\n\nВведите текст или отправьте фото/документ.\n\nОтмена — «Отмена».`,
+    { inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `t:msg:d:${studentTelegramId}` }]] },
+  );
+}
 
 export async function handleTeacherMessage(
   admin: SupabaseClient,
@@ -377,11 +199,10 @@ export async function handleTeacherMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
-  const role = await effectiveTeacherRole(admin, telegramId);
-  if (role !== 'teacher' && !isCreatorTelegramId(telegramId)) return false;
+  if (!(await canUseTeacherBot(admin, telegramId))) return false;
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const staffMode = resolveStaffBotMode(caps);
 
-  // Диалог «Написать ученику»: состояние шага хранится в
-  // bot_conversation_states (общий механизм состояний бота).
   let state = null;
   try {
     state = await getState(admin, telegramId);
@@ -389,32 +210,69 @@ export async function handleTeacherMessage(
     if (!isConversationStateTableError(error)) throw error;
   }
 
-  // Шаг teacher:message не входит в union админских шагов: состояние
-  // читается тем же механизмом, тип сравнивается как строка.
-  const stateStep = state?.step as string | undefined;
-  if (state && stateStep === TEACHER_MESSAGE_STEP) {
-    await clearStateIfAvailable(admin, telegramId);
-    const payload = state.payload as AdminPayload & { studentId?: string };
-    const student = payload.studentId ? getMockStudent(payload.studentId) : undefined;
-    const member = !student && payload.studentId ? findGroupMemberByStateId(payload.studentId) : undefined;
-    const recipient = student?.name ?? member?.name ?? 'ученик';
-    // MOCK: сообщение никуда не доставляется — только тестовый отчёт.
-    await sendAdminMessage(
-      chatId,
-      '✅ Тестовое сообщение отправлено.\n\n' +
-        `Получатель:\n${recipient}\n\n` +
-        `Сообщение:\n«${text}»\n\n` +
-        'В реальной версии сообщение будет доставлено ученику через Telegram-бота.',
-      {
-        inline_keyboard: [
-          [backButton('⬅️ Назад', student ? `t:st:${student.id}` : `t:gs:${member?.groupId ?? 'g1'}:${member?.memberId ?? 'm1'}`)],
-        ],
-      },
-    );
+  const step = state?.step as string | undefined;
+
+  if (state && step === STAFF_TEACHER_REPLY_STEP) {
+    const payload = state.payload as ReplyPayload;
+    const studentId = payload.studentTelegramId;
+    if (!studentId) return false;
+    if (isStaffMenuLabel(text, caps)) {
+      await clearStateIfAvailable(admin, telegramId);
+      return false;
+    }
+    if (/^отмена$/i.test(text.trim())) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Отправка отменена.');
+      return true;
+    }
+    try {
+      await deliverStaffToStudent(admin, {
+        staffTelegramId: telegramId,
+        staffRole: 'teacher',
+        studentTelegramId: studentId,
+        body: text.trim(),
+      });
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, '✅ Сообщение отправлено ученику.');
+    } catch (error) {
+      await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
+    }
     return true;
   }
 
+  if (state && step === STAFF_TEACHER_HW_REVISION_STEP) {
+    const payload = state.payload as HwRevisionPayload;
+    const lessonId = payload.lessonId;
+    if (!lessonId) return false;
+    if (isStaffMenuLabel(text, caps)) {
+      await clearStateIfAvailable(admin, telegramId);
+      return false;
+    }
+    if (/^отмена$/i.test(text.trim())) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Отменено.');
+      return true;
+    }
+    if (!text.trim()) {
+      await sendAdminMessage(chatId, 'Нужен комментарий для возврата на доработку.');
+      return true;
+    }
+    try {
+      await revisionTeacherHomework(admin, telegramId, lessonId, text.trim());
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, '✅ Работа возвращена на доработку. Ученик получит уведомление.');
+    } catch (error) {
+      await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось сохранить.');
+    }
+    return true;
+  }
+
+  if (staffMode === 'combined') return false;
+
   if (!TEACHER_MENU_LABEL_SET.has(text)) {
+    if (state && (step === STAFF_TEACHER_REPLY_STEP || step === STAFF_TEACHER_HW_REVISION_STEP)) {
+      return false;
+    }
     await sendAdminMessage(chatId, TEACHER_UNKNOWN_TEXT);
     return true;
   }
@@ -425,28 +283,71 @@ export async function handleTeacherMessage(
     return true;
   }
 
-  const screen =
-    text === TEACHER_MENU_LABELS.individual
-      ? renderIndividualList()
-      : text === TEACHER_MENU_LABELS.groups
-        ? renderGroupList()
-        : renderHomeworkSelect();
+  const cabinetUrl = await teacherCabinetUrl(admin, telegramId);
+
+  if (text === TEACHER_MENU_LABELS.messages) {
+    const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
+    const screen = renderTeacherMessagesInbox(threads, storageEnabled, cabinetUrl);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+    return true;
+  }
+
+  if (text === TEACHER_MENU_LABELS.homework) {
+    const screen = renderTeacherHomeworkHub(cabinetUrl);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+    return true;
+  }
+
+  const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+
+  if (text === TEACHER_MENU_LABELS.schedule) {
+    const screen = renderTeacherScheduleHome(snapshot);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+    return true;
+  }
+
+  const screen = renderTeacherStudentsHub();
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
   return true;
 }
 
-// Состояние хранит составной id «groupId:memberId» для учеников групп.
-function findGroupMemberByStateId(stateId: string): (MockGroupMember & { groupId: string; memberId: string }) | undefined {
-  const [groupId, memberId] = stateId.split(':');
-  if (!groupId || !memberId) return undefined;
-  const member = getMockGroupMember(groupId, memberId);
-  return member ? { ...member, groupId, memberId } : undefined;
-}
+export async function handleTeacherAttachment(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  attachment: { fileId: string; kind: 'photo' | 'document' },
+): Promise<boolean> {
+  if (!(await canUseTeacherBot(admin, telegramId))) return false;
 
-// ---------------------------------------------------------------------------
-// Inline-навигация: все колбэки t:*. Возвращает false для чужих префиксов
-// и для не-преподавателей (кнопки улетят дальше по цепочке вебхука).
-// ---------------------------------------------------------------------------
+  let state = null;
+  try {
+    state = await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    return false;
+  }
+  if (!state || (state.step as string) !== STAFF_TEACHER_REPLY_STEP) return false;
+
+  const payload = state.payload as ReplyPayload;
+  const studentId = payload.studentTelegramId;
+  if (!studentId) return false;
+
+  try {
+    await deliverStaffToStudent(admin, {
+      staffTelegramId: telegramId,
+      staffRole: 'teacher',
+      studentTelegramId: studentId,
+      body: '',
+      attachmentRef: formatTelegramFileRef(attachment.fileId),
+      attachmentKind: attachment.kind,
+    });
+    await clearStateIfAvailable(admin, telegramId);
+    await sendAdminMessage(chatId, '✅ Вложение отправлено ученику.');
+  } catch (error) {
+    await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
+  }
+  return true;
+}
 
 export async function handleTeacherCallback(
   admin: SupabaseClient,
@@ -457,8 +358,7 @@ export async function handleTeacherCallback(
   callbackQueryId?: string,
 ): Promise<boolean> {
   if (!data.startsWith('t:')) return false;
-  const role = await effectiveTeacherRole(admin, telegramId);
-  if (role !== 'teacher' && !isCreatorTelegramId(telegramId)) return false;
+  if (!(await canUseTeacherBot(admin, telegramId))) return false;
 
   const message: AdminMessage = { chatId, messageId };
   const parts = data.split(':');
@@ -477,172 +377,228 @@ async function routeTeacherCallback(
   telegramId: number,
   parts: string[],
 ): Promise<boolean> {
-  const [, action, id, subId] = parts;
+  const [, action, id, subId, subSubId] = parts;
+  const cabinetUrl = await teacherCabinetUrl(admin, telegramId);
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const combined = resolveStaffBotMode(caps) === 'combined';
+  const hwNav: StaffScreenNav | undefined = combined ? COMBINED_TEACHER_HW_NAV : undefined;
+  const msgNav: StaffScreenNav | undefined = combined ? COMBINED_TEACHER_MSG_NAV : undefined;
 
   switch (action) {
-    // Главное меню: подсказка про постоянную Reply Keyboard.
     case 'menu': {
-      await editTeacherScreen(message, TEACHER_HOME_TEXT, { inline_keyboard: [] });
+      if (combined) {
+        await editTeacherScreen(message, COMBINED_HOME_TEXT, { inline_keyboard: [] });
+      } else {
+        await editTeacherScreen(message, TEACHER_HOME_TEXT, { inline_keyboard: [] });
+      }
       return true;
     }
 
-    // Списки направлений.
-    case 'list': {
-      const screen = id === 'i' ? renderIndividualList() : renderGroupList();
-      await editTeacherScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-
-    // Карточка индивидуального ученика.
-    case 'st': {
-      const student = id ? getMockStudent(id) : undefined;
-      if (!student) {
-        await editTeacherScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 't:list:i'));
+    case 'sch': {
+      const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+      if (id === 'today') {
+        const screen = renderTeacherScheduleToday(snapshot);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderStudentCard(student);
-      await editTeacherScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-
-    // Список групп / карточка группы.
-    case 'gr': {
-      const group = id ? getMockGroup(id) : undefined;
-      if (!group) {
-        await editTeacherScreen(message, 'Группа не найдена.', notFoundKeyboard('Назад', 't:list:g'));
+      if (id === 'up') {
+        const screen = renderTeacherScheduleUpcoming(snapshot);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderGroupCard(group);
+      const screen = renderTeacherScheduleHome(snapshot);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // Ученики группы.
-    case 'gm': {
-      const group = id ? getMockGroup(id) : undefined;
-      if (!group) {
-        await editTeacherScreen(message, 'Группа не найдена.', notFoundKeyboard('Назад', 't:list:g'));
+    case 'les': {
+      const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+      const lessonId = Number(id);
+      const lesson = Number.isFinite(lessonId) ? findLesson(snapshot, lessonId) : undefined;
+      if (!lesson) {
+        await editTeacherScreen(message, 'Занятие не найдено.', notFoundKeyboard('Расписание', 't:sch'));
         return true;
       }
-      const screen = renderGroupMembers(group);
+      const screen = renderTeacherLessonCard(snapshot, lesson);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // Карточка ученика мини-группы.
-    case 'gs': {
-      const group = id ? getMockGroup(id) : undefined;
-      const member = group && subId ? getMockGroupMember(group.id, subId) : undefined;
-      if (!group || !member) {
-        await editTeacherScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 't:list:g'));
-        return true;
-      }
-      const screen = renderGroupMemberCard(group, member);
-      await editTeacherScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-
-    // ДЗ индивидуального ученика (работы его формата).
-    case 'shw': {
-      const screen = renderIndividualHomework();
-      await editTeacherScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-
-    // Выбор раздела ДЗ.
-    case 'hw': {
+    case 'stu': {
       if (id === 'i') {
-        const screen = renderIndividualHomework();
+        const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+        const screen = renderTeacherIndividualList(snapshot);
         await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
       if (id === 'g') {
-        const screen = renderGroupHomeworkList();
+        const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+        const screen = renderTeacherGroupList(snapshot);
         await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderHomeworkSelect();
+      const hub = renderTeacherStudentsHub();
+      await editTeacherScreen(message, hub.text, hub.keyboard);
+      return true;
+    }
+
+    case 'st': {
+      const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+      const studentId = Number(id);
+      const student = Number.isFinite(studentId) ? findStudent(snapshot, studentId) : undefined;
+      if (!student) {
+        await editTeacherScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 't:stu:i'));
+        return true;
+      }
+      const screen = renderTeacherStudentCard(snapshot, student);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // ДЗ мини-группы.
-    case 'ghw': {
-      const group = id ? getMockGroup(id) : undefined;
-      if (!group) {
-        await editTeacherScreen(message, 'Группа не найдена.', notFoundKeyboard('Назад', 't:hw:g'));
+    case 'gr':
+    case 'gm':
+    case 'gs': {
+      const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+      if (action === 'gr') {
+        const groupId = Number(id);
+        const group = Number.isFinite(groupId) ? findGroup(snapshot, groupId) : undefined;
+        if (!group) {
+          await editTeacherScreen(message, 'Группа не найдена.', notFoundKeyboard('Назад', 't:stu:g'));
+          return true;
+        }
+        const screen = renderTeacherGroupCard(group);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderGroupHomework(group);
+      if (action === 'gm') {
+        const groupId = Number(id);
+        const group = Number.isFinite(groupId) ? findGroup(snapshot, groupId) : undefined;
+        if (!group) {
+          await editTeacherScreen(message, 'Группа не найдена.', notFoundKeyboard('Назад', 't:stu:g'));
+          return true;
+        }
+        const screen = renderTeacherGroupMembers(group);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      const groupId = Number(id);
+      const memberId = Number(subId);
+      const group = Number.isFinite(groupId) ? findGroup(snapshot, groupId) : undefined;
+      if (!group || !Number.isFinite(memberId)) {
+        await editTeacherScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 't:stu:g'));
+        return true;
+      }
+      const screen = renderTeacherGroupMemberCard(snapshot, group, memberId);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }
 
-    // Карточка конкретной работы.
-    case 'hwv': {
-      const submission = id ? getHomeworkSubmission(id) : undefined;
-      if (!submission) {
-        await editTeacherScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 't:hw'));
+    case 'msg': {
+      if (id === 'l') {
+        const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
+        const screen = renderTeacherMessagesInbox(threads, storageEnabled, cabinetUrl, msgNav);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderHomeworkCard(submission);
-      await editTeacherScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-
-    // Тестовые действия с ДЗ: результат — новым сообщением.
-    case 'hwa': {
-      const submission = subId ? getHomeworkSubmission(subId) : undefined;
-      if (!submission) {
-        await editTeacherScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 't:hw'));
+      if (id === 'u') {
+        const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
+        const screen = renderTeacherUnreadMessagesInbox(threads, storageEnabled, cabinetUrl, msgNav);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const result = renderHomeworkActionResult(id ?? '', submission);
-      await sendAdminMessage(message.chatId, result.text, result.keyboard);
-      return true;
-    }
-
-    // «Написать ученику»: индивидуал и ученик группы.
-    case 'msg':
-    case 'gmsg': {
-      const student = action === 'msg' && id ? getMockStudent(id) : undefined;
-      const group = action === 'gmsg' && id ? getMockGroup(id) : undefined;
-      const member = group && subId ? getMockGroupMember(group.id, subId) : undefined;
-      if (!student && !(group && member)) {
-        await editTeacherScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 't:menu'));
-        return true;
-      }
-      const recipient = student?.name ?? member?.name ?? '';
-      const stateId = student ? student.id : `${group?.id}:${member?.id}`;
-      const promptText = `💬 Написать ${dativeName(recipient)}\n\nВведите сообщение:`;
-      const promptKeyboard: InlineKeyboard = {
-        inline_keyboard: [[backButton('⬅️ Отмена', student ? `t:msgc:i:${student?.id}` : `t:msgc:g:${group?.id}:${member?.id}`)]],
-      };
-      try {
-        const promptId = await sendAdminMessage(message.chatId, promptText, promptKeyboard);
-        await saveState(
-          admin,
-          telegramId,
-          { chatId: message.chatId, messageId: promptId ?? 0 },
-          TEACHER_MESSAGE_STEP as never,
-          { studentId: stateId } as never,
+      if (id === 'd' && subId) {
+        const studentId = Number(subId);
+        if (!Number.isFinite(studentId)) return true;
+        await markTeacherThreadRead(admin, telegramId, studentId);
+        const label = await staffStudentLabel(admin, studentId);
+        const { messages, storageEnabled } = await loadThreadMessages(admin, telegramId, studentId);
+        const screen = renderTeacherMessageThread(
+          label,
+          messages,
+          storageEnabled,
+          cabinetUrl,
+          studentId,
+          msgNav,
         );
-      } catch (error) {
-        if (!isConversationStateTableError(error)) throw error;
-        await sendAdminMessage(message.chatId, migrationText('bot_conversation_states.sql'));
+        await editTeacherScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'w' && subId) {
+        const studentId = Number(subId);
+        if (!Number.isFinite(studentId)) return true;
+        await beginTeacherReply(admin, telegramId, message.chatId, studentId);
+        return true;
+      }
+      if (id && !subId) {
+        const studentId = Number(id);
+        if (Number.isFinite(studentId)) {
+          await beginTeacherReply(admin, telegramId, message.chatId, studentId);
+          return true;
+        }
       }
       return true;
     }
 
-    // Отмена ввода сообщения: подсказка + возврат к карточке.
-    case 'msgc': {
-      await clearStateIfAvailable(admin, telegramId);
-      const backCallback = id === 'i' ? `t:st:${subId}` : `t:gs:${subId}:${parts[3] ?? ''}`;
-      await editTeacherScreen(
-        message,
-        '✖️ Отправка отменена.',
-        notFoundKeyboard('К карточке ученика', backCallback),
-      );
+    case 'hw': {
+      if (id === 'q' && subId) {
+        const queue = subId as TeacherHomeworkQueueKind;
+        const items = filterHomeworkByQueue(await loadTeacherHomeworkItems(admin, telegramId), queue);
+        const screen = renderTeacherHomeworkList(queue, items, cabinetUrl, hwNav);
+        await editTeacherScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'i' && subId) {
+        const lessonId = Number(subId);
+        const items = await loadTeacherHomeworkItems(admin, telegramId);
+        const item = items.find((i) => i.lessonId === lessonId);
+        if (!item) {
+          await editTeacherScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 't:hw'));
+          return true;
+        }
+        const homework = await getLessonHomework(admin, lessonId);
+        const canReview = item.reviewStatus === 'submitted' || item.reviewStatus === 'reviewing';
+        const text = renderHomeworkCardText(item, homework);
+        const keyboard = renderTeacherHomeworkCardActions(lessonId, canReview, cabinetUrl);
+        await editTeacherScreen(message, text, keyboard);
+        return true;
+      }
+      if (id === 'v' && subId) {
+        const lessonId = Number(subId);
+        await sendHomeworkSubmissionPreview(admin, message.chatId, lessonId);
+        return true;
+      }
+      if (id === 'ok' && subId) {
+        const lessonId = Number(subId);
+        try {
+          await approveTeacherHomework(admin, telegramId, lessonId);
+          await sendAdminMessage(message.chatId, '✅ Домашнее задание принято.');
+        } catch (error) {
+          await sendAdminMessage(message.chatId, error instanceof Error ? error.message : 'Ошибка.');
+        }
+        return true;
+      }
+      if (id === 'rev' && subId) {
+        const lessonId = Number(subId);
+        try {
+          await saveState(
+            admin,
+            telegramId,
+            { chatId: message.chatId, messageId: message.messageId },
+            STAFF_TEACHER_HW_REVISION_STEP as never,
+            { lessonId } as never,
+          );
+          await sendAdminMessage(
+            message.chatId,
+            '✏️ Комментарий для ученика (обязателен):\n\nОтмена — «Отмена».',
+          );
+        } catch (error) {
+          if (!isConversationStateTableError(error)) throw error;
+          await sendAdminMessage(message.chatId, migrationText('bot_conversation_states.sql'));
+        }
+        return true;
+      }
+      const hub = renderTeacherHomeworkHub(cabinetUrl, hwNav);
+      await editTeacherScreen(message, hub.text, hub.keyboard);
       return true;
     }
 
@@ -657,20 +613,12 @@ async function routeTeacherCallback(
   }
 }
 
-// «Написать Ивану Петрову» — простое склонение для MOCK-имён из списка.
-function dativeName(name: string): string {
-  const [firstName, lastName] = name.split(' ');
-  const first =
-    firstName?.endsWith('а') ? `${firstName.slice(0, -1)}е`
-    : firstName?.endsWith('й') ? `${firstName.slice(0, -2)}ю`
-    : firstName
-      ? `${firstName}у`
-      : name;
-  const last =
-    lastName?.endsWith('а') ? `${lastName.slice(0, -1)}ой`
-    : lastName?.endsWith('ва') ? `${lastName.slice(0, -2)}ой`
-    : lastName
-      ? `${lastName}у`
-      : '';
-  return last ? `${first} ${last}` : first;
-}
+export {
+  renderTeacherScheduleHome,
+  renderTeacherIndividualList,
+  renderTeacherStudentCard,
+  renderTeacherGroupList,
+  renderTeacherGroupCard,
+  renderTeacherGroupMembers,
+  renderTeacherGroupMemberCard,
+} from '../staff/teacher-screens';
