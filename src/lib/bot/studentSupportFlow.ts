@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
+import { CLIENT_CANCEL_HINT, isClientCancelText, isClientCancelTypo } from './client-cancel';
 import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
 
 export async function beginStudentSupport(
@@ -91,9 +92,13 @@ export async function handleStudentSupportMessage(
   if (!state || state.step !== 'student:support') return false;
 
   const trimmed = text.trim();
-  if (!trimmed || /^отмена$/i.test(trimmed)) {
+  if (!trimmed || isClientCancelText(trimmed)) {
     await resetClientDialogToHub(admin, telegramId);
     await sendAdminMessage(chatId, 'Обращение отменено.');
+    return true;
+  }
+  if (isClientCancelTypo(trimmed)) {
+    await sendAdminMessage(chatId, CLIENT_CANCEL_HINT);
     return true;
   }
 

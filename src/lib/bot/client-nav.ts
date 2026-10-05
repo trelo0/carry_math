@@ -20,7 +20,7 @@ export type ClientHubPayload = AdminPayload & {
   clientScreen?: string;
 };
 
-const CLIENT_DIALOG_STEPS = new Set<string>([
+export const CLIENT_DIALOG_STEPS = new Set<string>([
   CLIENT_HUB_STEP,
   'client:lead-form',
   'student:support',

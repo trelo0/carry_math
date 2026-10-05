@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import { getBaseUrlString } from '@/lib/siteUrl';
+import { SITE_URL_FALLBACK } from '@/lib/siteUrl';
+import { listMentorPickerCandidates } from '@/lib/bot/admin/staff-roster';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { beginStudentPurchase } from './studentPurchaseFlow';
 import { beginStudentSupport } from './studentSupportFlow';
@@ -28,22 +29,37 @@ import {
   isClientReplyLabel,
 } from './client-menu';
 import {
-  clientHomeButton,
+  clientBackButton,
   editHubMessage,
   loadClientHub,
   resetClientDialogToHub,
   saveClientHub,
   sendHubMessage,
 } from './client-nav';
+import { getState } from './admin/core';
+import type { ClientHubPayload } from './client-nav';
 import type { BotRole } from './roles';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
 
-function courseInfoUrl(): string {
-  return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || `${getBaseUrlString()}/cabinet`;
+const EMPTY_INLINE = { inline_keyboard: [] as Array<Array<Record<string, string>>> };
+
+function publicSiteUrl(path = ''): string {
+  const base = (process.env.NEXT_PUBLIC_SITE_URL?.trim() || SITE_URL_FALLBACK).replace(/\/$/, '');
+  return path ? `${base}${path.startsWith('/') ? path : `/${path}`}` : base;
 }
 
-function stubKeyboard() {
-  return { inline_keyboard: [[clientHomeButton()]] };
+function courseInfoUrl(): string {
+  return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || publicSiteUrl('/');
+}
+
+async function formatTeacherList(admin: SupabaseClient): Promise<string> {
+  const teachers = await listMentorPickerCandidates(admin, 'teacher');
+  if (teachers.length === 0) {
+    return 'Преподаватели: команда District — уточним при заявке.';
+  }
+  const lines = teachers.slice(0, 8).map((t) => `• ${t.full_name?.trim() || `ID ${t.telegram_id}`}`);
+  const more = teachers.length > 8 ? `\n… и ещё ${teachers.length - 8}` : '';
+  return `Преподаватели:\n${lines.join('\n')}${more}`;
 }
 
 async function showHubScreen(
@@ -76,11 +92,11 @@ async function showOnlineCourseScreen(
   const lines = [
     '🎓 Онлайн-курс District',
     '',
-    'Подготовка к ЦТ по математике: вебинары, практика и домашние задания с поддержкой куратора.',
+    'Системная подготовка к ЦТ/ЦЭ по математике: вебинары, практика, домашние задания и поддержка куратора.',
     '',
-    'Для кого: школьники, которые готовятся к экзаменам и хотят системную программу.',
+    'Подходит, если нужен понятный маршрут к экзамену без хаоса в материалах.',
     '',
-    'Покупка, оплата и прохождение — на сайте в личном кабинете.',
+    'Оплата и доступ — на сайте школы; после покупки занятия и материалы открываются в личном кабинете.',
   ];
 
   const keyboard: { inline_keyboard: Array<Array<Record<string, string>>> } = {
@@ -94,7 +110,7 @@ async function showOnlineCourseScreen(
   } else {
     keyboard.inline_keyboard.push([{ text: '🌐 Подробнее на сайте', url: courseInfoUrl() }]);
   }
-  keyboard.inline_keyboard.push([clientHomeButton()]);
+  keyboard.inline_keyboard.push([clientBackButton()]);
 
   await showHubScreen(admin, state.telegramId, chatId, 'course', lines.join('\n'), keyboard);
 }
@@ -106,14 +122,14 @@ async function showBuyHub(
 ): Promise<void> {
   const text =
     '💳 Купить обучение\n\n' +
-    '🎓 Онлайн-курс — оплата и доступ через личный кабинет на сайте.\n\n' +
-    '📚 Индивидуальные и 👥 групповые занятия — заявка и согласование с администратором.';
+    '🎓 Онлайн-курс — оплатить на сайте и сразу получить доступ в кабинете.\n\n' +
+    '📚 Индивидуальные и 👥 групповые занятия — выберите формат: мы расскажем условия и поможем оформить заявку на подключение.';
   const keyboard = {
     inline_keyboard: [
       [{ text: '🎓 Онлайн-курс', callback_data: 'cl:buy:course' }],
       [{ text: '📚 Индивидуальные занятия', callback_data: 'cl:buy:individual' }],
       [{ text: '👥 Групповые занятия', callback_data: 'cl:buy:group' }],
-      [clientHomeButton()],
+      [clientBackButton()],
     ],
   };
   await showHubScreen(admin, state.telegramId, chatId, 'buy', text, keyboard);
@@ -125,11 +141,15 @@ async function showBuyFormatHub(
   chatId: number,
   format: 'individual' | 'group',
 ): Promise<void> {
+  const teachersBlock = await formatTeacherList(admin);
   const title = format === 'individual' ? 'Индивидуальные занятия' : 'Групповые занятия';
-  const text =
-    `📚 ${title}\n\n` +
-    'Подбор преподавателя, расписание и оплата — после заявки с вами свяжется администратор.\n\n' +
-    'Можно оформить заявку в боте или написать администратору напрямую.';
+  const body =
+    format === 'individual'
+      ? 'Занятия один на один с преподавателем: разбор тем, домашние задания, гибкое расписание под ученика.'
+      : 'Небольшая группа с общим темпом: занятия с преподавателем, практика и поддержка куратора.';
+  const text = [`📚 ${title}`, '', body, '', teachersBlock, '', 'Оставьте заявку — администратор согласует расписание и стоимость.'].join(
+    '\n',
+  );
   const keyboard = {
     inline_keyboard: [
       [
@@ -138,8 +158,7 @@ async function showBuyFormatHub(
           callback_data: format === 'individual' ? 'cl:lead:fmt:individual' : 'cl:lead:fmt:group',
         },
       ],
-      [{ text: '💬 Связаться с администратором', callback_data: 'cl:lead:goto:support' }],
-      [clientHomeButton()],
+      [clientBackButton()],
     ],
   };
   await showHubScreen(admin, telegramId, chatId, `buy-${format}`, text, keyboard);
@@ -151,10 +170,33 @@ async function showHomeHub(
   chatId: number,
   testFooter = '',
 ): Promise<void> {
-  const text =
-    buildClientWelcomeText(state, testFooter) +
-    '\n\nВыберите действие в меню под полем ввода или кнопку ниже.';
-  await showHubScreen(admin, state.telegramId, chatId, 'home', text, stubKeyboard());
+  const text = buildClientWelcomeText(state, testFooter);
+  await showHubScreen(admin, state.telegramId, chatId, 'home', text, EMPTY_INLINE);
+}
+
+async function navigateClientBack(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  memberRole?: BotRole,
+): Promise<void> {
+  let screen = 'home';
+  try {
+    const state = await getState(admin, telegramId);
+    screen = (state?.payload as ClientHubPayload | undefined)?.clientScreen ?? 'home';
+  } catch {
+    /* ignore */
+  }
+  const clientState = await resolveClientState(admin, telegramId, { memberRole });
+  if (screen === 'buy-individual' || screen === 'buy-group') {
+    await showBuyHub(admin, clientState, chatId);
+    return;
+  }
+  if (screen === 'buy' || screen === 'course' || screen === 'lead-format') {
+    await showHomeHub(admin, clientState, chatId);
+    return;
+  }
+  await showHomeHub(admin, clientState, chatId);
 }
 
 /** /start и /menu для клиентского UI (guest/student). */
@@ -168,16 +210,18 @@ export async function sendClientStart(
   const welcome = buildClientWelcomeText(state, options?.testFooter ?? '');
   const replyMarkup = buildClientReplyKeyboard(state);
 
-  await telegramSend('sendMessage', {
+  const result = await telegramSend('sendMessage', {
     chat_id: chatId,
     text: welcome,
     reply_markup: replyMarkup,
   });
-
-  await showHomeHub(admin, state, chatId, options?.testFooter);
+  const messageId = result.result?.message_id;
+  if (messageId) {
+    await saveClientHub(admin, telegramId, { chatId, messageId }, 'home');
+  }
 }
 
-/** Обновить Reply-меню после покупки, привязки и т.д. (без дубля welcome+/start). */
+/** Обновить Reply-меню после покупки, привязки и т.д. */
 export async function refreshClientMenu(
   admin: SupabaseClient,
   telegramId: number,
@@ -185,12 +229,16 @@ export async function refreshClientMenu(
   memberRole?: BotRole,
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId, { memberRole });
-  await telegramSend('sendMessage', {
+  const welcome = buildClientWelcomeText(state);
+  const result = await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: buildClientWelcomeText(state),
+    text: welcome,
     reply_markup: buildClientReplyKeyboard(state),
   });
-  await showHomeHub(admin, state, chatId);
+  const messageId = result.result?.message_id;
+  if (messageId) {
+    await saveClientHub(admin, telegramId, { chatId, messageId }, 'home');
+  }
 }
 
 export async function handleClientMessage(
@@ -283,13 +331,7 @@ export async function handleClientCallback(
   }
   if (data === 'cl:home' || data === 'cl:back') {
     await resetClientDialogToHub(admin, telegramId);
-    let hubState = await loadClientHub(admin, telegramId);
-    if (!hubState) {
-      hubState = { chatId, messageId };
-      await saveClientHub(admin, telegramId, hubState, 'home');
-    }
-    const freshState = await resolveClientState(admin, telegramId, { memberRole });
-    await showHomeHub(admin, freshState, chatId);
+    await navigateClientBack(admin, telegramId, chatId, memberRole);
     return true;
   }
 

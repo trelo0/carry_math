@@ -73,6 +73,8 @@ import {
 import { usesClientBotUi } from '@/lib/bot/client-state';
 import { handleClientLegacyReply } from '@/lib/bot/client-legacy-reply';
 import { bridgeGuestCallbackForClient } from '@/lib/bot/client-guest-bridge';
+import { getState } from '@/lib/bot/admin/core';
+import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
 
 type TgFrom = {
   id: number;
@@ -417,10 +419,8 @@ export async function POST(request: Request) {
       const testerTools = canUseTesterTools(from.id, member.role);
       const hasMask = member.viewRole && member.viewRole !== member.role;
       const creatorHint =
-        testerTools && !hasMask
-          ? isCreatorTelegramId(from.id)
-            ? '\n\n🛠 /as <роль> — UI другой роли · /role me <роль> — сменить себе роль · /role reset — вернуть admin'
-            : '\n\n🛠 /as <роль> — UI другой роли · /role me <роль> — сменить себе роль'
+        member.role === 'test' && testerTools && !hasMask
+          ? '\n\n🛠 /as <роль> — UI другой роли · /role me <роль> — сменить себе роль'
           : '';
       const footer = testFooter + creatorHint;
       if (isAdminEnv(from.id) && update.message.text === '/admin') {
@@ -639,14 +639,6 @@ export async function POST(request: Request) {
         update.message.text,
       );
       if (courseApplyHandled) return NextResponse.json({ ok: true });
-
-      const handled = await handleAdminMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (handled) return NextResponse.json({ ok: true });
     }
 
     // Кнопки Reply Keyboard ученика: обрабатываются до контроля переписки,
@@ -734,6 +726,21 @@ export async function POST(request: Request) {
         );
         if (handled) return NextResponse.json({ ok: true });
       }
+    }
+
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from
+    ) {
+      const adminTextHandled = await handleAdminMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (adminTextHandled) return NextResponse.json({ ok: true });
     }
 
     // Combined staff (teacher + curator): единое Reply-меню.
@@ -943,12 +950,21 @@ export async function POST(request: Request) {
       );
       const effective = resolveEffectiveRoleWithFooter(member, update.message.from.id).role;
       if (usesClientBotUi(effective)) {
-        await handleClientUnknownText(
-          admin,
-          update.message.from.id,
-          update.message.chat.id,
-          member.role,
-        );
+        let inClientDialog = false;
+        try {
+          const dialogState = await getState(admin, update.message.from.id);
+          inClientDialog = Boolean(dialogState?.step && CLIENT_DIALOG_STEPS.has(dialogState.step));
+        } catch {
+          inClientDialog = false;
+        }
+        if (!inClientDialog) {
+          await handleClientUnknownText(
+            admin,
+            update.message.from.id,
+            update.message.chat.id,
+            member.role,
+          );
+        }
         return NextResponse.json({ ok: true });
       }
     }

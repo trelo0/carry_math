@@ -7,8 +7,9 @@ import {
   sendAdminMessage,
   type AdminPayload,
 } from './admin/core';
+import { CLIENT_CANCEL_HINT, isClientCancelText, isClientCancelTypo } from './client-cancel';
 import {
-  clientHomeButton,
+  clientBackButton,
   editHubMessage,
   loadClientHub,
   resetClientDialogToHub,
@@ -91,12 +92,13 @@ async function showLeadFormatHub(
 ): Promise<void> {
   const text =
     '📝 Заявка на занятия\n\n' +
-    'Выберите формат обучения. Дальше бот задаст несколько коротких вопросов — заявку можно отправить ученику или родителю.';
+    'Расскажите о ученике — администратор подберёт преподавателя, формат и расписание и свяжется с вами.\n\n' +
+    'Выберите формат:';
   const keyboard = {
     inline_keyboard: [
       [{ text: '📚 Индивидуальные занятия', callback_data: 'cl:lead:fmt:individual' }],
       [{ text: '👥 Групповые занятия', callback_data: 'cl:lead:fmt:group' }],
-      [clientHomeButton()],
+      [clientBackButton()],
     ],
   };
 
@@ -155,7 +157,7 @@ async function showConfirmHub(
       [{ text: '✅ Отправить заявку', callback_data: 'cl:lead:submit' }],
       [{ text: '✏️ Изменить данные', callback_data: 'cl:lead:edit' }],
       [{ text: '❌ Отменить', callback_data: 'cl:lead:cancel' }],
-      [clientHomeButton()],
+      [clientBackButton()],
     ],
   };
   const hub = await loadClientHub(admin, telegramId);
@@ -290,8 +292,8 @@ export async function handleClientLeadCallback(
         '⏳ Похожая заявка уже отправлена недавно.\n\n' +
         'Администратор свяжется с вами. Если нужно уточнить данные — напишите через «Связаться с администратором».';
       const hub = await loadClientHub(admin, telegramId);
-      if (hub) await editHubMessage(hub, text, { inline_keyboard: [[clientHomeButton()]] });
-      else await sendHubMessage(chatId, text, { inline_keyboard: [[clientHomeButton()]] });
+      if (hub) await editHubMessage(hub, text, { inline_keyboard: [[clientBackButton()]] });
+      else await sendHubMessage(chatId, text, { inline_keyboard: [[clientBackButton()]] });
       return true;
     }
 
@@ -337,7 +339,7 @@ export async function handleClientLeadCallback(
       'Администратор свяжется с вами для уточнения деталей, расписания и оплаты.';
     const keyboard = {
       inline_keyboard: [
-        [clientHomeButton()],
+        [clientBackButton()],
         [{ text: '💬 Связаться с администратором', callback_data: 'cl:lead:goto:support' }],
       ],
     };
@@ -374,9 +376,13 @@ export async function handleClientLeadMessage(
   const step = payload.leadStep ?? 'name';
   const trimmed = text.trim();
 
-  if (/^отмена$/i.test(trimmed)) {
+  if (isClientCancelText(trimmed)) {
     await resetClientDialogToHub(admin, telegramId);
     await sendAdminMessage(chatId, 'Заявка отменена.');
+    return true;
+  }
+  if (isClientCancelTypo(trimmed)) {
+    await sendAdminMessage(chatId, CLIENT_CANCEL_HINT);
     return true;
   }
 

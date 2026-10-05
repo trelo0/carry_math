@@ -47,6 +47,9 @@ import {
   renderEducationMenu,
 } from './education-ops';
 import { shouldAdminDeferTextToMaskedUi } from './admin-access';
+import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
+import { usesClientBotUi } from '@/lib/bot/client-state';
+import { isBotRole, resolveEffectiveRole, type MemberInfo } from '@/lib/bot/roles';
 import { renderAdminHomeDashboard, handleHubAction, isHubAction } from './home';
 import { renderPeopleMenu } from './people-menu';
 import { renderMoreMenu } from './more-menu';
@@ -200,6 +203,14 @@ export async function handleAdminMessage(
 ): Promise<boolean> {
   if (!(await isAdmin(admin, telegramId))) return false;
 
+  let earlyState: ConversationState | null = null;
+  try {
+    earlyState = await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+  if (earlyState?.step && CLIENT_DIALOG_STEPS.has(earlyState.step)) return false;
+
   // Кнопки Reply Keyboard приходят точным текстом: раздел открывается новым
   // сообщением, активный сценарий сбрасывается.
   if (ADMIN_REPLY_LABEL_SET.has(text)) {
@@ -233,11 +244,27 @@ export async function handleAdminMessage(
     throw error;
   }
   if (!state || state.chat_id !== chatId) {
-    // Текст вне активного сценария: навигацию не ломаем,
-    // подсказку показываем новым сообщением под текстом админа.
+    const { data: memberRow } = await admin
+      .from('bot_members')
+      .select('role, view_role')
+      .eq('telegram_id', telegramId)
+      .maybeSingle();
+    const primary =
+      memberRow?.role && isBotRole(String(memberRow.role))
+        ? (memberRow.role as MemberInfo['role'])
+        : 'guest';
+    const viewRole =
+      memberRow?.view_role && isBotRole(String(memberRow.view_role))
+        ? (memberRow.view_role as MemberInfo['role'])
+        : null;
+    const effective = resolveEffectiveRole({ role: primary, viewRole }, telegramId);
+    if (usesClientBotUi(effective)) return false;
+
     await sendAdminMessage(chatId, ADMIN_UNKNOWN_TEXT);
     return true;
   }
+
+  if (CLIENT_DIALOG_STEPS.has(state.step)) return false;
 
   // Поиск пользователей: шаг остаётся активным, пока админ не уйдёт домой.
   if (state.step === 'users:search') {
@@ -278,7 +305,8 @@ export async function handleAdminMessage(
     return true;
   }
 
-  // Неизвестный шаг — очищаем устаревшее состояние.
+  if (CLIENT_DIALOG_STEPS.has(state.step)) return false;
+
   await clearState(admin, telegramId);
   return false;
 }
