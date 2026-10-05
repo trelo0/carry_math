@@ -19,7 +19,9 @@
     "deduct:life": "npx tsx scripts/deduct-life.ts",
     "grant:life": "npx tsx scripts/grant-life.ts",
     "test:admin": "npx tsx scripts/test-admin-all.ts",
-    "test:bots": "npx tsc --noEmit && npx tsx scripts/test-admin-all.ts && npx tsx scripts/test-admin-phase2.ts && npx tsx scripts/test-client-bot-scenarios.ts"
+    "test:bots": "npx tsc --noEmit && npx tsx scripts/test-admin-all.ts && npx tsx scripts/test-admin-phase2.ts && npx tsx scripts/test-client-bot-scenarios.ts",
+    "telegram:webhook:vercel": "node scripts/set-telegram-webhook.mjs vercel",
+    "telegram:webhook:by": "node scripts/set-telegram-webhook.mjs by"
   },
   "dependencies": {
     "@sanity/client": "^7.17.0",
