@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
-import { CLIENT_CANCEL_HINT, isClientCancelText, isClientCancelTypo } from './client-cancel';
 import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
 
 export async function beginStudentSupport(
@@ -17,7 +16,10 @@ export async function beginStudentSupport(
 
   await sendAdminMessage(
     chatId,
-    '🆘 Поддержка\n\nОпишите вопрос одним сообщением — текст, фото или документ.\n\n⬅️ Отмена — напишите «Отмена».',
+    '🆘 Связаться с администратором\n\nОпишите вопрос одним сообщением — текст, фото или документ.',
+    {
+      inline_keyboard: [[{ text: '❌ Отменить', callback_data: 'cl:support:cancel' }]],
+    },
   );
 }
 
@@ -92,21 +94,13 @@ export async function handleStudentSupportMessage(
   if (!state || state.step !== 'student:support') return false;
 
   const trimmed = text.trim();
-  if (!trimmed || isClientCancelText(trimmed)) {
-    await resetClientDialogToHub(admin, telegramId);
-    await sendAdminMessage(chatId, 'Обращение отменено.');
-    return true;
-  }
-  if (isClientCancelTypo(trimmed)) {
-    await sendAdminMessage(chatId, CLIENT_CANCEL_HINT);
-    return true;
-  }
+  if (!trimmed) return true;
 
   await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
   await resetClientDialogToHub(admin, telegramId);
   await sendAdminMessage(
     chatId,
-    '✅ Сообщение отправлено в поддержку.\n\nМы ответим в Telegram или по телефону из профиля.',
+    '✅ Сообщение отправлено администратору.\n\nМы ответим в Telegram или по контакту из профиля.',
   );
   return true;
 }
@@ -126,14 +120,17 @@ export async function handleStudentSupportAttachment(
   }
   if (!state || state.step !== 'student:support') return false;
 
-  const label = await memberLabel(admin, telegramId);
-  const adminChatIds = await getAdminChatIds(admin);
-  const body = ['🆘 Вложение в поддержку', '', `👤 ${label}`, caption ? `\n${caption}` : ''].join('\n');
-
-  await Promise.all(
-    adminChatIds.map((id) => telegramSend('sendMessage', { chat_id: id, text: body }).catch(() => undefined)),
-  );
+  await notifyAdminsOfSupportMessage(admin, telegramId, caption || '(вложение без подписи)');
   await resetClientDialogToHub(admin, telegramId);
-  await sendAdminMessage(chatId, '✅ Вложение отправлено в поддержку.');
+  await sendAdminMessage(chatId, '✅ Вложение отправлено администратору.');
   return true;
+}
+
+export async function handleStudentSupportCancel(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+): Promise<void> {
+  await resetClientDialogToHub(admin, telegramId);
+  await sendAdminMessage(chatId, 'Обращение отменено.');
 }

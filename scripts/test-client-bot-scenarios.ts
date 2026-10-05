@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, G);
     check('phase guest', state.phase === 'guest');
     const rows = rowTexts(G, state);
-    check('3 кнопки гостя', rows.length === 3 && rows[0].includes(CLIENT_LABELS.onlineCourse));
+    check('2 кнопки гостя', rows.length === 2 && rows[0].includes(CLIENT_LABELS.onlineCourse));
   }
 
   console.log('5: client_idle');
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, IDLE, { memberRole: 'student' });
     check('phase client_idle', state.phase === 'client_idle');
     const rows = rowTexts(IDLE, state);
-    check('есть Купить', rows.some((r) => r.includes(CLIENT_LABELS.buy)));
+    check('есть занятия с преподом', rows.some((r) => r.includes(CLIENT_LABELS.lessonsWithTeacher)));
   }
 
   console.log('6: active course');

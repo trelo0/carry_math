@@ -37,7 +37,7 @@ console.log('guest');
 {
   const kb = buildClientReplyKeyboard(base('guest', {}));
   const flat = kb.keyboard.flat().map((b) => b.text);
-  check('3 кнопки', flat.length === 3);
+  check('2 кнопки', flat.length === 2);
   check('курс', flat.includes(CLIENT_LABELS.onlineCourse));
 }
 

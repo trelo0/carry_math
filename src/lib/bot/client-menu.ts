@@ -2,9 +2,11 @@ import type { ClientStateSnapshot, ClientUiPhase } from './client-state';
 
 export const CLIENT_LABELS = {
   onlineCourse: '🎓 Онлайн-курс',
-  leaveRequest: '📝 Оставить заявку на занятия',
+  lessonsWithTeacher: '👨‍🏫 Занятия с преподавателем',
   contactAdmin: '💬 Связаться с администратором',
-  buy: '💳 Купить обучение',
+  /** @deprecated используйте lessonsWithTeacher */
+  buy: '👨‍🏫 Занятия с преподавателем',
+  leaveRequest: '📝 Оставить заявку на занятия',
   myLessons: '📅 Мои занятия',
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
@@ -30,10 +32,10 @@ const WELCOME: Record<ClientUiPhase, string> = {
     'Изучите форматы обучения в меню ниже и выберите, что вам подходит.',
   client_idle:
     '👋 С возвращением в District!\n\n' +
-    'Сейчас у вас нет активного обучения. Можно выбрать программу, оформить заявку на занятия или посмотреть прошлые занятия.',
+    'Сейчас у вас нет активного обучения. Выберите формат обучения или посмотрите историю занятий.',
   client_active:
     '👋 District — ваше обучение\n\n' +
-    'Выберите раздел в меню ниже: занятия, расписание, курс или покупка дополнительных программ.',
+    'Выберите раздел в меню ниже: занятия, расписание, курс или новые программы.',
 };
 
 export function buildClientWelcomeText(state: ClientStateSnapshot, testFooter = ''): string {
@@ -47,12 +49,14 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
     case 'guest':
       rows.push(
         [{ text: CLIENT_LABELS.onlineCourse }],
-        [{ text: CLIENT_LABELS.leaveRequest }],
-        [{ text: CLIENT_LABELS.contactAdmin }],
+        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
       );
       break;
     case 'client_idle':
-      rows.push([{ text: CLIENT_LABELS.buy }], [{ text: CLIENT_LABELS.leaveRequest }]);
+      rows.push(
+        [{ text: CLIENT_LABELS.onlineCourse }],
+        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
+      );
       if (state.hasLessonHistory) {
         rows.push([{ text: CLIENT_LABELS.myLessons }]);
       }
@@ -74,7 +78,10 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
       if (state.hasActiveCourse) {
         rows.push([{ text: CLIENT_LABELS.onlineCourse }]);
       }
-      rows.push([{ text: CLIENT_LABELS.buy }], [{ text: CLIENT_LABELS.contactAdmin }]);
+      rows.push(
+        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
+        [{ text: CLIENT_LABELS.contactAdmin }],
+      );
       break;
   }
 

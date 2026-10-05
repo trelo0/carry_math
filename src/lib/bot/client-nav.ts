@@ -18,6 +18,12 @@ export type ClientHubPayload = AdminPayload & {
   clientHubChatId?: number;
   clientHubMessageId?: number;
   clientScreen?: string;
+  /** Приветствие /start — не редактируем при навигации. */
+  welcomeMessageId?: number;
+  /** Стек экранов для «Назад». */
+  clientNavStack?: string[];
+  /** Карточка пошаговой заявки. */
+  leadFormMessageId?: number;
 };
 
 export const CLIENT_DIALOG_STEPS = new Set<string>([
@@ -27,12 +33,21 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   'client:lesson-hw-submit',
 ]);
 
+export type ClientHubState = {
+  chatId: number;
+  messageId: number;
+};
+
 export function hubFromState(
   state: { chat_id: number; payload: AdminPayload } | null,
 ): ClientHubState | null {
   if (!state) return null;
   const payload = state.payload as ClientHubPayload;
-  const messageId = payload.clientHubMessageId ?? payload.hubMessageId ?? null;
+  const welcomeId = payload.welcomeMessageId;
+  let messageId = payload.clientHubMessageId ?? payload.hubMessageId ?? null;
+  if (messageId != null && welcomeId != null && messageId === welcomeId) {
+    messageId = null;
+  }
   const chatId = payload.clientHubChatId ?? state.chat_id;
   if (typeof messageId === 'number' && messageId > 0 && typeof chatId === 'number') {
     return { chatId, messageId };
@@ -40,16 +55,33 @@ export function hubFromState(
   return null;
 }
 
+export async function loadClientHubPayload(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<{ chatId: number; payload: ClientHubPayload } | null> {
+  try {
+    const state = await getState(admin, telegramId);
+    if (!state) return null;
+    return {
+      chatId: state.chat_id,
+      payload: (state.payload ?? {}) as ClientHubPayload,
+    };
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    return null;
+  }
+}
+
 export function embedClientHub(payload: AdminPayload, hub: ClientHubState, screen?: string): AdminPayload {
   return {
     ...payload,
     clientHubChatId: hub.chatId,
     clientHubMessageId: hub.messageId,
+    hubMessageId: hub.messageId,
     clientScreen: screen ?? (payload as ClientHubPayload).clientScreen,
   };
 }
 
-/** Сохранить шаг диалога, не теряя ссылку на hub-сообщение. */
 export async function saveClientDialogState(
   admin: SupabaseClient,
   telegramId: number,
@@ -57,8 +89,8 @@ export async function saveClientDialogState(
   step: ConversationStep,
   payload: AdminPayload,
 ): Promise<void> {
-  const hub = await loadClientHub(admin, telegramId);
-  const merged = hub ? embedClientHub(payload, hub) : payload;
+  const loaded = await loadClientHubPayload(admin, telegramId);
+  const merged = loaded?.payload ? { ...loaded.payload, ...payload } : payload;
   try {
     await saveState(admin, telegramId, { chatId, messageId: 0 }, step, merged);
   } catch (error) {
@@ -66,11 +98,14 @@ export async function saveClientDialogState(
   }
 }
 
-/** Завершить lead/support/hw и вернуть состояние к hub. */
 export async function resetClientDialogToHub(admin: SupabaseClient, telegramId: number): Promise<void> {
+  let meta: ClientHubPayload | null = null;
+  let chatId = 0;
   let hub: ClientHubState | null = null;
   try {
     const state = await getState(admin, telegramId);
+    meta = (state?.payload ?? null) as ClientHubPayload | null;
+    chatId = state?.chat_id ?? meta?.clientHubChatId ?? 0;
     hub = hubFromState(state);
     if (state?.step === CLIENT_HUB_STEP) {
       return;
@@ -84,14 +119,24 @@ export async function resetClientDialogToHub(admin: SupabaseClient, telegramId: 
     return;
   }
   if (hub) {
-    await saveClientHub(admin, telegramId, hub, 'home');
+    await saveClientHub(admin, telegramId, hub, meta?.clientScreen ?? 'home', {
+      welcomeMessageId: meta?.welcomeMessageId,
+      clientNavStack: meta?.clientNavStack,
+      leadFormMessageId: undefined,
+    });
+  } else if (meta?.welcomeMessageId && chatId) {
+    await saveClientHub(
+      admin,
+      telegramId,
+      { chatId, messageId: 0 },
+      'home',
+      {
+        welcomeMessageId: meta.welcomeMessageId,
+        clientNavStack: meta.clientNavStack ?? ['home'],
+      },
+    );
   }
 }
-
-export type ClientHubState = {
-  chatId: number;
-  messageId: number;
-};
 
 export async function loadClientHub(admin: SupabaseClient, telegramId: number): Promise<ClientHubState | null> {
   try {
@@ -99,6 +144,10 @@ export async function loadClientHub(admin: SupabaseClient, telegramId: number): 
     const fromPayload = hubFromState(state);
     if (fromPayload) return fromPayload;
     if (!state || state.step !== CLIENT_HUB_STEP) return null;
+    const payload = state.payload as ClientHubPayload;
+    if (payload.welcomeMessageId && state.message_id === payload.welcomeMessageId) {
+      return null;
+    }
     const messageId = state.message_id;
     if (!messageId) return null;
     return { chatId: state.chat_id, messageId };
@@ -113,14 +162,23 @@ export async function saveClientHub(
   telegramId: number,
   hub: ClientHubState,
   screen: string,
+  extra?: Partial<ClientHubPayload>,
 ): Promise<void> {
+  const prev = await loadClientHubPayload(admin, telegramId);
   const payload: ClientHubPayload = {
-    hubMessageId: hub.messageId,
+    ...(prev?.payload ?? {}),
+    ...extra,
     screen,
-    clientHubChatId: hub.chatId,
-    clientHubMessageId: hub.messageId,
     clientScreen: screen,
+    clientHubChatId: hub.chatId || prev?.chatId,
   };
+  if (hub.messageId > 0) {
+    payload.hubMessageId = hub.messageId;
+    payload.clientHubMessageId = hub.messageId;
+  }
+
+  const anchor = hub.messageId > 0 ? hub : { chatId: prev?.chatId ?? hub.chatId, messageId: prev?.payload.welcomeMessageId ?? 0 };
+
   try {
     const state = await getState(admin, telegramId);
     if (state && state.step !== CLIENT_HUB_STEP && CLIENT_DIALOG_STEPS.has(state.step)) {
@@ -129,11 +187,11 @@ export async function saveClientHub(
         telegramId,
         { chatId: state.chat_id, messageId: state.message_id },
         state.step,
-        embedClientHub(state.payload, hub, screen),
+        { ...state.payload, ...payload },
       );
       return;
     }
-    await saveState(admin, telegramId, hub, CLIENT_HUB_STEP, payload);
+    await saveState(admin, telegramId, anchor, CLIENT_HUB_STEP, payload);
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
@@ -181,4 +239,51 @@ export function clientHomeButton() {
 
 export function clientBackButton() {
   return { text: '◀️ Назад', callback_data: 'cl:back' };
+}
+
+/** Новая карточка внизу чата (не трогаем приветствие). */
+export async function pushClientCard(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  screenId: string,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<number | null> {
+  const prev = await loadClientHubPayload(admin, telegramId);
+  const stack = ['home', screenId];
+  const messageId = await sendHubMessage(chatId, text, keyboard);
+  if (!messageId) return null;
+  await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {
+    welcomeMessageId: prev?.payload.welcomeMessageId,
+    clientNavStack: stack,
+  });
+  return messageId;
+}
+
+export async function editClientCard(
+  admin: SupabaseClient,
+  telegramId: number,
+  hub: ClientHubState,
+  screenId: string,
+  text: string,
+  keyboard: InlineKeyboard,
+  navStack?: string[],
+): Promise<void> {
+  await editHubMessage(hub, text, keyboard);
+  const prev = await loadClientHubPayload(admin, telegramId);
+  await saveClientHub(admin, telegramId, hub, screenId, {
+    welcomeMessageId: prev?.payload.welcomeMessageId,
+    clientNavStack: navStack ?? prev?.payload.clientNavStack,
+    leadFormMessageId: prev?.payload.leadFormMessageId,
+  });
+}
+
+export function popNavStack(stack: string[]): { target: string; nextStack: string[] } {
+  const copy = [...stack];
+  if (copy.length <= 1) {
+    return { target: 'home', nextStack: ['home'] };
+  }
+  copy.pop();
+  return { target: copy[copy.length - 1] ?? 'home', nextStack: copy };
 }

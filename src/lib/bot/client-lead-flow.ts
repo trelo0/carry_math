@@ -7,11 +7,10 @@ import {
   sendAdminMessage,
   type AdminPayload,
 } from './admin/core';
-import { CLIENT_CANCEL_HINT, isClientCancelText, isClientCancelTypo } from './client-cancel';
 import {
   clientBackButton,
   editHubMessage,
-  loadClientHub,
+  loadClientHubPayload,
   resetClientDialogToHub,
   saveClientDialogState,
   saveClientHub,
@@ -39,6 +38,7 @@ export type LeadFormPayload = AdminPayload & {
   leadStep?: LeadFormStep;
   leadSubmittedAt?: string;
   leadSubmitting?: boolean;
+  leadFormMessageId?: number;
 };
 
 const FORMAT_LABEL: Record<LeadFormat, string> = {
@@ -48,8 +48,121 @@ const FORMAT_LABEL: Record<LeadFormat, string> = {
 
 const TELEGRAM_ID_TAG = (id: number) => `telegram_id:${id}`;
 
+const STEP_ORDER: LeadFormStep[] = ['name', 'grade', 'wishes', 'contact', 'confirm'];
+
 function formatLabel(format: LeadFormat): string {
   return FORMAT_LABEL[format];
+}
+
+function previousStep(step: LeadFormStep): LeadFormStep | null {
+  const i = STEP_ORDER.indexOf(step);
+  if (i <= 0) return null;
+  return STEP_ORDER[i - 1] ?? null;
+}
+
+function stepPrompt(step: LeadFormStep): string {
+  switch (step) {
+    case 'name':
+      return 'Шаг 1 из 4 — имя ученика\n\nНапишите имя или имя и фамилию одним сообщением.';
+    case 'grade':
+      return 'Шаг 2 из 4 — класс\n\nНапример: 9, 10 или 11.';
+    case 'wishes':
+      return 'Шаг 3 из 4 — цель и пожелания (необязательно)\n\nКратко опишите цель или нажмите «Пропустить».';
+    case 'contact':
+      return 'Шаг 4 из 4 — контакт (необязательно)\n\nТелефон или другой способ связи, либо «Пропустить».';
+    default:
+      return '';
+  }
+}
+
+function leadFormKeyboard(step: LeadFormStep): { inline_keyboard: Array<Array<Record<string, string>>> } {
+  const row: Array<Record<string, string>> = [];
+  if (previousStep(step)) {
+    row.push({ text: '◀️ На шаг назад', callback_data: 'cl:lead:back' });
+  }
+  row.push({ text: '❌ Отменить', callback_data: 'cl:lead:cancel' });
+  const rows: Array<Array<Record<string, string>>> = [row];
+  if (step === 'wishes') {
+    rows.push([{ text: 'Пропустить', callback_data: 'cl:lead:skip:wishes' }]);
+  }
+  if (step === 'contact') {
+    rows.push([{ text: 'Пропустить', callback_data: 'cl:lead:skip:contact' }]);
+  }
+  return { inline_keyboard: rows };
+}
+
+function confirmSummary(payload: LeadFormPayload): string {
+  const format = payload.leadFormat!;
+  return [
+    '📝 Проверьте заявку',
+    '',
+    `Формат: ${formatLabel(format)}`,
+    `Имя ученика: ${payload.leadStudentName}`,
+    `Класс: ${payload.leadGrade}`,
+    payload.leadWishes?.trim() ? `Пожелания: ${payload.leadWishes.trim()}` : 'Пожелания: не указаны',
+    payload.leadContact?.trim()
+      ? `Контакт: ${payload.leadContact.trim()}`
+      : 'Контакт: не указан (связь через Telegram)',
+  ].join('\n');
+}
+
+async function renderLeadFormCard(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  payload: LeadFormPayload,
+  step: LeadFormStep,
+): Promise<void> {
+  const loaded = await loadClientHubPayload(admin, telegramId);
+  let messageId = payload.leadFormMessageId ?? loaded?.payload.leadFormMessageId;
+  const text =
+    step === 'confirm'
+      ? confirmSummary(payload)
+      : ['📝 Заявка на занятия', '', stepPrompt(step)].join('\n');
+  const keyboard =
+    step === 'confirm'
+      ? {
+          inline_keyboard: [
+            [{ text: '✅ Отправить заявку', callback_data: 'cl:lead:submit' }],
+            [{ text: '✏️ Изменить с начала', callback_data: 'cl:lead:edit' }],
+            [{ text: '❌ Отменить', callback_data: 'cl:lead:cancel' }],
+          ],
+        }
+      : leadFormKeyboard(step);
+
+  if (messageId) {
+    await editHubMessage({ chatId, messageId }, text, keyboard);
+  } else {
+    messageId = (await sendHubMessage(chatId, text, keyboard)) ?? undefined;
+  }
+  if (messageId) {
+    payload.leadFormMessageId = messageId;
+    await persistLeadFormState(admin, telegramId, chatId, payload, step);
+    await saveClientHub(
+      admin,
+      telegramId,
+      { chatId, messageId: loaded?.payload.clientHubMessageId ?? 0 },
+      'lead-form',
+      {
+        welcomeMessageId: loaded?.payload.welcomeMessageId,
+        clientNavStack: loaded?.payload.clientNavStack,
+        leadFormMessageId: messageId,
+      },
+    );
+  }
+}
+
+async function persistLeadFormState(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  payload: LeadFormPayload,
+  step: LeadFormStep,
+): Promise<void> {
+  await saveClientDialogState(admin, telegramId, chatId, CLIENT_LEAD_FORM_STEP, {
+    ...payload,
+    leadStep: step,
+  });
 }
 
 async function findRecentDuplicateLead(
@@ -84,119 +197,14 @@ async function findRecentDuplicateLead(
   return (data ?? []).length > 0;
 }
 
-
-async function showLeadFormatHub(
-  admin: SupabaseClient,
-  telegramId: number,
-  chatId: number,
-): Promise<void> {
-  const text =
-    '📝 Заявка на занятия\n\n' +
-    'Расскажите о ученике — администратор подберёт преподавателя, формат и расписание и свяжется с вами.\n\n' +
-    'Выберите формат:';
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📚 Индивидуальные занятия', callback_data: 'cl:lead:fmt:individual' }],
-      [{ text: '👥 Групповые занятия', callback_data: 'cl:lead:fmt:group' }],
-      [clientBackButton()],
-    ],
-  };
-
-  const hub = await loadClientHub(admin, telegramId);
-  if (hub) {
-    const ok = await editHubMessage(hub, text, keyboard);
-    if (ok) {
-      await saveClientHub(admin, telegramId, hub, 'lead-format');
-      return;
-    }
-  }
-  const messageId = await sendHubMessage(chatId, text, keyboard);
-  if (messageId) await saveClientHub(admin, telegramId, { chatId, messageId }, 'lead-format');
-}
-
 export async function beginClientLeadForm(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
-  options?: { format?: LeadFormat },
+  options: { format: LeadFormat },
 ): Promise<void> {
-  if (options?.format) {
-    const payload: LeadFormPayload = { leadFormat: options.format };
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'name');
-    const hub = await loadClientHub(admin, telegramId);
-    if (hub) await saveClientHub(admin, telegramId, hub, 'lead-form');
-    await askNextQuestion(chatId, 'name');
-    return;
-  }
-  await showLeadFormatHub(admin, telegramId, chatId);
-}
-
-function confirmSummary(payload: LeadFormPayload): string {
-  const format = payload.leadFormat!;
-  return [
-    '📝 Проверьте заявку',
-    '',
-    `Формат: ${formatLabel(format)}`,
-    `Имя ученика: ${payload.leadStudentName}`,
-    `Класс: ${payload.leadGrade}`,
-    payload.leadWishes?.trim() ? `Пожелания: ${payload.leadWishes.trim()}` : 'Пожелания: не указаны',
-    payload.leadContact?.trim()
-      ? `Контакт: ${payload.leadContact.trim()}`
-      : 'Контакт: не указан (связь через Telegram)',
-  ].join('\n');
-}
-
-async function showConfirmHub(
-  admin: SupabaseClient,
-  telegramId: number,
-  chatId: number,
-  payload: LeadFormPayload,
-): Promise<void> {
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '✅ Отправить заявку', callback_data: 'cl:lead:submit' }],
-      [{ text: '✏️ Изменить данные', callback_data: 'cl:lead:edit' }],
-      [{ text: '❌ Отменить', callback_data: 'cl:lead:cancel' }],
-      [clientBackButton()],
-    ],
-  };
-  const hub = await loadClientHub(admin, telegramId);
-  const text = confirmSummary(payload);
-  if (hub) {
-    await editHubMessage(hub, text, keyboard);
-    await saveClientHub(admin, telegramId, hub, 'lead-confirm');
-    return;
-  }
-  const messageId = await sendHubMessage(chatId, text, keyboard);
-  if (messageId) await saveClientHub(admin, telegramId, { chatId, messageId }, 'lead-confirm');
-}
-
-async function persistLeadFormState(
-  admin: SupabaseClient,
-  telegramId: number,
-  chatId: number,
-  payload: LeadFormPayload,
-  step: LeadFormStep,
-): Promise<void> {
-  await saveClientDialogState(admin, telegramId, chatId, CLIENT_LEAD_FORM_STEP, {
-    ...payload,
-    leadStep: step,
-  });
-}
-
-async function askNextQuestion(chatId: number, step: LeadFormStep): Promise<void> {
-  const prompts: Record<LeadFormStep, string> = {
-    name: 'Как зовут ученика? (имя или имя и фамилия)\n\nОтмена — напишите «Отмена».',
-    grade: 'В каком классе учится? (например: 9, 10, 11)\n\nОтмена — «Отмена».',
-    wishes:
-      'Цель занятий и пожелания (необязательно).\n' +
-      'Можно написать «Пропустить» или «Отмена».',
-    contact:
-      'Контакт для связи — телефон или другой способ (необязательно).\n' +
-      'Можно «Пропустить» или «Отмена».',
-    confirm: '',
-  };
-  if (prompts[step]) await sendAdminMessage(chatId, prompts[step]);
+  const payload: LeadFormPayload = { leadFormat: options.format };
+  await renderLeadFormCard(admin, telegramId, chatId, payload, 'name');
 }
 
 export function isClientLeadCallback(data: string): boolean {
@@ -219,8 +227,11 @@ export async function handleClientLeadCallback(
 
   if (data === 'cl:lead:cancel') {
     await resetClientDialogToHub(admin, telegramId);
-    await sendAdminMessage(chatId, 'Заявка отменена.');
-    await saveClientHub(admin, telegramId, { chatId, messageId }, 'lead-cancelled');
+    await editHubMessage(
+      { chatId, messageId },
+      'Заявка отменена. Выберите раздел в меню ниже.',
+      { inline_keyboard: [[clientBackButton()]] },
+    );
     return true;
   }
 
@@ -228,10 +239,43 @@ export async function handleClientLeadCallback(
     const format = data.slice('cl:lead:fmt:'.length) as LeadFormat;
     if (format !== 'individual' && format !== 'group') return true;
 
-    const payload: LeadFormPayload = { leadFormat: format };
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'name');
-    await saveClientHub(admin, telegramId, { chatId, messageId }, 'lead-form');
-    await askNextQuestion(chatId, 'name');
+    const payload: LeadFormPayload = { leadFormat: format, leadFormMessageId: messageId };
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'name');
+    return true;
+  }
+
+  if (data === 'cl:lead:back') {
+    let state = null;
+    try {
+      state = await getState(admin, telegramId);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      return true;
+    }
+    if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
+    const payload = state.payload as LeadFormPayload;
+    const step = payload.leadStep ?? 'name';
+    const prev = previousStep(step === 'confirm' ? 'contact' : step);
+    if (!prev) {
+      await renderLeadFormCard(admin, telegramId, chatId, payload, 'name');
+      return true;
+    }
+    await persistLeadFormState(admin, telegramId, chatId, payload, prev);
+    await renderLeadFormCard(admin, telegramId, chatId, payload, prev);
+    return true;
+  }
+
+  if (data === 'cl:lead:skip:wishes') {
+    let state = null;
+    try {
+      state = await getState(admin, telegramId);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      return true;
+    }
+    if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
+    const payload = { ...(state.payload as LeadFormPayload), leadWishes: '' };
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'contact');
     return true;
   }
 
@@ -245,8 +289,7 @@ export async function handleClientLeadCallback(
     }
     if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
     const payload = { ...(state.payload as LeadFormPayload), leadContact: '' };
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'confirm');
-    await showConfirmHub(admin, telegramId, chatId, payload);
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'confirm');
     return true;
   }
 
@@ -260,8 +303,7 @@ export async function handleClientLeadCallback(
     }
     if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
     const payload = state.payload as LeadFormPayload;
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'name');
-    await askNextQuestion(chatId, 'name');
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'name');
     return true;
   }
 
@@ -281,7 +323,7 @@ export async function handleClientLeadCallback(
     }
 
     if (!payload.leadFormat || !payload.leadStudentName || !payload.leadGrade) {
-      await sendAdminMessage(chatId, 'Заявка неполная. Начните заново через «Оставить заявку на занятия».');
+      await sendAdminMessage(chatId, 'Заявка неполная. Начните заново из раздела «Занятия с преподавателем».');
       await resetClientDialogToHub(admin, telegramId);
       return true;
     }
@@ -290,18 +332,14 @@ export async function handleClientLeadCallback(
       await resetClientDialogToHub(admin, telegramId);
       const text =
         '⏳ Похожая заявка уже отправлена недавно.\n\n' +
-        'Администратор свяжется с вами. Если нужно уточнить данные — напишите через «Связаться с администратором».';
-      const hub = await loadClientHub(admin, telegramId);
-      if (hub) await editHubMessage(hub, text, { inline_keyboard: [[clientBackButton()]] });
-      else await sendHubMessage(chatId, text, { inline_keyboard: [[clientBackButton()]] });
+        'Администратор свяжется с вами.';
+      await editHubMessage({ chatId, messageId }, text, { inline_keyboard: [[clientBackButton()]] });
       return true;
     }
 
     const contactRaw = payload.leadContact?.trim();
     const contact =
-      contactRaw && contactRaw.length > 0
-        ? contactRaw
-        : `Telegram (ID ${telegramId})`;
+      contactRaw && contactRaw.length > 0 ? contactRaw : `Telegram (ID ${telegramId})`;
 
     await persistLeadFormState(admin, telegramId, chatId, { ...payload, leadSubmitting: true }, 'confirm');
 
@@ -324,7 +362,13 @@ export async function handleClientLeadCallback(
       .maybeSingle();
     if (error) {
       if (String(error.message ?? '').includes('assigned_telegram_id')) {
-        const fallback = await admin.from('leads').insert(insertRow).select('id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status').single();
+        const fallback = await admin
+          .from('leads')
+          .insert(insertRow)
+          .select(
+            'id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status',
+          )
+          .single();
         if (fallback.error) throw fallback.error;
         await notifyAdminsOfNewLead(admin, fallback.data as LeadRow);
       } else throw error;
@@ -337,14 +381,9 @@ export async function handleClientLeadCallback(
     const successText =
       '✅ Заявка отправлена.\n\n' +
       'Администратор свяжется с вами для уточнения деталей, расписания и оплаты.';
-    const keyboard = {
-      inline_keyboard: [
-        [clientBackButton()],
-        [{ text: '💬 Связаться с администратором', callback_data: 'cl:lead:goto:support' }],
-      ],
-    };
-    await editHubMessage({ chatId, messageId }, successText, keyboard);
-    await saveClientHub(admin, telegramId, { chatId, messageId }, 'lead-done');
+    await editHubMessage({ chatId, messageId }, successText, {
+      inline_keyboard: [[clientBackButton()]],
+    });
     return true;
   }
 
@@ -375,25 +414,19 @@ export async function handleClientLeadMessage(
   const payload = { ...(state.payload as LeadFormPayload) };
   const step = payload.leadStep ?? 'name';
   const trimmed = text.trim();
-
-  if (isClientCancelText(trimmed)) {
-    await resetClientDialogToHub(admin, telegramId);
-    await sendAdminMessage(chatId, 'Заявка отменена.');
-    return true;
-  }
-  if (isClientCancelTypo(trimmed)) {
-    await sendAdminMessage(chatId, CLIENT_CANCEL_HINT);
-    return true;
-  }
+  if (!trimmed) return true;
 
   if (step === 'name') {
-    if (trimmed.length < 2) {
-      await sendAdminMessage(chatId, 'Укажите имя ученика (минимум 2 символа).');
+    if (trimmed.length < 3) {
+      await editHubMessage(
+        { chatId, messageId: payload.leadFormMessageId ?? 0 },
+        ['📝 Заявка на занятия', '', stepPrompt('name'), '', '⚠️ Имя слишком короткое — от 3 символов.'].join('\n'),
+        leadFormKeyboard('name'),
+      );
       return true;
     }
     payload.leadStudentName = trimmed;
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'grade');
-    await askNextQuestion(chatId, 'grade');
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'grade');
     return true;
   }
 
@@ -403,37 +436,20 @@ export async function handleClientLeadMessage(
       return true;
     }
     payload.leadGrade = trimmed;
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'wishes');
-    await askNextQuestion(chatId, 'wishes');
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'wishes');
     return true;
   }
 
   if (step === 'wishes') {
-    if (!/^пропустить$/i.test(trimmed)) {
-      payload.leadWishes = trimmed;
-    } else {
-      payload.leadWishes = '';
-    }
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'contact');
-    await sendAdminMessage(
-      chatId,
-      'Контакт для связи (необязательно). Отправьте номер или нажмите «Пропустить» в сообщении ниже.',
-      {
-        inline_keyboard: [[{ text: 'Пропустить', callback_data: 'cl:lead:skip:contact' }]],
-      },
-    );
+    payload.leadWishes = trimmed;
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'contact');
     return true;
   }
 
   if (step === 'contact') {
-    if (!/^пропустить$/i.test(trimmed)) {
-      const phone = normalizePhone(trimmed);
-      payload.leadContact = phone ?? trimmed;
-    } else {
-      payload.leadContact = '';
-    }
-    await persistLeadFormState(admin, telegramId, chatId, payload, 'confirm');
-    await showConfirmHub(admin, telegramId, chatId, payload);
+    const phone = normalizePhone(trimmed);
+    payload.leadContact = phone ?? trimmed;
+    await renderLeadFormCard(admin, telegramId, chatId, payload, 'confirm');
     return true;
   }
 

@@ -59,7 +59,7 @@ export async function handleClientLegacyReply(
   const state = await resolveClientState(admin, telegramId, { memberRole });
 
   if (text === STUDENT_BUY_LABEL) {
-    await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.buy, memberRole);
+    await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.lessonsWithTeacher, memberRole);
     return true;
   }
 
