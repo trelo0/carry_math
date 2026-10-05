@@ -1,8 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { usesClientBotUi } from '@/lib/bot/client-state';
 import {
   canManageTeacherCabinet,
   isBotRole,
-  isCreatorTelegramId,
   loadMemberRoles,
   memberHasRole,
   resolveEffectiveRole,
@@ -40,12 +40,22 @@ export async function loadStaffCapabilities(
   const member: MemberInfo = { role: primaryRole, viewRole };
   const effectiveRole = resolveEffectiveRole(member, telegramId);
 
-  const canTeacherBot =
-    isCreatorTelegramId(telegramId) || canManageTeacherCabinet(roles, telegramId);
+  // Маска /as guest|student или role=guest — клиентский UI, не staff (в т.ч. для создателя).
+  if (usesClientBotUi(effectiveRole)) {
+    return {
+      telegramId,
+      roles,
+      primaryRole,
+      viewRole,
+      effectiveRole,
+      canTeacherBot: false,
+      canCuratorBot: false,
+    };
+  }
+
+  const canTeacherBot = canManageTeacherCabinet(roles, telegramId);
   const canCuratorBot =
-    isCreatorTelegramId(telegramId) ||
-    memberHasRole(roles, 'curator') ||
-    memberHasRole(roles, 'admin');
+    memberHasRole(roles, 'curator') || memberHasRole(roles, 'admin');
 
   return {
     telegramId,

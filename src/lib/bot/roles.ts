@@ -70,9 +70,7 @@ export function resolveEffectiveRole(member: MemberInfo, telegramId: number): Bo
   ) {
     return member.viewRole;
   }
-  if (isAdminEnv(telegramId) && member.role === 'guest') {
-    return 'admin';
-  }
+  // Создатель с role=guest в БД — гостевой UI на /start; админка: /admin или role=admin.
   return member.role;
 }
 

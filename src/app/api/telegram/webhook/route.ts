@@ -449,7 +449,7 @@ export async function POST(request: Request) {
       } else if (usesClientBotUi(role)) {
         await sendClientStart(admin, from.id, update.message.chat.id, {
           testFooter: footer,
-          memberRole: member.role,
+          memberRole: role,
         });
       } else {
         await renderMainMenu(update.message.chat.id, footer);
