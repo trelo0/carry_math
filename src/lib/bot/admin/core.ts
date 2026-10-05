@@ -42,6 +42,7 @@ export type AdminPayload = {
   category?: string;
   page?: number;
   audience?: string;
+  audienceTitle?: string;
   broadcastText?: string;
   attachmentKind?: BroadcastAttachmentKind;
   fileId?: string;
@@ -54,6 +55,8 @@ export type AdminPayload = {
   scheduleStartsAt?: string;
   scheduleMeetUrl?: string;
   scheduleGroupId?: number;
+  rescheduleLessonId?: number;
+  scheduleNav?: string;
   groupTitle?: string;
   groupTeacherId?: number;
   groupCuratorId?: number;
@@ -79,6 +82,7 @@ export type AdminPayload = {
   hwLessonId?: number;
   hwDraftText?: string;
   hwDraftFiles?: Array<{ ref: string; kind: 'photo' | 'document'; name?: string }>;
+  adminMsgStudentId?: number;
 };
 
 export type ConversationStep =
@@ -114,13 +118,15 @@ export type ConversationStep =
   | 'edu:sched:topic'
   | 'edu:sched:datetime'
   | 'edu:sched:meet'
+  | 'edu:ls:datetime'
   | 'student:support'
   | 'student:mentor'
   | 'student:course-hw-submit'
   | 'course-apply:link-phone'
   | 'client:hub'
   | 'client:lead-form'
-  | 'client:lesson-hw-submit';
+  | 'client:lesson-hw-submit'
+  | 'admin:msg:compose';
 
 export type ConversationState = {
   telegram_id: number;
@@ -320,11 +326,9 @@ export type ReplyKeyboard = { keyboard: Array<Array<{ text: string }>>; resize_k
 export function adminReplyKeyboard(): ReplyKeyboard {
   return {
     keyboard: [
-      [{ text: '👥 Пользователи' }, { text: '📢 Рассылки' }],
-      [{ text: '📊 Статистика' }, { text: '🚨 Контроль' }],
-      [{ text: '📅 Вебинары' }, { text: '⚙️ Настройки' }],
-      [{ text: '📝 Заявки' }, { text: '💳 Оплаты' }],
-      [{ text: '📚 Учёба' }],
+      [{ text: '🏠 Главная' }, { text: '👥 Люди' }],
+      [{ text: '📚 Обучение' }, { text: '📨 Заявки' }],
+      [{ text: '💳 Финансы' }, { text: '⚙️ Прочее' }],
     ],
     resize_keyboard: true,
   };
@@ -332,25 +336,37 @@ export function adminReplyKeyboard(): ReplyKeyboard {
 
 // Нажатие Reply-кнопки приходит как обычный текст с точным названием.
 export const ADMIN_REPLY_LABELS = {
+  home: '🏠 Главная',
+  people: '👥 Люди',
+  education: '📚 Обучение',
+  leads: '📨 Заявки',
+  finance: '💳 Финансы',
+  more: '⚙️ Прочее',
+} as const;
+
+/** Старые подписи Reply Keyboard — маршрутизация в index.ts */
+export const ADMIN_LEGACY_REPLY_LABELS = {
   users: '👥 Пользователи',
   broadcasts: '📢 Рассылки',
   stats: '📊 Статистика',
   moderation: '🚨 Контроль',
   webinars: '📅 Вебинары',
   settings: '⚙️ Настройки',
-  leads: '📝 Заявки',
+  leadsOld: '📝 Заявки',
   purchases: '💳 Оплаты',
-  education: '📚 Учёба',
 } as const;
 
-export const ADMIN_REPLY_LABEL_SET = new Set<string>(Object.values(ADMIN_REPLY_LABELS));
+export const ADMIN_REPLY_LABEL_SET = new Set<string>([
+  ...Object.values(ADMIN_REPLY_LABELS),
+  ...Object.values(ADMIN_LEGACY_REPLY_LABELS),
+]);
 
 export const ADMIN_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы панели — на кнопках меню под полем ввода.';
 
 export const ADMIN_HOME_TEXT =
   '🔐 Панель администратора District\n\n' +
-  'Разделы — на кнопках меню под полем ввода. Оно всегда на месте, листать историю не нужно.';
+  '🏠 Главная — что требует внимания. Разделы — на кнопках под полем ввода.';
 
 const ADMIN_HOME_POINTER_TEXT =
   '🏠 Главное меню администратора\n\nКнопки разделов — на постоянной клавиатуре под полем ввода.';

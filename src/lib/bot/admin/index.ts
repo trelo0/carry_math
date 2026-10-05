@@ -38,12 +38,20 @@ import {
 } from './settings';
 import { renderLeadsMenu, handleLeadsAction, isLeadsAction } from './leads';
 import { renderPurchasesMenu, handlePurchasesAction, isPurchasesAction } from './purchases';
+import { handlePackagesAction, isPackagesAction } from './packages-menu';
+import { handleAdminComposeMessageStep } from './comms-ops';
 import {
   handleEducationAction,
   handleEducationTextStep,
   isEducationAction,
   renderEducationMenu,
 } from './education-ops';
+import { shouldAdminDeferTextToMaskedUi } from './admin-access';
+import { renderAdminHomeDashboard, handleHubAction, isHubAction } from './home';
+import { renderPeopleMenu } from './people-menu';
+import { renderMoreMenu } from './more-menu';
+import { renderFinanceMenu } from './finance-menu';
+import { ADMIN_LEGACY_REPLY_LABELS } from './core';
 
 // Единый сценарий админа: главное меню, пользователи, рассылки, статистика,
 // контроль переписки, управление вебинарами, шаблоны уведомлений и тестовые
@@ -56,55 +64,65 @@ import {
 // ---------------------------------------------------------------------------
 
 // Отправляет начальный экран роли admin после /start: текст + Reply Keyboard.
-export async function sendAdminStart(chatId: number, testFooter = ''): Promise<void> {
+export async function sendAdminStart(
+  chatId: number,
+  testFooter = '',
+  admin?: SupabaseClient,
+): Promise<void> {
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: ADMIN_HOME_TEXT + testFooter,
     reply_markup: adminReplyKeyboard(),
   });
+  if (admin) {
+    await renderAdminHomeDashboard(admin, sendDeliver(chatId));
+  }
 }
 
 // Разделы, открываемые кнопками Reply Keyboard. Каждый раздел — новое
 // сообщение с inline-кнопками: результат всегда ниже ввода админа.
-async function openUsersSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
-  await renderUsersMenu(admin, telegramId, sendDeliver(chatId));
+async function openHomeSection(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderAdminHomeDashboard(admin, sendDeliver(chatId));
 }
 
-async function openBroadcastsSection(chatId: number): Promise<void> {
-  await renderBroadcastMenu(sendDeliver(chatId));
-}
-
-async function openStatsSection(admin: SupabaseClient, chatId: number): Promise<void> {
-  await renderStatsOverview(admin, sendDeliver(chatId), '7d');
-}
-
-async function openModerationSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
-  await renderModerationMenu(admin, telegramId, sendDeliver(chatId));
-}
-
-async function openWebinarsSection(chatId: number): Promise<void> {
-  await sendDeliver(chatId)('📅 Управление вебинарами', managementKeyboard());
-}
-
-async function openSettingsSection(chatId: number): Promise<void> {
-  await sendDeliver(chatId)('⚙️ Настройки', {
-    inline_keyboard: [
-      [{ text: '🔔 Уведомления о вебинарах', callback_data: 'an:menu' }],
-      [{ text: '🧪 Тест уведомлений', callback_data: 'ar:menu' }],
-    ],
-  });
+async function openPeopleSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
+  await renderPeopleMenu(admin, telegramId, sendDeliver(chatId));
 }
 
 async function openLeadsSection(admin: SupabaseClient, chatId: number): Promise<void> {
   await renderLeadsMenu(admin, sendDeliver(chatId));
 }
 
-async function openPurchasesSection(admin: SupabaseClient, chatId: number): Promise<void> {
-  await renderPurchasesMenu(admin, sendDeliver(chatId));
+async function openFinanceSection(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderFinanceMenu(admin, sendDeliver(chatId));
 }
 
 async function openEducationSection(chatId: number): Promise<void> {
   await renderEducationMenu(sendDeliver(chatId));
+}
+
+async function openMoreSection(chatId: number): Promise<void> {
+  await renderMoreMenu(sendDeliver(chatId));
+}
+
+async function openLegacyBroadcasts(chatId: number): Promise<void> {
+  await renderBroadcastMenu(sendDeliver(chatId));
+}
+
+async function openLegacyStats(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderStatsOverview(admin, sendDeliver(chatId), '7d');
+}
+
+async function openLegacyModeration(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
+  await renderModerationMenu(admin, telegramId, sendDeliver(chatId));
+}
+
+async function openLegacyWebinars(chatId: number): Promise<void> {
+  await sendDeliver(chatId)('📅 Управление вебинарами', managementKeyboard());
+}
+
+async function openLegacySettings(chatId: number): Promise<void> {
+  await renderMoreMenu(sendDeliver(chatId));
 }
 
 // ---------------------------------------------------------------------------
@@ -125,8 +143,12 @@ export async function handleAdminCallback(
   const isWebinar = data.startsWith('admin:');
   const isLeads = isLeadsAction(data);
   const isPurchases = isPurchasesAction(data);
+  const isPackages = isPackagesAction(data);
   const isEducation = isEducationAction(data);
-  if (!isReminder && !isTemplate && !isWebinar && !isLeads && !isPurchases && !isEducation) return false;
+  const isHub = isHubAction(data);
+  if (!isReminder && !isTemplate && !isWebinar && !isLeads && !isPurchases && !isPackages && !isEducation && !isHub) {
+    return false;
+  }
 
   const acknowledge = async (text?: string, showAlert = false) => {
     if (callbackQueryId) {
@@ -145,10 +167,12 @@ export async function handleAdminCallback(
   await acknowledge();
 
   try {
+    if (isHub) return await handleHubAction(admin, data, message, telegramId);
     if (isReminder) return await handleReminderAction(admin, data, message, telegramId);
     if (isTemplate) return await handleTemplateAction(admin, data, message, telegramId);
-    if (isLeads) return await handleLeadsAction(admin, data, message);
+    if (isLeads) return await handleLeadsAction(admin, data, message, telegramId);
     if (isPurchases) return await handlePurchasesAction(admin, data, message, telegramId);
+    if (isPackages) return await handlePackagesAction(admin, data, message, telegramId);
     if (isEducation) return await handleEducationAction(admin, data, message, telegramId);
     if (data === 'admin:broadcasts' || data.startsWith('admin:bc:')) {
       return await handleBroadcastAction(admin, data, message, telegramId);
@@ -180,17 +204,26 @@ export async function handleAdminMessage(
   // сообщением, активный сценарий сбрасывается.
   if (ADMIN_REPLY_LABEL_SET.has(text)) {
     await clearStateIfAvailable(admin, telegramId);
-    if (text === ADMIN_REPLY_LABELS.users) await openUsersSection(admin, telegramId, chatId);
-    else if (text === ADMIN_REPLY_LABELS.broadcasts) await openBroadcastsSection(chatId);
-    else if (text === ADMIN_REPLY_LABELS.stats) await openStatsSection(admin, chatId);
-    else if (text === ADMIN_REPLY_LABELS.moderation) await openModerationSection(admin, telegramId, chatId);
-    else if (text === ADMIN_REPLY_LABELS.webinars) await openWebinarsSection(chatId);
-    else if (text === ADMIN_REPLY_LABELS.leads) await openLeadsSection(admin, chatId);
-    else if (text === ADMIN_REPLY_LABELS.purchases) await openPurchasesSection(admin, chatId);
-    else if (text === ADMIN_REPLY_LABELS.education) await openEducationSection(chatId);
-    else await openSettingsSection(chatId);
+    if (text === ADMIN_REPLY_LABELS.home) await openHomeSection(admin, chatId);
+    else if (text === ADMIN_REPLY_LABELS.people || text === ADMIN_LEGACY_REPLY_LABELS.users) {
+      await openPeopleSection(admin, telegramId, chatId);
+    } else if (text === ADMIN_REPLY_LABELS.education) await openEducationSection(chatId);
+    else if (text === ADMIN_REPLY_LABELS.leads || text === ADMIN_LEGACY_REPLY_LABELS.leadsOld) {
+      await openLeadsSection(admin, chatId);
+    } else if (text === ADMIN_REPLY_LABELS.finance || text === ADMIN_LEGACY_REPLY_LABELS.purchases) {
+      await openFinanceSection(admin, chatId);
+    } else if (text === ADMIN_REPLY_LABELS.more || text === ADMIN_LEGACY_REPLY_LABELS.settings) {
+      await openMoreSection(chatId);
+    } else if (text === ADMIN_LEGACY_REPLY_LABELS.broadcasts) await openLegacyBroadcasts(chatId);
+    else if (text === ADMIN_LEGACY_REPLY_LABELS.stats) await openLegacyStats(admin, chatId);
+    else if (text === ADMIN_LEGACY_REPLY_LABELS.moderation) {
+      await openLegacyModeration(admin, telegramId, chatId);
+    } else if (text === ADMIN_LEGACY_REPLY_LABELS.webinars) await openLegacyWebinars(chatId);
+    else await openMoreSection(chatId);
     return true;
   }
+
+  if (await shouldAdminDeferTextToMaskedUi(admin, telegramId)) return false;
 
   let state: ConversationState | null;
   try {
@@ -229,6 +262,10 @@ export async function handleAdminMessage(
 
   if (state.step.startsWith('edu:')) {
     return handleEducationTextStep(admin, telegramId, state, text);
+  }
+
+  if (await handleAdminComposeMessageStep(admin, telegramId, state, text)) {
+    return true;
   }
 
   const input = text.trim();

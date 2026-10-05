@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ACCESS_PRODUCT_LABELS, ACCESS_PRODUCTS, grantAccess, isAccessProduct, revokeAccess } from '../accesses';
 import { assignCurator, assignTeacher } from '../education/assignments';
+import { countScheduledLessonsForPackage } from '../lesson-credits';
 import { notifyStudentLessonScheduled } from '../student-notifications';
 import {
   addStudentToGroup,
@@ -32,6 +33,13 @@ import {
 } from './core';
 import { memberDisplayName } from './users';
 import { getMember } from '@/lib/bot/roles';
+import { listMentorPickerCandidates } from './staff-roster';
+import {
+  handleScheduleListAction,
+  handleScheduleTextStep,
+  isScheduleListAction,
+} from './schedule-ops';
+import { removeStudentFromGroup } from '../education/groups';
 
 const GROUPS_PER_PAGE = 5;
 
@@ -65,7 +73,7 @@ function formatDateTime(iso: string): string {
   });
 }
 
-function parseScheduleDateTime(input: string): string | null {
+export function parseScheduleDateTime(input: string): string | null {
   const trimmed = input.trim();
   const iso = new Date(trimmed);
   if (!Number.isNaN(iso.getTime()) && trimmed.includes('-')) return iso.toISOString();
@@ -101,9 +109,12 @@ function groupCard(group: Group, memberCount?: number): string {
 }
 
 export async function renderEducationMenu(deliver: Deliver): Promise<void> {
-  await deliver('📚 Учёба\n\nГруппы и назначение ind/group занятий.', {
+  await deliver('📚 Учёба\n\nГруппы, расписание, назначение занятий.', {
     inline_keyboard: [
+      [{ text: '📅 Расписание недели', callback_data: 'ae:ls:w:0:0' }],
       [{ text: '👥 Группы', callback_data: 'ae:groups:0' }],
+      [{ text: '👨‍🏫 Ученики по преподавателю', callback_data: 'ae:ls:teachers:0' }],
+      [{ text: '🎓 Курсовое обучение', callback_data: 'ae:ls:course:0' }],
       [{ text: '➕ Создать группу', callback_data: 'ae:g:new' }],
       [homeButton()],
     ],
@@ -170,6 +181,12 @@ async function renderGroupDetail(admin: SupabaseClient, message: AdminMessage, g
   const keyboard: InlineButton[][] = [
     [{ text: '➕ Добавить ученика', callback_data: `ae:g:${groupId}:add` }],
     [{ text: '👨‍🏫 Назначить препода', callback_data: `ae:g:${groupId}:teacher` }],
+    ...members.map((m) => [
+      {
+        text: `➖ ${shorten(m.full_name ?? String(m.telegram_id), 20)}`,
+        callback_data: `ae:g:${groupId}:rm:${m.telegram_id}`,
+      },
+    ]),
     [{ text: '↩️ К списку', callback_data: 'ae:groups:0' }],
     [homeButton()],
   ];
@@ -359,6 +376,10 @@ export async function handleEducationAction(
   message: AdminMessage,
   telegramId: number,
 ): Promise<boolean> {
+  if (isScheduleListAction(data)) {
+    return handleScheduleListAction(admin, data, message, telegramId);
+  }
+
   if (data === 'ae:menu') {
     await renderEducationMenu(editDeliver(message));
     return true;
@@ -385,6 +406,27 @@ export async function handleEducationAction(
   const groupTeacherMatch = data.match(/^ae:g:(\d+):teacher$/);
   if (groupTeacherMatch) {
     await startSetTeacher(admin, telegramId, message, Number(groupTeacherMatch[1]));
+    return true;
+  }
+
+  const groupRemoveMatch = data.match(/^ae:g:(\d+):rm:(\d+)$/);
+  if (groupRemoveMatch) {
+    const groupId = Number(groupRemoveMatch[1]);
+    const studentId = Number(groupRemoveMatch[2]);
+    const removed = await removeStudentFromGroup(admin, groupId, studentId);
+    await editAdminMessage(
+      message,
+      removed
+        ? `✅ Ученик ${studentId} исключён из группы #${groupId}.`
+        : `ℹ️ Активного участника ${studentId} в группе не было.`,
+      {
+        inline_keyboard: [
+          [{ text: 'Открыть группу', callback_data: `ae:g:${groupId}` }],
+          [{ text: '↩️ К списку', callback_data: 'ae:groups:0' }],
+          [homeButton()],
+        ],
+      },
+    );
     return true;
   }
 
@@ -503,22 +545,27 @@ export async function handleEducationAction(
   const mentorMenuMatch = data.match(/^ae:mentor:(\d+)$/);
   if (mentorMenuMatch) {
     const studentId = Number(mentorMenuMatch[1]);
-    const { data: mentors, error } = await admin
-      .from('bot_members')
-      .select('telegram_id, full_name, role')
-      .in('role', ['teacher', 'curator', 'mentor']);
-    if (error) throw error;
+    const teachers = await listMentorPickerCandidates(admin, 'teacher');
+    const curators = await listMentorPickerCandidates(admin, 'curator');
 
-    const keyboard: InlineButton[][] = (mentors ?? []).map((row) => {
-      const kind = row.role === 'teacher' ? 'teacher' : 'curator';
-      const label = `${kind === 'teacher' ? '👨‍🏫' : '🎓'} ${row.full_name ?? row.telegram_id}`;
-      return [
+    const keyboard: InlineButton[][] = [];
+    for (const row of teachers) {
+      keyboard.push([
         {
-          text: label,
-          callback_data: `ae:mentor:a:${studentId}:${kind}:${row.telegram_id}`,
+          text: `👨‍🏫 ${row.full_name ?? row.telegram_id}`,
+          callback_data: `ae:mentor:a:${studentId}:teacher:${row.telegram_id}`,
         },
-      ];
-    });
+      ]);
+    }
+    for (const row of curators) {
+      if (teachers.some((t) => t.telegram_id === row.telegram_id)) continue;
+      keyboard.push([
+        {
+          text: `🟡 ${row.full_name ?? row.telegram_id}`,
+          callback_data: `ae:mentor:a:${studentId}:curator:${row.telegram_id}`,
+        },
+      ]);
+    }
     if (keyboard.length === 0) {
       keyboard.push([{ text: '— Наставники не найдены —', callback_data: 'ae:menu' }]);
     }
@@ -698,6 +745,10 @@ export async function handleEducationTextStep(
     return true;
   }
 
+  if (await handleScheduleTextStep(admin, telegramId, state, text)) {
+    return true;
+  }
+
   if (state.step === 'edu:sched:meet') {
     let scheduleMeetUrl: string | undefined;
     if (input !== '-') {
@@ -740,7 +791,7 @@ export async function loadUserEducationSummary(
     admin.from('user_accesses').select('product, status').eq('telegram_id', telegramId).eq('status', 'active'),
     admin
       .from('lesson_packages')
-      .select('product, remaining_lessons, status')
+      .select('id, product, title, total_lessons, remaining_lessons, status')
       .eq('telegram_id', telegramId)
       .eq('status', 'active'),
     getStudentGroups(admin, telegramId),
@@ -759,13 +810,26 @@ export async function loadUserEducationSummary(
         )
       : ['📚 Доступы: нет активных'];
 
-  const packageLines =
-    (packages ?? []).length > 0
-      ? (packages ?? []).map((row) => {
-          const label = row.product === 'individual' ? 'Индив' : row.product === 'group' ? 'Группа' : row.product;
-          return `📦 ${label}: ${row.remaining_lessons} занятий`;
-        })
-      : ['📦 Пакеты: нет активных'];
+  const packageLines: string[] = [];
+  if ((packages ?? []).length === 0) {
+    packageLines.push('📦 Пакеты: нет активных');
+  } else {
+    for (const row of packages ?? []) {
+      const label = row.product === 'individual' ? 'Индив' : row.product === 'group' ? 'Группа' : row.product;
+      const id = (row as { id?: number }).id;
+      let sched = 0;
+      if (id) {
+        try {
+          sched = await countScheduledLessonsForPackage(admin, id);
+        } catch {
+          sched = 0;
+        }
+      }
+      packageLines.push(
+        `📦 ${label} #${id ?? '?'}: ${row.remaining_lessons}/${(row as { total_lessons?: number }).total_lessons ?? '?'} · 📅 ${sched} в расписании`,
+      );
+    }
+  }
 
   const groupLine =
     groups.length > 0

@@ -424,10 +424,10 @@ export async function POST(request: Request) {
           : '';
       const footer = testFooter + creatorHint;
       if (isAdminEnv(from.id) && update.message.text === '/admin') {
-        await sendAdminStart(update.message.chat.id, footer);
+        await sendAdminStart(update.message.chat.id, footer, admin);
       } else if (role === 'admin') {
         if (member.role === 'admin' || isAdminEnv(from.id)) {
-          await sendAdminStart(update.message.chat.id, footer);
+          await sendAdminStart(update.message.chat.id, footer, admin);
         } else {
           await telegramSend('sendMessage', {
             chat_id: update.message.chat.id,

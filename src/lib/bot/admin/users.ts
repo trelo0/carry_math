@@ -11,7 +11,17 @@ import {
   roleLabel,
   searchMembers,
   setRole,
+  addMemberExtraRole,
+  removeMemberExtraRole,
+  combineMemberRoles,
+  normalizeMemberRole,
 } from '@/lib/bot/roles';
+import {
+  EXTRA_ASSIGNABLE,
+  formatExtraRolesList,
+  getMemberWithExtras,
+  memberRolesSummary,
+} from './staff-roster';
 import {
   type UserViolationStats,
   getUserViolationStats,
@@ -38,6 +48,8 @@ import {
 } from './core';
 import { handleStatsAction } from './stats';
 import { loadUserEducationSummary } from './education-ops';
+import { logAdminAction } from './action-log';
+import { personHubNavRows } from './person-hub';
 
 // ---------------------------------------------------------------------------
 // Панель администратора: пользователи и роли
@@ -247,7 +259,53 @@ async function renderUserList(
   await editAdminMessage(message, text, { inline_keyboard: keyboard });
 }
 
+async function renderExtraRolesMenu(message: AdminMessage, member: MemberRow, extra: string[]): Promise<void> {
+  const keyboard: InlineButton[][] = [
+    [{ text: '➕ Добавить роль', callback_data: `admin:user:${member.telegram_id}:xpick:add::` }],
+  ];
+  for (const raw of extra) {
+    const r = normalizeMemberRole(raw);
+    keyboard.push([
+      {
+        text: `➖ Снять «${roleLabel(r)}»`,
+        callback_data: `admin:user:${member.telegram_id}:xrem:${r}::`,
+      },
+    ]);
+  }
+  keyboard.push([{ text: '↩️ К профилю', callback_data: `admin:user:${member.telegram_id}::` }]);
+  await editAdminMessage(
+    message,
+    `➕ Дополнительные роли\n\n${memberDisplayName(member)}\n\nСейчас: ${formatExtraRolesList(extra)}`,
+    { inline_keyboard: keyboard },
+  );
+}
+
+async function renderExtraRolePick(message: AdminMessage, member: MemberRow, extra: string[]): Promise<void> {
+  const combined = combineMemberRoles(member.role, extra);
+  const keyboard: InlineButton[][] = [];
+  for (const role of EXTRA_ASSIGNABLE) {
+    if (memberHasExtra(combined, role)) continue;
+    keyboard.push([
+      {
+        text: roleLabel(role),
+        callback_data: `admin:user:${member.telegram_id}:xadd:${role}::`,
+      },
+    ]);
+  }
+  if (keyboard.length === 0) {
+    keyboard.push([{ text: 'Все роли уже назначены', callback_data: 'noop' }]);
+  }
+  keyboard.push([{ text: '↩️ Назад', callback_data: `admin:user:${member.telegram_id}:extra::` }]);
+  await editAdminMessage(message, 'Выбери дополнительную роль:', { inline_keyboard: keyboard });
+}
+
+function memberHasExtra(combined: BotRole[], role: BotRole): boolean {
+  return combined.some((r) => normalizeMemberRole(r) === normalizeMemberRole(role));
+}
+
 async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, member: MemberRow): Promise<void> {
+  const withExtra = await getMemberWithExtras(admin, member.telegram_id);
+  const extra = withExtra?.extra_roles ?? [];
   let leads = 0;
   try {
     if (member.phone) leads = await countLeadsByPhone(admin, member.phone);
@@ -289,7 +347,7 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
     `👤 ${memberDisplayName(member)}`,
     member.phone ? `📱 Телефон: ${member.phone}` : '📱 Телефон: не указан',
     `✈️ Telegram: ${member.chat_id ? 'подключён' : 'не подключён'}`,
-    `🎭 Роль: ${roleLabel(member.role)}`,
+    `🎭 Роли: ${memberRolesSummary(member.role, extra)}`,
     ...eduSummary.accessLines,
     ...eduSummary.packageLines,
     eduSummary.groupLine,
@@ -309,16 +367,19 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
     );
   }
 
-  const keyboard: InlineButton[][] = [
-    [{ text: '📅 Назначить занятие', callback_data: `ae:sched:${member.telegram_id}` }],
-  ];
-  if (member.role === 'student') {
+  const isStudent = member.role === 'student';
+  const keyboard: InlineButton[][] = [...personHubNavRows(member.telegram_id, isStudent)];
+  keyboard.push([{ text: '📅 Назначить занятие', callback_data: `ae:sched:${member.telegram_id}` }]);
+  if (isStudent) {
     keyboard.push(
-      [{ text: '📚 Доступы', callback_data: `ae:access:${member.telegram_id}` }],
       [{ text: '👤 Назначить наставника', callback_data: `ae:mentor:${member.telegram_id}` }],
+      [{ text: '📦 Пакеты', callback_data: `apk:stu:${member.telegram_id}` }],
     );
   }
-  keyboard.push([{ text: '🎭 Изменить роль', callback_data: `admin:user:${member.telegram_id}:role::` }]);
+  keyboard.push(
+    [{ text: '🎭 Основная роль', callback_data: `admin:user:${member.telegram_id}:role::` }],
+    [{ text: '➕ Доп. роли', callback_data: `admin:user:${member.telegram_id}:extra::` }],
+  );
   if (stats) {
     keyboard.push([{ text: '📋 История нарушений', callback_data: `admin:mod:usr:${member.telegram_id}:0` }]);
   }
@@ -379,6 +440,15 @@ async function applyRoleChange(
 
   // setRole сам обновляет updated_at.
   const found = await setRole(admin, member.telegram_id, role);
+  if (found) {
+    await logAdminAction(admin, {
+      actorTelegramId: callerId,
+      action: 'user.role',
+      entityType: 'bot_member',
+      targetTelegramId: member.telegram_id,
+      detail: { role },
+    });
+  }
   const text = found
     ? `✅ Роль «${roleLabel(role)}» установлена для ${memberDisplayName(member)}.`
     : 'Пользователь не найден — возможно, запись уже удалена.';
@@ -397,7 +467,8 @@ export async function handlePanelAction(
 ): Promise<boolean> {
   if (data === 'admin:home') {
     await clearStateIfAvailable(admin, telegramId);
-    await showAdminHome(message);
+    const { renderAdminHomeDashboard } = await import('./home');
+    await renderAdminHomeDashboard(admin, editDeliver(message));
     return true;
   }
 
@@ -463,6 +534,42 @@ export async function handlePanelAction(
 
   if (action === 'role') {
     await renderRoleChoices(message, member, telegramId);
+    return true;
+  }
+
+  if (action === 'extra') {
+    const withExtra = await getMemberWithExtras(admin, targetId);
+    await renderExtraRolesMenu(message, member, withExtra?.extra_roles ?? []);
+    return true;
+  }
+
+  if (action === 'xpick' && parts[4] === 'add') {
+    const withExtra = await getMemberWithExtras(admin, targetId);
+    await renderExtraRolePick(message, member, withExtra?.extra_roles ?? []);
+    return true;
+  }
+
+  if (action === 'xadd' && isBotRole(role)) {
+    await addMemberExtraRole(admin, targetId, role);
+    await logAdminAction(admin, {
+      actorTelegramId: telegramId,
+      action: 'user.extra_add',
+      targetTelegramId: targetId,
+      detail: { role },
+    });
+    await renderUserProfile(admin, message, member);
+    return true;
+  }
+
+  if (action === 'xrem' && isBotRole(role)) {
+    await removeMemberExtraRole(admin, targetId, role);
+    await logAdminAction(admin, {
+      actorTelegramId: telegramId,
+      action: 'user.extra_remove',
+      targetTelegramId: targetId,
+      detail: { role },
+    });
+    await renderUserProfile(admin, message, member);
     return true;
   }
 

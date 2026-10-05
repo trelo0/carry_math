@@ -7,7 +7,6 @@ import {
   sendAdminMessage,
   type AdminPayload,
 } from './admin/core';
-import { getMember } from './roles';
 import {
   clientHomeButton,
   editHubMessage,
@@ -17,7 +16,12 @@ import {
   saveClientHub,
   sendHubMessage,
 } from './client-nav';
-import { isLeadStatusColumnError } from './admin/leads';
+import {
+  isLeadStatusColumnError,
+  LEAD_SELECT_COLUMNS,
+  notifyAdminsOfNewLead,
+  type LeadRow,
+} from './admin/leads';
 
 export const CLIENT_LEAD_FORM_STEP = 'client:lead-form' as const;
 
@@ -45,45 +49,6 @@ const TELEGRAM_ID_TAG = (id: number) => `telegram_id:${id}`;
 
 function formatLabel(format: LeadFormat): string {
   return FORMAT_LABEL[format];
-}
-
-async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
-  const envIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const roleFilter = envIds.length
-    ? `role.eq.admin,telegram_id.in.(${envIds.join(',')})`
-    : 'role.eq.admin';
-
-  const { data, error } = await admin
-    .from('bot_members')
-    .select('chat_id')
-    .or(roleFilter)
-    .not('chat_id', 'is', null);
-  if (error) throw error;
-
-  const ids = new Set<number>();
-  for (const row of data ?? []) {
-    const chatId = (row as { chat_id: number | null }).chat_id;
-    if (typeof chatId === 'number') ids.add(chatId);
-  }
-  return [...ids];
-}
-
-async function memberLabel(admin: SupabaseClient, telegramId: number): Promise<string> {
-  const member = await getMember(admin, telegramId);
-  const { data: link } = await admin
-    .from('telegram_links')
-    .select('phone')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  const phone = link?.phone ?? member?.phone;
-  const name = member?.full_name;
-  if (name && phone) return `${name} · ${phone}`;
-  if (name) return name;
-  if (phone) return phone;
-  return `ID ${telegramId}`;
 }
 
 async function findRecentDuplicateLead(
@@ -118,32 +83,6 @@ async function findRecentDuplicateLead(
   return (data ?? []).length > 0;
 }
 
-async function notifyAdminsOfLead(
-  admin: SupabaseClient,
-  telegramId: number,
-  lead: { name: string; contact: string; service: string; grade: string | null; comment: string | null },
-): Promise<void> {
-  const adminChatIds = await getAdminChatIds(admin);
-  if (adminChatIds.length === 0) return;
-
-  const label = await memberLabel(admin, telegramId);
-  const lines = [
-    '🔔 Новая заявка из Telegram',
-    '',
-    `👤 ${label}`,
-    `📝 ${lead.name}`,
-    `📚 ${lead.service}`,
-    `🎓 Класс: ${lead.grade ?? '—'}`,
-    `📞 ${lead.contact}`,
-  ];
-  if (lead.comment) lines.push('', lead.comment.replace(new RegExp(`${TELEGRAM_ID_TAG(telegramId)}\\s*`), '').trim());
-  lines.push('', 'Раздел «Заявки» в админ-боте.');
-
-  const text = lines.filter(Boolean).join('\n');
-  await Promise.all(
-    adminChatIds.map((chatId) => telegramSend('sendMessage', { chat_id: chatId, text }).catch(() => undefined)),
-  );
-}
 
 async function showLeadFormatHub(
   admin: SupabaseClient,
@@ -376,16 +315,20 @@ export async function handleClientLeadCallback(
       source: 'telegram_bot',
     };
 
-    const { error } = await admin.from('leads').insert(insertRow);
-    if (error) throw error;
-
-    await notifyAdminsOfLead(admin, telegramId, {
-      name: insertRow.name as string,
-      contact: insertRow.contact as string,
-      service: insertRow.service as string,
-      grade: insertRow.grade as string,
-      comment: comment,
-    });
+    const { data: inserted, error } = await admin
+      .from('leads')
+      .insert(insertRow)
+      .select(LEAD_SELECT_COLUMNS)
+      .maybeSingle();
+    if (error) {
+      if (String(error.message ?? '').includes('assigned_telegram_id')) {
+        const fallback = await admin.from('leads').insert(insertRow).select('id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status').single();
+        if (fallback.error) throw fallback.error;
+        await notifyAdminsOfNewLead(admin, fallback.data as LeadRow);
+      } else throw error;
+    } else if (inserted) {
+      await notifyAdminsOfNewLead(admin, inserted as LeadRow);
+    }
 
     await resetClientDialogToHub(admin, telegramId);
 

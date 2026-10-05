@@ -25,6 +25,14 @@ import {
   shorten,
   showAdminHome,
 } from './core';
+import {
+  getBroadcastSegmentRecipients,
+  isBroadcastSegmentId,
+  resolveGroupSegmentTitle,
+  resolveTeacherSegmentTitle,
+  segmentTitle,
+} from './broadcast-segments';
+import { listMentorPickerCandidates } from './staff-roster';
 
 // ---------------------------------------------------------------------------
 // Массовая рассылка
@@ -74,7 +82,22 @@ const BROADCAST_ERRORS_PER_PAGE = 10;
 function findBroadcastAudience(id: string | undefined): BroadcastAudience | undefined {
   if (!id) return undefined;
   if (id === BROADCAST_ADMINS_AUDIENCE.id) return BROADCAST_ADMINS_AUDIENCE;
-  return BROADCAST_AUDIENCES.find((audience) => audience.id === id);
+  const staticAud = BROADCAST_AUDIENCES.find((audience) => audience.id === id);
+  if (staticAud) return staticAud;
+  if (isBroadcastSegmentId(id)) {
+    return { id, buttonLabel: '', title: segmentTitle(id), roles: [] };
+  }
+  return undefined;
+}
+
+function audienceDisplayTitle(payload: AdminPayload): string {
+  if (payload.audienceTitle?.trim()) return payload.audienceTitle.trim();
+  const aud = findBroadcastAudience(payload.audience);
+  return aud?.title ?? '—';
+}
+
+function isKnownBroadcastAudience(id: string | undefined): boolean {
+  return Boolean(id && findBroadcastAudience(id));
 }
 
 function delay(ms: number): Promise<void> {
@@ -83,8 +106,16 @@ function delay(ms: number): Promise<void> {
 
 type BroadcastError = { name: string; reason: string };
 
+async function resolveBroadcastRecipients(admin: SupabaseClient, audienceId: string | undefined): Promise<number[]> {
+  if (!audienceId) return [];
+  if (isBroadcastSegmentId(audienceId)) return getBroadcastSegmentRecipients(admin, audienceId);
+  const aud = findBroadcastAudience(audienceId);
+  if (!aud?.roles?.length) return [];
+  return getBroadcastRecipientsByRoles(admin, aud.roles);
+}
+
 // Получатели рассылки: участники выбранных ролей с подключённым Telegram.
-async function getBroadcastRecipients(admin: SupabaseClient, roles: string[]): Promise<number[]> {
+async function getBroadcastRecipientsByRoles(admin: SupabaseClient, roles: string[]): Promise<number[]> {
   const chatIds: number[] = [];
   for (let page = 0; ; page += 1) {
     const from = page * BROADCAST_FETCH_PAGE;
@@ -240,11 +271,122 @@ async function renderBroadcastAudienceMenu(message: AdminMessage): Promise<void>
   const keyboard: InlineButton[][] = BROADCAST_AUDIENCES.map((audience) => [
     { text: audience.buttonLabel, callback_data: `admin:bc:aud:${audience.id}` },
   ]);
-  keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:broadcasts' }], [homeButton()]);
+  keyboard.push(
+    [{ text: '🎯 Сегменты (курс / группа / препод)', callback_data: 'admin:bc:seg' }],
+    [{ text: '⬅️ Назад', callback_data: 'admin:broadcasts' }],
+    [homeButton()],
+  );
   await editAdminMessage(
     message,
     '📢 Массовая рассылка\n\nВыберите аудиторию:',
     { inline_keyboard: keyboard },
+  );
+}
+
+async function renderBroadcastSegmentMenu(message: AdminMessage): Promise<void> {
+  await editAdminMessage(message, '🎯 Сегменты рассылки', {
+    inline_keyboard: [
+      [{ text: '🎓 Доступ «Курс»', callback_data: 'admin:bc:seg:access:course' }],
+      [{ text: '👤 Доступ «Индив»', callback_data: 'admin:bc:seg:access:individual' }],
+      [{ text: '👥 Доступ «Группа»', callback_data: 'admin:bc:seg:access:group' }],
+      [{ text: '📚 Конкретная группа', callback_data: 'admin:bc:seg:grp:0' }],
+      [{ text: '👨‍🏫 Ученики преподавателя', callback_data: 'admin:bc:seg:tea:0' }],
+      [{ text: '⬅️ К аудиториям', callback_data: 'admin:bc:new' }],
+      [homeButton()],
+    ],
+  });
+}
+
+async function renderBroadcastGroupSegmentPicker(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  const perPage = 6;
+  const from = page * perPage;
+  const { data, error, count } = await admin
+    .from('groups')
+    .select('id, title', { count: 'exact' })
+    .eq('status', 'active')
+    .order('id', { ascending: false })
+    .range(from, from + perPage - 1);
+  if (error) throw error;
+  const groups = data ?? [];
+  const total = count ?? groups.length;
+  const keyboard: InlineButton[][] = groups.map((g) => [
+    { text: shorten(String(g.title), 32), callback_data: `admin:bc:seg:grp:pick:${g.id}` },
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  if (pageCount > 1) {
+    keyboard.push([
+      {
+        text: page > 0 ? '⬅️' : '·',
+        callback_data: page > 0 ? `admin:bc:seg:grp:${page - 1}` : 'noop',
+      },
+      { text: `${page + 1}/${pageCount}`, callback_data: 'noop' },
+      {
+        text: page < pageCount - 1 ? '➡️' : '·',
+        callback_data: page < pageCount - 1 ? `admin:bc:seg:grp:${page + 1}` : 'noop',
+      },
+    ]);
+  }
+  keyboard.push([{ text: '⬅️ Сегменты', callback_data: 'admin:bc:seg' }], [homeButton()]);
+  await editAdminMessage(message, '📚 Выберите группу для рассылки:', { inline_keyboard: keyboard });
+}
+
+async function renderBroadcastTeacherSegmentPicker(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  const teachers = await listMentorPickerCandidates(admin, 'teacher');
+  const perPage = 6;
+  const from = page * perPage;
+  const slice = teachers.slice(from, from + perPage);
+  const pageCount = Math.max(1, Math.ceil(teachers.length / perPage));
+  const keyboard: InlineButton[][] = slice.map((t) => [
+    {
+      text: shorten(t.full_name?.trim() || `ID ${t.telegram_id}`, 32),
+      callback_data: `admin:bc:seg:tea:pick:${t.telegram_id}`,
+    },
+  ]);
+  if (pageCount > 1) {
+    keyboard.push([
+      {
+        text: page > 0 ? '⬅️' : '·',
+        callback_data: page > 0 ? `admin:bc:seg:tea:${page - 1}` : 'noop',
+      },
+      { text: `${page + 1}/${pageCount}`, callback_data: 'noop' },
+      {
+        text: page < pageCount - 1 ? '➡️' : '·',
+        callback_data: page < pageCount - 1 ? `admin:bc:seg:tea:${page + 1}` : 'noop',
+      },
+    ]);
+  }
+  keyboard.push([{ text: '⬅️ Сегменты', callback_data: 'admin:bc:seg' }], [homeButton()]);
+  await editAdminMessage(message, '👨‍🏫 Ученики какого преподавателя?', { inline_keyboard: keyboard });
+}
+
+async function startSegmentBroadcast(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+  audienceId: string,
+  audienceTitle: string,
+): Promise<void> {
+  await saveState(admin, telegramId, message, 'broadcast:text', {
+    audience: audienceId,
+    audienceTitle,
+  });
+  await editAdminMessage(
+    message,
+    `📢 Новая рассылка\n\nАудитория: ${audienceTitle}\n\nВведите текст сообщения следующим сообщением.`,
+    {
+      inline_keyboard: [
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        [homeButton()],
+      ],
+    },
   );
 }
 
@@ -289,8 +431,7 @@ async function renderBroadcastComposer(
   notice = '',
 ): Promise<void> {
   const payload = state.payload ?? {};
-  const audience = findBroadcastAudience(payload.audience);
-  if (!audience || !payload.broadcastText) {
+  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
     await clearState(admin, telegramId);
     await deliver('Черновик рассылки не найден. Начните заново.', {
       inline_keyboard: [[{ text: '📢 К рассылкам', callback_data: 'admin:broadcasts' }]],
@@ -301,7 +442,7 @@ async function renderBroadcastComposer(
   const lines = [
     ...(notice ? [notice, ''] : []),
     '📢 Новая рассылка',
-    `Аудитория: ${audience.title}`,
+    `Аудитория: ${audienceDisplayTitle(payload)}`,
     '',
     `Текст: ${shorten(payload.broadcastText.replace(/\n/g, ' '), 120)}`,
   ];
@@ -417,9 +558,8 @@ async function renderBroadcastPreview(
   state: ConversationState,
 ): Promise<void> {
   const payload = state.payload ?? {};
-  const audience = findBroadcastAudience(payload.audience);
   const message = { chatId: state.chat_id, messageId: state.message_id };
-  if (!audience || !payload.broadcastText) {
+  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
     await clearState(admin, telegramId);
     await renderBroadcastAudienceMenu(message);
     return;
@@ -443,7 +583,7 @@ async function renderBroadcastPreview(
     await telegramSend('sendMessage', body);
   }
 
-  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  const recipients = await resolveBroadcastRecipients(admin, payload.audience);
   await saveState(admin, telegramId, message, 'broadcast:preview', payload);
 
   const attachment = attachmentLine(payload);
@@ -472,19 +612,19 @@ async function renderBroadcastConfirm(
   state: ConversationState,
 ): Promise<void> {
   const payload = state.payload ?? {};
-  const audience = findBroadcastAudience(payload.audience);
   const message = { chatId: state.chat_id, messageId: state.message_id };
-  if (!audience || !payload.broadcastText) {
+  const title = audienceDisplayTitle(payload);
+  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
     await clearState(admin, telegramId);
     await renderBroadcastAudienceMenu(message);
     return;
   }
 
-  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  const recipients = await resolveBroadcastRecipients(admin, payload.audience);
   if (recipients.length === 0) {
     await editAdminMessage(
       message,
-      `⚠️ В аудитории «${audience.title}» нет пользователей с подключённым Telegram. Рассылка невозможна.`,
+      `⚠️ В аудитории «${title}» нет пользователей с подключённым Telegram. Рассылка невозможна.`,
       {
         inline_keyboard: [
           [{ text: '✏️ Изменить', callback_data: 'admin:bc:menu' }],
@@ -499,7 +639,7 @@ async function renderBroadcastConfirm(
   await editAdminMessage(
     message,
     '📢 Вы собираетесь отправить сообщение:\n\n' +
-      `Аудитория: ${audience.title}\n` +
+      `Аудитория: ${title}\n` +
       `Получателей: ${recipients.length}`,
     {
       inline_keyboard: [
@@ -563,15 +703,16 @@ async function executeBroadcast(
   state: ConversationState,
 ): Promise<void> {
   const payload = state.payload ?? {};
-  const audience = findBroadcastAudience(payload.audience);
   const message = { chatId: state.chat_id, messageId: state.message_id };
-  if (!audience || !payload.broadcastText) {
+  const audienceId = payload.audience ?? '';
+  const title = audienceDisplayTitle(payload);
+  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
     await clearState(admin, telegramId);
     await renderBroadcastAudienceMenu(message);
     return;
   }
 
-  const recipients = await getBroadcastRecipients(admin, audience.roles);
+  const recipients = await resolveBroadcastRecipients(admin, payload.audience);
   await editAdminMessage(
     message,
     `📢 Отправляем рассылку: получателей ${recipients.length}. Это может занять время — не закрывайте чат.`,
@@ -606,9 +747,9 @@ async function executeBroadcast(
   // История и ошибки сохраняются в bot_broadcasts и привязаны к id рассылки.
   const broadcastId = await saveBroadcastRecord(admin, {
     admin_telegram_id: telegramId,
-    audience_id: audience.id,
-    audience_title: audience.title,
-    to_admins: audience.id === BROADCAST_ADMINS_AUDIENCE.id,
+    audience_id: audienceId,
+    audience_title: title,
+    to_admins: audienceId === BROADCAST_ADMINS_AUDIENCE.id,
     text_preview: shorten(payload.broadcastText.replace(/\n/g, ' '), 160),
     has_attachment: Boolean(payload.fileId),
     has_button: Boolean(payload.buttonText && payload.buttonUrl),
@@ -959,6 +1100,76 @@ export async function handleBroadcastAction(
     return true;
   }
 
+  if (data === 'admin:bc:seg') {
+    await renderBroadcastSegmentMenu(message);
+    return true;
+  }
+
+  if (data.startsWith('admin:bc:seg:access:')) {
+    const product = data.split(':')[4];
+    const map: Record<string, string> = {
+      course: 'seg:access:course',
+      individual: 'seg:access:individual',
+      group: 'seg:access:group',
+    };
+    const audienceId = map[product ?? ''];
+    if (!audienceId) {
+      await renderBroadcastSegmentMenu(message);
+      return true;
+    }
+    try {
+      await startSegmentBroadcast(
+        admin,
+        telegramId,
+        message,
+        audienceId,
+        segmentTitle(audienceId),
+      );
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  const segGrpPage = data.match(/^admin:bc:seg:grp:(\d+)$/);
+  if (segGrpPage) {
+    await renderBroadcastGroupSegmentPicker(admin, message, Number(segGrpPage[1]) || 0);
+    return true;
+  }
+
+  const segGrpPick = data.match(/^admin:bc:seg:grp:pick:(\d+)$/);
+  if (segGrpPick) {
+    const groupId = Number(segGrpPick[1]);
+    try {
+      const title = await resolveGroupSegmentTitle(admin, groupId);
+      await startSegmentBroadcast(admin, telegramId, message, `seg:group:${groupId}`, title);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  const segTeaPage = data.match(/^admin:bc:seg:tea:(\d+)$/);
+  if (segTeaPage) {
+    await renderBroadcastTeacherSegmentPicker(admin, message, Number(segTeaPage[1]) || 0);
+    return true;
+  }
+
+  const segTeaPick = data.match(/^admin:bc:seg:tea:pick:(\d+)$/);
+  if (segTeaPick) {
+    const teacherId = Number(segTeaPick[1]);
+    try {
+      const title = await resolveTeacherSegmentTitle(admin, teacherId);
+      await startSegmentBroadcast(admin, telegramId, message, `seg:teacher:${teacherId}`, title);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
   // «Отправить администраторам»: тот же конструктор, аудитория фиксированная.
   if (data === 'admin:bc:admins') {
     await clearStateIfAvailable(admin, telegramId);
@@ -1018,7 +1229,6 @@ export async function handleBroadcastAction(
   }
 
   const payload = state?.payload ?? {};
-  const audience = findBroadcastAudience(payload.audience);
 
   if (data.startsWith('admin:bc:aud:')) {
     const selected = findBroadcastAudience(data.split(':')[3]);
@@ -1035,7 +1245,7 @@ export async function handleBroadcastAction(
     return true;
   }
 
-  if (!state || state.chat_id !== message.chatId || !audience || !payload.broadcastText) {
+  if (!state || state.chat_id !== message.chatId || !isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
     // Состояние потеряно (например, истекло) — возвращаем в начало сценария.
     await clearStateIfAvailable(admin, telegramId);
     await renderBroadcastMenu(editDeliver(message));
@@ -1049,7 +1259,7 @@ export async function handleBroadcastAction(
       await saveState(admin, telegramId, message, 'broadcast:text', payload);
       await editAdminMessage(
         message,
-        `📢 Новая рассылка\n\nАудитория: ${audience.title}\n\nОтправьте новый текст сообщения.`,
+        `📢 Новая рассылка\n\nАудитория: ${audienceDisplayTitle(payload)}\n\nОтправьте новый текст сообщения.`,
         {
           inline_keyboard: [
             [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],

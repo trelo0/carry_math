@@ -17,7 +17,9 @@
     "submit:homework": "npx tsx scripts/submit-homework.ts",
     "review:homework": "npx tsx scripts/review-homework.ts",
     "deduct:life": "npx tsx scripts/deduct-life.ts",
-    "grant:life": "npx tsx scripts/grant-life.ts"
+    "grant:life": "npx tsx scripts/grant-life.ts",
+    "test:admin": "npx tsx scripts/test-admin-all.ts",
+    "test:bots": "npx tsc --noEmit && npx tsx scripts/test-admin-all.ts && npx tsx scripts/test-admin-phase2.ts && npx tsx scripts/test-client-bot-scenarios.ts"
   },
   "dependencies": {
     "@sanity/client": "^7.17.0",

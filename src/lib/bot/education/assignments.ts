@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { EducationStatus } from './courses';
 import { getStudentGroups } from './groups';
+import { loadMemberRoles, memberHasRole } from '@/lib/bot/roles';
 
 // ---------------------------------------------------------------------------
 // Персональные назначения: ученик ↔ преподаватель/куратор
@@ -31,13 +32,6 @@ export type StudentMentor = {
   source: 'personal' | 'group';
 };
 
-// Допустимые роли наставника по типу назначения.
-// mentor — легаси-синоним curator: считается куратором.
-const KIND_ROLES: Record<AssignmentKind, string[]> = {
-  teacher: ['teacher'],
-  curator: ['curator', 'mentor'],
-};
-
 const ASSIGNMENT_COLUMNS =
   'id, telegram_id, mentor_telegram_id, kind, status, started_at, ended_at, created_at, updated_at';
 
@@ -48,20 +42,15 @@ async function assertMentorRole(
   mentorTelegramId: number,
   kind: AssignmentKind,
 ): Promise<void> {
-  const { data, error } = await admin
-    .from('bot_members')
-    .select('role')
-    .eq('telegram_id', mentorTelegramId)
-    .maybeSingle();
-  if (error) throw error;
-
-  const role = data?.role as string | undefined;
-  if (!role) {
+  const roles = await loadMemberRoles(admin, mentorTelegramId);
+  if (roles.length === 0 || (roles.length === 1 && roles[0] === 'guest')) {
     throw new Error(`Наставник ${mentorTelegramId} не зарегистрирован в боте.`);
   }
-  if (!KIND_ROLES[kind].includes(role)) {
+  const ok =
+    kind === 'teacher' ? memberHasRole(roles, 'teacher') : memberHasRole(roles, 'curator');
+  if (!ok) {
     throw new Error(
-      `Назначение kind='${kind}' недоступно: у пользователя ${mentorTelegramId} роль '${role}'.`,
+      `Назначение kind='${kind}' недоступно для пользователя ${mentorTelegramId} (роли: ${roles.join(', ')}).`,
     );
   }
 }

@@ -24,6 +24,7 @@ import {
   homeOnlyKeyboard,
   migrationText,
 } from './core';
+import { logAdminAction } from './action-log';
 
 export type PurchaseFilter = 'pending' | 'all';
 
@@ -296,6 +297,13 @@ export async function handlePurchasesAction(
         id,
         adminTelegramId,
       );
+      await logAdminAction(admin, {
+        actorTelegramId: adminTelegramId,
+        action: 'purchase.approve',
+        entityType: 'purchase_request',
+        entityId: id,
+        targetTelegramId: updated.telegram_id,
+      });
       const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
       await renderPurchaseDetail(
         admin,
@@ -316,6 +324,13 @@ export async function handlePurchasesAction(
         return true;
       }
       const { note, request: updated } = await rejectPurchaseRequest(admin, id, adminTelegramId);
+      await logAdminAction(admin, {
+        actorTelegramId: adminTelegramId,
+        action: 'purchase.reject',
+        entityType: 'purchase_request',
+        entityId: id,
+        targetTelegramId: updated.telegram_id,
+      });
       const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
       await renderPurchaseDetail(admin, message, updated, filter, Math.max(0, Number(pageRaw) || 0), [note]);
       return true;
