@@ -58,6 +58,7 @@ import {
 import { shouldAdminDeferTextToMaskedUi } from './admin-access';
 import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
 import { usesClientBotUi } from '@/lib/bot/client-state';
+import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { isBotRole, resolveEffectiveRole, type MemberInfo } from '@/lib/bot/roles';
 import { renderAdminHomeDashboard, handleHubAction, isHubAction } from './home';
 import { renderPeopleMenu } from './people-menu';
@@ -235,6 +236,25 @@ export async function handleAdminMessage(
   // Кнопки Reply Keyboard приходят точным текстом: раздел открывается новым
   // сообщением, активный сценарий сбрасывается.
   if (ADMIN_REPLY_LABEL_SET.has(text)) {
+    if (isClientReplyLabel(text)) {
+      if (await shouldAdminDeferTextToMaskedUi(admin, telegramId)) return false;
+      const { data: memberRow } = await admin
+        .from('bot_members')
+        .select('role, view_role')
+        .eq('telegram_id', telegramId)
+        .maybeSingle();
+      const primary =
+        memberRow?.role && isBotRole(String(memberRow.role))
+          ? (memberRow.role as MemberInfo['role'])
+          : 'guest';
+      const viewRole =
+        memberRow?.view_role && isBotRole(String(memberRow.view_role))
+          ? (memberRow.view_role as MemberInfo['role'])
+          : null;
+      const effective = resolveEffectiveRole({ role: primary, viewRole }, telegramId);
+      if (usesClientBotUi(effective)) return false;
+    }
+
     await clearStateIfAvailable(admin, telegramId);
     if (text === ADMIN_REPLY_LABELS.home) await openHomeSection(admin, chatId, telegramId);
     else if (text === ADMIN_REPLY_LABELS.people || text === ADMIN_LEGACY_REPLY_LABELS.users) {

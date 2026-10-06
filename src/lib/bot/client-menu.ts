@@ -13,7 +13,7 @@ export const CLIENT_LABELS = {
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
   purchaseHistory: '🧾 История',
-  myApplications: '📨 Заявки',
+  myApplications: '📨 Мои заявки',
 } as const;
 
 export type ClientReplyLabel = (typeof CLIENT_LABELS)[keyof typeof CLIENT_LABELS];

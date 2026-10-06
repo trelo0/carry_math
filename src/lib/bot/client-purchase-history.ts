@@ -5,7 +5,11 @@ import {
   type PurchaseRequestRow,
   type PurchaseRequestStatus,
 } from './purchase-requests';
-import { clientHomeButton, loadClientHub, saveClientHub, sendHubMessage, editHubMessage } from './client-nav';
+import {
+  clientHomeButton,
+  deliverClientHubScreen,
+  type ClientHubDeliverOptions,
+} from './client-nav';
 
 function statusLabel(status: PurchaseRequestStatus): string {
   switch (status) {
@@ -35,6 +39,7 @@ export async function showClientPurchaseHistory(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   let rows: PurchaseRequestRow[] = [];
   try {
@@ -49,16 +54,7 @@ export async function showClientPurchaseHistory(
     const text =
       '🧾 История\n\n' +
       'Заявок на оплату пока нет. Когда оформите покупку на сайте или через бота, она появится здесь.';
-    const hub = await loadClientHub(admin, telegramId);
-    if (hub) {
-      const ok = await editHubMessage(hub, text, keyboard);
-      if (ok) {
-        await saveClientHub(admin, telegramId, hub, 'purchase-history-empty');
-        return;
-      }
-    }
-    const messageId = await sendHubMessage(chatId, text, keyboard);
-    if (messageId) await saveClientHub(admin, telegramId, { chatId, messageId }, 'purchase-history-empty');
+    await deliverClientHubScreen(admin, telegramId, chatId, 'purchase-history-empty', text, keyboard, deliver);
     return;
   }
 
@@ -72,15 +68,13 @@ export async function showClientPurchaseHistory(
     );
   }
 
-  const text = lines.join('\n').trim();
-  const hub = await loadClientHub(admin, telegramId);
-  if (hub) {
-    const ok = await editHubMessage(hub, text, keyboard);
-    if (ok) {
-      await saveClientHub(admin, telegramId, hub, 'purchase-history');
-      return;
-    }
-  }
-  const messageId = await sendHubMessage(chatId, text, keyboard);
-  if (messageId) await saveClientHub(admin, telegramId, { chatId, messageId }, 'purchase-history');
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'purchase-history',
+    lines.join('\n').trim(),
+    keyboard,
+    deliver,
+  );
 }

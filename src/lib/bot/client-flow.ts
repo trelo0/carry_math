@@ -307,19 +307,19 @@ export async function handleClientMessage(
       await showBuyEducationHub(admin, state, { kind: 'push', chatId });
       return true;
     case CLIENT_LABELS.myApplications:
-      await showClientApplicationsHub(admin, telegramId, chatId);
+      await showClientApplicationsHub(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.myLessons:
-      await showClientLessonsMenu(admin, telegramId, chatId, state);
+      await showClientLessonsMenu(admin, telegramId, chatId, state, { forcePush: true });
       return true;
     case CLIENT_LABELS.schedule:
-      await showClientScheduleMenu(admin, telegramId, chatId);
+      await showClientScheduleMenu(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.myPackage:
-      await showClientPackageMenu(admin, telegramId, chatId);
+      await showClientPackageMenu(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.purchaseHistory:
-      await showClientPurchaseHistory(admin, telegramId, chatId);
+      await showClientPurchaseHistory(admin, telegramId, chatId, { forcePush: true });
       return true;
     default:
       return false;
@@ -354,7 +354,7 @@ export async function handleClientCallback(
   }
 
   if (isClientMyLeadsCallback(data)) {
-    return handleClientMyLeadsCallback(admin, data, chatId, telegramId);
+    return handleClientMyLeadsCallback(admin, data, chatId, messageId, telegramId);
   }
 
   if (data === 'cl:buy:hub') {

@@ -2,7 +2,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { resolveLessonFileDownloadUrl } from '@/lib/lesson-file-download';
 import { formatLessonDateTime } from '@/lib/teacher/format';
-import { clientHomeButton, editHubMessage, loadClientHub, saveClientHub, sendHubMessage } from './client-nav';
+import {
+  clientHomeButton,
+  deliverClientHubScreen,
+  editHubMessage,
+  loadClientHub,
+  saveClientHub,
+  sendHubMessage,
+  type ClientHubDeliverOptions,
+} from './client-nav';
 import { resolveClientState, type ClientStateSnapshot } from './client-state';
 import {
   fetchClientLessonDetail,
@@ -59,17 +67,14 @@ async function renderHub(
   screenId: string,
   text: string,
   keyboard: { inline_keyboard: Array<Array<Record<string, string>>> },
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const hub = messageId ? { chatId, messageId } : await loadClientHub(admin, telegramId);
-  if (hub) {
-    const ok = await editHubMessage(hub, text, keyboard);
-    if (ok) {
-      await saveClientHub(admin, telegramId, hub, screenId);
-      return;
-    }
-  }
-  const newId = await sendHubMessage(chatId, text, keyboard);
-  if (newId) await saveClientHub(admin, telegramId, { chatId, messageId: newId }, screenId);
+  const editAt = messageId ? { chatId, messageId } : deliver?.editAt;
+  await deliverClientHubScreen(admin, telegramId, chatId, screenId, text, keyboard, {
+    ...deliver,
+    editAt,
+    forcePush: deliver?.forcePush ?? false,
+  });
 }
 
 function lessonCardText(lesson: ClientLessonDetail, upcoming: boolean): string {
@@ -179,6 +184,7 @@ export async function showClientLessonsMenu(
   telegramId: number,
   chatId: number,
   stateHint?: ClientStateSnapshot,
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const state = stateHint ?? (await resolveClientState(admin, telegramId));
   const [next, future, past] = await Promise.all([
@@ -203,6 +209,7 @@ export async function showClientLessonsMenu(
       {
         inline_keyboard: [[{ text: '🎓 Купить обучение', callback_data: 'cl:buy:hub' }], [clientHomeButton()]],
       },
+      deliver,
     );
     return;
   }
@@ -231,6 +238,7 @@ export async function showClientLessonsMenu(
     'lessons-menu',
     text + subtitle,
     { inline_keyboard: rows },
+    deliver,
   );
 }
 
@@ -238,6 +246,7 @@ export async function showClientScheduleMenu(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const lessons = await fetchFutureClientLessons(admin, telegramId, 25);
   if (lessons.length === 0) {
@@ -249,6 +258,7 @@ export async function showClientScheduleMenu(
       'schedule-empty',
       '🗓 Расписание\n\nБлижайших занятий пока нет.',
       { inline_keyboard: [[clientHomeButton()]] },
+      deliver,
     );
     return;
   }
@@ -284,13 +294,14 @@ export async function showClientScheduleMenu(
   keyboardRows.push([clientHomeButton()]);
   await renderHub(admin, telegramId, chatId, undefined, 'schedule-list', lines.join('\n').trim(), {
     inline_keyboard: keyboardRows,
-  });
+  }, deliver);
 }
 
 export async function showClientPackageMenu(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const packages = await fetchClientPackages(admin, telegramId);
   if (packages.length === 0) {
@@ -302,6 +313,7 @@ export async function showClientPackageMenu(
       'package-empty',
       '📦 Мой пакет\n\nАктивных пакетов занятий не найдено.',
       { inline_keyboard: [[clientHomeButton()]] },
+      deliver,
     );
     return;
   }
@@ -328,7 +340,7 @@ export async function showClientPackageMenu(
   const text = ['📦 Мой пакет занятий', '', ...blocks].join('\n\n');
   await renderHub(admin, telegramId, chatId, undefined, 'package-list', text, {
     inline_keyboard: [[clientHomeButton()]],
-  });
+  }, deliver);
 }
 
 async function showLessonById(

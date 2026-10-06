@@ -220,6 +220,51 @@ export async function editHubMessage(
   return false;
 }
 
+export type ClientHubDeliverOptions = {
+  /** Новое сообщение внизу чата (Reply Keyboard), не edit старой карточки. */
+  forcePush?: boolean;
+  /** Inline «назад» — редактировать сообщение с кнопкой. */
+  editAt?: ClientHubState;
+};
+
+export async function deliverClientHubScreen(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  screenId: string,
+  text: string,
+  replyMarkup: InlineKeyboard,
+  options?: ClientHubDeliverOptions,
+): Promise<void> {
+  if (!options?.forcePush && options?.editAt) {
+    const ok = await editHubMessage(options.editAt, text, replyMarkup);
+    if (ok) {
+      await saveClientHub(admin, telegramId, options.editAt, screenId);
+      return;
+    }
+  }
+
+  if (!options?.forcePush) {
+    const hub = await loadClientHub(admin, telegramId);
+    if (hub) {
+      const ok = await editHubMessage(hub, text, replyMarkup);
+      if (ok) {
+        await saveClientHub(admin, telegramId, hub, screenId);
+        return;
+      }
+    }
+  }
+
+  const prev = await loadClientHubPayload(admin, telegramId);
+  const stack = [...(prev?.payload.clientNavStack ?? ['home']), screenId];
+  const messageId = await sendHubMessage(chatId, text, replyMarkup);
+  if (!messageId) return;
+  await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {
+    welcomeMessageId: prev?.payload.welcomeMessageId,
+    clientNavStack: stack,
+  });
+}
+
 export async function sendHubMessage(
   chatId: number,
   text: string,

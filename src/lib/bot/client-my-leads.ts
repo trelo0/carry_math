@@ -4,10 +4,9 @@ import type { LeadRow } from './admin/leads';
 import { listClientInquiryLeads, type InquiryKind } from './inquiry-leads';
 import {
   clientBackButton,
-  loadClientHub,
-  saveClientHub,
+  deliverClientHubScreen,
+  type ClientHubDeliverOptions,
   sendHubMessage,
-  editHubMessage,
 } from './client-nav';
 import { beginStudentSupportThreadFromLead } from './studentSupportFlow';
 import { shorten } from './admin/core';
@@ -39,6 +38,7 @@ export async function showClientApplicationsHub(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const apps = await listClientInquiryLeads(admin, telegramId, ['application']);
   const questions = await listClientInquiryLeads(admin, telegramId, ['student_question', 'guest_question']);
@@ -69,17 +69,15 @@ export async function showClientApplicationsHub(
 
   keyboard.push([clientBackButton()]);
 
-  const hub = await loadClientHub(admin, telegramId);
-  const payload = { inline_keyboard: keyboard };
-  if (hub) {
-    const ok = await editHubMessage(hub, lines.join('\n').trim(), payload);
-    if (ok) {
-      await saveClientHub(admin, telegramId, hub, 'my-leads');
-      return;
-    }
-  }
-  const messageId = await sendHubMessage(chatId, lines.join('\n').trim(), payload);
-  if (messageId) await saveClientHub(admin, telegramId, { chatId, messageId }, 'my-leads');
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'my-leads',
+    lines.join('\n').trim(),
+    { inline_keyboard: keyboard },
+    deliver,
+  );
 }
 
 export async function showClientLeadThread(
@@ -130,7 +128,15 @@ export async function showClientLeadThread(
   }
   keyboard.push([clientBackButton()]);
 
-  await sendHubMessage(chatId, lines.join('\n'), { inline_keyboard: keyboard });
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    `my-lead-${leadId}`,
+    lines.join('\n'),
+    { inline_keyboard: keyboard },
+    { forcePush: true },
+  );
 }
 
 export function isClientMyLeadsCallback(data: string): boolean {
@@ -141,10 +147,13 @@ export async function handleClientMyLeadsCallback(
   admin: SupabaseClient,
   data: string,
   chatId: number,
+  messageId: number,
   telegramId: number,
 ): Promise<boolean> {
   if (data === 'cl:my:menu') {
-    await showClientApplicationsHub(admin, telegramId, chatId);
+    await showClientApplicationsHub(admin, telegramId, chatId, {
+      editAt: { chatId, messageId },
+    });
     return true;
   }
   const app = data.match(/^cl:my:app:([^:]+)$/);
