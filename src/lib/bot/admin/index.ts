@@ -36,7 +36,16 @@ import {
   renderTemplateDetail,
   renderTemplateMigrationMessage,
 } from './settings';
-import { renderLeadsMenu, handleLeadsAction, isLeadsAction } from './leads';
+import {
+  renderLeadsMenu,
+  handleLeadsAction,
+  isLeadsAction,
+  handleAdminLeadReplyStep,
+  renderLeadsSearchResults,
+} from './leads';
+import { handleLeadTrialTextStep } from './lead-trial-flow';
+import { handleLeadFollowupTextStep } from './lead-followups';
+import { handleAdminLeadReplyMedia } from './lead-reply-media';
 import { renderPurchasesMenu, handlePurchasesAction, isPurchasesAction } from './purchases';
 import { handlePackagesAction, isPackagesAction } from './packages-menu';
 import { handleAdminComposeMessageStep } from './comms-ops';
@@ -53,7 +62,9 @@ import { isBotRole, resolveEffectiveRole, type MemberInfo } from '@/lib/bot/role
 import { renderAdminHomeDashboard, handleHubAction, isHubAction } from './home';
 import { renderPeopleMenu } from './people-menu';
 import { renderMoreMenu } from './more-menu';
+import { renderAdminWebPanel } from './admin-panel';
 import { renderFinanceMenu } from './finance-menu';
+import { handleFinanceAction, isFinanceAction } from './finance-ops';
 import { ADMIN_LEGACY_REPLY_LABELS } from './core';
 
 // Единый сценарий админа: главное меню, пользователи, рассылки, статистика,
@@ -71,9 +82,10 @@ export async function sendAdminStart(
   chatId: number,
   testFooter = '',
   admin?: SupabaseClient,
+  telegramId?: number,
 ): Promise<void> {
-  if (admin) {
-    await renderAdminHomeDashboard(admin, sendDeliver(chatId), testFooter);
+  if (admin && telegramId) {
+    await renderAdminHomeDashboard(admin, sendDeliver(chatId), telegramId, testFooter);
     await telegramSend('sendMessage', {
       chat_id: chatId,
       text: '⬇️',
@@ -91,8 +103,8 @@ export async function sendAdminStart(
 
 // Разделы, открываемые кнопками Reply Keyboard. Каждый раздел — новое
 // сообщение с inline-кнопками: результат всегда ниже ввода админа.
-async function openHomeSection(admin: SupabaseClient, chatId: number): Promise<void> {
-  await renderAdminHomeDashboard(admin, sendDeliver(chatId));
+async function openHomeSection(admin: SupabaseClient, chatId: number, telegramId: number): Promise<void> {
+  await renderAdminHomeDashboard(admin, sendDeliver(chatId), telegramId);
 }
 
 async function openPeopleSection(admin: SupabaseClient, telegramId: number, chatId: number): Promise<void> {
@@ -115,8 +127,16 @@ async function openMoreSection(chatId: number): Promise<void> {
   await renderMoreMenu(sendDeliver(chatId));
 }
 
-async function openLegacyBroadcasts(chatId: number): Promise<void> {
-  await renderBroadcastMenu(sendDeliver(chatId));
+async function openAdminPanelSection(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+): Promise<void> {
+  await renderAdminWebPanel(admin, telegramId, sendDeliver(chatId));
+}
+
+async function openLegacyBroadcasts(admin: SupabaseClient, chatId: number): Promise<void> {
+  await renderBroadcastMenu(admin, sendDeliver(chatId));
 }
 
 async function openLegacyStats(admin: SupabaseClient, chatId: number): Promise<void> {
@@ -154,9 +174,10 @@ export async function handleAdminCallback(
   const isLeads = isLeadsAction(data);
   const isPurchases = isPurchasesAction(data);
   const isPackages = isPackagesAction(data);
+  const isFinance = isFinanceAction(data);
   const isEducation = isEducationAction(data);
   const isHub = isHubAction(data);
-  if (!isReminder && !isTemplate && !isWebinar && !isLeads && !isPurchases && !isPackages && !isEducation && !isHub) {
+  if (!isReminder && !isTemplate && !isWebinar && !isLeads && !isFinance && !isPurchases && !isPackages && !isEducation && !isHub) {
     return false;
   }
 
@@ -181,6 +202,7 @@ export async function handleAdminCallback(
     if (isReminder) return await handleReminderAction(admin, data, message, telegramId);
     if (isTemplate) return await handleTemplateAction(admin, data, message, telegramId);
     if (isLeads) return await handleLeadsAction(admin, data, message, telegramId);
+    if (isFinance) return await handleFinanceAction(admin, data, message, telegramId);
     if (isPurchases) return await handlePurchasesAction(admin, data, message, telegramId);
     if (isPackages) return await handlePackagesAction(admin, data, message, telegramId);
     if (isEducation) return await handleEducationAction(admin, data, message, telegramId);
@@ -214,7 +236,7 @@ export async function handleAdminMessage(
   // сообщением, активный сценарий сбрасывается.
   if (ADMIN_REPLY_LABEL_SET.has(text)) {
     await clearStateIfAvailable(admin, telegramId);
-    if (text === ADMIN_REPLY_LABELS.home) await openHomeSection(admin, chatId);
+    if (text === ADMIN_REPLY_LABELS.home) await openHomeSection(admin, chatId, telegramId);
     else if (text === ADMIN_REPLY_LABELS.people || text === ADMIN_LEGACY_REPLY_LABELS.users) {
       await openPeopleSection(admin, telegramId, chatId);
     } else if (text === ADMIN_REPLY_LABELS.education) await openEducationSection(chatId);
@@ -224,7 +246,9 @@ export async function handleAdminMessage(
       await openFinanceSection(admin, chatId);
     } else if (text === ADMIN_REPLY_LABELS.more || text === ADMIN_LEGACY_REPLY_LABELS.settings) {
       await openMoreSection(chatId);
-    } else if (text === ADMIN_LEGACY_REPLY_LABELS.broadcasts) await openLegacyBroadcasts(chatId);
+    } else if (text === ADMIN_REPLY_LABELS.panel) {
+      await openAdminPanelSection(admin, telegramId, chatId);
+    } else if (text === ADMIN_LEGACY_REPLY_LABELS.broadcasts) await openLegacyBroadcasts(admin, chatId);
     else if (text === ADMIN_LEGACY_REPLY_LABELS.stats) await openLegacyStats(admin, chatId);
     else if (text === ADMIN_LEGACY_REPLY_LABELS.moderation) {
       await openLegacyModeration(admin, telegramId, chatId);
@@ -271,14 +295,36 @@ export async function handleAdminMessage(
     return true;
   }
 
+  if (state.step === 'admin:leads:search') {
+    await renderLeadsSearchResults(admin, state, text);
+    return true;
+  }
+
   // Поиск пользователя для «Нарушения пользователей»: тот же принцип.
   if (state.step === 'moderation:search') {
     await renderModerationSearchResults(admin, state, text);
     return true;
   }
 
+  if (state.step === 'audit:search') {
+    const { renderAuditSearchResults } = await import('./audit-menu');
+    await renderAuditSearchResults(admin, state, text);
+    return true;
+  }
+
+  if (state.step === 'admin:hw:search' || state.step === 'admin:hw:revision') {
+    const { handleAdminHomeworkTextStep } = await import('./homework-review');
+    return handleAdminHomeworkTextStep(admin, telegramId, state, text);
+  }
+
   // Шаги конструктора рассылки, ожидающие текст.
-  if (state.step === 'broadcast:text' || state.step === 'broadcast:button-text' || state.step === 'broadcast:button-url') {
+  if (
+    state.step === 'broadcast:text' ||
+    state.step === 'broadcast:button-text' ||
+    state.step === 'broadcast:button-url' ||
+    state.step === 'broadcast:schedule:date' ||
+    state.step === 'broadcast:schedule:time'
+  ) {
     return handleBroadcastTextStep(admin, telegramId, state, text);
   }
 
@@ -291,6 +337,18 @@ export async function handleAdminMessage(
   }
 
   if (await handleAdminComposeMessageStep(admin, telegramId, state, text)) {
+    return true;
+  }
+
+  if (await handleAdminLeadReplyStep(admin, telegramId, state, text)) {
+    return true;
+  }
+
+  if (await handleLeadTrialTextStep(admin, telegramId, state, text)) {
+    return true;
+  }
+
+  if (await handleLeadFollowupTextStep(admin, telegramId, state, text)) {
     return true;
   }
 
@@ -317,6 +375,7 @@ export async function handleAdminDocument(
   telegramId: number,
   chatId: number,
   document: IncomingDocument,
+  caption?: string,
 ): Promise<boolean> {
   if (!(await isAdmin(admin, telegramId))) return false;
 
@@ -332,6 +391,10 @@ export async function handleAdminDocument(
   // Вложение рассылки: файл или фото, отправленные на шаге конструктора.
   if (state.step.startsWith('broadcast:')) {
     return handleBroadcastAttachment(admin, telegramId, state, document);
+  }
+
+  if (await handleAdminLeadReplyMedia(admin, telegramId, state, document, caption)) {
+    return true;
   }
 
   if (state.step !== 'notification:file') return false;

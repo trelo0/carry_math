@@ -1,24 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
-import { getMember } from '@/lib/bot/roles';
 import {
   type AdminMessage,
   type Deliver,
   type InlineButton,
-  ADMIN_HOME_TEXT,
   editAdminMessage,
   editDeliver,
   homeButton,
   saveState,
   sendAdminMessage,
-  shorten,
 } from './core';
-import {
-  fetchAdminHubMetrics,
-  fetchTodayLessonsPreview,
-  type AdminHubMetrics,
-  type TodayLessonRow,
-} from './hub-metrics';
+import { fetchAdminHubMetrics } from './hub-metrics';
 import { renderMoreMenu } from './more-menu';
 import { renderBotCopyMenu } from './bot-copy-menu';
 import { renderPeopleMenu } from './people-menu';
@@ -27,7 +19,12 @@ import { renderPurchasesMenu } from './purchases';
 import { renderPackagesMenu } from './packages-menu';
 import { renderEducationMenu } from './education-ops';
 import { renderModerationMenu } from './moderation';
-import { renderStaffList, renderStaffProfile } from './staff-catalog';
+import {
+  parseStaffListCallback,
+  parseStaffProfileCallback,
+  renderStaffList,
+  renderStaffProfile,
+} from './staff-catalog';
 import { getMemberWithExtras } from './staff-roster';
 import {
   renderStudentsHub,
@@ -37,144 +34,33 @@ import {
 } from './student-catalog';
 import { handleCommsHubAction, isCommsHubAction } from './comms-ops';
 import { buildAttentionItems } from './home-attention';
+import { buildAdminHomeDashboard } from './home-dashboard';
 import { handleAuditHubAction, isAuditHubAction } from './audit-menu';
+import { handleProblemsAction, isProblemsAction } from './problems-menu';
 import { renderOperationalReport } from './reports-ops';
-import { adminActionLabel, listAdminActionLog, type AdminActionLogRow } from './action-log';
 import { handleScheduleListAction } from './schedule-ops';
-import { memberDisplayName } from './users';
+import { renderProblemsControlHub } from './more-problems-control';
+import {
+  parseSchoolReportCallback,
+  parseSchoolReportSectionCallback,
+  renderSchoolReportSection,
+  renderSchoolReports,
+} from './school-reports';
 
 export function isHubAction(data: string): boolean {
   return data.startsWith('ah:');
 }
 
-function formatEventFeedLine(row: AdminActionLogRow): string {
-  const time = new Date(row.created_at).toLocaleString('ru-RU', {
-    timeZone: 'Europe/Moscow',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  const label = adminActionLabel(row.action);
-  const tail = row.entity_id ? ` #${row.entity_id}` : '';
-  return `${time} — ${label}${tail}`;
-}
-
-async function formatTodayLessonLine(admin: SupabaseClient, row: TodayLessonRow): Promise<string> {
-  const time = new Date(row.starts_at).toLocaleString('ru-RU', {
-    timeZone: 'Europe/Moscow',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  const member = await getMember(admin, row.telegram_id);
-  const name = member ? memberDisplayName(member) : `#${row.telegram_id}`;
-  const kind =
-    row.kind === 'trial'
-      ? 'пробное'
-      : row.kind === 'group'
-        ? 'группа'
-        : row.kind === 'individual'
-          ? 'индивидуальное'
-          : row.topic || row.kind;
-  const topic = row.topic && row.kind !== 'trial' ? ` «${shorten(row.topic, 24)}»` : '';
-  return `• ${time} — ${kind}${topic} → ${shorten(name, 28)}`;
-}
-
-export async function buildAdminHomeDashboardText(
-  admin: SupabaseClient,
-  metrics: AdminHubMetrics,
-  testFooter = '',
-): Promise<string> {
-  const attentionItems = buildAttentionItems(metrics);
-  const { rows: logRows } = await listAdminActionLog(admin, 0, 6);
-  const { dateLabel, rows: todayRows } = await fetchTodayLessonsPreview(admin, 5);
-  const todayLines = await Promise.all(todayRows.map((r) => formatTodayLessonLine(admin, r)));
-
-  const attentionLines =
-    attentionItems.length === 0
-      ? ['Сейчас нет срочных задач по счётчикам.']
-      : attentionItems.map((item) => `• ${item.text}`);
-
-  const eventLines =
-    logRows.length > 0
-      ? logRows.map((r) => formatEventFeedLine(r))
-      : ['Пока нет записей в журнале действий.'];
-
-  const todayBlock =
-    todayLines.length > 0
-      ? todayLines
-      : metrics.lessonsToday > 0
-        ? ['Занятия есть — открой расписание.']
-        : ['На сегодня запланированных занятий нет.'];
-
-  return [
-    ADMIN_HOME_TEXT.trim() + testFooter,
-    '',
-    '⚡ Требует внимания',
-    '',
-    ...attentionLines,
-    '',
-    '🔔 Последние события',
-    '',
-    ...eventLines,
-    '',
-    '📅 Сегодня',
-    '',
-    `Сегодня, ${dateLabel}`,
-    '',
-    ...todayBlock,
-    '',
-    '📊 Состояние школы',
-    '',
-    'Ученики',
-    `• ${metrics.studentsActive} активных`,
-    `• ${metrics.studentsPaused} на паузе`,
-    `• ${metrics.studentsNew} новых`,
-    '',
-    'Заявки',
-    `• ${metrics.leadsNew} новых`,
-    `• ${metrics.leadsInProgress} в работе`,
-    '',
-    'Финансы',
-    `• ${metrics.purchasesPending} ожидают оплаты`,
-    `• ${metrics.packagesLow} пакета заканчиваются`,
-    '',
-    'Занятия',
-    `• ${metrics.lessonsToday} сегодня`,
-    metrics.scheduleProblems > 0
-      ? `• ${metrics.scheduleProblems} проблема расписания`
-      : '• проблем расписания нет',
-  ].join('\n');
-}
-
-function buildAdminHomeInlineKeyboard(metrics: AdminHubMetrics): InlineButton[][] {
-  const rows: InlineButton[][] = [];
-  for (const item of buildAttentionItems(metrics)) {
-    rows.push([{ text: item.text, callback_data: item.callback }]);
-  }
-  if (rows.length === 0) {
-    rows.push([{ text: '✅ Срочных задач нет', callback_data: 'ah:home' }]);
-  }
-  rows.push([{ text: '📜 Журнал событий', callback_data: 'ah:audit:0' }]);
-  rows.push([{ text: '📅 Открыть расписание', callback_data: 'ah:go:schedule' }]);
-
-  rows.push([
-    { text: `👨‍🎓 ${metrics.studentsActive} активных`, callback_data: 'ah:stu:f:active:0' },
-    { text: `📨 ${metrics.leadsNew} заявок`, callback_data: 'ah:go:leads:new' },
-  ]);
-  rows.push([
-    { text: `💳 ${metrics.purchasesPending} оплат`, callback_data: 'ah:go:finance:pending' },
-    { text: `📅 ${metrics.lessonsToday} сегодня`, callback_data: 'ah:go:schedule' },
-  ]);
-  return rows;
-}
-
 export async function renderAdminHomeDashboard(
   admin: SupabaseClient,
   deliver: Deliver,
+  telegramId: number,
   testFooter = '',
 ): Promise<void> {
-  const metrics = await fetchAdminHubMetrics(admin);
-  const text = await buildAdminHomeDashboardText(admin, metrics, testFooter);
-  await deliver(text, { inline_keyboard: buildAdminHomeInlineKeyboard(metrics) });
+  const { text, keyboard } = await buildAdminHomeDashboard(admin, telegramId, testFooter);
+  const markup =
+    keyboard && keyboard.length > 0 ? { inline_keyboard: keyboard } : { inline_keyboard: [] };
+  await deliver(text, markup);
 }
 
 async function renderAttentionScreen(admin: SupabaseClient, deliver: Deliver): Promise<void> {
@@ -193,14 +79,14 @@ async function renderAttentionScreen(admin: SupabaseClient, deliver: Deliver): P
   await deliver(text, { inline_keyboard: keyboard });
 }
 
-async function startGlobalSearch(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
-  await saveState(admin, telegramId, message, 'users:search', {});
+async function startPeopleSearch(admin: SupabaseClient, telegramId: number, message: AdminMessage): Promise<void> {
+  await saveState(admin, telegramId, message, 'users:search', { searchBack: 'ah:people' });
   await editAdminMessage(
     message,
-    '🔎 Поиск человека\n\nОтправь имя, телефон или Telegram ID (мин. 2 символа).',
+    '🔎 Поиск человека\n\nИмя, фамилия, телефон, Telegram ID или @username.\nМинимум 2 символа.',
     {
       inline_keyboard: [
-        [{ text: '⬅️ Отмена', callback_data: 'ah:people' }],
+        [{ text: '⬅️ Назад', callback_data: 'ah:people' }],
         [homeButton()],
       ],
     },
@@ -216,7 +102,7 @@ export async function handleHubAction(
   const deliver = editDeliver(message);
 
   if (data === 'ah:home') {
-    await renderAdminHomeDashboard(admin, deliver);
+    await renderAdminHomeDashboard(admin, deliver, telegramId);
     return true;
   }
   if (data === 'ah:attention') {
@@ -227,6 +113,24 @@ export async function handleHubAction(
     await renderMoreMenu(deliver);
     return true;
   }
+  if (data === 'ah:more:problems-control') {
+    await renderProblemsControlHub(admin, deliver);
+    return true;
+  }
+  if (data === 'ah:more:reports') {
+    await renderSchoolReports(admin, deliver, 'today');
+    return true;
+  }
+  const schoolRep = parseSchoolReportCallback(data);
+  if (schoolRep) {
+    await renderSchoolReports(admin, deliver, schoolRep);
+    return true;
+  }
+  const schoolSec = parseSchoolReportSectionCallback(data);
+  if (schoolSec) {
+    await renderSchoolReportSection(admin, deliver, schoolSec.section, schoolSec.period);
+    return true;
+  }
   if (data === 'ah:botcopy') {
     await renderBotCopyMenu(deliver);
     return true;
@@ -235,8 +139,8 @@ export async function handleHubAction(
     await renderPeopleMenu(admin, telegramId, deliver);
     return true;
   }
-  if (data === 'ah:search') {
-    await startGlobalSearch(admin, telegramId, message);
+  if (data === 'ah:people:search' || data === 'ah:search') {
+    await startPeopleSearch(admin, telegramId, message);
     return true;
   }
   if (data === 'ah:cabinet') {
@@ -245,23 +149,25 @@ export async function handleHubAction(
     return true;
   }
   if (data === 'ah:go:schedule') {
-    return handleScheduleListAction(admin, 'ae:ls:w:0:0', message, telegramId);
+    return handleScheduleListAction(admin, 'ae:ls:day:0:a:0:0', message, telegramId);
   }
 
   if (data === 'ah:go:leads:new') {
-    await renderLeadsMenu(admin, deliver);
+    await renderLeadsMenu(admin, deliver, 'new');
     return true;
   }
   if (data === 'ah:go:leads:progress') {
-    await renderLeadsMenu(admin, deliver, 'in_progress');
+    await renderLeadsMenu(admin, deliver, 'in_work');
     return true;
   }
   if (data === 'ah:go:finance:pending') {
-    await renderPurchasesMenu(admin, deliver);
+    const { renderFinanceDueList } = await import('./finance-ops');
+    await renderFinanceDueList(admin, deliver, 0);
     return true;
   }
   if (data === 'ah:go:finance:packages') {
-    await renderPackagesMenu(admin, deliver, 'low');
+    const { renderPackagesHub } = await import('./packages-menu');
+    await renderPackagesHub(admin, deliver);
     return true;
   }
   if (data === 'ah:go:finance:overbook') {
@@ -281,8 +187,11 @@ export async function handleHubAction(
     await renderOperationalReport(admin, deliver);
     return true;
   }
+  if (isProblemsAction(data)) {
+    return handleProblemsAction(admin, data, message, telegramId);
+  }
   if (isAuditHubAction(data)) {
-    return handleAuditHubAction(admin, data, message);
+    return handleAuditHubAction(admin, data, message, telegramId);
   }
   if (isCommsHubAction(data)) {
     return handleCommsHubAction(admin, data, message, telegramId);
@@ -293,7 +202,7 @@ export async function handleHubAction(
   }
 
   if (data === 'ah:stu:menu') {
-    await renderStudentsHub(deliver);
+    await renderStudentsHub(admin, deliver);
     return true;
   }
 
@@ -319,23 +228,37 @@ export async function handleHubAction(
     return true;
   }
 
-  const staffProfile = data.match(/^ah:staff:p:(\d+)$/);
-  if (staffProfile) {
-    const id = Number(staffProfile[1]);
-    const staff = await getMemberWithExtras(admin, id);
+  const staffProfileParsed = parseStaffProfileCallback(data);
+  if (staffProfileParsed) {
+    const staff = await getMemberWithExtras(admin, staffProfileParsed.id);
     if (!staff) {
       await editAdminMessage(message, 'Сотрудник не найден.', {
-        inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'ah:staff:0' }], [homeButton()]],
+        inline_keyboard: [
+          [{ text: '⬅️ Назад', callback_data: `ah:staff:f:${staffProfileParsed.filter}:${staffProfileParsed.page}` }],
+          [homeButton()],
+        ],
       });
       return true;
     }
-    await renderStaffProfile(admin, message, staff);
+    await renderStaffProfile(admin, message, staff, staffProfileParsed.filter, staffProfileParsed.page);
     return true;
   }
 
-  const staffPage = data.match(/^ah:staff:(\d+)$/);
-  if (staffPage) {
-    await renderStaffList(admin, message, Number(staffPage[1]) || 0);
+  const staffListParsed = parseStaffListCallback(data);
+  if (staffListParsed) {
+    await renderStaffList(admin, message, staffListParsed.page, staffListParsed.filter);
+    return true;
+  }
+
+  const staffPageLegacy = data.match(/^ah:staff:(\d+)$/);
+  if (staffPageLegacy) {
+    await renderStaffList(admin, message, Number(staffPageLegacy[1]) || 0, 'all');
+    return true;
+  }
+
+  if (data === 'ah:stu:adv') {
+    const { renderStudentsAdvancedFilters } = await import('./student-catalog');
+    await renderStudentsAdvancedFilters(admin, message);
     return true;
   }
 

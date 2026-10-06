@@ -36,7 +36,7 @@ async function loadTeacherLessons(
     const pad = (n: number) => String(n).padStart(2, '0');
     return {
       id: row.id as number,
-      kind: row.kind as 'individual' | 'group',
+      kind: (row.kind === 'trial' ? 'individual' : row.kind) as 'individual' | 'group',
       startsAt,
       date: `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`,
       time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,

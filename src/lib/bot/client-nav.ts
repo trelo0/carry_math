@@ -30,6 +30,7 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   CLIENT_HUB_STEP,
   'client:lead-form',
   'student:support',
+  'student:support-thread',
   'client:lesson-hw-submit',
 ]);
 
@@ -251,7 +252,7 @@ export async function pushClientCard(
   keyboard: InlineKeyboard,
 ): Promise<number | null> {
   const prev = await loadClientHubPayload(admin, telegramId);
-  const stack = ['home', screenId];
+  const stack = [...(prev?.payload.clientNavStack ?? ['home']), screenId];
   const messageId = await sendHubMessage(chatId, text, keyboard);
   if (!messageId) return null;
   await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {

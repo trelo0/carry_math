@@ -18,6 +18,8 @@ import { listMembersInRoles, getMember } from '@/lib/bot/roles';
 export type StudentFilterId =
   | 'all'
   | 'active'
+  | 'paused'
+  | 'new'
   | 'low_pkg'
   | 'individual'
   | 'course'
@@ -26,25 +28,73 @@ export type StudentFilterId =
 const FILTER_LABELS: Record<StudentFilterId, string> = {
   all: 'Все ученики',
   active: 'Активные',
-  low_pkg: 'Пакет ≤2',
+  paused: 'На паузе',
+  new: 'Новые',
+  low_pkg: 'Пакет заканчивается',
   individual: 'Индивидуальные',
   course: 'С курсом',
   group: 'Групповые',
 };
 
-export async function renderStudentsHub(deliver: Deliver): Promise<void> {
+async function countStudentsSummary(admin: SupabaseClient): Promise<{
+  total: number;
+  active: number;
+  paused: number;
+  newCount: number;
+}> {
+  const { total } = await listMembersInRoles(admin, ['student'], 0, 1);
+  const activeIds = await idsWithActiveProduct(admin);
+  const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data: studentRows } = await admin.from('bot_members').select('telegram_id, created_at').eq('role', 'student');
+  let newCount = 0;
+  let active = 0;
+  for (const row of studentRows ?? []) {
+    const id = row.telegram_id as number;
+    if (activeIds.has(id)) active += 1;
+    if (String(row.created_at) >= since7d) newCount += 1;
+  }
+  const totalN = studentRows?.length ?? total;
+  const paused = Math.max(0, totalN - active);
+  return { total: totalN, active, paused, newCount };
+}
+
+export async function renderStudentsHub(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const c = await countStudentsSummary(admin);
+  const text = [
+    '👨‍🎓 Ученики',
+    '',
+    `Всего: ${c.total}`,
+    `Активных: ${c.active}`,
+    `На паузе: ${c.paused}`,
+    `Новых: ${c.newCount}`,
+  ].join('\n');
+
   const keyboard: InlineButton[][] = [
-    [{ text: '📋 Все', callback_data: 'ah:stu:f:all:0' }],
-    [{ text: '🟢 Активные', callback_data: 'ah:stu:f:active:0' }],
-    [{ text: '📦 Пакет заканчивается', callback_data: 'ah:stu:f:low_pkg:0' }],
-    [{ text: '👤 Индивидуальные', callback_data: 'ah:stu:f:individual:0' }],
-    [{ text: '🎓 Онлайн-курс', callback_data: 'ah:stu:f:course:0' }],
-    [{ text: '👥 В группах', callback_data: 'ah:stu:f:group:0' }],
-    [{ text: '👨‍🏫 По преподавателю', callback_data: 'ah:stu:pick:teacher:0' }],
+    [
+      { text: 'Все', callback_data: 'ah:stu:f:all:0' },
+      { text: 'Активные', callback_data: 'ah:stu:f:active:0' },
+      { text: 'Пауза', callback_data: 'ah:stu:f:paused:0' },
+      { text: 'Новые', callback_data: 'ah:stu:f:new:0' },
+    ],
+    [{ text: '⚙️ Фильтры', callback_data: 'ah:stu:adv' }],
     [{ text: '⬅️ Люди', callback_data: 'ah:people' }],
     [homeButton()],
   ];
-  await deliver('👨‍🎓 Ученики\n\nВыбери фильтр. В списке — формат, преподаватель, пакет, ближайшее занятие.', {
+  await deliver(text, { inline_keyboard: keyboard });
+}
+
+export async function renderStudentsAdvancedFilters(admin: SupabaseClient, message: AdminMessage): Promise<void> {
+  void admin;
+  const keyboard: InlineButton[][] = [
+    [{ text: '👤 Индивидуальные', callback_data: 'ah:stu:f:individual:0' }],
+    [{ text: '👥 Групповые', callback_data: 'ah:stu:f:group:0' }],
+    [{ text: '🎓 Онлайн-курс', callback_data: 'ah:stu:f:course:0' }],
+    [{ text: '📦 Заканчивается пакет', callback_data: 'ah:stu:f:low_pkg:0' }],
+    [{ text: '👨‍🏫 По преподавателю', callback_data: 'ah:stu:pick:teacher:0' }],
+    [{ text: '⬅️ Ученики', callback_data: 'ah:stu:menu' }],
+    [homeButton()],
+  ];
+  await editAdminMessage(message, '⚙️ Фильтры учеников\n\nДополнительные условия отбора.', {
     inline_keyboard: keyboard,
   });
 }
@@ -86,9 +136,31 @@ async function idsInGroups(admin: SupabaseClient): Promise<Set<number>> {
   return new Set((data ?? []).map((r) => r.telegram_id as number));
 }
 
+async function idsNewStudents(admin: SupabaseClient): Promise<number[]> {
+  const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('telegram_id')
+    .eq('role', 'student')
+    .gte('created_at', since7d);
+  if (error) return [];
+  return (data ?? []).map((r) => r.telegram_id as number);
+}
+
+async function idsPausedStudents(admin: SupabaseClient): Promise<number[]> {
+  const active = await idsWithActiveProduct(admin);
+  const { data, error } = await admin.from('bot_members').select('telegram_id').eq('role', 'student');
+  if (error) return [];
+  return (data ?? [])
+    .map((r) => r.telegram_id as number)
+    .filter((id) => !active.has(id));
+}
+
 async function resolveStudentIds(admin: SupabaseClient, filter: StudentFilterId): Promise<number[] | null> {
   if (filter === 'all') return null;
   if (filter === 'active') return [...(await idsWithActiveProduct(admin))];
+  if (filter === 'paused') return idsPausedStudents(admin);
+  if (filter === 'new') return idsNewStudents(admin);
   if (filter === 'low_pkg') return idsLowPackage(admin);
   if (filter === 'individual') return [...(await idsWithAccessProduct(admin, 'individual'))];
   if (filter === 'course') return [...(await idsWithAccessProduct(admin, 'course'))];
@@ -209,17 +281,30 @@ export async function renderStudentFilterList(
   const lines: string[] = [title, ''];
   const summaries = await Promise.all(members.map((m) => enrichStudentSummary(admin, m.telegram_id)));
 
+  const activeIds = await idsWithActiveProduct(admin);
+  const statuses = members.map((m) => (activeIds.has(m.telegram_id) ? '🟢 Активен' : '⏸️ Пауза'));
+
   for (let i = 0; i < members.length; i++) {
-    lines.push(`${safePage * USERS_PER_PAGE + i + 1}. ${memberDisplayName(members[i])}`);
-    lines.push(`   ${summaries[i]}`);
+    lines.push(`👨‍🎓 ${memberDisplayName(members[i])}`);
+    lines.push(summaries[i]);
+    lines.push(statuses[i]);
     lines.push('');
   }
   if (members.length === 0) lines.push('Никого не найдено.');
 
+  const navBack =
+    filter === 'individual' ||
+    filter === 'course' ||
+    filter === 'group' ||
+    filter === 'low_pkg' ||
+    teacherId != null
+      ? 'ah:stu:adv'
+      : 'ah:stu:menu';
+
   const keyboard: InlineButton[][] = members.map((member, i) => [
     {
       text: shorten(`${memberDisplayName(member)} — ${summaries[i]}`, 58),
-      callback_data: `admin:user:${member.telegram_id}::`,
+      callback_data: `admin:user:${member.telegram_id}::stu:${filter}:${safePage}`,
     },
   ]);
 
@@ -240,7 +325,7 @@ export async function renderStudentFilterList(
       },
     ]);
   }
-  keyboard.push([{ text: '⬅️ Фильтры', callback_data: 'ah:stu:menu' }], [homeButton()]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: navBack }], [homeButton()]);
 
   await editAdminMessage(message, lines.join('\n').slice(0, 3900), { inline_keyboard: keyboard });
 }
@@ -250,18 +335,15 @@ export async function renderTeacherPickerForStudents(
   message: AdminMessage,
   page: number,
 ): Promise<void> {
-  const { members, total } = await listMembersInRoles(
-    admin,
-    ['teacher', 'mentor'],
-    page,
-    USERS_PER_PAGE,
-  );
-  const pageCount = Math.max(1, Math.ceil(total / USERS_PER_PAGE));
+  const { listMentorPickerCandidates } = await import('./staff-roster');
+  const all = await listMentorPickerCandidates(admin, 'teacher');
+  const pageCount = Math.max(1, Math.ceil(all.length / USERS_PER_PAGE));
   const safePage = Math.min(page, pageCount - 1);
+  const slice = all.slice(safePage * USERS_PER_PAGE, safePage * USERS_PER_PAGE + USERS_PER_PAGE);
 
-  const keyboard: InlineButton[][] = members.map((m) => [
+  const keyboard: InlineButton[][] = slice.map((m) => [
     {
-      text: memberDisplayName(m),
+      text: shorten(`${m.full_name ?? `ID ${m.telegram_id}`} · ${m.rolesLine}`, 58),
       callback_data: `ah:stu:by:${m.telegram_id}:0`,
     },
   ]);
@@ -278,7 +360,7 @@ export async function renderTeacherPickerForStudents(
       },
     ]);
   }
-  keyboard.push([{ text: '⬅️ Ученики', callback_data: 'ah:stu:menu' }], [homeButton()]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: 'ah:stu:adv' }], [homeButton()]);
 
   await editAdminMessage(message, '👨‍🏫 Выбери преподавателя', { inline_keyboard: keyboard });
 }

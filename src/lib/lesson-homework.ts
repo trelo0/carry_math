@@ -79,6 +79,22 @@ async function assertTeacherOwnsLesson(
   };
 }
 
+export async function getHomeworkById(
+  admin: SupabaseClient,
+  homeworkId: number,
+): Promise<LessonHomeworkRow | null> {
+  const { data, error } = await admin
+    .from('homework_assignments')
+    .select(
+      'id, lesson_id, file_name, file_size, storage_path, instruction_text, due_at, review_status, teacher_comment, submission_text, submission_files, submitted_at',
+    )
+    .eq('id', homeworkId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return mapRow(data as Record<string, unknown>);
+}
+
 export async function getLessonHomework(
   admin: SupabaseClient,
   lessonId: number,
@@ -222,6 +238,10 @@ export async function submitLessonHomework(
     throw new Error('Отправьте текст или хотя бы один файл');
   }
 
+  if (homework.reviewStatus === 'revision') {
+    await archiveHomeworkSubmissionVersion(admin, homework.id, homework, 'resubmit', null, null, null);
+  }
+
   const now = new Date().toISOString();
   const { data, error } = await admin
     .from('homework_assignments')
@@ -245,34 +265,147 @@ export async function submitLessonHomework(
   return row;
 }
 
-export async function reviewLessonHomework(
+export type HomeworkReviewerRole = 'teacher' | 'admin' | 'curator';
+
+function isVersionsTableError(error: unknown): boolean {
+  const message = String((error as { message?: string })?.message ?? error);
+  return message.includes('homework_submission_versions');
+}
+
+async function nextHomeworkVersionNo(admin: SupabaseClient, homeworkId: number): Promise<number> {
+  const { count, error } = await admin
+    .from('homework_submission_versions')
+    .select('id', { count: 'exact', head: true })
+    .eq('homework_id', homeworkId);
+  if (error) {
+    if (isVersionsTableError(error)) return 1;
+    throw error;
+  }
+  return (count ?? 0) + 1;
+}
+
+export async function archiveHomeworkSubmissionVersion(
   admin: SupabaseClient,
-  teacherTelegramId: number,
-  lessonId: number,
+  homeworkId: number,
+  snapshot: Pick<
+    LessonHomeworkRow,
+    'submissionText' | 'submissionFiles' | 'submittedAt'
+  >,
+  outcome: 'revision' | 'resubmit' | 'approved',
+  reviewerTelegramId: number | null,
+  reviewerRole: HomeworkReviewerRole | null,
+  reviewerComment: string | null,
+): Promise<void> {
+  if (!snapshot.submittedAt && !snapshot.submissionText?.trim() && snapshot.submissionFiles.length === 0) {
+    return;
+  }
+  const versionNo = await nextHomeworkVersionNo(admin, homeworkId);
+  const { error } = await admin.from('homework_submission_versions').insert({
+    homework_id: homeworkId,
+    version_no: versionNo,
+    submission_text: snapshot.submissionText,
+    submission_files: snapshot.submissionFiles,
+    submitted_at: snapshot.submittedAt,
+    outcome,
+    reviewer_telegram_id: reviewerTelegramId,
+    reviewer_role: reviewerRole,
+    reviewer_comment: reviewerComment,
+  });
+  if (error && !isVersionsTableError(error)) throw error;
+}
+
+export type HomeworkSubmissionVersionRow = {
+  versionNo: number;
+  outcome: string;
+  submittedAt: string | null;
+  reviewerComment: string | null;
+  createdAt: string;
+};
+
+export async function listHomeworkSubmissionVersions(
+  admin: SupabaseClient,
+  homeworkId: number,
+): Promise<HomeworkSubmissionVersionRow[]> {
+  const { data, error } = await admin
+    .from('homework_submission_versions')
+    .select('version_no, outcome, submitted_at, reviewer_comment, created_at')
+    .eq('homework_id', homeworkId)
+    .order('version_no', { ascending: true });
+  if (error) {
+    if (isVersionsTableError(error)) return [];
+    throw error;
+  }
+  return (data ?? []).map((row) => ({
+    versionNo: row.version_no as number,
+    outcome: row.outcome as string,
+    submittedAt: (row.submitted_at as string | null) ?? null,
+    reviewerComment: (row.reviewer_comment as string | null) ?? null,
+    createdAt: row.created_at as string,
+  }));
+}
+
+export async function reviewHomeworkAsStaff(
+  admin: SupabaseClient,
+  homeworkId: number,
+  reviewerTelegramId: number,
+  reviewerRole: HomeworkReviewerRole,
   input: { action: 'approve' | 'revision'; comment?: string },
 ): Promise<LessonHomeworkRow> {
-  const lesson = await assertTeacherOwnsLesson(admin, teacherTelegramId, lessonId);
-  const homework = await getLessonHomework(admin, lessonId);
+  const homework = await getHomeworkById(admin, homeworkId);
   if (!homework) throw new Error('Домашнее задание не найдено');
   if (homework.reviewStatus !== 'submitted' && homework.reviewStatus !== 'reviewing') {
     throw new Error('Нет работы на проверке');
   }
-
   if (input.action === 'revision' && !input.comment?.trim()) {
     throw new Error('Комментарий обязателен при возврате на доработку');
+  }
+
+  const { data: lessonRow, error: lessonError } = await admin
+    .from('scheduled_lessons')
+    .select('id, telegram_id, topic, teacher_telegram_id')
+    .eq('id', homework.lessonId)
+    .maybeSingle();
+  if (lessonError) throw lessonError;
+  if (!lessonRow?.telegram_id) throw new Error('Занятие не найдено');
+
+  if (input.action === 'revision') {
+    await archiveHomeworkSubmissionVersion(
+      admin,
+      homework.id,
+      homework,
+      'revision',
+      reviewerTelegramId,
+      reviewerRole,
+      input.comment?.trim() ?? null,
+    );
+  } else {
+    await archiveHomeworkSubmissionVersion(
+      admin,
+      homework.id,
+      homework,
+      'approved',
+      reviewerTelegramId,
+      reviewerRole,
+      input.comment?.trim() ?? null,
+    );
   }
 
   const now = new Date().toISOString();
   const nextStatus: LessonHomeworkReviewStatus =
     input.action === 'approve' ? 'done' : 'revision';
 
+  const updatePayload: Record<string, unknown> = {
+    review_status: nextStatus,
+    teacher_comment: input.comment?.trim() || null,
+    updated_at: now,
+    reviewed_by_telegram_id: reviewerTelegramId,
+    reviewed_at: now,
+    reviewer_role: reviewerRole,
+  };
+
   const { data, error } = await admin
     .from('homework_assignments')
-    .update({
-      review_status: nextStatus,
-      teacher_comment: input.comment?.trim() || null,
-      updated_at: now,
-    })
+    .update(updatePayload)
     .eq('id', homework.id)
     .select(
       'id, lesson_id, file_name, file_size, storage_path, instruction_text, due_at, review_status, teacher_comment, submission_text, submission_files, submitted_at',
@@ -282,13 +415,39 @@ export async function reviewLessonHomework(
 
   const row = mapRow(data as Record<string, unknown>);
   const { notifyStudentLessonHomeworkReviewed } = await import('./bot/lesson-homework-notify');
-  await notifyStudentLessonHomeworkReviewed(admin, lesson.telegramId, {
-    lessonId,
-    topic: lesson.topic,
+  await notifyStudentLessonHomeworkReviewed(admin, lessonRow.telegram_id as number, {
+    lessonId: homework.lessonId,
+    topic: lessonRow.topic as string,
     approved: input.action === 'approve',
     comment: input.comment?.trim(),
   });
+
+  try {
+    const { logAdminAction } = await import('./bot/admin/action-log');
+    await logAdminAction(admin, {
+      actorTelegramId: reviewerTelegramId,
+      action: input.action === 'approve' ? 'homework.approve' : 'homework.revision',
+      entityType: 'homework',
+      entityId: homeworkId,
+      detail: { lessonId: homework.lessonId, reviewerRole },
+    });
+  } catch {
+    /* journal optional */
+  }
+
   return row;
+}
+
+export async function reviewLessonHomework(
+  admin: SupabaseClient,
+  teacherTelegramId: number,
+  lessonId: number,
+  input: { action: 'approve' | 'revision'; comment?: string },
+): Promise<LessonHomeworkRow> {
+  await assertTeacherOwnsLesson(admin, teacherTelegramId, lessonId);
+  const homework = await getLessonHomework(admin, lessonId);
+  if (!homework) throw new Error('Домашнее задание не найдено');
+  return reviewHomeworkAsStaff(admin, homework.id, teacherTelegramId, 'teacher', input);
 }
 
 export async function resolveHomeworkAssignmentUrl(

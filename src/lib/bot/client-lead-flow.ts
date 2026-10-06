@@ -443,6 +443,8 @@ export async function handleClientLeadCallback(
       comment,
       service: formatLabel(payload.leadFormat),
       source: 'telegram_bot',
+      inquiry_kind: 'application',
+      client_telegram_id: telegramId,
     };
     if (payload.leadFormat === 'individual' && payload.leadPreferredTeacher?.trim()) {
       insertRow.teacher = payload.leadPreferredTeacher.trim();
@@ -466,7 +468,18 @@ export async function handleClientLeadCallback(
         await notifyAdminsOfNewLead(admin, fallback.data as LeadRow);
       } else throw error;
     } else if (inserted) {
-      await notifyAdminsOfNewLead(admin, inserted as LeadRow);
+      const row = inserted as LeadRow;
+      try {
+        const { logLeadEvent } = await import('./admin/lead-events');
+        await logLeadEvent(admin, {
+          leadId: row.id,
+          eventType: 'lead_created',
+          actorTelegramId: telegramId,
+        });
+      } catch {
+        /* lead_events optional until migration */
+      }
+      await notifyAdminsOfNewLead(admin, row);
     }
 
     await clearInlineKeyboard(chatId, messageId);

@@ -118,8 +118,9 @@ export const CURATOR_MENU_LABELS = CURATOR_BOT_MENU_LABELS;
 export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU_LABELS));
 
 const CURATOR_HOME_TEXT =
-  '🧑‍🏫 Кабинет куратора District\n\n' +
-  'Быстрые действия — кнопками ниже. Подробная работа — в «Панели управления» внизу.';
+  '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
+  'Здесь вы можете посмотреть учеников, курс и прогресс, домашние задания и сообщения.\n\n' +
+  'Выберите нужный раздел:';
 
 async function curatorCabinetScreen(
   admin: SupabaseClient,

@@ -4,25 +4,20 @@ import { homeButton } from './core';
 export async function renderMoreMenu(deliver: Deliver): Promise<void> {
   const keyboard: InlineButton[][] = [
     [{ text: '📢 Рассылки', callback_data: 'admin:broadcasts' }],
-    [{ text: '🚨 Контроль переписки', callback_data: 'admin:chat-control' }],
-    [
-      { text: '🚩 Проблемы', callback_data: 'ah:problems' },
-      { text: '📜 Журнал', callback_data: 'ah:audit:0' },
-    ],
-    [{ text: '📊 Статистика', callback_data: 'admin:stats' }],
-    [{ text: '📈 Операционный отчёт', callback_data: 'ah:report:ops' }],
-    [
-      { text: '📝 ДЗ на проверке', callback_data: 'ah:hw:pending' },
-      { text: '💬 Непрочитанные', callback_data: 'ah:msg:unread' },
-    ],
-    [{ text: '📅 Вебинары', callback_data: 'admin:webinars' }],
-    [
-      { text: '🔔 Шаблоны уведомлений', callback_data: 'an:menu' },
-      { text: '🧪 Тест уведомлений', callback_data: 'ar:menu' },
-    ],
-    [{ text: '💬 Тексты бота (гость)', callback_data: 'ah:botcopy' }],
-    [{ text: '🔐 Личный кабинет', callback_data: 'ah:cabinet' }],
+    [{ text: '🚨 Проблемы и контроль', callback_data: 'ah:more:problems-control' }],
+    [{ text: '📝 Журнал событий', callback_data: 'ah:audit:all:0:all' }],
+    [{ text: '📊 Отчёты', callback_data: 'ah:more:reports' }],
     [homeButton()],
   ];
-  await deliver('⚙️ Прочее\n\nСервисные разделы бота.', { inline_keyboard: keyboard });
+  await deliver(
+    [
+      '⚙️ Прочее',
+      '',
+      '📢 Рассылки — сообщения ученикам и клиентам',
+      '🚨 Проблемы и контроль — внимание и переписка',
+      '📝 Журнал событий — что произошло в системе',
+      '📊 Отчёты — сводка работы школы',
+    ].join('\n'),
+    { inline_keyboard: keyboard },
+  );
 }

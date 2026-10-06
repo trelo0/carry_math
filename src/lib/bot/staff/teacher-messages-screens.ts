@@ -20,7 +20,7 @@ export function renderTeacherMessagesInbox(
   nav?: StaffScreenNav,
 ): { text: string; keyboard: InlineKeyboard } {
   const n = navOrDefault(nav);
-  const parts = ['💬 СООБЩЕНИЯ', ''];
+  const parts = ['💬 Сообщения', ''];
   if (!storageEnabled) {
     parts.push(
       'История переписки пока недоступна (не применена миграция staff_student_messages.sql).',
@@ -28,10 +28,29 @@ export function renderTeacherMessagesInbox(
       '',
     );
   }
+  const unreadCount = threads.filter((t) => t.unreadCount > 0).length;
+  if (unreadCount > 0) {
+    parts.push(`🔴 Новые сообщения — ${unreadCount}`, '');
+  }
+
   if (threads.length === 0) {
     parts.push('Диалогов пока нет. Напишите ученику из карточки или дождитесь обращения.');
   } else {
-    parts.push('Выберите диалог:');
+    for (const t of threads.slice(0, 8)) {
+      parts.push(
+        `👨‍🎓 ${t.studentLabel}`,
+        'Последнее сообщение:',
+        `«${t.lastBody.slice(0, 120)}»`,
+        new Date(t.lastAt).toLocaleString('ru-RU', {
+          timeZone: 'Europe/Moscow',
+          day: 'numeric',
+          month: 'long',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        '',
+      );
+    }
   }
 
   const buttons = threads.map((t) => [
@@ -40,8 +59,6 @@ export function renderTeacherMessagesInbox(
       callback_data: `t:msg:d:${t.studentTelegramId}`,
     },
   ]);
-
-  const unreadCount = threads.filter((t) => t.unreadCount > 0).length;
 
   return {
     text: parts.join('\n'),
@@ -109,7 +126,7 @@ export function renderTeacherMessageThread(
   nav?: StaffScreenNav,
 ): { text: string; keyboard: InlineKeyboard } {
   const n = navOrDefault(nav);
-  const parts = [`💬 ${studentLabel}`, ''];
+  const parts = [`💬 ${studentLabel}`, '', 'История сообщений — ниже отдельными сообщениями.', ''];
   if (!storageEnabled) {
     parts.push('История не сохранена. Ответ уйдёт ученику через бота.', '');
   } else if (messages.length === 0) {
@@ -127,7 +144,7 @@ export function renderTeacherMessageThread(
     keyboard: {
       inline_keyboard: withTeacherCabinetRow(
         [
-          [{ text: '✏️ Написать', callback_data: `t:msg:w:${studentTelegramId}` }],
+          [{ text: '💬 Написать сообщение', callback_data: `t:msg:w:${studentTelegramId}` }],
           [backButton('⬅️ К списку', n.listBack ?? 't:msg:l')],
         ],
         cabinetUrl,

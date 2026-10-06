@@ -8,10 +8,12 @@ export const CLIENT_LABELS = {
   /** @deprecated используйте lessonsWithTeacher */
   buy: '👨‍🏫 Занятия с преподавателем',
   leaveRequest: '📝 Оставить заявку на занятия',
-  myLessons: '📅 Мои занятия',
+  myLessons: '📚 Мои занятия',
+  buyEducation: '🎓 Купить обучение',
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
-  purchaseHistory: '🧾 История покупок',
+  purchaseHistory: '🧾 История',
+  myApplications: '📨 Заявки',
 } as const;
 
 export type ClientReplyLabel = (typeof CLIENT_LABELS)[keyof typeof CLIENT_LABELS];
@@ -48,15 +50,13 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
       rows.push(
         [{ text: CLIENT_LABELS.onlineCourse }],
         [{ text: CLIENT_LABELS.lessonsWithTeacher }],
+        [{ text: CLIENT_LABELS.contactAdmin }],
       );
       break;
     case 'client_idle':
       rows.push(
-        [{ text: CLIENT_LABELS.myLessons }],
-        [{ text: CLIENT_LABELS.purchaseHistory }],
-        [{ text: CLIENT_LABELS.schedule }],
-        [{ text: CLIENT_LABELS.onlineCourse }],
-        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
+        [{ text: CLIENT_LABELS.myLessons }, { text: CLIENT_LABELS.buyEducation }],
+        [{ text: CLIENT_LABELS.purchaseHistory }, { text: CLIENT_LABELS.myApplications }],
         [{ text: CLIENT_LABELS.contactAdmin }],
       );
       break;

@@ -18,7 +18,7 @@ import { memberDisplayName } from './users';
 import { logAdminAction } from './action-log';
 import { getMember } from '@/lib/bot/roles';
 
-export type PackageFilter = 'low' | 'over' | 'active' | 'all';
+export type PackageFilter = 'low' | 'over' | 'active' | 'all' | 'ended';
 
 type PackageRow = {
   id: number;
@@ -39,7 +39,57 @@ const FILTER_CODE: Record<PackageFilter, string> = {
   over: 'o',
   active: 'a',
   all: 'z',
+  ended: 'e',
 };
+
+async function countPackagesByBucket(admin: SupabaseClient): Promise<{ active: number; ending: number; ended: number }> {
+  const threshold = Number(process.env.FINANCE_PACKAGE_ENDING_THRESHOLD ?? '2');
+  const endingMax = Number.isFinite(threshold) ? threshold : 2;
+  const [active, ending, ended] = await Promise.all([
+    admin
+      .from('lesson_packages')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .gt('remaining_lessons', endingMax),
+    admin
+      .from('lesson_packages')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .lte('remaining_lessons', endingMax)
+      .gt('remaining_lessons', 0),
+    admin
+      .from('lesson_packages')
+      .select('id', { count: 'exact', head: true })
+      .or('status.eq.completed,remaining_lessons.eq.0'),
+  ]);
+  return { active: active.count ?? 0, ending: ending.count ?? 0, ended: ended.count ?? 0 };
+}
+
+export async function renderPackagesHub(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const c = await countPackagesByBucket(admin);
+  const btn = (label: string, count: number, cb: string) => ({
+    text: count > 0 ? `${label} · ${count}` : label,
+    callback_data: cb,
+  });
+  await deliver(
+    [
+      '📦 Пакеты',
+      '',
+      `🟢 Активные — ${c.active}`,
+      `🟡 Заканчиваются — ${c.ending}`,
+      `🔴 Закончились — ${c.ended}`,
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [btn('🟢 Активные', c.active, 'apk:f:a:0')],
+        [btn('🟡 Заканчиваются', c.ending, 'apk:f:l:0')],
+        [btn('🔴 Закончились', c.ended, 'apk:f:e:0')],
+        [{ text: '⬅️ Финансы', callback_data: 'af:menu' }],
+        [homeButton()],
+      ],
+    },
+  );
+}
 
 const PACKAGE_COLUMNS =
   'id, telegram_id, product, title, total_lessons, used_lessons, remaining_lessons, status, purchased_at';
@@ -84,6 +134,17 @@ async function loadActivePackages(admin: SupabaseClient): Promise<PackageRow[]> 
     .from('lesson_packages')
     .select(PACKAGE_COLUMNS)
     .eq('status', 'active')
+    .order('purchased_at', { ascending: false })
+    .limit(80);
+  if (error) throw error;
+  return (data ?? []) as unknown as PackageRow[];
+}
+
+async function loadEndedPackages(admin: SupabaseClient): Promise<PackageRow[]> {
+  const { data, error } = await admin
+    .from('lesson_packages')
+    .select(PACKAGE_COLUMNS)
+    .or('status.eq.completed,remaining_lessons.eq.0')
     .order('purchased_at', { ascending: false })
     .limit(80);
   if (error) throw error;
@@ -151,6 +212,7 @@ async function renderPackagesScreen(
   if (filter === 'low') items = await loadLowPackages(admin);
   else if (filter === 'active') items = await loadActivePackages(admin);
   else if (filter === 'all') items = await loadAllPackages(admin);
+  else if (filter === 'ended') items = await loadEndedPackages(admin);
   else items = await loadOverbookedPackages(admin);
 
   const total = items.length;
@@ -165,8 +227,8 @@ async function renderPackagesScreen(
   });
 
   const keyboard: InlineButton[][] = [
-    [filterBtn('low', '📦 ≤2'), filterBtn('over', '⚠️ Перебор')],
-    [filterBtn('active', '🟢 Активные'), filterBtn('all', '📋 Все')],
+    [filterBtn('active', '🟢 Активные'), filterBtn('low', '🟡 Заканчиваются')],
+    [filterBtn('ended', '🔴 Закончились'), filterBtn('over', '⚠️ Перебор')],
   ];
 
   for (const pkg of slice) {
@@ -193,12 +255,13 @@ async function renderPackagesScreen(
     ]);
   }
 
-  keyboard.push([{ text: '💳 Заявки на оплату', callback_data: 'ap:menu' }], [homeButton()]);
+  keyboard.push([{ text: '⬅️ Пакеты', callback_data: 'apk:hub' }, { text: '💳 Финансы', callback_data: 'af:menu' }], [homeButton()]);
 
   const titles: Record<PackageFilter, string> = {
-    low: '📦 Пакеты ≤2 занятия',
+    low: '🟡 Пакеты заканчиваются',
     over: '⚠️ Запланировано больше, чем остаток',
     active: '🟢 Активные пакеты',
+    ended: '🔴 Закончившиеся пакеты',
     all: '📋 Все пакеты (последние)',
   };
 
@@ -222,7 +285,7 @@ async function renderPackagesScreen(
 export async function renderPackagesMenu(
   admin: SupabaseClient,
   deliver: Deliver,
-  filter: PackageFilter = 'low',
+  filter: PackageFilter = 'active',
 ): Promise<void> {
   await renderPackagesScreen(admin, deliver, filter, 0);
 }
@@ -312,8 +375,8 @@ export async function handlePackagesAction(
   const deliver = editDeliver(message);
 
   try {
-    if (data === 'apk:menu') {
-      await renderPackagesMenu(admin, deliver, 'low');
+    if (data === 'apk:menu' || data === 'apk:hub') {
+      await renderPackagesHub(admin, deliver);
       return true;
     }
 

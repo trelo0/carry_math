@@ -47,7 +47,7 @@ export async function showClientPurchaseHistory(
 
   if (rows.length === 0) {
     const text =
-      '🧾 История покупок\n\n' +
+      '🧾 История\n\n' +
       'Заявок на оплату пока нет. Когда оформите покупку на сайте или через бота, она появится здесь.';
     const hub = await loadClientHub(admin, telegramId);
     if (hub) {
@@ -62,7 +62,7 @@ export async function showClientPurchaseHistory(
     return;
   }
 
-  const lines = ['🧾 История покупок', ''];
+  const lines = ['🧾 История', ''];
   for (const row of rows) {
     lines.push(
       `• ${row.title}`,

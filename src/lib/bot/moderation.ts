@@ -390,7 +390,10 @@ export const VIOLATIONS_PER_PAGE = 5;
 export type ViolationFilter = {
   status?: ViolationStatus;
   risk?: ViolationRisk;
+  riskIn?: ViolationRisk[];
   telegramId?: number;
+  /** Ученик: как получатель или как отправитель */
+  involvedStudentId?: number;
 };
 
 export async function countViolations(
@@ -400,7 +403,13 @@ export async function countViolations(
   let query = admin.from('bot_violations').select('id', { count: 'exact', head: true });
   if (filter.status) query = query.eq('status', filter.status);
   if (filter.risk) query = query.eq('risk_level', filter.risk);
+  if (filter.riskIn?.length) query = query.in('risk_level', filter.riskIn);
   if (filter.telegramId) query = query.eq('telegram_id', filter.telegramId);
+  if (filter.involvedStudentId) {
+    query = query.or(
+      `recipient_telegram_id.eq.${filter.involvedStudentId},telegram_id.eq.${filter.involvedStudentId}`,
+    );
+  }
   const { count, error } = await query;
   if (error) throw error;
   return count ?? 0;
@@ -421,7 +430,13 @@ export async function listViolations(
     .range(from, from + perPage - 1);
   if (filter.status) query = query.eq('status', filter.status);
   if (filter.risk) query = query.eq('risk_level', filter.risk);
+  if (filter.riskIn?.length) query = query.in('risk_level', filter.riskIn);
   if (filter.telegramId) query = query.eq('telegram_id', filter.telegramId);
+  if (filter.involvedStudentId) {
+    query = query.or(
+      `recipient_telegram_id.eq.${filter.involvedStudentId},telegram_id.eq.${filter.involvedStudentId}`,
+    );
+  }
   const { data, error, count } = await query;
   if (error) throw error;
   return { rows: (data ?? []) as ViolationRow[], total: count ?? 0 };
@@ -521,9 +536,10 @@ export function violationSenderName(row: ViolationRow): string {
 // Ответ отправителю, чьё HIGH-сообщение не прошло дальше (§5).
 // Без технических деталей алгоритма.
 export const MESSAGE_BLOCKED_NOTICE =
-  '⚠️ Сообщение не отправлено.\n\n' +
-  'В нём обнаружены контактные данные или попытка перевести общение за пределы District.\n\n' +
-  'Пожалуйста, продолжайте общение внутри платформы.';
+  '⚠️ Сообщение не отправлено\n\n' +
+  'В сообщении обнаружены личные контактные данные.\n\n' +
+  'Обмен личными контактами между сотрудниками и учениками запрещён.\n\n' +
+  'Пожалуйста, измените сообщение.';
 
 // Предупреждение от администратора (§7).
 function warningNotice(warningsCount: number): string {
@@ -672,6 +688,106 @@ async function notifyAdminsAboutViolation(
       }
     }),
   );
+}
+
+// Проверка исходящего сообщения сотрудника ученику (до доставки в Telegram).
+export async function guardStaffToStudentMessage(
+  admin: SupabaseClient,
+  params: {
+    staffTelegramId: number;
+    staffChatId: number;
+    studentTelegramId: number;
+    text: string;
+    staffRole: 'teacher' | 'curator';
+    fallbackName?: string;
+  },
+): Promise<{ blocked: boolean }> {
+  try {
+    const member = await getMember(admin, params.staffTelegramId);
+    const senderName = member?.full_name ?? params.fallbackName ?? null;
+    const detection = detectViolation(params.text, params.staffRole);
+    if (!detection) return { blocked: false };
+
+    const { data, error } = await admin
+      .from('bot_violations')
+      .insert({
+        telegram_id: params.staffTelegramId,
+        chat_id: params.staffChatId,
+        message_id: 0,
+        recipient_telegram_id: params.studentTelegramId,
+        sender_role: params.staffRole,
+        sender_name: senderName,
+        message_text: params.text.slice(0, 4000),
+        violation_type: detection.type,
+        risk_level: detection.risk,
+        reason: detection.reason,
+      })
+      .select('id, created_at')
+      .single();
+
+    if (error) {
+      if (isViolationTableError(error)) return { blocked: false };
+      throw error;
+    }
+
+    const record = data as { id: number; created_at: string } | null;
+    const detectedLabel = detection.type.startsWith('phone')
+      ? 'Телефонный номер'
+      : 'Telegram-контакт или фраза';
+
+    try {
+      const { logAdminAction } = await import('./admin/action-log');
+      await logAdminAction(admin, {
+        actorTelegramId: params.staffTelegramId,
+        action: 'violation.recorded',
+        entityType: 'violation',
+        entityId: record?.id,
+        targetTelegramId: params.studentTelegramId,
+        detail: { risk: detection.risk, type: detection.type },
+      });
+    } catch (logError) {
+      console.error('Контроль переписки: не удалось записать журнал:', logError);
+    }
+
+    if (detection.risk === 'high') {
+      try {
+        await telegramSend('sendMessage', { chat_id: params.staffChatId, text: MESSAGE_BLOCKED_NOTICE });
+      } catch (noticeError) {
+        console.error('Контроль переписки: отказ сотруднику не доставлен:', noticeError);
+      }
+      if (record) {
+        await notifyAdminsAboutViolation(admin, {
+          id: record.id,
+          createdAt: record.created_at,
+          senderName: senderName ?? `ID ${params.staffTelegramId}`,
+          senderRole: params.staffRole,
+          text: params.text,
+          reason: detection.reason,
+          risk: detection.risk,
+          detected: detectedLabel,
+        });
+      }
+      return { blocked: true };
+    }
+
+    if (record && (detection.risk === 'medium' || detection.risk === 'low')) {
+      await notifyAdminsAboutViolation(admin, {
+        id: record.id,
+        createdAt: record.created_at,
+        senderName: senderName ?? `ID ${params.staffTelegramId}`,
+        senderRole: params.staffRole,
+        text: params.text,
+        reason: detection.reason,
+        risk: detection.risk,
+        detected: detectedLabel,
+      });
+    }
+
+    return { blocked: false };
+  } catch (error) {
+    console.error('Контроль переписки: ошибка проверки исходящего сообщения:', error);
+    return { blocked: false };
+  }
 }
 
 // ---------------------------------------------------------------------------

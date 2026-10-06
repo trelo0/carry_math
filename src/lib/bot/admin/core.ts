@@ -40,6 +40,7 @@ export type AdminPayload = {
   webinarId?: string;
   reminderType?: ReminderType;
   category?: string;
+  auditPeriod?: string;
   page?: number;
   audience?: string;
   audienceTitle?: string;
@@ -49,6 +50,11 @@ export type AdminPayload = {
   fileName?: string;
   buttonText?: string;
   buttonUrl?: string;
+  scheduledAtIso?: string;
+  scheduleDayOffset?: number;
+  scheduleCustomDateMs?: number;
+  schedulePlanDayKey?: string;
+  broadcastRescheduleId?: number;
   studentTelegramId?: number;
   scheduleKind?: 'individual' | 'group';
   scheduleTopic?: string;
@@ -66,8 +72,15 @@ export type AdminPayload = {
   /** Кому пишет ученик: teacher | curator (student:mentor). */
   staffRole?: 'teacher' | 'curator';
   homework?: boolean;
+  adminHwId?: number;
+  adminHwQueue?: string;
+  adminHwPage?: number;
   hubMessageId?: number;
   screen?: string;
+  /** Куда вернуть «Назад» после поиска (callback_data). */
+  searchBack?: string;
+  /** Контекст карточки: people | stu | staff */
+  personBack?: string;
   clientHubChatId?: number;
   clientHubMessageId?: number;
   clientScreen?: string;
@@ -83,6 +96,20 @@ export type AdminPayload = {
   hwDraftText?: string;
   hwDraftFiles?: Array<{ ref: string; kind: 'photo' | 'document'; name?: string }>;
   adminMsgStudentId?: number;
+  leadReplyLeadId?: string;
+  inquiryLeadId?: string;
+  leadReplyNav?: string;
+  leadReplyClientTelegramId?: number;
+  leadTrialLeadId?: string;
+  leadTrialNav?: string;
+  leadTrialSubject?: string;
+  leadTrialTeacherTgId?: number;
+  leadTrialTeacherId?: string;
+  leadTrialTeacherName?: string;
+  leadTrialStartsAt?: string;
+  leadTrialRescheduleLessonId?: number;
+  leadFollowupLeadId?: string;
+  leadFollowupNav?: string;
 };
 
 export type ConversationStep =
@@ -104,29 +131,41 @@ export type ConversationStep =
   | 'notification:file'
   | 'users:search'
   | 'moderation:search'
+  | 'audit:search'
   | 'broadcast:text'
   | 'broadcast:compose'
   | 'broadcast:button-text'
   | 'broadcast:button-url'
   | 'broadcast:preview'
   | 'broadcast:confirm'
+  | 'broadcast:schedule:date'
+  | 'broadcast:schedule:time'
   | 'edu:group:title'
   | 'edu:group:teacher'
   | 'edu:group:curator'
   | 'edu:group:add'
   | 'edu:group:teacher-set'
+  | 'edu:group:curator-set'
   | 'edu:sched:topic'
   | 'edu:sched:datetime'
   | 'edu:sched:meet'
   | 'edu:ls:datetime'
   | 'student:support'
+  | 'student:support-thread'
   | 'student:mentor'
   | 'student:course-hw-submit'
   | 'course-apply:link-phone'
   | 'client:hub'
   | 'client:lead-form'
   | 'client:lesson-hw-submit'
-  | 'admin:msg:compose';
+  | 'admin:msg:compose'
+  | 'admin:lead:reply'
+  | 'admin:leads:search'
+  | 'admin:lead:trial:datetime'
+  | 'admin:lead:trial:confirm'
+  | 'admin:lead:followup:date'
+  | 'admin:hw:search'
+  | 'admin:hw:revision';
 
 export type ConversationState = {
   telegram_id: number;
@@ -332,6 +371,7 @@ export function adminReplyKeyboard(): ReplyKeyboard {
       [{ text: '🏠 Главная' }, { text: '👥 Люди' }],
       [{ text: '📚 Обучение' }, { text: '📨 Заявки' }],
       [{ text: '💳 Финансы' }, { text: '⚙️ Прочее' }],
+      [{ text: '🖥 Панель управления' }],
     ],
     resize_keyboard: true,
   };
@@ -345,6 +385,7 @@ export const ADMIN_REPLY_LABELS = {
   leads: '📨 Заявки',
   finance: '💳 Финансы',
   more: '⚙️ Прочее',
+  panel: '🖥 Панель управления',
 } as const;
 
 /** Старые подписи Reply Keyboard — маршрутизация в index.ts */

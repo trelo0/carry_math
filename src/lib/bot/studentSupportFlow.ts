@@ -1,9 +1,35 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
-import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
-import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
+import { logLeadEvent } from './admin/lead-events';
+import { insertLeadMessage } from './admin/lead-messages';
+import { setLeadStatus } from './admin/leads';
+import { resetClientDialogToHub, saveClientDialogState, clientBackButton } from './client-nav';
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
+import { createInquiryLead, type InquiryKind } from './inquiry-leads';
+import { getMember } from './roles';
+
+const SUPPORT_INTRO =
+  '💬 Напишите ваше сообщение администрации.\n\n' +
+  'Вы можете отправить текст, фото, документ или другое поддерживаемое сообщение.';
+
+const SUPPORT_THREAD_HINT =
+  'Можете отправить ещё сообщение по этому обращению или нажать «Отмена», чтобы выйти.';
+
+function supportIntroKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '⬅️ Назад', callback_data: 'cl:support:back' }],
+      [{ text: '❌ Отмена', callback_data: 'cl:support:cancel' }],
+    ],
+  };
+}
+
+async function inquiryKindForUser(admin: SupabaseClient, telegramId: number): Promise<InquiryKind> {
+  const member = await getMember(admin, telegramId);
+  if (member?.role === 'student') return 'student_question';
+  return 'guest_question';
+}
 
 export async function beginStudentSupport(
   admin: SupabaseClient,
@@ -16,10 +42,24 @@ export async function beginStudentSupport(
     if (!isConversationStateTableError(error)) throw error;
   }
 
-  const intro = await getBotCopy(BOT_COPY_KEYS.guestSupportIntro);
-  await sendAdminMessage(chatId, intro, {
-    inline_keyboard: [[{ text: '❌ Отменить', callback_data: 'cl:support:cancel' }]],
-  });
+  await sendAdminMessage(chatId, SUPPORT_INTRO, supportIntroKeyboard());
+}
+
+export async function beginStudentSupportThreadFromLead(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  leadId: string,
+): Promise<void> {
+  try {
+    await saveClientDialogState(admin, telegramId, chatId, 'student:support-thread', {
+      inquiryLeadId: leadId,
+    });
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+
+  await sendAdminMessage(chatId, `✍️ Дополните обращение.\n\n${SUPPORT_THREAD_HINT}`, supportIntroKeyboard());
 }
 
 async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
@@ -77,6 +117,58 @@ export async function notifyAdminsOfSupportMessage(
   );
 }
 
+async function enterSupportThread(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  leadId: string,
+): Promise<void> {
+  try {
+    await saveClientDialogState(admin, telegramId, chatId, 'student:support-thread', {
+      inquiryLeadId: leadId,
+    });
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+}
+
+async function appendInquiryMessage(
+  admin: SupabaseClient,
+  leadId: string,
+  telegramId: number,
+  body: string,
+): Promise<void> {
+  await insertLeadMessage(admin, {
+    leadId,
+    direction: 'client_to_admin',
+    senderTelegramId: telegramId,
+    body,
+  });
+  await logLeadEvent(admin, {
+    leadId,
+    eventType: 'client_message',
+    actorTelegramId: telegramId,
+    detail: { length: body.length },
+  });
+  await setLeadStatus(admin, leadId, 'awaiting_reply', null);
+}
+
+async function deliverSupportToAdmin(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  body: string,
+  ack: string,
+): Promise<void> {
+  const kind = await inquiryKindForUser(admin, telegramId);
+  const lead = await createInquiryLead(admin, telegramId, kind, body);
+  await notifyAdminsOfSupportMessage(admin, telegramId, body);
+  if (lead?.id) {
+    await enterSupportThread(admin, telegramId, chatId, lead.id);
+  }
+  await sendAdminMessage(chatId, `${ack}\n\n${SUPPORT_THREAD_HINT}`, supportIntroKeyboard());
+}
+
 export async function handleStudentSupportMessage(
   admin: SupabaseClient,
   telegramId: number,
@@ -92,15 +184,27 @@ export async function handleStudentSupportMessage(
     if (!isConversationStateTableError(error)) throw error;
     return false;
   }
-  if (!state || state.step !== 'student:support') return false;
+  if (!state) return false;
 
   const trimmed = text.trim();
   if (!trimmed) return true;
 
-  await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
-  await resetClientDialogToHub(admin, telegramId);
-  await sendAdminMessage(
+  if (state.step === 'student:support-thread') {
+    const leadId = state.payload?.inquiryLeadId as string | undefined;
+    if (!leadId) return false;
+    await appendInquiryMessage(admin, leadId, telegramId, trimmed);
+    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
+    await sendAdminMessage(chatId, '✅ Сообщение добавлено к обращению.', supportIntroKeyboard());
+    return true;
+  }
+
+  if (state.step !== 'student:support') return false;
+
+  await deliverSupportToAdmin(
+    admin,
+    telegramId,
     chatId,
+    trimmed,
     '✅ Сообщение отправлено администратору.\n\nМы ответим в Telegram или по контакту из профиля.',
   );
   return true;
@@ -119,12 +223,40 @@ export async function handleStudentSupportAttachment(
     if (!isConversationStateTableError(error)) throw error;
     return false;
   }
-  if (!state || state.step !== 'student:support') return false;
+  if (!state) return false;
 
-  await notifyAdminsOfSupportMessage(admin, telegramId, caption || '(вложение без подписи)');
-  await resetClientDialogToHub(admin, telegramId);
-  await sendAdminMessage(chatId, '✅ Вложение отправлено администратору.');
+  const body = caption || '(вложение без подписи)';
+
+  if (state.step === 'student:support-thread') {
+    const leadId = state.payload?.inquiryLeadId as string | undefined;
+    if (!leadId) return false;
+    await appendInquiryMessage(admin, leadId, telegramId, body);
+    await notifyAdminsOfSupportMessage(admin, telegramId, body);
+    await sendAdminMessage(chatId, '✅ Вложение добавлено к обращению.', supportIntroKeyboard());
+    return true;
+  }
+
+  if (state.step !== 'student:support') return false;
+
+  await deliverSupportToAdmin(
+    admin,
+    telegramId,
+    chatId,
+    body,
+    '✅ Вложение отправлено администратору.',
+  );
   return true;
+}
+
+export async function handleStudentSupportBack(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+): Promise<void> {
+  await resetClientDialogToHub(admin, telegramId);
+  await sendAdminMessage(chatId, 'Выберите раздел в меню ниже.', {
+    inline_keyboard: [[clientBackButton()]],
+  });
 }
 
 export async function handleStudentSupportCancel(

@@ -3,6 +3,7 @@ import { telegramSend } from '@/lib/telegram';
 import { resolveLessonFileDownloadUrl } from '@/lib/lesson-file-download';
 import { formatLessonDateTime } from '@/lib/teacher/format';
 import { clientHomeButton, editHubMessage, loadClientHub, saveClientHub, sendHubMessage } from './client-nav';
+import { resolveClientState, type ClientStateSnapshot } from './client-state';
 import {
   fetchClientLessonDetail,
   fetchClientPackages,
@@ -177,7 +178,9 @@ export async function showClientLessonsMenu(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  stateHint?: ClientStateSnapshot,
 ): Promise<void> {
+  const state = stateHint ?? (await resolveClientState(admin, telegramId));
   const [next, future, past] = await Promise.all([
     fetchNextClientLesson(admin, telegramId),
     fetchFutureClientLessons(admin, telegramId, 1),
@@ -187,9 +190,25 @@ export async function showClientLessonsMenu(
   const hasPast = past.items.length > 0 || past.hasMore;
   const hasFuture = future.length > 0;
   const hasNext = Boolean(next);
+  const noActive = !state.hasActiveProducts && !hasNext && !hasFuture && !hasPast;
+
+  if (noActive && state.phase === 'client_idle') {
+    await renderHub(
+      admin,
+      telegramId,
+      chatId,
+      undefined,
+      'lessons-menu-empty',
+      ['📚 Мои занятия', '', 'У вас пока нет активного обучения.'].join('\n'),
+      {
+        inline_keyboard: [[{ text: '🎓 Купить обучение', callback_data: 'cl:buy:hub' }], [clientHomeButton()]],
+      },
+    );
+    return;
+  }
 
   const text =
-    '📅 Мои занятия\n\n' +
+    '📚 Мои занятия\n\n' +
     'Выберите подраздел: ближайшее, будущие или прошедшие занятия.';
 
   const rows: Array<Array<Record<string, string>>> = [

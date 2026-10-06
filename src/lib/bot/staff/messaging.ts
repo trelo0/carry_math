@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
+import { guardStaffToStudentMessage } from '@/lib/bot/moderation';
 
 export type StaffMessageRole = 'teacher' | 'curator';
 
@@ -127,6 +128,20 @@ export async function deliverStaffToStudent(
     params.staffRole,
     params.studentTelegramId,
   );
+
+  const staffChatId = await resolveMemberChatId(admin, params.staffTelegramId);
+  if (params.body.trim()) {
+    const guard = await guardStaffToStudentMessage(admin, {
+      staffTelegramId: params.staffTelegramId,
+      staffChatId: staffChatId ?? params.staffTelegramId,
+      studentTelegramId: params.studentTelegramId,
+      text: params.body.trim(),
+      staffRole: params.staffRole,
+    });
+    if (guard.blocked) {
+      throw new Error('Сообщение не отправлено: обнаружены личные контактные данные.');
+    }
+  }
 
   const chatId = await resolveMemberChatId(admin, params.studentTelegramId);
   if (!chatId) {

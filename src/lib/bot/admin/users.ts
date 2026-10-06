@@ -139,21 +139,31 @@ async function renderUserSearchPrompt(
   admin: SupabaseClient,
   telegramId: number,
   message: AdminMessage,
+  searchBack = 'admin:users',
 ): Promise<void> {
-  await saveState(admin, telegramId, message, 'users:search', {});
+  await saveState(admin, telegramId, message, 'users:search', { searchBack });
   await editAdminMessage(
     message,
-    '🔎 Поиск пользователя\n\n' +
-      'Отправь следующим сообщением имя, часть имени или телефон.\n\n' +
-      'Например: «Иван», «29» или «37529».\n\n' +
-      'Email в системе не хранится, поэтому поиск по нему недоступен.',
+    '🔎 Поиск человека\n\nИмя, фамилия, телефон, Telegram ID.\nМинимум 2 символа.',
     {
       inline_keyboard: [
-        [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
+        [{ text: '⬅️ Назад', callback_data: searchBack }],
         [homeButton()],
       ],
     },
   );
+}
+
+function searchResultCard(admin: SupabaseClient, member: MemberRow): Promise<string> {
+  return (async () => {
+    const withExtra = await getMemberWithExtras(admin, member.telegram_id);
+    const roles = memberRolesSummary(member.role, withExtra?.extra_roles ?? []);
+    const isStudent = member.role === 'student';
+    const icon = isStudent ? '👨‍🎓' : '👨‍💼';
+    const lines = [`${icon} ${memberDisplayName(member)}`, roles];
+    if (member.phone) lines.push(`📱 ${member.phone}`);
+    return lines.join('\n');
+  })();
 }
 
 // Результаты поиска — ответ на текстовый ввод: всегда новое сообщение,
@@ -164,16 +174,14 @@ export async function renderUsersSearchResults(
   query: string,
 ): Promise<void> {
   const chatId = state.chat_id;
+  const back = state.payload?.searchBack ?? 'admin:users';
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     await sendAdminMessage(
       chatId,
-      '🔎 Поиск пользователя\n\nЗапрос слишком короткий — введи минимум 2 символа.',
+      '🔎 Поиск\n\nЗапрос слишком короткий — минимум 2 символа.',
       {
-        inline_keyboard: [
-          [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
-          [homeButton()],
-        ],
+        inline_keyboard: [[{ text: '⬅️ Назад', callback_data: back }], [homeButton()]],
       },
     );
     return;
@@ -183,33 +191,24 @@ export async function renderUsersSearchResults(
   if (members.length === 0) {
     await sendAdminMessage(
       chatId,
-      `🔎 Никого не нашли по запросу «${trimmed}».\n\nПопробуй другое имя или телефон. Новый запрос — просто отправь его сообщением.`,
+      `🔎 Никого не нашли по «${trimmed}».\n\nОтправь другой запрос сообщением.`,
       {
-        inline_keyboard: [
-          [{ text: '⬅️ Назад', callback_data: 'admin:users' }],
-          [homeButton()],
-        ],
+        inline_keyboard: [[{ text: '⬅️ Назад', callback_data: back }], [homeButton()]],
       },
     );
     return;
   }
 
-  const text = [
-    `🔎 Результаты по запросу «${trimmed}»: ${members.length}`,
-    '',
-    ...members.map((member, index) => `${index + 1}. ${memberCard(member)}`),
-    '',
-    'Нажми на пользователя, чтобы открыть профиль. Новый запрос — просто отправь его сообщением.',
-  ].join('\n\n');
+  const cards = await Promise.all(members.map((m) => searchResultCard(admin, m)));
+  const text = ['🔎 Результаты поиска', '', ...cards.flatMap((c) => [c, ''])].join('\n');
 
   const keyboard: InlineButton[][] = members.map((member) => [
     {
       text: `👤 ${shorten(memberDisplayName(member), 40)}`,
-      // Контекст не передаём: «Назад» из профиля после поиска ведёт в меню.
-      callback_data: `admin:user:${member.telegram_id}::`,
+      callback_data: `admin:user:${member.telegram_id}::people`,
     },
   ]);
-  keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:users' }], [homeButton()]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: back }], [homeButton()]);
 
   await sendAdminMessage(chatId, text, { inline_keyboard: keyboard });
 }
@@ -303,7 +302,12 @@ function memberHasExtra(combined: BotRole[], role: BotRole): boolean {
   return combined.some((r) => normalizeMemberRole(r) === normalizeMemberRole(role));
 }
 
-async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, member: MemberRow): Promise<void> {
+async function renderUserProfile(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  member: MemberRow,
+  back: InlineButton = { text: '⬅️ Назад', callback_data: 'admin:users' },
+): Promise<void> {
   const withExtra = await getMemberWithExtras(admin, member.telegram_id);
   const extra = withExtra?.extra_roles ?? [];
   let leads = 0;
@@ -389,12 +393,17 @@ async function renderUserProfile(admin: SupabaseClient, message: AdminMessage, m
   if (moderationStatus === 'restricted') {
     keyboard.push([{ text: '🔓 Снять ограничение', callback_data: `admin:mod:unrestrict:${member.telegram_id}` }]);
   }
-  keyboard.push([homeButton()]);
+  keyboard.push([back], [homeButton()]);
 
   await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
 }
 
-async function renderRoleChoices(message: AdminMessage, member: MemberRow, callerId: number): Promise<void> {
+async function renderRoleChoices(
+  message: AdminMessage,
+  member: MemberRow,
+  callerId: number,
+  back: InlineButton,
+): Promise<void> {
   const roles: BotRole[] = isAdminEnv(callerId) ? [...ASSIGNABLE_ROLES, 'test'] : ASSIGNABLE_ROLES;
   const keyboard: InlineButton[][] = roles.map((role) => [
     {
@@ -468,7 +477,7 @@ export async function handlePanelAction(
   if (data === 'admin:home') {
     await clearStateIfAvailable(admin, telegramId);
     const { renderAdminHomeDashboard } = await import('./home');
-    await renderAdminHomeDashboard(admin, editDeliver(message));
+    await renderAdminHomeDashboard(admin, editDeliver(message), telegramId);
     return true;
   }
 
@@ -520,20 +529,47 @@ export async function handlePanelAction(
 
   const action = parts[3] || '';
   const role = parts[4];
-  const category = findCategory(parts[5] ?? '');
-  const page = Math.max(0, Number(parts[6]) || 0);
-  // «Назад»: в список категории либо в меню пользователей после поиска.
-  const back = category
-    ? { text: '⬅️ Назад', callback_data: `admin:cat:${category.id}:${page}` }
-    : { text: '⬅️ Назад', callback_data: 'admin:users' };
+  const ctx = action === '' ? (parts[4] ?? '') : (parts[5] ?? '');
+  // admin:user:<id>::edu:ind:<page>
+  const category = findCategory(ctx);
+  const page = Math.max(0, Number(action === '' ? parts[6] : parts[6]) || 0);
 
-  if (action === '' ) {
-    await renderUserProfile(admin, message, member);
+  let back: InlineButton;
+  if (ctx === 'people') {
+    back = { text: '⬅️ Назад', callback_data: 'ah:people' };
+  } else if (ctx === 'stu') {
+    const filter = parts[5] ?? 'all';
+    const stuPage = Math.max(0, Number(parts[6]) || 0);
+    const adv = ['individual', 'course', 'group', 'low_pkg'].includes(filter);
+    back = {
+      text: '⬅️ Назад',
+      callback_data: adv ? 'ah:stu:adv' : `ah:stu:f:${filter}:${stuPage}`,
+    };
+  } else if (ctx === 'staff') {
+    const sf = parts[5] ?? 'all';
+    const sp = Math.max(0, Number(parts[6]) || 0);
+    back = { text: '⬅️ Назад', callback_data: `ah:staff:f:${sf}:${sp}` };
+  } else if (ctx === 'edu') {
+    const sub = parts[5] ?? 'ind';
+    if (sub === 'ind') {
+      const p = Math.max(0, Number(parts[6]) || 0);
+      back = { text: '⬅️ Назад', callback_data: `ae:ind:${p}` };
+    } else {
+      back = { text: '⬅️ Назад', callback_data: 'ae:menu' };
+    }
+  } else if (category) {
+    back = { text: '⬅️ Назад', callback_data: `admin:cat:${category.id}:${page}` };
+  } else {
+    back = { text: '⬅️ Назад', callback_data: 'admin:users' };
+  }
+
+  if (action === '') {
+    await renderUserProfile(admin, message, member, back);
     return true;
   }
 
   if (action === 'role') {
-    await renderRoleChoices(message, member, telegramId);
+    await renderRoleChoices(message, member, telegramId, back);
     return true;
   }
 

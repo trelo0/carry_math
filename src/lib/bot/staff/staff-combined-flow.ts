@@ -44,9 +44,9 @@ import { renderCuratorStudentsList } from '@/lib/bot/curator/curatorFlow';
 import { teacherCabinetScreen } from '@/lib/bot/teacher/teacherFlow';
 
 export const COMBINED_HOME_TEXT =
-  '👨‍🏫 Кабинет сотрудника District\n\n' +
-  'У вас одновременно роли преподавателя и куратора — общее меню с разделением по контексту.\n' +
-  'Только куратор: primary role=curator без teacher в extra_roles → отдельное меню куратора.';
+  '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
+  'Здесь вы можете посмотреть своих учеников, расписание, домашние задания и сообщения.\n\n' +
+  'Выберите нужный раздел:';
 
 async function combinedCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {

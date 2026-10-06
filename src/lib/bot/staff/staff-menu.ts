@@ -1,4 +1,5 @@
 import type { ReplyKeyboard } from '@/lib/bot/admin/core';
+import { memberHasRole } from '@/lib/bot/roles';
 import type { StaffCapabilities } from './capabilities';
 
 /** Reply-меню куратора (без расписания преподавателя). */
@@ -34,9 +35,11 @@ export const COMBINED_STAFF_MENU_LABEL_SET = new Set<string>(
 );
 
 export function resolveStaffBotMode(caps: StaffCapabilities): StaffBotMode {
-  if (caps.canTeacherBot && caps.canCuratorBot) return 'combined';
-  if (caps.canTeacherBot) return 'teacher_only';
-  if (caps.canCuratorBot) return 'curator_only';
+  const hasTeacher = memberHasRole(caps.roles, 'teacher');
+  const hasCurator = memberHasRole(caps.roles, 'curator');
+  if (hasTeacher && hasCurator) return 'combined';
+  if (hasTeacher) return 'teacher_only';
+  if (hasCurator || caps.canCuratorBot) return 'curator_only';
   return null;
 }
 

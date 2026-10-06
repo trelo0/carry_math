@@ -166,6 +166,7 @@ async function memberName(admin: SupabaseClient, telegramId: number): Promise<st
 export async function getStudentTeacher(
   admin: SupabaseClient,
   telegramId: number,
+  options?: { assignmentsOnly?: boolean },
 ): Promise<StudentMentor | null> {
   const assignments = await getStudentAssignments(admin, telegramId, 'teacher');
   const personal = assignments[0];
@@ -185,6 +186,10 @@ export async function getStudentTeacher(
         source: 'group',
       };
     }
+  }
+
+  if (options?.assignmentsOnly) {
+    return null;
   }
 
   const { data: lessonRow } = await admin

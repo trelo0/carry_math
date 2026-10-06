@@ -116,6 +116,228 @@ async function memberLabel(admin: SupabaseClient, telegramId: number): Promise<s
   return member ? memberDisplayName(member) : `ID ${telegramId}`;
 }
 
+function dayRange(dayOffset: number): { fromIso: string; toIso: string; label: string } {
+  const msDay = 86400000;
+  const mskOffset = 3 * 3600000;
+  const now = Date.now();
+  const mskMidnight = Math.floor((now + mskOffset) / msDay) * msDay - mskOffset;
+  const dayStart = mskMidnight + dayOffset * msDay;
+  const from = new Date(dayStart);
+  const to = new Date(dayStart + msDay);
+  const label = from.toLocaleDateString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: 'numeric',
+    month: 'long',
+  });
+  return { fromIso: from.toISOString(), toIso: to.toISOString(), label };
+}
+
+type DayKindFilter = 'a' | 'g' | 'i';
+
+async function listDayLessons(
+  admin: SupabaseClient,
+  dayOffset: number,
+  kind: DayKindFilter,
+  teacherId: number,
+  groupId: number,
+): Promise<AdminLessonRow[]> {
+  const { fromIso, toIso } = dayRange(dayOffset);
+  let query = admin
+    .from('scheduled_lessons')
+    .select(
+      'id, telegram_id, teacher_telegram_id, group_id, kind, topic, starts_at, status, meet_url',
+    )
+    .gte('starts_at', fromIso)
+    .lt('starts_at', toIso)
+    .neq('status', 'cancelled')
+    .order('starts_at', { ascending: true })
+    .limit(50);
+  if (kind === 'g') query = query.eq('kind', 'group');
+  if (kind === 'i') query = query.eq('kind', 'individual');
+  if (teacherId > 0) query = query.eq('teacher_telegram_id', teacherId);
+  if (groupId > 0) query = query.eq('group_id', groupId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as unknown as AdminLessonRow[];
+}
+
+function dayNavSuffix(dayOffset: number, kind: DayKindFilter, teacherId: number, groupId: number): string {
+  return `${dayOffset}:${kind}:${teacherId || 0}:${groupId || 0}`;
+}
+
+function parseDayNav(parts: string[]): {
+  dayOffset: number;
+  kind: DayKindFilter;
+  teacherId: number;
+  groupId: number;
+} {
+  return {
+    dayOffset: Number(parts[0]) || 0,
+    kind: (parts[1] === 'g' || parts[1] === 'i' ? parts[1] : 'a') as DayKindFilter,
+    teacherId: Number(parts[2]) || 0,
+    groupId: Number(parts[3]) || 0,
+  };
+}
+
+async function formatLessonBlock(admin: SupabaseClient, lesson: AdminLessonRow): Promise<string> {
+  const start = new Date(lesson.starts_at);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const fmt = (d: Date) =>
+    d.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' });
+  const student = await memberLabel(admin, lesson.telegram_id);
+  const teacher = lesson.teacher_telegram_id
+    ? await memberLabel(admin, lesson.teacher_telegram_id)
+    : '—';
+  const status =
+    lesson.status === 'scheduled'
+      ? '🟢 Запланировано'
+      : lesson.status === 'completed'
+        ? '✅ Проведено'
+        : lesson.status;
+  return [
+    `${fmt(start)}–${fmt(end)}`,
+    `👤 ${student}`,
+    `📚 ${shorten(lesson.topic, 32)}`,
+    `👨‍🏫 ${teacher}`,
+    status,
+  ].join('\n');
+}
+
+export async function renderScheduleDayMenu(
+  admin: SupabaseClient,
+  deliver: Deliver,
+  dayOffset = 0,
+  kind: DayKindFilter = 'a',
+  teacherId = 0,
+  groupId = 0,
+): Promise<void> {
+  const { label } = dayRange(dayOffset);
+  const lessons = await listDayLessons(admin, dayOffset, kind, teacherId, groupId);
+  const filterHints: string[] = [];
+  if (kind === 'g') filterHints.push('только групповые');
+  if (kind === 'i') filterHints.push('только индивидуальные');
+  if (teacherId > 0) filterHints.push(`препод: ${await memberLabel(admin, teacherId)}`);
+  if (groupId > 0) filterHints.push(`группа #${groupId}`);
+
+  const lines = [
+    '📅 Расписание',
+    '',
+    label,
+    filterHints.length ? filterHints.join(' · ') : '',
+    '',
+  ].filter(Boolean);
+
+  if (lessons.length === 0) {
+    lines.push('Занятий нет.');
+  } else {
+    for (const lesson of lessons.slice(0, 8)) {
+      lines.push(await formatLessonBlock(admin, lesson), '');
+    }
+  }
+
+  const nav = dayNavSuffix(dayOffset, kind, teacherId, groupId);
+  const keyboard: InlineButton[][] = [
+    [
+      { text: kind === 'a' ? '[Все]' : 'Все', callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, 'a', teacherId, groupId)}` },
+      { text: kind === 'g' ? '[Группы]' : 'Группы', callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, 'g', teacherId, groupId)}` },
+      {
+        text: kind === 'i' ? '[Индивид.]' : 'Индивид.',
+        callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, 'i', teacherId, groupId)}`,
+      },
+    ],
+    [{ text: '👨‍🏫 Преподаватель', callback_data: `ae:ls:tpd:${dayOffset}:${kind}:0` }],
+    [{ text: '👥 Группа', callback_data: `ae:ls:gpd:${dayOffset}:${kind}:0` }],
+  ];
+
+  for (const l of lessons.slice(0, LESSONS_PER_PAGE)) {
+    keyboard.push([
+      {
+        text: `${new Date(l.starts_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' })} · ${shorten(l.topic, 20)}`,
+        callback_data: `ae:ls:l:${l.id}:d:${nav}`,
+      },
+    ]);
+  }
+
+  keyboard.push([
+    {
+      text: dayOffset > -7 ? '◀️ День' : '·',
+      callback_data: dayOffset > -7 ? `ae:ls:day:${dayNavSuffix(dayOffset - 1, kind, teacherId, groupId)}` : 'noop',
+    },
+    { text: dayOffset === 0 ? 'Сегодня' : `+${dayOffset}д`, callback_data: 'noop' },
+    {
+      text: dayOffset < 14 ? 'День ▶️' : '·',
+      callback_data: dayOffset < 14 ? `ae:ls:day:${dayNavSuffix(dayOffset + 1, kind, teacherId, groupId)}` : 'noop',
+    },
+  ]);
+  keyboard.push(
+    [{ text: '📆 Неделя', callback_data: 'ae:ls:w:0:0' }],
+    [{ text: '⬅️ Обучение', callback_data: 'ae:menu' }],
+    [homeButton()],
+  );
+
+  await deliver(lines.join('\n').slice(0, 3900), { inline_keyboard: keyboard });
+}
+
+async function renderDayTeacherPicker(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  dayOffset: number,
+  kind: DayKindFilter,
+  page: number,
+): Promise<void> {
+  const teachers = await listMentorPickerCandidates(admin, 'teacher');
+  const from = page * TEACHERS_PER_PAGE;
+  const slice = teachers.slice(from, from + TEACHERS_PER_PAGE);
+  const keyboard: InlineButton[][] = slice.map((t) => [
+    {
+      text: shorten(t.full_name?.trim() || `ID ${t.telegram_id}`, 34),
+      callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, kind, t.telegram_id, 0)}`,
+    },
+  ]);
+  if (page > 0) {
+    keyboard.push([{ text: '◀️', callback_data: `ae:ls:tpd:${dayOffset}:${kind}:${page - 1}` }]);
+  }
+  if (from + slice.length < teachers.length) {
+    keyboard.push([{ text: '▶️', callback_data: `ae:ls:tpd:${dayOffset}:${kind}:${page + 1}` }]);
+  }
+  keyboard.push(
+    [{ text: '⬅️ Расписание', callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, kind, 0, 0)}` }],
+    [homeButton()],
+  );
+  await editAdminMessage(message, '👨‍🏫 Выбери преподавателя', { inline_keyboard: keyboard });
+}
+
+async function renderDayGroupPicker(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  dayOffset: number,
+  kind: DayKindFilter,
+  page: number,
+): Promise<void> {
+  const { data, error } = await admin.from('groups').select('id, title').order('title').limit(100);
+  if (error) throw error;
+  const groups = data ?? [];
+  const from = page * TEACHERS_PER_PAGE;
+  const slice = groups.slice(from, from + TEACHERS_PER_PAGE);
+  const keyboard: InlineButton[][] = slice.map((g) => [
+    {
+      text: shorten(String(g.title), 34),
+      callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, kind, 0, g.id as number)}`,
+    },
+  ]);
+  if (page > 0) {
+    keyboard.push([{ text: '◀️', callback_data: `ae:ls:gpd:${dayOffset}:${kind}:${page - 1}` }]);
+  }
+  if (from + slice.length < groups.length) {
+    keyboard.push([{ text: '▶️', callback_data: `ae:ls:gpd:${dayOffset}:${kind}:${page + 1}` }]);
+  }
+  keyboard.push(
+    [{ text: '⬅️ Расписание', callback_data: `ae:ls:day:${dayNavSuffix(dayOffset, kind, 0, 0)}` }],
+    [homeButton()],
+  );
+  await editAdminMessage(message, '👥 Выбери группу', { inline_keyboard: keyboard });
+}
+
 async function listWeekLessons(
   admin: SupabaseClient,
   weekOffset: number,
@@ -211,7 +433,8 @@ export async function renderScheduleWeekMenu(
   }
 
   keyboard.push(
-    [{ text: '↩️ Учёба', callback_data: 'ae:menu' }],
+    [{ text: '📅 По дням', callback_data: 'ae:ls:day:0:a:0:0' }],
+    [{ text: '⬅️ Обучение', callback_data: 'ae:menu' }],
     [homeButton()],
   );
 
@@ -255,17 +478,23 @@ async function renderLessonDetail(
   const teacherLabel = lesson.teacher_telegram_id
     ? await memberLabel(admin, lesson.teacher_telegram_id)
     : '—';
+  const statusLine =
+    lesson.status === 'scheduled'
+      ? '🟢 Запланировано'
+      : lesson.status === 'completed'
+        ? '✅ Проведено'
+        : `Статус: ${lesson.status}`;
   const lines = [
     `📅 Занятие #${lesson.id}`,
     '',
     `📝 ${lesson.topic}`,
     `🕐 ${formatDateTime(lesson.starts_at)}`,
     `📦 ${lesson.kind === 'group' ? 'Групповое' : 'Индивидуальное'}`,
-    `👤 Ученик: ${studentLabel}`,
-    `👨‍🏫 Препод: ${teacherLabel}`,
+    `👤 ${studentLabel}`,
+    `👨‍🏫 ${teacherLabel}`,
     lesson.group_id ? `👥 Группа #${lesson.group_id}` : '',
     lesson.meet_url ? `🔗 ${lesson.meet_url}` : '',
-    `Статус: ${lesson.status}`,
+    statusLine,
   ].filter(Boolean);
 
   const keyboard: InlineButton[][] = [];
@@ -275,9 +504,17 @@ async function renderLessonDetail(
       [{ text: '❌ Отменить', callback_data: `ae:ls:cx:${lesson.id}:${nav}` }],
     );
   }
+  if (lesson.group_id) {
+    keyboard.push([{ text: '👥 Группа', callback_data: `ae:g:${lesson.group_id}` }]);
+  }
   keyboard.push(
     [{ text: '👤 Карточка ученика', callback_data: `admin:user:${lesson.telegram_id}::` }],
-    [{ text: '◀️ К расписанию', callback_data: `ae:ls:w:${nav}` }],
+    [
+      {
+        text: '◀️ К расписанию',
+        callback_data: nav.startsWith('d:') ? `ae:ls:day:${nav.slice(2)}` : `ae:ls:w:${nav}`,
+      },
+    ],
     [homeButton()],
   );
 
@@ -348,7 +585,7 @@ async function renderCourseStudentsHub(
       },
     ]);
   }
-  keyboard.push([{ text: '↩️ Учёба', callback_data: 'ae:menu' }], [homeButton()]);
+  keyboard.push([{ text: '⬅️ Обучение', callback_data: 'ae:menu' }], [homeButton()]);
   await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
 }
 
@@ -411,7 +648,44 @@ export async function handleScheduleListAction(
   const deliver = editDeliver(message);
 
   if (data === 'ae:ls:menu') {
-    await renderScheduleWeekMenu(admin, deliver, 0, 0);
+    await renderScheduleDayMenu(admin, deliver, 0, 'a', 0, 0);
+    return true;
+  }
+
+  const dayMatch = data.match(/^ae:ls:day:(-?\d+):([agi]):(\d+):(\d+)$/);
+  if (dayMatch) {
+    await renderScheduleDayMenu(
+      admin,
+      deliver,
+      Number(dayMatch[1]) || 0,
+      dayMatch[2] as DayKindFilter,
+      Number(dayMatch[3]) || 0,
+      Number(dayMatch[4]) || 0,
+    );
+    return true;
+  }
+
+  const tpdMatch = data.match(/^ae:ls:tpd:(-?\d+):([agi]):(\d+)$/);
+  if (tpdMatch) {
+    await renderDayTeacherPicker(
+      admin,
+      message,
+      Number(tpdMatch[1]) || 0,
+      tpdMatch[2] as DayKindFilter,
+      Number(tpdMatch[3]) || 0,
+    );
+    return true;
+  }
+
+  const gpdMatch = data.match(/^ae:ls:gpd:(-?\d+):([agi]):(\d+)$/);
+  if (gpdMatch) {
+    await renderDayGroupPicker(
+      admin,
+      message,
+      Number(gpdMatch[1]) || 0,
+      gpdMatch[2] as DayKindFilter,
+      Number(gpdMatch[3]) || 0,
+    );
     return true;
   }
 
@@ -424,6 +698,17 @@ export async function handleScheduleListAction(
   const tpMatch = data.match(/^ae:ls:tp:(-?\d+):(\d+)$/);
   if (tpMatch) {
     await renderTeacherPickerForSchedule(admin, message, Number(tpMatch[1]) || 0, Number(tpMatch[2]) || 0);
+    return true;
+  }
+
+  const lessonDayMatch = data.match(/^ae:ls:l:(\d+):d:(.+)$/);
+  if (lessonDayMatch) {
+    const lesson = await getLesson(admin, Number(lessonDayMatch[1]));
+    if (!lesson) {
+      await deliver('Занятие не найдено.', { inline_keyboard: [[homeButton()]] });
+      return true;
+    }
+    await renderLessonDetail(admin, message, lesson, `d:${lessonDayMatch[2]}`);
     return true;
   }
 

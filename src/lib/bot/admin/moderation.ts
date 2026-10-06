@@ -8,6 +8,8 @@ import {
   searchMembers,
   setModerationStatus,
 } from '@/lib/bot/roles';
+import { formatMsgDisplayId } from '@/lib/displayId';
+import { staffStudentLabel } from '@/lib/bot/staff/messaging';
 import {
   RISK_EMOJI,
   RISK_TITLE,
@@ -58,11 +60,15 @@ import { memberCard, memberDisplayName } from './users';
 // Откуда открыта карточка события: n — новые, a — все, u — нарушения
 // пользователя, w — предупреждения, x — уведомление в чате администратора.
 type ModerationContext = {
-  origin: 'n' | 'a' | 'u' | 'w' | 'x';
+  origin: 'n' | 'r' | 'a' | 'u' | 'w' | 'x';
   filter: string;
   telegramId: number;
   page: number;
 };
+
+function commsThreadStaffRole(senderRole: string): 'teacher' | 'curator' {
+  return senderRole === 'teacher' ? 'teacher' : 'curator';
+}
 
 const MODERATION_RISK_FILTERS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'Все' },
@@ -130,6 +136,7 @@ function serializeModerationContext(context: ModerationContext): string {
   if (context.origin === 'a') return `a:${context.filter}:${context.page}`;
   if (context.origin === 'u') return `u:${context.telegramId}:${context.page}`;
   if (context.origin === 'w') return `w:${context.page}`;
+  if (context.origin === 'r') return `r:${context.page}`;
   if (context.origin === 'x') return 'x';
   return `n:${context.page}`;
 }
@@ -146,6 +153,7 @@ function parseModerationContext(parts: string[]): ModerationContext {
     return { origin: 'w', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
   }
   if (origin === 'x') return { origin: 'x', filter: 'all', telegramId: 0, page: 0 };
+  if (origin === 'r') return { origin: 'r', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
   return { origin: 'n', filter: 'all', telegramId: 0, page: toModerationPage(parts[1]) };
 }
 
@@ -162,6 +170,9 @@ function moderationBackButton(context: ModerationContext): InlineButton {
   if (context.origin === 'x') {
     return { text: '⬅️ Назад', callback_data: 'admin:chat-control' };
   }
+  if (context.origin === 'r') {
+    return { text: '⬅️ Назад', callback_data: `admin:mod:review:${context.page}` };
+  }
   return { text: '⬅️ Назад', callback_data: `admin:mod:new:${context.page}` };
 }
 
@@ -174,19 +185,27 @@ export async function renderModerationMenu(
   // Вне активного поиска текст админа не должен попадать в поиск нарушителей.
   await clearStateIfAvailable(admin, telegramId);
   try {
-    const pending = await countViolations(admin, { status: 'pending' });
+    const [pendingHigh, pendingReview] = await Promise.all([
+      countViolations(admin, { status: 'pending', risk: 'high' }),
+      countViolations(admin, { status: 'pending', riskIn: ['low', 'medium'] }),
+    ]);
     const text = [
-      '🚨 Контроль переписки',
+      '💬 Контроль переписки',
       '',
-      pending > 0 ? `🔴 Ожидают обработки: ${pending}` : '✅ Новых нарушений нет.',
+      `🔴 Новые (HIGH) — ${pendingHigh}`,
+      `🟡 На проверке — ${pendingReview}`,
+      '',
+      pendingHigh + pendingReview > 0 ? 'Есть необработанные события.' : '✅ Новых нарушений нет.',
     ].join('\n');
     await deliver(text, {
       inline_keyboard: [
-        [{ text: '🔴 Новые нарушения', callback_data: 'admin:mod:new:0' }],
-        [{ text: '📋 Все нарушения', callback_data: 'admin:mod:all:all:0' }],
+        [{ text: '🔴 Новые', callback_data: 'admin:mod:new:0' }],
+        [{ text: '🟡 На проверке', callback_data: 'admin:mod:review:0' }],
+        [{ text: '📋 Все', callback_data: 'admin:mod:all:all:0' }],
         [{ text: '👤 Пользователи под контролем', callback_data: 'admin:mod:users' }],
         [{ text: '⚠️ Предупреждения', callback_data: 'admin:mod:warned:0' }],
         [{ text: '🔒 Заблокированные', callback_data: 'admin:mod:blocked:0' }],
+        [{ text: '⬅️ Проблемы и контроль', callback_data: 'ah:more:problems-control' }],
         [homeButton()],
       ],
     });
@@ -203,7 +222,7 @@ async function renderModerationNew(
   page: number,
 ): Promise<void> {
   try {
-    const { rows, total } = await listViolations(admin, { status: 'pending' }, page);
+    const { rows, total } = await listViolations(admin, { status: 'pending', risk: 'high' }, page);
     const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
     const safePage = Math.min(page, pageCount - 1);
 
@@ -219,8 +238,45 @@ async function renderModerationNew(
 
     const text =
       rows.length === 0
-        ? '🚨 Новые нарушения\n\nНеобработанных событий нет.'
-        : ['🚨 Новые нарушения', '', ...rows.map(violationItemText)].join('\n\n');
+        ? '🚨 Новые нарушения (HIGH)\n\nНеобработанных событий нет.'
+        : ['🚨 Новые нарушения (HIGH)', '', ...rows.map(violationItemText)].join('\n\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
+// Pending с риском LOW/MEDIUM — без автоблокировки сообщения.
+async function renderModerationReview(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  page: number,
+): Promise<void> {
+  try {
+    const { rows, total } = await listViolations(
+      admin,
+      { status: 'pending', riskIn: ['low', 'medium'] },
+      page,
+    );
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${RISK_EMOJI[row.risk_level]} ${shorten(violationSenderName(row), 28)}`,
+        callback_data: `admin:mod:v:${row.id}:r:${safePage}`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:review:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Назад', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? '🟡 На проверке\n\nСобытий в очереди нет.'
+        : ['🟡 На проверке', '', ...rows.map(violationItemText)].join('\n\n');
 
     await editAdminMessage(message, text, { inline_keyboard: keyboard });
   } catch (error) {
@@ -413,6 +469,50 @@ async function renderUserViolations(
   }
 }
 
+async function renderStudentViolationHistory(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  studentId: number,
+  page: number,
+): Promise<void> {
+  try {
+    const label = await staffStudentLabel(admin, studentId);
+    const { rows, total } = await listViolations(admin, { involvedStudentId: studentId }, page);
+    const pageCount = Math.max(1, Math.ceil(total / VIOLATIONS_PER_PAGE));
+    const safePage = Math.min(page, pageCount - 1);
+
+    const keyboard: InlineButton[][] = rows.map((row) => [
+      {
+        text: `${formatMsgDisplayId(row.id)} · ${formatViolationDateShort(row.created_at)}`,
+        callback_data: `admin:mod:v:${row.id}:x`,
+      },
+    ]);
+    const pagination = moderationPaginationRow(pageCount, safePage, (p) => `admin:mod:std:${studentId}:${p}`);
+    if (pagination) keyboard.push(pagination);
+    keyboard.push([{ text: '⬅️ Контроль', callback_data: 'admin:chat-control' }], [homeButton()]);
+
+    const text =
+      rows.length === 0
+        ? ['💬 История нарушений', '', `👨‍🎓 ${label}`, '', 'Событий нет.'].join('\n')
+        : [
+            '💬 История нарушений',
+            '',
+            `👨‍🎓 ${label}`,
+            `Всего: ${total}`,
+            '',
+            ...rows.map((row) => {
+              const type = row.violation_type.startsWith('phone') ? '📱 телефон' : '🔗 Telegram';
+              return `${formatViolationDateShort(row.created_at)} — ${type}`;
+            }),
+          ].join('\n');
+
+    await editAdminMessage(message, text, { inline_keyboard: keyboard });
+  } catch (error) {
+    if (!isViolationTableError(error)) throw error;
+    await renderModerationMigrationMessage(message);
+  }
+}
+
 // Полная карточка события с кнопками обработки.
 async function renderViolationDetail(
   admin: SupabaseClient,
@@ -429,31 +529,37 @@ async function renderViolationDetail(
       return;
     }
 
+    let recipientLine = 'Бот District (личный чат)';
+    if (row.recipient_telegram_id) {
+      try {
+        recipientLine = await staffStudentLabel(admin, row.recipient_telegram_id);
+      } catch {
+        recipientLine = `Ученик ${row.recipient_telegram_id}`;
+      }
+    }
+
+    const detectedType = row.violation_type.startsWith('phone') ? '📱 Номер телефона' : '🔗 Telegram / контакт';
+
     const lines = [
-      `🚨 Нарушение #${row.id}`,
+      `💬 Нарушение ${formatMsgDisplayId(row.id)}`,
       '',
-      '👤 Отправитель:',
-      `${violationSenderName(row)} (ID ${row.telegram_id})`,
-      '',
-      '🎭 Роль:',
-      roleLabel(row.sender_role),
-      '',
-      '👥 Получатель:',
-      'Бот District (личный чат)',
-      '',
-      '💬 Сообщение:',
-      `«${shorten(row.message_text, 2000)}»`,
-      '',
-      '🔎 Причина:',
-      row.reason,
-      '',
-      `${RISK_EMOJI[row.risk_level]} ${RISK_TITLE[row.risk_level]}`,
+      `👨‍🏫 ${violationSenderName(row)}`,
+      row.recipient_telegram_id ? `👨‍🎓 ${recipientLine}` : '',
       '',
       `🕐 ${formatViolationDateTime(row.created_at)}`,
       '',
+      'Тип:',
+      detectedType,
+      '',
+      'Сообщение:',
+      `«${shorten(row.message_text, 2000)}»`,
+      '',
+      'Действие:',
+      row.status === 'pending' && row.risk_level === 'high' ? '🚫 Сообщение заблокировано' : 'Зафиксировано',
+      '',
       'Статус:',
-      STATUS_LABEL[row.status],
-    ];
+      row.status === 'pending' ? '🔴 Новое' : STATUS_LABEL[row.status],
+    ].filter((line) => line !== '');
 
     if (row.status !== 'pending' && row.action_at) {
       lines.push(
@@ -471,6 +577,16 @@ async function renderViolationDetail(
       lines.push('', '🔒 Пользователь заблокирован.');
     }
 
+    let staffStats: UserViolationStats | null = null;
+    try {
+      staffStats = await getUserViolationStats(admin, row.telegram_id);
+    } catch {
+      staffStats = null;
+    }
+    if (staffStats && staffStats.total > 1) {
+      lines.push('', `📊 Нарушений у отправителя: ${staffStats.total}`);
+    }
+
     const keyboard: InlineButton[][] = [];
     if (row.status === 'pending') {
       const contextSuffix = serializeModerationContext(context);
@@ -480,8 +596,26 @@ async function renderViolationDetail(
           { text: '🚫 Ограничить', callback_data: `admin:mod:act:restrict:${row.id}:${contextSuffix}` },
           { text: '🔒 Заблокировать', callback_data: `admin:mod:act:block:${row.id}:${contextSuffix}` },
         ],
-        [{ text: '✅ Игнорировать', callback_data: `admin:mod:act:ignore:${row.id}:${contextSuffix}` }],
+        [{ text: '✅ Обработано', callback_data: `admin:mod:act:ignore:${row.id}:${contextSuffix}` }],
       );
+    }
+    if (row.recipient_telegram_id) {
+      const staffRole = commsThreadStaffRole(row.sender_role);
+      keyboard.push([
+        {
+          text: '👁 Открыть переписку',
+          callback_data: `ah:msg:t:${row.recipient_telegram_id}:${row.telegram_id}:${staffRole}:0`,
+        },
+      ]);
+    }
+    keyboard.push([{ text: '📜 История сотрудника', callback_data: `admin:mod:usr:${row.telegram_id}:0` }]);
+    if (row.recipient_telegram_id) {
+      keyboard.push([
+        {
+          text: '📜 История ученика',
+          callback_data: `admin:mod:std:${row.recipient_telegram_id}:0`,
+        },
+      ]);
     }
     keyboard.push([moderationBackButton(context)], [homeButton()]);
 
@@ -752,6 +886,10 @@ export async function handleModerationAction(
       await renderModerationNew(admin, message, toModerationPage(parts[3]));
       return true;
     }
+    if (section === 'review') {
+      await renderModerationReview(admin, message, toModerationPage(parts[3]));
+      return true;
+    }
     if (section === 'all') {
       await renderModerationAll(admin, message, normalizeRiskFilter(parts[3]), toModerationPage(parts[4]));
       return true;
@@ -781,6 +919,15 @@ export async function handleModerationAction(
       const targetId = Number(parts[3]) || 0;
       if (targetId > 0) {
         await renderUserViolations(admin, message, targetId, toModerationPage(parts[4]));
+      } else {
+        await renderModerationMenu(admin, telegramId, editDeliver(message));
+      }
+      return true;
+    }
+    if (section === 'std') {
+      const studentId = Number(parts[3]) || 0;
+      if (studentId > 0) {
+        await renderStudentViolationHistory(admin, message, studentId, toModerationPage(parts[4]));
       } else {
         await renderModerationMenu(admin, telegramId, editDeliver(message));
       }

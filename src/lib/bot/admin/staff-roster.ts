@@ -78,6 +78,29 @@ function filterMentorCandidates(
   return out;
 }
 
+export type StaffRoleFilter = 'all' | 'teacher' | 'curator' | 'admin';
+
+function staffMatchesFilter(primary: string, extraRoles: string[] | null | undefined, filter: StaffRoleFilter): boolean {
+  if (filter === 'all') return isStaffMember(primary, extraRoles);
+  const roles = combineMemberRoles(primary, extraRoles ?? []);
+  if (filter === 'teacher') return memberHasRole(roles, 'teacher');
+  if (filter === 'curator') return memberHasRole(roles, 'curator');
+  if (filter === 'admin') return memberHasRole(roles, 'admin');
+  return false;
+}
+
+export async function listStaffMembersFiltered(
+  admin: SupabaseClient,
+  filter: StaffRoleFilter,
+  page: number,
+  perPage: number,
+): Promise<{ members: StaffMemberRow[]; total: number }> {
+  const { members: all, total: _t } = await listStaffMembers(admin, 0, 500);
+  void _t;
+  const filtered = all.filter((m) => staffMatchesFilter(String(m.role), m.extra_roles ?? [], filter));
+  return paginate(filtered, page, perPage);
+}
+
 export async function listStaffMembers(
   admin: SupabaseClient,
   page: number,

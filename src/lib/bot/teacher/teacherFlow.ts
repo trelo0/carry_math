@@ -90,8 +90,9 @@ export const TEACHER_MENU_LABELS = TEACHER_BOT_MENU_LABELS;
 export const TEACHER_MENU_LABEL_SET = new Set<string>(Object.values(TEACHER_MENU_LABELS));
 
 const TEACHER_HOME_TEXT =
-  '👨‍🏫 Кабинет преподавателя District\n\n' +
-  'Быстрые действия — кнопками ниже. Сложные операции — в «Панели управления» внизу.';
+  '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
+  'Здесь вы можете посмотреть своих учеников, расписание, домашние задания и сообщения.\n\n' +
+  'Выберите нужный раздел:';
 
 const TEACHER_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
@@ -514,13 +515,27 @@ async function routeTeacherCallback(
         const { messages, storageEnabled } = await loadThreadMessages(admin, telegramId, studentId);
         const screen = renderTeacherMessageThread(
           label,
-          messages,
+          [],
           storageEnabled,
           cabinetUrl,
           studentId,
           msgNav,
         );
         await editTeacherScreen(message, screen.text, screen.keyboard);
+        if (storageEnabled && messages.length > 0) {
+          for (const msg of messages.slice(-15)) {
+            const who = msg.direction === 'student_to_staff' ? label.split(' ')[0] : 'Вы';
+            const time = new Date(msg.createdAt).toLocaleString('ru-RU', {
+              timeZone: 'Europe/Moscow',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+            await sendAdminMessage(
+              message.chatId,
+              `${time} · ${who}\n${msg.body || '(вложение)'}`,
+            );
+          }
+        }
         return true;
       }
       if (id === 'w' && subId) {

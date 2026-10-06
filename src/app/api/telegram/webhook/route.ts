@@ -35,6 +35,7 @@ import {
   sendTeacherStart,
 } from '@/lib/bot/teacher';
 import { handleCombinedStaffCallback, handleCombinedStaffMessage, sendStaffStart } from '@/lib/bot/staff/staff-combined-flow';
+import { clearBotWizardStateOnMenuStart } from '@/lib/bot/conversation-reset';
 import {
   handleCuratorAttachment,
   handleCuratorCallback,
@@ -69,6 +70,12 @@ import {
 } from '@/lib/bot/client-flow';
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
+import {
+  handleClientTrialPayCallback,
+  handleTrialPayDeepLink,
+  parseTrialPayStart,
+} from '@/lib/bot/client-trial-pay-flow';
+import { recordInboundClientMessage, recordInboundClientMedia } from '@/lib/bot/admin/lead-inbound';
 import {
   handleClientLessonHomeworkAttachment,
   handleClientLessonHomeworkMessage,
@@ -208,13 +215,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (startSource && update.message?.chat && update.message.from) {
+      const trialPayId = parseTrialPayStart(startSource);
+      if (trialPayId) {
+        await ensureMember(
+          admin,
+          update.message.from.id,
+          memberPatch(update.message.from, update.message.chat.id),
+        );
+        await handleTrialPayDeepLink(admin, update.message.from.id, update.message.chat.id, trialPayId);
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     // /start pay_<product>[_<pkg>_<teacher>] — покупка из кабинета.
     if (
       startSource?.startsWith('pay_') &&
       update.message?.chat &&
       update.message.from
     ) {
-      const payMember = await ensureMember(
+      await ensureMember(
         admin,
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
@@ -418,6 +438,8 @@ export async function POST(request: Request) {
         memberPatch(from, update.message.chat.id),
       );
 
+      await clearBotWizardStateOnMenuStart(admin, from.id);
+
       const { role, testFooter } = resolveEffectiveRoleWithFooter(member, from.id);
       const testerTools = canUseTesterTools(from.id, member.role);
       const hasMask = member.viewRole && member.viewRole !== member.role;
@@ -427,10 +449,10 @@ export async function POST(request: Request) {
           : '';
       const footer = testFooter + creatorHint;
       if (isAdminEnv(from.id) && update.message.text === '/admin') {
-        await sendAdminStart(update.message.chat.id, footer, admin);
+        await sendAdminStart(update.message.chat.id, footer, admin, from.id);
       } else if (role === 'admin') {
         if (member.role === 'admin' || isAdminEnv(from.id)) {
-          await sendAdminStart(update.message.chat.id, footer, admin);
+          await sendAdminStart(update.message.chat.id, footer, admin, from.id);
         } else {
           await telegramSend('sendMessage', {
             chat_id: update.message.chat.id,
@@ -524,6 +546,18 @@ export async function POST(request: Request) {
       );
       if (supportDocHandled) return NextResponse.json({ ok: true });
 
+      const leadDoc = await recordInboundClientMedia(admin, update.message.from.id, {
+        messageType: 'document',
+        body: update.message.caption ?? update.message.document.file_name ?? null,
+        telegramMessageId: update.message.message_id,
+        attachment: {
+          file_id: update.message.document.file_id,
+          kind: 'document',
+          file_name: update.message.document.file_name,
+        },
+      });
+      if (leadDoc) return NextResponse.json({ ok: true });
+
       const handled = await handleAdminDocument(
         admin,
         update.message.from.id,
@@ -534,6 +568,7 @@ export async function POST(request: Request) {
           mimeType: update.message.document.mime_type,
           kind: 'document',
         },
+        update.message.caption,
       );
       if (handled) return NextResponse.json({ ok: true });
     }
@@ -582,13 +617,47 @@ export async function POST(request: Request) {
         );
         if (supportPhotoHandled) return NextResponse.json({ ok: true });
 
+        const leadPhoto = await recordInboundClientMedia(admin, update.message.from.id, {
+          messageType: 'photo',
+          body: update.message.caption ?? null,
+          telegramMessageId: update.message.message_id,
+          attachment: { file_id: largest.file_id, kind: 'photo' },
+        });
+        if (leadPhoto) return NextResponse.json({ ok: true });
+
         const handled = await handleAdminDocument(
           admin,
           update.message.from.id,
           update.message.chat.id,
           { fileId: largest.file_id, kind: 'photo' },
+          update.message.caption,
         );
         if (handled) return NextResponse.json({ ok: true });
+      }
+    }
+
+    if (update.message?.voice?.file_id && update.message.chat && update.message.from) {
+      const leadVoice = await recordInboundClientMedia(admin, update.message.from.id, {
+        messageType: 'voice',
+        telegramMessageId: update.message.message_id,
+        attachment: { file_id: update.message.voice.file_id, kind: 'voice' },
+      });
+      if (leadVoice) return NextResponse.json({ ok: true });
+
+      const { handleAdminLeadReplyMedia } = await import('@/lib/bot/admin/lead-reply-media');
+      const { getState, isConversationStateTableError } = await import('@/lib/bot/admin/core');
+      try {
+        const state = await getState(admin, update.message.from.id);
+        if (state?.step === 'admin:lead:reply') {
+          const voiceHandled = await handleAdminLeadReplyMedia(admin, update.message.from.id, state, {
+            fileId: update.message.voice.file_id,
+            kind: 'document',
+            mimeType: 'audio/ogg',
+          });
+          if (voiceHandled) return NextResponse.json({ ok: true });
+        }
+      } catch (error) {
+        if (!isConversationStateTableError(error)) throw error;
       }
     }
 
@@ -735,6 +804,14 @@ export async function POST(request: Request) {
           update.message.text,
         );
         if (leadHandled) return NextResponse.json({ ok: true });
+
+        const leadInbound = await recordInboundClientMessage(
+          admin,
+          update.message.from.id,
+          update.message.text,
+          update.message.message_id,
+        );
+        if (leadInbound) return NextResponse.json({ ok: true });
 
         const lessonHwHandled = await handleClientLessonHomeworkMessage(
           admin,
@@ -904,6 +981,9 @@ export async function POST(request: Request) {
         id,
       );
       if (purchaseHandled) return NextResponse.json({ ok: true });
+
+      const trialPayHandled = await handleClientTrialPayCallback(admin, data, chatId, from.id);
+      if (trialPayHandled) return NextResponse.json({ ok: true });
 
       const callbackMember = await ensureMember(
         admin,

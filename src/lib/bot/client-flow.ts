@@ -5,7 +5,11 @@ import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
 import { beginStudentPurchase } from './studentPurchaseFlow';
-import { beginStudentSupport, handleStudentSupportCancel } from './studentSupportFlow';
+import {
+  beginStudentSupport,
+  handleStudentSupportBack,
+  handleStudentSupportCancel,
+} from './studentSupportFlow';
 import { handleClientLeadCallback, isClientLeadCallback } from './client-lead-flow';
 import {
   handleClientLessonsCallback,
@@ -38,6 +42,7 @@ import {
 } from './client-nav';
 import type { BotRole } from './roles';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
+import { handleClientMyLeadsCallback, isClientMyLeadsCallback, showClientApplicationsHub } from './client-my-leads';
 
 const EMPTY_INLINE = { inline_keyboard: [] as Array<Array<Record<string, string>>> };
 
@@ -96,6 +101,22 @@ async function showOnlineCourseScreen(
   keyboard.inline_keyboard.push([clientBackButton()]);
 
   await applyCard(admin, state.telegramId, 'course', lines.join('\n'), keyboard, mode);
+}
+
+async function showBuyEducationHub(
+  admin: SupabaseClient,
+  state: ClientStateSnapshot,
+  mode: CardMode,
+): Promise<void> {
+  const text = ['🎓 Купить обучение', '', 'Выберите формат:'].join('\n');
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '📚 Купить курс', callback_data: 'cl:buy:course' }],
+      [{ text: '👨‍🏫 Занятия с преподавателем', callback_data: 'cl:lessons:individual' }],
+      [clientBackButton()],
+    ],
+  };
+  await applyCard(admin, state.telegramId, 'buy-education', text, keyboard, mode);
 }
 
 async function showLessonsHub(
@@ -282,8 +303,14 @@ export async function handleClientMessage(
     case CLIENT_LABELS.contactAdmin:
       await beginStudentSupport(admin, telegramId, chatId);
       return true;
+    case CLIENT_LABELS.buyEducation:
+      await showBuyEducationHub(admin, state, { kind: 'push', chatId });
+      return true;
+    case CLIENT_LABELS.myApplications:
+      await showClientApplicationsHub(admin, telegramId, chatId);
+      return true;
     case CLIENT_LABELS.myLessons:
-      await showClientLessonsMenu(admin, telegramId, chatId);
+      await showClientLessonsMenu(admin, telegramId, chatId, state);
       return true;
     case CLIENT_LABELS.schedule:
       await showClientScheduleMenu(admin, telegramId, chatId);
@@ -314,11 +341,25 @@ export async function handleClientCallback(
 ): Promise<boolean> {
   if (!isClientCallback(data)) return false;
 
-  if (data === 'cl:support:cancel') {
+  if (data === 'cl:support:back' || data === 'cl:support:cancel') {
     if (callbackQueryId) {
       await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
     }
-    await handleStudentSupportCancel(admin, telegramId, chatId);
+    if (data === 'cl:support:back') {
+      await handleStudentSupportBack(admin, telegramId, chatId);
+    } else {
+      await handleStudentSupportCancel(admin, telegramId, chatId);
+    }
+    return true;
+  }
+
+  if (isClientMyLeadsCallback(data)) {
+    return handleClientMyLeadsCallback(admin, data, chatId, telegramId);
+  }
+
+  if (data === 'cl:buy:hub') {
+    const state = await resolveClientState(admin, telegramId, { memberRole });
+    await showBuyEducationHub(admin, state, { kind: 'push', chatId });
     return true;
   }
 

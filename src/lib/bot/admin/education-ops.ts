@@ -99,27 +99,30 @@ async function memberLabel(admin: SupabaseClient, telegramId: number): Promise<s
   return member ? memberDisplayName(member) : `ID ${telegramId}`;
 }
 
-function groupCard(group: Group, memberCount?: number): string {
-  const lines = [`📚 ${group.title}`, `🆔 ${group.id}`];
-  if (group.teacher_telegram_id) lines.push(`👨‍🏫 Препод: ${group.teacher_telegram_id}`);
-  else lines.push('👨‍🏫 Препод: не назначен');
-  if (group.curator_telegram_id) lines.push(`🟡 Куратор: ${group.curator_telegram_id}`);
-  if (memberCount != null) lines.push(`👥 Участников: ${memberCount}`);
+async function groupCardRich(
+  admin: SupabaseClient,
+  group: Group,
+  memberCount?: number,
+): Promise<string> {
+  const teacher = group.teacher_telegram_id
+    ? await memberLabel(admin, group.teacher_telegram_id)
+    : 'не назначен';
+  const curator = group.curator_telegram_id
+    ? await memberLabel(admin, group.curator_telegram_id)
+    : null;
+  const status = group.status === 'active' ? '🟢 Активна' : '⏸️ Не активна';
+  const lines = [
+    `👥 ${group.title}`,
+    'Математика',
+    memberCount != null ? `👨‍🎓 ${memberCount} учеников` : '',
+    `👨‍🏫 ${teacher}`,
+    curator ? `👩‍💼 ${curator}` : '',
+    status,
+  ].filter(Boolean);
   return lines.join('\n');
 }
 
-export async function renderEducationMenu(deliver: Deliver): Promise<void> {
-  await deliver('📚 Учёба\n\nГруппы, расписание, назначение занятий.', {
-    inline_keyboard: [
-      [{ text: '📅 Расписание недели', callback_data: 'ae:ls:w:0:0' }],
-      [{ text: '👥 Группы', callback_data: 'ae:groups:0' }],
-      [{ text: '👨‍🏫 Ученики по преподавателю', callback_data: 'ae:ls:teachers:0' }],
-      [{ text: '🎓 Курсовое обучение', callback_data: 'ae:ls:course:0' }],
-      [{ text: '➕ Создать группу', callback_data: 'ae:g:new' }],
-      [homeButton()],
-    ],
-  });
-}
+export { renderEducationMenu } from './education-hub';
 
 async function renderGroupsList(
   admin: SupabaseClient,
@@ -152,14 +155,21 @@ async function renderGroupsList(
   }
   keyboard.push(
     [{ text: '➕ Создать группу', callback_data: 'ae:g:new' }],
-    [{ text: '↩️ Учёба', callback_data: 'ae:menu' }],
+    [{ text: '⬅️ Обучение', callback_data: 'ae:menu' }],
     [homeButton()],
+  );
+
+  const cards = await Promise.all(
+    groups.map(async (g) => {
+      const members = await getGroupMembers(admin, g.id);
+      return groupCardRich(admin, g, members.length);
+    }),
   );
 
   const text =
     groups.length === 0
       ? '👥 Группы\n\nПока нет групп. Создай первую.'
-      : ['👥 Группы', '', ...groups.map((g, i) => `${from + i + 1}. ${groupCard(g)}`)].join('\n\n');
+      : ['👥 Группы', '', ...cards.flatMap((c) => [c, ''])].join('\n').slice(0, 3900);
 
   await editAdminMessage(message, text, { inline_keyboard: keyboard });
 }
@@ -177,17 +187,22 @@ async function renderGroupDetail(admin: SupabaseClient, message: AdminMessage, g
       ? 'Участников пока нет.'
       : members.map((m, i) => `${i + 1}. ${m.full_name ?? `ID ${m.telegram_id}`}`).join('\n');
 
-  const text = [groupCard(group, members.length), '', 'Состав:', memberLines].join('\n');
+  const card = await groupCardRich(admin, group, members.length);
+  const text = [card, '', 'Состав:', memberLines].join('\n');
   const keyboard: InlineButton[][] = [
     [{ text: '➕ Добавить ученика', callback_data: `ae:g:${groupId}:add` }],
-    [{ text: '👨‍🏫 Назначить препода', callback_data: `ae:g:${groupId}:teacher` }],
+    [{ text: '📅 Расписание', callback_data: `ae:ls:day:0:a:0:${groupId}` }],
+    [
+      { text: '👨‍🏫 Преподаватель', callback_data: `ae:g:${groupId}:teacher` },
+      { text: '👩‍💼 Куратор', callback_data: `ae:g:${groupId}:curator` },
+    ],
     ...members.map((m) => [
       {
         text: `➖ ${shorten(m.full_name ?? String(m.telegram_id), 20)}`,
         callback_data: `ae:g:${groupId}:rm:${m.telegram_id}`,
       },
     ]),
-    [{ text: '↩️ К списку', callback_data: 'ae:groups:0' }],
+    [{ text: '⬅️ К списку групп', callback_data: 'ae:groups:0' }],
     [homeButton()],
   ];
   await editAdminMessage(message, text, { inline_keyboard: keyboard });
@@ -234,6 +249,23 @@ async function startSetTeacher(
   );
   if (!messageId) return;
   await saveState(admin, telegramId, { chatId: message.chatId, messageId }, 'edu:group:teacher-set', {
+    targetGroupId: groupId,
+  });
+}
+
+async function startSetCurator(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+  groupId: number,
+): Promise<void> {
+  const messageId = await sendAdminMessage(
+    message.chatId,
+    `👩‍💼 Куратор для группы #${groupId}\n\nВведи Telegram ID куратора:`,
+    homeOnlyKeyboard(),
+  );
+  if (!messageId) return;
+  await saveState(admin, telegramId, { chatId: message.chatId, messageId }, 'edu:group:curator-set', {
     targetGroupId: groupId,
   });
 }
@@ -380,9 +412,19 @@ export async function handleEducationAction(
     return handleScheduleListAction(admin, data, message, telegramId);
   }
 
+  const { handleEducationHubAction, renderEducationMenu } = await import('./education-hub');
+
   if (data === 'ae:menu') {
     await renderEducationMenu(editDeliver(message));
     return true;
+  }
+
+  const hubHandled = await handleEducationHubAction(admin, data, message);
+  if (hubHandled) return true;
+
+  const { handleAdminHomeworkAction, isAdminHomeworkAction } = await import('./homework-review');
+  if (isAdminHomeworkAction(data)) {
+    return handleAdminHomeworkAction(admin, data, message, telegramId);
   }
 
   if (data.startsWith('ae:groups:')) {
@@ -406,6 +448,12 @@ export async function handleEducationAction(
   const groupTeacherMatch = data.match(/^ae:g:(\d+):teacher$/);
   if (groupTeacherMatch) {
     await startSetTeacher(admin, telegramId, message, Number(groupTeacherMatch[1]));
+    return true;
+  }
+
+  const groupCuratorMatch = data.match(/^ae:g:(\d+):curator$/);
+  if (groupCuratorMatch) {
+    await startSetCurator(admin, telegramId, message, Number(groupCuratorMatch[1]));
     return true;
   }
 
@@ -448,7 +496,7 @@ export async function handleEducationAction(
       curatorTelegramId: payload.groupCuratorId ?? null,
     });
     await clearState(admin, telegramId);
-    await editAdminMessage(message, `✅ Группа создана\n\n${groupCard(group, 0)}`, {
+    await editAdminMessage(message, `✅ Группа создана\n\n${await groupCardRich(admin, group, 0)}`, {
       inline_keyboard: [
         [{ text: 'Открыть', callback_data: `ae:g:${group.id}` }],
         [{ text: '↩️ К списку', callback_data: 'ae:groups:0' }],
@@ -713,6 +761,25 @@ export async function handleEducationTextStep(
     await updateGroup(admin, groupId, { teacher_telegram_id: teacherId });
     await clearState(admin, telegramId);
     await deliver(`✅ Преподаватель ${teacherId} назначен для группы #${groupId}.`, {
+      inline_keyboard: [[{ text: 'Открыть группу', callback_data: `ae:g:${groupId}` }], [homeButton()]],
+    });
+    return true;
+  }
+
+  if (state.step === 'edu:group:curator-set') {
+    const groupId = state.payload.targetGroupId;
+    if (!groupId) {
+      await clearState(admin, telegramId);
+      return true;
+    }
+    const curatorId = parseTelegramId(input);
+    if (!curatorId) {
+      await deliver('Нужен числовой Telegram ID куратора.');
+      return true;
+    }
+    await updateGroup(admin, groupId, { curator_telegram_id: curatorId });
+    await clearState(admin, telegramId);
+    await deliver(`✅ Куратор ${curatorId} назначен для группы #${groupId}.`, {
       inline_keyboard: [[{ text: 'Открыть группу', callback_data: `ae:g:${groupId}` }], [homeButton()]],
     });
     return true;

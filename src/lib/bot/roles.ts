@@ -354,11 +354,15 @@ export async function searchMembers(
   if (!cleaned) return [];
 
   const digits = cleaned.replace(/\D/g, '');
+  const withoutHash = cleaned.replace(/^#/, '');
   const filters = [
     `full_name.ilike.%${cleaned}%`,
     `phone.ilike.%${digits || cleaned}%`,
   ];
-  if (/^\d+$/.test(cleaned)) filters.push(`telegram_id.eq.${cleaned}`);
+  if (/^\d+$/.test(withoutHash)) filters.push(`telegram_id.eq.${withoutHash}`);
+  if (/^@/.test(cleaned)) {
+    filters.push(`full_name.ilike.%${cleaned.slice(1)}%`);
+  }
 
   const { data, error } = await admin
     .from('bot_members')

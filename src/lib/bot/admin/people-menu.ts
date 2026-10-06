@@ -9,14 +9,13 @@ export async function renderPeopleMenu(
   void admin;
   void telegramId;
   const keyboard: InlineButton[][] = [
-    [{ text: '🔎 Найти человека', callback_data: 'admin:users:search' }],
+    [{ text: '🔎 Найти человека', callback_data: 'ah:people:search' }],
     [{ text: '👨‍🎓 Ученики', callback_data: 'ah:stu:menu' }],
-    [{ text: '👨‍💼 Сотрудники', callback_data: 'ah:staff:0' }],
-    [{ text: '👥 Все пользователи', callback_data: 'admin:users' }],
+    [{ text: '👨‍💼 Сотрудники', callback_data: 'ah:staff:f:all:0' }],
     [homeButton()],
   ];
   await deliver(
-    '👥 Люди\n\nПоиск, каталоги учеников и сотрудников. Карточка человека — центр управления.',
+    '👥 Люди\n\nПоиск, списки учеников и сотрудников. Карточка человека — связующий центр.',
     { inline_keyboard: keyboard },
   );
 }

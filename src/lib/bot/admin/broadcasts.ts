@@ -33,6 +33,31 @@ import {
   segmentTitle,
 } from './broadcast-segments';
 import { listMentorPickerCandidates } from './staff-roster';
+import {
+  BROADCAST_ASYNC_THRESHOLD,
+  broadcastJobsAvailable,
+  countBroadcastsByStatus,
+  createBroadcastJob,
+} from './broadcast-jobs';
+import {
+  buildScheduledIso,
+  confirmCancelScheduled,
+  executeCancelScheduled,
+  parseCustomScheduleDate,
+  parseScheduleTime,
+  promptCustomScheduleDate,
+  promptCustomScheduleTime,
+  renderScheduleConfirm,
+  renderScheduleDatePicker,
+  renderScheduledDetail,
+  renderScheduledList,
+  renderScheduleTimePicker,
+  resolveScheduledIso,
+  saveScheduledBroadcast,
+  startBroadcastReschedule,
+} from './broadcast-schedule';
+import { logAdminAction } from './action-log';
+import { audienceTitleForId } from './broadcast-recipients';
 
 // ---------------------------------------------------------------------------
 // Массовая рассылка
@@ -82,6 +107,12 @@ const BROADCAST_ERRORS_PER_PAGE = 10;
 function findBroadcastAudience(id: string | undefined): BroadcastAudience | undefined {
   if (!id) return undefined;
   if (id === BROADCAST_ADMINS_AUDIENCE.id) return BROADCAST_ADMINS_AUDIENCE;
+  if (id === 'aud:students' || id === 'aud:clients' || id === 'aud:staff') {
+    return { id, buttonLabel: '', title: id, roles: [] };
+  }
+  if (id.startsWith('seg:filter:')) {
+    return { id, buttonLabel: '', title: id, roles: [] };
+  }
   const staticAud = BROADCAST_AUDIENCES.find((audience) => audience.id === id);
   if (staticAud) return staticAud;
   if (isBroadcastSegmentId(id)) {
@@ -92,8 +123,21 @@ function findBroadcastAudience(id: string | undefined): BroadcastAudience | unde
 
 function audienceDisplayTitle(payload: AdminPayload): string {
   if (payload.audienceTitle?.trim()) return payload.audienceTitle.trim();
+  if (
+    payload.audience &&
+    (payload.audience.startsWith('aud:') ||
+      payload.audience.startsWith('seg:filter:') ||
+      payload.audience.startsWith('seg:access:'))
+  ) {
+    return audienceTitleForId(payload.audience);
+  }
   const aud = findBroadcastAudience(payload.audience);
-  return aud?.title ?? '—';
+  if (aud?.title && aud.title !== aud.id) return aud.title;
+  return payload.audience ?? '—';
+}
+
+function broadcastDraftReady(payload: AdminPayload): boolean {
+  return Boolean(isKnownBroadcastAudience(payload.audience) && (payload.broadcastText?.trim() || payload.fileId));
 }
 
 function isKnownBroadcastAudience(id: string | undefined): boolean {
@@ -108,6 +152,11 @@ type BroadcastError = { name: string; reason: string };
 
 async function resolveBroadcastRecipients(admin: SupabaseClient, audienceId: string | undefined): Promise<number[]> {
   if (!audienceId) return [];
+  const { resolveBroadcastRecipientsExtended } = await import('./broadcast-recipients');
+  const extended = await resolveBroadcastRecipientsExtended(admin, audienceId);
+  if (extended.length > 0 || audienceId.startsWith('aud:') || audienceId.startsWith('seg:filter:')) {
+    return extended;
+  }
   if (isBroadcastSegmentId(audienceId)) return getBroadcastSegmentRecipients(admin, audienceId);
   const aud = findBroadcastAudience(audienceId);
   if (!aud?.roles?.length) return [];
@@ -256,30 +305,116 @@ async function renderBroadcastMigrationMessage(message: AdminMessage): Promise<v
 // Главное меню раздела «Рассылки».
 // Меню раздела: из Reply Keyboard приходит новым сообщением,
 // из inline-навигации — редактирует текущий блок.
-export async function renderBroadcastMenu(deliver: Deliver): Promise<void> {
-  await deliver('📢 Рассылки', {
+export async function renderBroadcastMenu(
+  admin: SupabaseClient,
+  deliver: Deliver,
+): Promise<void> {
+  let historyTotal = 0;
+  try {
+    const { total } = await listBroadcastHistory(admin, 0);
+    historyTotal = total;
+  } catch {
+    historyTotal = 0;
+  }
+
+  let scheduled = 0;
+  let active = 0;
+  try {
+    scheduled = await countBroadcastsByStatus(admin, 'scheduled');
+    active = await countBroadcastsByStatus(admin, 'sending');
+  } catch {
+    scheduled = 0;
+    active = 0;
+  }
+
+  const lines = [
+    '📢 Рассылки',
+    '',
+    `📊 Активные рассылки — ${active}`,
+    `🕐 Запланированные — ${scheduled}`,
+    `📜 В истории — ${historyTotal}`,
+  ];
+  if (active === 0 && scheduled === 0) {
+    lines.push('', 'Сейчас нет активных рассылок.');
+  }
+
+  await deliver(lines.join('\n'), {
     inline_keyboard: [
-      [{ text: '✉️ Новая рассылка', callback_data: 'admin:bc:new' }],
-      [{ text: '👥 Отправить администраторам', callback_data: 'admin:bc:admins' }],
-      [{ text: '📊 Статистика рассылок', callback_data: 'admin:bc:statsmenu' }],
+      [{ text: '➕ Создать рассылку', callback_data: 'admin:bc:new' }],
+      [{ text: '🕐 Запланированные', callback_data: 'admin:bc:scheduled' }],
+      [{ text: '📜 История', callback_data: 'admin:bc:history:0' }],
+      [{ text: '👥 Администраторам', callback_data: 'admin:bc:admins' }],
+      [{ text: '📊 Статистика', callback_data: 'admin:bc:statsmenu' }],
+      [{ text: '⬅️ Прочее', callback_data: 'ah:more' }],
       [homeButton()],
     ],
   });
 }
 
-async function renderBroadcastAudienceMenu(message: AdminMessage): Promise<void> {
-  const keyboard: InlineButton[][] = BROADCAST_AUDIENCES.map((audience) => [
-    { text: audience.buttonLabel, callback_data: `admin:bc:aud:${audience.id}` },
-  ]);
+async function renderBroadcastAudienceMenu(admin: SupabaseClient, message: AdminMessage): Promise<void> {
+  const { SPEC_RECIPIENT_OPTIONS, countBroadcastRecipients } = await import('./broadcast-recipients');
+  const lines = ['👥 Получатели', '', 'Кому отправить сообщение?', ''];
+  const keyboard: InlineButton[][] = [];
+
+  for (const opt of SPEC_RECIPIENT_OPTIONS) {
+    if (opt.id === 'seg:group:pick') {
+      keyboard.push([{ text: opt.label, callback_data: 'admin:bc:seg:grp:0' }]);
+      continue;
+    }
+    if (opt.id === 'admin:bc:filters') {
+      keyboard.push([{ text: opt.label, callback_data: 'admin:bc:filters' }]);
+      continue;
+    }
+    if (opt.id === 'seg:access:course') {
+      keyboard.push([{ text: opt.label, callback_data: 'admin:bc:sel:seg:access:course' }]);
+      continue;
+    }
+    const n = await countBroadcastRecipients(admin, opt.id);
+    keyboard.push([{ text: `${opt.label} (${n})`, callback_data: `admin:bc:sel:${opt.id}` }]);
+  }
+
   keyboard.push(
-    [{ text: '🎯 Сегменты (курс / группа / препод)', callback_data: 'admin:bc:seg' }],
-    [{ text: '⬅️ Назад', callback_data: 'admin:broadcasts' }],
+    [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+    [{ text: '⬅️ Рассылки', callback_data: 'admin:broadcasts' }],
     [homeButton()],
   );
+  await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
+}
+
+async function renderBroadcastFilterMenu(message: AdminMessage): Promise<void> {
+  const filters: Array<{ id: string; label: string }> = [
+    { id: 'seg:filter:active', label: '☑ Активные' },
+    { id: 'seg:filter:course', label: '☑ Курс' },
+    { id: 'seg:filter:individual', label: '☑ Индивидуальные' },
+    { id: 'seg:filter:low_pkg', label: '☑ Осталось 1–2 занятия' },
+    { id: 'seg:filter:group', label: '☑ Групповые' },
+  ];
+  await editAdminMessage(message, '🎯 Фильтры\n\nВыберите сегмент:', {
+    inline_keyboard: [
+      ...filters.map((f) => [{ text: f.label, callback_data: `admin:bc:sel:${f.id}` }]),
+      [{ text: '⬅️ Получатели', callback_data: 'admin:bc:new' }],
+      [homeButton()],
+    ],
+  });
+}
+
+async function renderBroadcastAudienceConfirm(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  audienceId: string,
+  title: string,
+): Promise<void> {
+  const n = await resolveBroadcastRecipients(admin, audienceId);
   await editAdminMessage(
     message,
-    '📢 Массовая рассылка\n\nВыберите аудиторию:',
-    { inline_keyboard: keyboard },
+    ['👥 Получатели', '', `Выбрано: ${title}`, '', `Количество: ${n.length} человек`].join('\n'),
+    {
+      inline_keyboard: [
+        [{ text: '➡️ Далее', callback_data: `admin:bc:start:${encodeURIComponent(audienceId)}` }],
+        [{ text: '🔄 Изменить', callback_data: 'admin:bc:new' }],
+        [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+      ],
+    },
   );
 }
 
@@ -367,7 +502,7 @@ async function renderBroadcastTeacherSegmentPicker(
   await editAdminMessage(message, '👨‍🏫 Ученики какого преподавателя?', { inline_keyboard: keyboard });
 }
 
-async function startSegmentBroadcast(
+async function beginBroadcastMessageStep(
   admin: SupabaseClient,
   telegramId: number,
   message: AdminMessage,
@@ -380,7 +515,15 @@ async function startSegmentBroadcast(
   });
   await editAdminMessage(
     message,
-    `📢 Новая рассылка\n\nАудитория: ${audienceTitle}\n\nВведите текст сообщения следующим сообщением.`,
+    [
+      '✉️ Сообщение',
+      '',
+      `Аудитория: ${audienceTitle}`,
+      '',
+      'Отправьте сообщение для рассылки.',
+      '',
+      'Поддерживаются: текст, фото, видео, документ, подпись к медиа.',
+    ].join('\n'),
     {
       inline_keyboard: [
         [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
@@ -431,7 +574,7 @@ async function renderBroadcastComposer(
   notice = '',
 ): Promise<void> {
   const payload = state.payload ?? {};
-  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
+  if (!broadcastDraftReady(payload)) {
     await clearState(admin, telegramId);
     await deliver('Черновик рассылки не найден. Начните заново.', {
       inline_keyboard: [[{ text: '📢 К рассылкам', callback_data: 'admin:broadcasts' }]],
@@ -444,7 +587,9 @@ async function renderBroadcastComposer(
     '📢 Новая рассылка',
     `Аудитория: ${audienceDisplayTitle(payload)}`,
     '',
-    `Текст: ${shorten(payload.broadcastText.replace(/\n/g, ' '), 120)}`,
+    payload.broadcastText?.trim()
+      ? `Текст: ${shorten(payload.broadcastText.replace(/\n/g, ' '), 120)}`
+      : 'Текст: (только медиа)',
   ];
   const attachment = attachmentLine(payload);
   if (attachment) lines.push(attachment);
@@ -559,9 +704,9 @@ async function renderBroadcastPreview(
 ): Promise<void> {
   const payload = state.payload ?? {};
   const message = { chatId: state.chat_id, messageId: state.message_id };
-  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
+  if (!broadcastDraftReady(payload)) {
     await clearState(admin, telegramId);
-    await renderBroadcastAudienceMenu(message);
+    await renderBroadcastAudienceMenu(admin, message);
     return;
   }
 
@@ -573,12 +718,15 @@ async function renderBroadcastPreview(
     const body: Record<string, unknown> = {
       chat_id: state.chat_id,
       [payload.attachmentKind === 'photo' ? 'photo' : 'document']: payload.fileId,
-      caption: payload.broadcastText,
+      caption: payload.broadcastText ?? '',
     };
     if (urlKeyboard) body.reply_markup = urlKeyboard;
     await telegramSend(method, body);
   } else {
-    const body: Record<string, unknown> = { chat_id: state.chat_id, text: payload.broadcastText };
+    const body: Record<string, unknown> = {
+      chat_id: state.chat_id,
+      text: payload.broadcastText ?? '',
+    };
     if (urlKeyboard) body.reply_markup = urlKeyboard;
     await telegramSend('sendMessage', body);
   }
@@ -589,17 +737,21 @@ async function renderBroadcastPreview(
   const attachment = attachmentLine(payload);
   const button = buttonLine(payload);
   const lines = [
-    '📢 Предпросмотр отправлен выше — так сообщение увидят получатели.',
+    '📢 Предпросмотр',
     '',
-    shorten(payload.broadcastText, 300),
+    `👥 Получатели: ${recipients.length} человек`,
+    '',
+    'Пример сообщения отправлен выше.',
+    '',
+    payload.broadcastText?.trim() ? shorten(payload.broadcastText, 300) : '(медиа без подписи)',
   ];
   if (attachment) lines.push(attachment);
   if (button) lines.push(button);
-  lines.push('', `👥 Получателей: ${recipients.length}`);
 
   await editAdminMessage(message, lines.join('\n'), {
     inline_keyboard: [
-      [{ text: '✅ Отправить', callback_data: 'admin:bc:confirm' }],
+      [{ text: '🚀 Отправить сейчас', callback_data: 'admin:bc:confirm' }],
+      [{ text: '🕐 Запланировать', callback_data: 'admin:bc:plan' }],
       [{ text: '✏️ Изменить', callback_data: 'admin:bc:menu' }],
       [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
     ],
@@ -614,9 +766,9 @@ async function renderBroadcastConfirm(
   const payload = state.payload ?? {};
   const message = { chatId: state.chat_id, messageId: state.message_id };
   const title = audienceDisplayTitle(payload);
-  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
+  if (!broadcastDraftReady(payload)) {
     await clearState(admin, telegramId);
-    await renderBroadcastAudienceMenu(message);
+    await renderBroadcastAudienceMenu(admin, message);
     return;
   }
 
@@ -638,9 +790,18 @@ async function renderBroadcastConfirm(
   await saveState(admin, telegramId, message, 'broadcast:confirm', payload);
   await editAdminMessage(
     message,
-    '📢 Вы собираетесь отправить сообщение:\n\n' +
-      `Аудитория: ${title}\n` +
-      `Получателей: ${recipients.length}`,
+    [
+      '⚠️ Подтвердить отправку?',
+      '',
+      `Получатели: ${recipients.length} человек`,
+      '',
+      'Сообщение:',
+      payload.broadcastText?.trim()
+        ? `«${shorten(payload.broadcastText.replace(/\n/g, ' '), 120)}»`
+        : '(медиа без текста)',
+      '',
+      'После подтверждения сообщение будет отправлено выбранным получателям.',
+    ].join('\n'),
     {
       inline_keyboard: [
         [{ text: '✅ Да, отправить', callback_data: 'admin:bc:send' }],
@@ -660,14 +821,18 @@ async function sendBroadcastMessage(chatId: number, payload: AdminPayload): Prom
       body: {
         chat_id: chatId,
         [payload.attachmentKind === 'photo' ? 'photo' : 'document']: payload.fileId,
-        caption: payload.broadcastText,
+        caption: payload.broadcastText ?? '',
         ...(urlKeyboard ? { reply_markup: urlKeyboard } : {}),
       },
     });
   } else {
     attempts.push({
       method: 'sendMessage',
-      body: { chat_id: chatId, text: payload.broadcastText, ...(urlKeyboard ? { reply_markup: urlKeyboard } : {}) },
+      body: {
+        chat_id: chatId,
+        text: payload.broadcastText ?? '',
+        ...(urlKeyboard ? { reply_markup: urlKeyboard } : {}),
+      },
     });
   }
 
@@ -706,13 +871,55 @@ async function executeBroadcast(
   const message = { chatId: state.chat_id, messageId: state.message_id };
   const audienceId = payload.audience ?? '';
   const title = audienceDisplayTitle(payload);
-  if (!isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
+  if (!broadcastDraftReady(payload)) {
     await clearState(admin, telegramId);
-    await renderBroadcastAudienceMenu(message);
+    await renderBroadcastAudienceMenu(admin, message);
     return;
   }
 
   const recipients = await resolveBroadcastRecipients(admin, payload.audience);
+
+  if (recipients.length >= BROADCAST_ASYNC_THRESHOLD && (await broadcastJobsAvailable(admin))) {
+    const jobId = await createBroadcastJob(admin, {
+      adminTelegramId: telegramId,
+      adminNotifyChatId: message.chatId,
+      audienceId,
+      audienceTitle: title,
+      payload,
+      chatIds: recipients,
+      status: 'sending',
+      scheduledAt: null,
+    });
+    await clearStateIfAvailable(admin, telegramId);
+    if (jobId) {
+      await logAdminAction(admin, {
+        actorTelegramId: telegramId,
+        action: 'broadcast.send',
+        entityType: 'broadcast',
+        entityId: jobId,
+        detail: { recipients: recipients.length, queued: true },
+      });
+      await editAdminMessage(
+        message,
+        [
+          '📢 Рассылка запущена',
+          '',
+          `👥 Получателей: ${recipients.length}`,
+          '',
+          'Отправка идёт в фоне — по завершении придёт уведомление.',
+        ].join('\n'),
+        {
+          inline_keyboard: [
+            [{ text: '📜 История', callback_data: 'admin:bc:history:0' }],
+            [{ text: '📢 Рассылки', callback_data: 'admin:broadcasts' }],
+            [homeButton()],
+          ],
+        },
+      );
+      return;
+    }
+  }
+
   await editAdminMessage(
     message,
     `📢 Отправляем рассылку: получателей ${recipients.length}. Это может занять время — не закрывайте чат.`,
@@ -750,7 +957,7 @@ async function executeBroadcast(
     audience_id: audienceId,
     audience_title: title,
     to_admins: audienceId === BROADCAST_ADMINS_AUDIENCE.id,
-    text_preview: shorten(payload.broadcastText.replace(/\n/g, ' '), 160),
+    text_preview: shorten((payload.broadcastText ?? '').replace(/\n/g, ' '), 160),
     has_attachment: Boolean(payload.fileId),
     has_button: Boolean(payload.buttonText && payload.buttonUrl),
     recipients: recipients.length,
@@ -773,6 +980,16 @@ async function executeBroadcast(
   }
 
   await renderBroadcastResult(message, broadcastId, statsLine, errors.length > 0);
+
+  if (broadcastId) {
+    await logAdminAction(admin, {
+      actorTelegramId: telegramId,
+      action: 'broadcast.complete',
+      entityType: 'broadcast',
+      entityId: broadcastId,
+      detail: { delivered, failed, recipients: recipients.length },
+    });
+  }
 
   if (errors.length > 0) {
     console.error(`Ошибки рассылки #${broadcastId}:`, errors.slice(0, 20));
@@ -1078,6 +1295,49 @@ export async function handleBroadcastTextStep(
     return true;
   }
 
+  if (state.step === 'broadcast:schedule:date') {
+    const dateMs = parseCustomScheduleDate(input);
+    if (dateMs == null) {
+      await sendAdminMessage(chatId, '⚠️ Не удалось разобрать дату. Используйте ДД.ММ или ДД.ММ.ГГГГ', {
+        inline_keyboard: [
+          [{ text: '⬅️ Назад', callback_data: 'admin:bc:plan' }],
+          [{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }],
+        ],
+      });
+      return true;
+    }
+    await renderScheduleTimePicker(
+      admin,
+      telegramId,
+      { chatId: state.chat_id, messageId: state.message_id },
+      { ...payload, scheduleCustomDateMs: dateMs },
+      0,
+    );
+    return true;
+  }
+
+  if (state.step === 'broadcast:schedule:time') {
+    const parsed = parseScheduleTime(input);
+    if (!parsed) {
+      await sendAdminMessage(chatId, '⚠️ Формат времени: ЧЧ:ММ (например 10:30)', {
+        inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'admin:bc:cancel' }]],
+      });
+      return true;
+    }
+    const dayKey = payload.schedulePlanDayKey ?? '0';
+    const iso = resolveScheduledIso(payload, dayKey, parsed.hour, parsed.minute);
+    const recipients = payload.audience ? await resolveBroadcastRecipients(admin, payload.audience) : [];
+    await renderScheduleConfirm(
+      admin,
+      telegramId,
+      { chatId, messageId: state.message_id },
+      { ...payload, scheduledAtIso: iso },
+      iso,
+      recipients.length,
+    );
+    return true;
+  }
+
   return false;
 }
 
@@ -1090,13 +1350,53 @@ export async function handleBroadcastAction(
 ): Promise<boolean> {
   if (data === 'admin:broadcasts') {
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastMenu(editDeliver(message));
+    await renderBroadcastMenu(admin, editDeliver(message));
+    return true;
+  }
+
+  if (data === 'admin:bc:scheduled') {
+    await renderScheduledList(admin, message);
+    return true;
+  }
+
+  const schedView = data.match(/^admin:bc:sched:view:(\d+)$/);
+  if (schedView) {
+    await renderScheduledDetail(admin, message, Number(schedView[1]));
+    return true;
+  }
+
+  const schedCancel = data.match(/^admin:bc:sched:cancel:(\d+)$/);
+  if (schedCancel) {
+    await confirmCancelScheduled(admin, message, Number(schedCancel[1]));
+    return true;
+  }
+
+  const schedCancelYes = data.match(/^admin:bc:sched:cancel:yes:(\d+)$/);
+  if (schedCancelYes) {
+    await executeCancelScheduled(admin, telegramId, message, Number(schedCancelYes[1]));
+    return true;
+  }
+
+  const schedEdit = data.match(/^admin:bc:sched:edit:(\d+)$/);
+  if (schedEdit) {
+    await startBroadcastReschedule(admin, telegramId, message, Number(schedEdit[1]));
     return true;
   }
 
   if (data === 'admin:bc:new') {
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastAudienceMenu(message);
+    await renderBroadcastAudienceMenu(admin, message);
+    return true;
+  }
+
+  if (data === 'admin:bc:filters') {
+    await renderBroadcastFilterMenu(message);
+    return true;
+  }
+
+  if (data.startsWith('admin:bc:sel:')) {
+    const audienceId = data.slice('admin:bc:sel:'.length);
+    await renderBroadcastAudienceConfirm(admin, message, audienceId, audienceTitleForId(audienceId));
     return true;
   }
 
@@ -1117,18 +1417,7 @@ export async function handleBroadcastAction(
       await renderBroadcastSegmentMenu(message);
       return true;
     }
-    try {
-      await startSegmentBroadcast(
-        admin,
-        telegramId,
-        message,
-        audienceId,
-        segmentTitle(audienceId),
-      );
-    } catch (error) {
-      if (!isConversationStateTableError(error)) throw error;
-      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
-    }
+    await renderBroadcastAudienceConfirm(admin, message, audienceId, segmentTitle(audienceId));
     return true;
   }
 
@@ -1143,7 +1432,7 @@ export async function handleBroadcastAction(
     const groupId = Number(segGrpPick[1]);
     try {
       const title = await resolveGroupSegmentTitle(admin, groupId);
-      await startSegmentBroadcast(admin, telegramId, message, `seg:group:${groupId}`, title);
+      await renderBroadcastAudienceConfirm(admin, message, `seg:group:${groupId}`, title);
     } catch (error) {
       if (!isConversationStateTableError(error)) throw error;
       await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
@@ -1162,7 +1451,7 @@ export async function handleBroadcastAction(
     const teacherId = Number(segTeaPick[1]);
     try {
       const title = await resolveTeacherSegmentTitle(admin, teacherId);
-      await startSegmentBroadcast(admin, telegramId, message, `seg:teacher:${teacherId}`, title);
+      await renderBroadcastAudienceConfirm(admin, message, `seg:teacher:${teacherId}`, title);
     } catch (error) {
       if (!isConversationStateTableError(error)) throw error;
       await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
@@ -1230,14 +1519,14 @@ export async function handleBroadcastAction(
 
   const payload = state?.payload ?? {};
 
-  if (data.startsWith('admin:bc:aud:')) {
-    const selected = findBroadcastAudience(data.split(':')[3]);
-    if (!selected || selected.id === BROADCAST_ADMINS_AUDIENCE.id) {
-      await renderBroadcastAudienceMenu(message);
-      return true;
-    }
+  if (data.startsWith('admin:bc:start:')) {
+    const audienceId = decodeURIComponent(data.slice('admin:bc:start:'.length));
+    const title =
+      payload.audienceTitle?.trim() ||
+      audienceTitleForId(audienceId) ||
+      audienceDisplayTitle({ audience: audienceId });
     try {
-      await startBroadcastText(admin, telegramId, message, selected);
+      await beginBroadcastMessageStep(admin, telegramId, message, audienceId, title);
     } catch (error) {
       if (!isConversationStateTableError(error)) throw error;
       await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
@@ -1245,10 +1534,80 @@ export async function handleBroadcastAction(
     return true;
   }
 
-  if (!state || state.chat_id !== message.chatId || !isKnownBroadcastAudience(payload.audience) || !payload.broadcastText) {
+  if (data.startsWith('admin:bc:aud:')) {
+    const selected = findBroadcastAudience(data.split(':')[3]);
+    if (!selected || selected.id === BROADCAST_ADMINS_AUDIENCE.id) {
+      await renderBroadcastAudienceMenu(admin, message);
+      return true;
+    }
+    try {
+      await renderBroadcastAudienceConfirm(admin, message, selected.id, selected.title);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      await editAdminMessage(message, migrationText('bot_conversation_states.sql'), homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  if (data.startsWith('admin:bc:plan')) {
+    const rescheduling = Boolean(payload.broadcastRescheduleId);
+    const draftOk =
+      state &&
+      state.chat_id === message.chatId &&
+      (rescheduling || broadcastDraftReady(payload));
+    if (!draftOk) {
+      await clearStateIfAvailable(admin, telegramId);
+      await renderBroadcastMenu(admin, editDeliver(message));
+      return true;
+    }
+    if (data === 'admin:bc:plan') {
+      await renderScheduleDatePicker(admin, telegramId, message, payload);
+      return true;
+    }
+    if (data === 'admin:bc:plan:day:custom') {
+      await promptCustomScheduleDate(admin, telegramId, message, payload);
+      return true;
+    }
+    const dayMatch = data.match(/^admin:bc:plan:day:(\d+)$/);
+    if (dayMatch) {
+      await renderScheduleTimePicker(admin, telegramId, message, { ...payload, scheduleCustomDateMs: undefined }, Number(dayMatch[1]) || 0);
+      return true;
+    }
+    const timeCustom = data.match(/^admin:bc:plan:time:custom:(.+)$/);
+    if (timeCustom) {
+      await promptCustomScheduleTime(admin, telegramId, message, payload, timeCustom[1] ?? '0');
+      return true;
+    }
+    const atMatch = data.match(/^admin:bc:plan:at:([^:]+):(\d+):(\d+)$/);
+    if (atMatch) {
+      const iso = resolveScheduledIso(payload, atMatch[1] ?? '0', Number(atMatch[2]) || 0, Number(atMatch[3]) || 0);
+      const recipients = payload.audience
+        ? await resolveBroadcastRecipients(admin, payload.audience)
+        : [];
+      await renderScheduleConfirm(admin, telegramId, message, { ...payload, scheduledAtIso: iso }, iso, recipients.length);
+      return true;
+    }
+    if (data === 'admin:bc:plan:save') {
+      const recipients = payload.audience
+        ? await resolveBroadcastRecipients(admin, payload.audience)
+        : [];
+      await saveScheduledBroadcast(
+        admin,
+        telegramId,
+        message,
+        payload,
+        payload.audience ?? '',
+        audienceDisplayTitle(payload),
+        recipients,
+      );
+      return true;
+    }
+  }
+
+  if (!state || state.chat_id !== message.chatId || !broadcastDraftReady(payload)) {
     // Состояние потеряно (например, истекло) — возвращаем в начало сценария.
     await clearStateIfAvailable(admin, telegramId);
-    await renderBroadcastMenu(editDeliver(message));
+    await renderBroadcastMenu(admin, editDeliver(message));
     return true;
   }
 

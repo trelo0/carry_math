@@ -11,6 +11,8 @@ type WebhookBody = {
   packageIndex?: number;
   teacherId?: string;
   externalId?: string;
+  /** Оплата пробного по lead_payments.external_id */
+  trialExternalId?: string;
 };
 
 /** Webhook эквайринга: idempotent fulfill после успешной оплаты. */
@@ -26,6 +28,30 @@ export async function POST(request: Request) {
     body = (await request.json()) as WebhookBody;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  const trialExternalId = body.trialExternalId?.trim() || (body.product === 'trial' ? body.externalId?.trim() : '');
+  if (trialExternalId) {
+    try {
+      const admin = createAdminClient();
+      const { processTrialPaymentWebhook } = await import('@/lib/bot/client-trial-pay-flow');
+      const result = await processTrialPaymentWebhook(admin, trialExternalId);
+      return NextResponse.json({ ok: true, trial: true, leadId: result.leadId });
+    } catch (error) {
+      console.error('[payments/webhook trial]', error);
+      try {
+        const admin = createAdminClient();
+        const { recordTrialPaymentProblem } = await import('@/lib/bot/admin/problems-hooks');
+        await recordTrialPaymentProblem(
+          admin,
+          trialExternalId,
+          error instanceof Error ? error.message : 'Internal error',
+        );
+      } catch (logErr) {
+        console.error('[payments/webhook trial problem]', logErr);
+      }
+      return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    }
   }
 
   if (typeof body.telegramId !== 'number' || !body.product || !isAccessProduct(body.product)) {
@@ -50,9 +76,34 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof PurchaseFulfillError) {
+      try {
+        const admin = createAdminClient();
+        const { recordPaymentFulfillProblem } = await import('@/lib/bot/admin/problems-hooks');
+        await recordPaymentFulfillProblem(admin, {
+          telegramId: body.telegramId,
+          externalId: body.externalId?.trim(),
+          code: error.code,
+          message: error.message,
+          critical: false,
+        });
+      } catch (logErr) {
+        console.error('[payments/webhook problem]', logErr);
+      }
       return NextResponse.json({ error: error.message, code: error.code }, { status: 400 });
     }
     console.error('[payments/webhook]', error);
+    try {
+      const admin = createAdminClient();
+      const { recordPaymentFulfillProblem } = await import('@/lib/bot/admin/problems-hooks');
+      await recordPaymentFulfillProblem(admin, {
+        telegramId: body.telegramId,
+        externalId: body.externalId?.trim(),
+        message: error instanceof Error ? error.message : 'Internal error',
+        critical: true,
+      });
+    } catch (logErr) {
+      console.error('[payments/webhook problem]', logErr);
+    }
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

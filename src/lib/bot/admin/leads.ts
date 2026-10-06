@@ -1,17 +1,29 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { formatShortDisplayId } from '@/lib/displayId';
 import { telegramSend } from '@/lib/telegram';
+import { resolveMemberChatId } from '../staff/messaging';
 import {
   type AdminMessage,
+  type ConversationState,
   type Deliver,
   type InlineButton,
+  clearState,
   editAdminMessage,
   editDeliver,
   homeButton,
   migrationText,
   homeOnlyKeyboard,
+  saveState,
+  sendAdminMessage,
   shorten,
 } from './core';
 import { logAdminAction } from './action-log';
+import { insertLeadMessage, listLeadMessages } from './lead-messages';
+import { listLeadEvents, formatLeadEventLine } from './lead-events';
+import { getActiveTrialForLead, syncTrialLessonConducted } from './lead-trial';
+import { handleLeadTrialAction, isLeadTrialAction } from './lead-trial-flow';
+import { handleLeadEnrollmentAction, isLeadEnrollmentAction } from './lead-enrollment-flow';
+import { handleLeadFollowupAction } from './lead-followups';
 
 // ---------------------------------------------------------------------------
 // Раздел админ-панели: заявки (сайт + Telegram-бот, таблица leads)
@@ -30,6 +42,9 @@ export type LeadSourceFilter = 'all' | 'telegram' | 'site';
 
 export type LeadFilter = LeadStatus | 'all';
 
+/** Категории списка в разделе «Заявки» (без ручного выбора статуса). */
+export type LeadListCategory = 'new' | 'in_work' | 'completed' | 'all';
+
 export type LeadRow = {
   id: string;
   created_at: string;
@@ -47,6 +62,8 @@ export type LeadRow = {
   source: string | null;
   status: string | null;
   assigned_telegram_id?: number | null;
+  inquiry_kind?: string | null;
+  client_telegram_id?: number | null;
 };
 
 export type LeadStatusHistoryRow = {
@@ -84,7 +101,8 @@ const LEAD_STATUS_META: Record<LeadStatus, LeadStatusMeta> = {
 // Код фильтра 'a' — все заявки; коды статусов берутся из LEAD_STATUS_META.
 const FILTER_ALL_CODE = 'a';
 
-const LEADS_PER_PAGE = 5;
+const LEADS_PER_PAGE = 10;
+const CHAT_HISTORY_PAGE = 8;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -109,6 +127,62 @@ function codeFromFilter(filter: LeadFilter): string {
   return filter === 'all' ? FILTER_ALL_CODE : LEAD_STATUS_META[filter].code;
 }
 
+const CATEGORY_CODES: Record<LeadListCategory, string> = {
+  new: 'n',
+  in_work: 'w',
+  completed: 'g',
+  all: 'a',
+};
+
+function categoryFromCode(code: string | undefined): LeadListCategory {
+  if (!code || code === 'a') return 'all';
+  if (code === 'n') return 'new';
+  if (code === 'w' || code === 'i') return 'in_work';
+  if (code === 'g' || code === 'd' || code === 'x') return 'completed';
+  return 'all';
+}
+
+function codeFromCategory(category: LeadListCategory): string {
+  return CATEGORY_CODES[category];
+}
+
+function categoryTitle(category: LeadListCategory): string {
+  switch (category) {
+    case 'new':
+      return '📨 Новые заявки';
+    case 'in_work':
+      return '📨 Заявки в работе';
+    case 'completed':
+      return '📨 Завершённые заявки';
+    default:
+      return '📨 Все заявки';
+  }
+}
+
+function applyCategoryFilter<T extends { eq: (c: string, v: string) => T; in: (c: string, v: string[]) => T }>(
+  query: T,
+  category: LeadListCategory,
+): T {
+  if (category === 'new') return query.eq('status', 'new');
+  if (category === 'in_work') return query.in('status', ['awaiting_reply', 'in_progress']);
+  if (category === 'completed') return query.in('status', ['completed', 'cancelled']);
+  return query;
+}
+
+function hubCounts(counts: Record<LeadStatus, number> & { all: number }): {
+  new: number;
+  inWork: number;
+  completed: number;
+  all: number;
+} {
+  return {
+    new: counts.new,
+    inWork: counts.awaiting_reply + counts.in_progress,
+    completed: counts.completed + counts.cancelled,
+    all: counts.all,
+  };
+}
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ru-RU', {
     timeZone: 'Europe/Moscow',
@@ -126,6 +200,21 @@ function formatTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatListWhen(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const msk = (date: Date) =>
+    date.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long' });
+  const today = msk(now);
+  const day = msk(d);
+  const time = formatTime(iso);
+  if (day === today) return `Сегодня, ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (day === msk(yesterday)) return `Вчера, ${time}`;
+  return `${d.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'long' })}, ${time}`;
 }
 
 // Колонка status появляется только после миграции leads_status.sql.
@@ -158,7 +247,7 @@ export function isLeadStatusColumnError(error: unknown): boolean {
 // ---------------------------------------------------------------------------
 
 export const LEAD_SELECT_COLUMNS =
-  'id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status, assigned_telegram_id';
+  'id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status, assigned_telegram_id, inquiry_kind, client_telegram_id';
 
 const LEAD_COLUMNS_LEGACY =
   'id, created_at, name, contact, comment, teacher, service, grade, rating, rt_score, price, waitlist, spots_status, source, status';
@@ -193,6 +282,11 @@ function leadSourceLabel(lead: LeadRow): string {
 }
 
 // Счётчики по статусам одним запросом (status выбираем без остальных полей).
+function isApplicationLead(row: { inquiry_kind?: string | null }): boolean {
+  const kind = row.inquiry_kind;
+  return !kind || kind === 'application';
+}
+
 async function countLeadsByStatus(
   admin: SupabaseClient,
 ): Promise<Record<LeadStatus, number> & { all: number }> {
@@ -204,9 +298,10 @@ async function countLeadsByStatus(
     cancelled: 0,
     all: 0,
   };
-  const { data, error } = await admin.from('leads').select('status').limit(1000);
+  const { data, error } = await admin.from('leads').select('status, inquiry_kind').limit(1000);
   if (error) throw error;
   for (const row of data ?? []) {
+    if (!isApplicationLead(row as { inquiry_kind?: string | null })) continue;
     const status = (row as { status: string | null }).status;
     const normalized: LeadStatus =
       status && status in LEAD_STATUS_META ? (status as LeadStatus) : 'new';
@@ -234,7 +329,74 @@ async function listLeads(
   return { leads: (data ?? []) as unknown as LeadRow[], total: count ?? 0 };
 }
 
-async function getLead(admin: SupabaseClient, id: string, columns: string): Promise<LeadRow | null> {
+async function listLeadsByCategory(
+  admin: SupabaseClient,
+  category: LeadListCategory,
+  page: number,
+  columns: string,
+): Promise<{ leads: LeadRow[]; total: number }> {
+  const from = page * LEADS_PER_PAGE;
+  let query = admin.from('leads').select(columns, { count: 'exact' });
+  query = applyCategoryFilter(query, category);
+  query = query.or('inquiry_kind.eq.application,inquiry_kind.is.null');
+  const { data, error, count } = await query
+    .order('created_at', { ascending: false })
+    .range(from, from + LEADS_PER_PAGE - 1);
+  if (error) {
+    if (String(error.message ?? '').includes('inquiry_kind')) {
+      let fallback = admin.from('leads').select(columns, { count: 'exact' });
+      fallback = applyCategoryFilter(fallback, category);
+      const res = await fallback
+        .order('created_at', { ascending: false })
+        .range(from, from + LEADS_PER_PAGE - 1);
+      if (res.error) throw res.error;
+      const filtered = ((res.data ?? []) as unknown as LeadRow[]).filter(isApplicationLead);
+      return { leads: filtered, total: res.count ?? filtered.length };
+    }
+    throw error;
+  }
+  return { leads: (data ?? []) as unknown as LeadRow[], total: count ?? 0 };
+}
+
+async function searchLeads(admin: SupabaseClient, query: string, columns: string): Promise<LeadRow[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+  const shortId = trimmed.replace(/^#/, '').toLowerCase();
+  if (/^[0-9a-f]{2,8}$/i.test(shortId)) {
+    const { data, error } = await admin
+      .from('leads')
+      .select(columns)
+      .ilike('id', `${shortId}%`)
+      .order('created_at', { ascending: false })
+      .limit(15);
+    if (error) throw error;
+    return (data ?? []) as unknown as LeadRow[];
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const tgId = Number(trimmed);
+    if (Number.isFinite(tgId)) {
+      const { data, error } = await admin
+        .from('leads')
+        .select(columns)
+        .or(`comment.ilike.%telegram_id:${tgId}%,contact.ilike.%${trimmed}%`)
+        .order('created_at', { ascending: false })
+        .limit(15);
+      if (error) throw error;
+      return (data ?? []) as unknown as LeadRow[];
+    }
+  }
+  const escaped = trimmed.replace(/[%_]/g, '\\$&');
+  const { data, error } = await admin
+    .from('leads')
+    .select(columns)
+    .or(`name.ilike.%${escaped}%,contact.ilike.%${escaped}%`)
+    .order('created_at', { ascending: false })
+    .limit(15);
+  if (error) throw error;
+  return (data ?? []) as unknown as LeadRow[];
+}
+
+export async function getLead(admin: SupabaseClient, id: string, columns: string): Promise<LeadRow | null> {
   if (!UUID_RE.test(id)) return null;
   const { data, error } = await admin.from('leads').select(columns).eq('id', id).maybeSingle();
   if (error) throw error;
@@ -273,7 +435,7 @@ async function loadLeadStatusHistory(
   return (data ?? []) as LeadStatusHistoryRow[];
 }
 
-async function setLeadStatus(
+export async function setLeadStatus(
   admin: SupabaseClient,
   id: string,
   status: LeadStatus,
@@ -331,7 +493,8 @@ async function setLeadAssignee(
   return ok;
 }
 
-async function resolveLinkedTelegramId(admin: SupabaseClient, lead: LeadRow): Promise<number | null> {
+export async function resolveLinkedTelegramId(admin: SupabaseClient, lead: LeadRow): Promise<number | null> {
+  if (lead.client_telegram_id && lead.client_telegram_id > 0) return lead.client_telegram_id;
   const fromComment = parseLeadTelegramId(lead.comment);
   if (fromComment) return fromComment;
   const digits = lead.contact.replace(/\D/g, '');
@@ -391,45 +554,47 @@ function leadServiceLine(lead: LeadRow): string | null {
   return null;
 }
 
-function leadCard(lead: LeadRow, index: number): string {
-  const meta = statusMeta(lead);
-  const lines = [`${index}. ${meta.emoji} ${lead.name}`, leadSourceLabel(lead), `📞 ${lead.contact}`];
-  const service = leadServiceLine(lead);
-  if (service) lines.push(service);
-  lines.push(`🕐 ${formatTime(lead.created_at)}`);
-  return lines.join('\n');
+function leadListSubtitle(lead: LeadRow): string {
+  const format = lead.grade?.trim() ? lead.grade : lead.service?.includes('групп') ? 'Группа' : 'Индивидуальное';
+  const subject = lead.service?.trim() || lead.teacher?.trim() || '—';
+  return `${format} · ${subject}`;
 }
 
-function countsHeader(counts: Record<LeadStatus, number> & { all: number }): string {
+function leadCard(lead: LeadRow, index: number): string {
   return [
-    `${LEAD_STATUS_META.new.emoji} Новые (${counts.new})`,
-    `${LEAD_STATUS_META.awaiting_reply.emoji} Ожидают ответа (${counts.awaiting_reply})`,
-    `${LEAD_STATUS_META.in_progress.emoji} В работе (${counts.in_progress})`,
-    `${LEAD_STATUS_META.completed.emoji} Выполненные (${counts.completed})`,
-    `${LEAD_STATUS_META.cancelled.emoji} Отменённые (${counts.cancelled})`,
-    `📋 Всего (${counts.all})`,
+    `${index}. ${lead.name}`,
+    `   ${leadListSubtitle(lead)}`,
+    `   ${formatListWhen(lead.created_at)}`,
   ].join('\n');
 }
 
-function listNavSuffix(filter: LeadFilter, page: number, source: LeadSourceFilter): string {
-  return `${codeFromFilter(filter)}:${page}:${codeFromSource(source)}`;
+function listNavSuffix(category: LeadListCategory, page: number): string {
+  return `${codeFromCategory(category)}:${page}`;
 }
 
-function filterKeyboard(current: LeadFilter, source: LeadSourceFilter): InlineButton[][] {
-  const button = (filter: LeadFilter, label: string): InlineButton => ({
-    text: `${filter === current ? '✅ ' : ''}${label}`,
-    callback_data: `al:f:${listNavSuffix(filter, 0, source)}`,
-  });
-  const srcBtn = (src: LeadSourceFilter, label: string): InlineButton => ({
-    text: `${source === src ? '✅ ' : ''}${label}`,
-    callback_data: `al:so:${codeFromSource(src)}:${codeFromFilter(current)}:0`,
-  });
-  return [
-    [srcBtn('all', '📋 Все источники'), srcBtn('telegram', '✈️ Telegram'), srcBtn('site', '🌐 Сайт')],
-    [button('new', '🔴 Новые'), button('awaiting_reply', '💬 Ждут ответа')],
-    [button('in_progress', '🟡 В работе'), button('completed', '🟢 Готово')],
-    [button('cancelled', '⚫ Отменённые'), button('all', '📋 Все статусы')],
-  ];
+function parseListContext(parts: string[]): { category: LeadListCategory; page: number; source: LeadSourceFilter } {
+  const category = categoryFromCode(parts[0]);
+  const page = Math.max(0, Number(parts[1]) || 0);
+  const source = sourceFromCode(parts[2]);
+  return { category, page, source };
+}
+
+function paginationRow(category: LeadListCategory, safePage: number, pageCount: number): InlineButton[] {
+  const nav = (p: number) => `al:f:${listNavSuffix(category, p)}`;
+  const row: InlineButton[] = [];
+  const windowSize = 4;
+  let start = Math.max(0, safePage - Math.floor(windowSize / 2));
+  if (start + windowSize > pageCount) start = Math.max(0, pageCount - windowSize);
+  for (let p = start; p < Math.min(pageCount, start + windowSize); p += 1) {
+    row.push({
+      text: p === safePage ? `[${p + 1}]` : `${p + 1}`,
+      callback_data: p === safePage ? 'noop' : nav(p),
+    });
+  }
+  if (pageCount > start + windowSize) {
+    row.push({ text: '▶️', callback_data: nav(Math.min(pageCount - 1, safePage + 1)) });
+  }
+  return row;
 }
 
 let leadColumnsCache: string | null = null;
@@ -442,172 +607,403 @@ async function resolveLeadColumns(admin: SupabaseClient): Promise<string> {
   return leadColumnsCache;
 }
 
-// Экран списка заявок: счётчики, страница выбранного фильтра и навигация.
-async function renderLeadsScreen(
+async function renderLeadsHub(admin: SupabaseClient, deliver: Deliver): Promise<void> {
+  const counts = await countLeadsByStatus(admin);
+  const hub = hubCounts(counts);
+  const text = [
+    '📨 Заявки',
+    '',
+    `🔴 Новые — ${hub.new}`,
+    `🟡 В работе — ${hub.inWork}`,
+    `🟢 Завершённые — ${hub.completed}`,
+    '',
+    `Всего заявок: ${hub.all}`,
+  ];
+  const keyboard: InlineButton[][] = [
+    [{ text: `🔴 Новые · ${hub.new}`, callback_data: `al:f:${listNavSuffix('new', 0)}` }],
+    [{ text: `🟡 В работе · ${hub.inWork}`, callback_data: `al:f:${listNavSuffix('in_work', 0)}` }],
+    [{ text: '📋 Все заявки', callback_data: `al:f:${listNavSuffix('all', 0)}` }],
+    [{ text: '🔎 Найти заявку', callback_data: 'al:search' }],
+    [homeButton()],
+  ];
+  const { patchLeadsHubWithQuestions } = await import('./lead-questions');
+  await patchLeadsHubWithQuestions(text, keyboard, admin);
+  await deliver(text.join('\n'), { inline_keyboard: keyboard });
+}
+
+async function renderLeadsList(
   admin: SupabaseClient,
   deliver: Deliver,
-  filter: LeadFilter,
+  category: LeadListCategory,
   page: number,
-  source: LeadSourceFilter = 'all',
 ): Promise<void> {
   const columns = await resolveLeadColumns(admin);
-  const counts = await countLeadsByStatus(admin);
-  const { leads, total } = await listLeads(admin, filter, page, source, columns);
+  const { leads, total } = await listLeadsByCategory(admin, category, page, columns);
   const pageCount = Math.max(1, Math.ceil(total / LEADS_PER_PAGE));
   const safePage = Math.min(page, pageCount - 1);
-  const nav = listNavSuffix(filter, safePage, source);
+  const nav = listNavSuffix(category, safePage);
 
-  const keyboard: InlineButton[][] = filterKeyboard(filter, source);
+  const keyboard: InlineButton[][] = leads.map((lead) => [
+    {
+      text: `👤 ${shorten(lead.name, 22)} · ${shorten(lead.service || lead.teacher || '—', 14)}`,
+      callback_data: `al:l:${lead.id}:${nav}`,
+    },
+  ]);
+
+  if (pageCount > 1) keyboard.push(paginationRow(category, safePage, pageCount));
   keyboard.push(
-    ...leads.map((lead) => [
-      {
-        text: `${statusMeta(lead).emoji} ${shorten(lead.name, 28)}`,
-        callback_data: `al:l:${lead.id}:${nav}`,
-      },
-    ]),
+    [{ text: '⬅️ К обзору', callback_data: 'al:menu' }],
+    [homeButton()],
   );
 
-  if (pageCount > 1) {
-    keyboard.push([
-      {
-        text: safePage > 0 ? '⬅️ Назад' : '·',
-        callback_data: safePage > 0 ? `al:f:${listNavSuffix(filter, safePage - 1, source)}` : 'noop',
-      },
-      { text: `${safePage + 1}/${pageCount}`, callback_data: 'noop' },
-      {
-        text: safePage < pageCount - 1 ? '➡️ Далее' : '·',
-        callback_data:
-          safePage < pageCount - 1 ? `al:f:${listNavSuffix(filter, safePage + 1, source)}` : 'noop',
-      },
-    ]);
-  }
-  keyboard.push([homeButton()]);
-
-  const sourceHint =
-    source === 'telegram' ? ' (Telegram)' : source === 'site' ? ' (сайт)' : '';
-  const title = filter === 'all' ? `📋 Все заявки${sourceHint}` : `${statusMetaOfFilter(filter)} Заявки${sourceHint}`;
+  const from = total === 0 ? 0 : safePage * LEADS_PER_PAGE + 1;
+  const to = Math.min(total, (safePage + 1) * LEADS_PER_PAGE);
   const text =
     total === 0
-      ? `📝 Заявки\n\n${countsHeader(counts)}\n\n${title}: пока пусто.`
+      ? `${categoryTitle(category)}\n\nПока пусто.`
       : [
-          '📝 Заявки',
+          categoryTitle(category),
           '',
-          countsHeader(counts),
+          `Показано ${from}–${to} из ${total}`,
           '',
-          ...leads.map((lead, index) => leadCard(lead, safePage * LEADS_PER_PAGE + index + 1)),
+          ...leads.map((lead, index) => leadCard(lead, from + index)),
         ].join('\n');
 
   await deliver(text, { inline_keyboard: keyboard });
 }
 
-function statusMetaOfFilter(filter: LeadFilter): string {
-  return filter === 'all' ? '📋' : LEAD_STATUS_META[filter].emoji;
-}
-
-// Меню раздела: из Reply Keyboard приходит новым сообщением.
 export async function renderLeadsMenu(
   admin: SupabaseClient,
   deliver: Deliver,
-  filter: LeadFilter = 'new',
-  source: LeadSourceFilter = 'all',
+  openCategory?: LeadListCategory,
 ): Promise<void> {
-  await renderLeadsScreen(admin, deliver, filter, 0, source);
+  if (openCategory) await renderLeadsList(admin, deliver, openCategory, 0);
+  else await renderLeadsHub(admin, deliver);
 }
 
-function parseListContext(parts: string[]): {
-  filter: LeadFilter;
-  page: number;
-  source: LeadSourceFilter;
-} {
-  const filter = filterFromCode(parts[0]);
-  const page = Math.max(0, Number(parts[1]) || 0);
-  const source = sourceFromCode(parts[2]);
-  return { filter, page, source };
+function leadStatusLine(lead: LeadRow): string {
+  const meta = statusMeta(lead);
+  return `${meta.emoji} ${meta.label}`;
 }
 
-// Карточка одной заявки со сменой статуса.
+function leadInitialMessage(lead: LeadRow): string | null {
+  const commentForDisplay = lead.comment?.replace(/telegram_id:\d+\s*/g, '').trim();
+  return commentForDisplay || null;
+}
+
 async function renderLeadDetail(
   admin: SupabaseClient,
   message: AdminMessage,
   lead: LeadRow,
-  filter: LeadFilter,
+  category: LeadListCategory,
   page: number,
-  source: LeadSourceFilter,
   _actorTelegramId: number,
 ): Promise<void> {
-  const meta = statusMeta(lead);
-  const nav = listNavSuffix(filter, page, source);
-  const lines = [`📝 Заявка`, '', leadSourceLabel(lead), `👤 ${lead.name}`, `📞 ${lead.contact}`];
-  if (lead.teacher) lines.push(`👨🏫 ${lead.teacher}`);
-  if (lead.service) lines.push(`📚 ${lead.service}`);
-  if (lead.grade) lines.push(`🎓 ${lead.grade} класс`);
-  if (lead.rating) lines.push(`📈 Оценка: ${lead.rating}`);
-  if (lead.rt_score) lines.push(`🎯 Балл РТ: ${lead.rt_score}`);
-  if (lead.price) lines.push(`💳 ${lead.price}`);
-  const commentForDisplay = lead.comment?.replace(/telegram_id:\d+\s*/g, '').trim();
-  if (commentForDisplay) lines.push(`💬 ${commentForDisplay}`);
-  lines.push('', `🕐 ${formatDateTime(lead.created_at)}`, '', `Статус: ${meta.emoji} ${meta.label}`);
+  const nav = listNavSuffix(category, page);
+  const shortId = formatShortDisplayId(lead.id);
+  const lines = [`📨 Заявка ${shortId ?? ''}`.trim(), '', `👤 ${lead.name}`, `📱 ${lead.contact}`];
+  if (lead.source === TELEGRAM_BOT_SOURCE) lines.push('💬 Telegram');
+  else lines.push(leadSourceLabel(lead));
 
-  if (lead.assigned_telegram_id != null) {
-    lines.push(`👔 Ответственный: ${await memberDisplayName(admin, lead.assigned_telegram_id)}`);
-  } else {
-    lines.push('👔 Ответственный: не назначен');
+  if (lead.service) lines.push(`📚 ${lead.service}`);
+  if (lead.grade) lines.push(`🎓 ${lead.grade}`);
+  if (lead.teacher) lines.push(`👨‍🏫 ${lead.teacher}`);
+
+  const initial = leadInitialMessage(lead);
+  if (initial) {
+    lines.push('', '💬 Сообщение', '', initial);
   }
 
-  const history = await loadLeadStatusHistory(admin, lead.id);
-  if (history.length > 0) {
-    lines.push('', 'История статусов:');
-    for (const row of history) {
-      const hMeta =
-        row.status in LEAD_STATUS_META
-          ? LEAD_STATUS_META[row.status as LeadStatus]
-          : { emoji: '•', label: row.status };
-      const who =
-        row.changed_by_telegram_id != null
-          ? await memberDisplayName(admin, row.changed_by_telegram_id)
-          : '—';
-      lines.push(`  ${hMeta.emoji} ${hMeta.label} · ${formatDateTime(row.created_at)} · ${who}`);
+  lines.push('', '📍 Источник', lead.source === TELEGRAM_BOT_SOURCE ? 'Telegram' : leadSourceLabel(lead));
+  lines.push('', `🕐 Создана: ${formatDateTime(lead.created_at)}`, '', leadStatusLine(lead));
+
+  const trial = await getActiveTrialForLead(admin, lead.id);
+  if (trial) {
+    await syncTrialLessonConducted(admin, trial);
+    const tName = trial.teacher_telegram_id
+      ? await memberDisplayName(admin, trial.teacher_telegram_id)
+      : '—';
+    lines.push('', '📅 Пробное', `${formatListWhen(trial.starts_at).replace(/^Сегодня, /, '')}`, `👨‍🏫 ${tName}`);
+    const price = Number(trial.trial_price_byn ?? 0);
+    if (price > 0) {
+      const payLabel =
+        trial.trial_payment_status === 'paid'
+          ? 'оплачено'
+          : trial.trial_payment_status === 'pending'
+            ? 'ожидает оплаты'
+            : trial.trial_payment_status === 'skipped'
+              ? 'не запрашивалась'
+              : '—';
+      lines.push('', '💳 Оплата', `${price} BYN · ${payLabel}`);
+    }
+    if (trial.trial_payment_status === 'paid' || trial.trial_payment_status === 'skipped') {
+      lines.push('', '🟢 Пробное подтверждено');
+    } else if (trial.trial_payment_status === 'pending') {
+      lines.push('', '💳 Ожидает оплаты');
+    }
+    if (trial.status === 'completed') lines.push('', '🟡 Пробное проведено');
+  }
+
+  const events = await listLeadEvents(admin, lead.id, 4);
+  if (events.length > 0) {
+    lines.push('', '📋 События');
+    for (const ev of events.reverse()) {
+      lines.push(formatLeadEventLine(ev, formatDateTime));
     }
   }
 
   const linkedId = await resolveLinkedTelegramId(admin, lead);
-  const keyboard: InlineButton[][] = (Object.keys(LEAD_STATUS_META) as LeadStatus[])
-    .filter((status) => status !== statusOf(lead))
-    .map((status) => [
+  const keyboard: InlineButton[][] = [
+    [
+      { text: '💬 Ответить', callback_data: `al:rp:${lead.id}:${nav}` },
+      { text: '📜 История чата', callback_data: `al:hist:${lead.id}:${nav}:0` },
+    ],
+    [
       {
-        text: `${LEAD_STATUS_META[status].emoji} ${LEAD_STATUS_META[status].label}`,
-        callback_data: `al:s:${lead.id}:${LEAD_STATUS_META[status].code}:${nav}`,
+        text: '👤 Открыть человека',
+        callback_data: linkedId != null ? `admin:user:${linkedId}::` : `al:l:${lead.id}:${nav}`,
       },
-    ]);
-
-  const assignRow: InlineButton[] = [
-    { text: '👔 Назначить', callback_data: `al:as:${lead.id}:${nav}` },
-    { text: '👤 На меня', callback_data: `al:me:${lead.id}:${nav}` },
+      { text: '⋯ Другие действия', callback_data: `al:mo:${lead.id}:${nav}` },
+    ],
+    [{ text: '📅 Оформить пробное', callback_data: `al:tr:${lead.id}:${nav}` }],
+    [{ text: '◀️ К списку', callback_data: `al:f:${nav}` }, { text: '⬅️ Обзор', callback_data: 'al:menu' }],
+    [homeButton()],
   ];
-  if (lead.assigned_telegram_id != null) {
-    assignRow.push({ text: '✖️ Снять', callback_data: `al:ac:${lead.id}:${nav}` });
-  }
-  keyboard.push(assignRow);
-
-  if (linkedId != null) {
-    keyboard.push([{ text: '🔗 Карточка человека', callback_data: `admin:user:${linkedId}::` }]);
-  }
-
-  const back = { text: '◀️ К заявкам', callback_data: `al:f:${nav}` };
-  keyboard.push([back], [homeButton()]);
 
   await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
+}
+
+async function renderLeadMoreMenu(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  lead: LeadRow,
+  category: LeadListCategory,
+  page: number,
+): Promise<void> {
+  const nav = listNavSuffix(category, page);
+  const st = statusOf(lead);
+  const keyboard: InlineButton[][] = [];
+  if (st === 'completed' || st === 'cancelled') {
+    keyboard.push([{ text: '🔄 Вернуть в работу', callback_data: `al:rw:${lead.id}:${nav}` }]);
+  } else {
+    keyboard.push([{ text: '❌ Закрыть заявку', callback_data: `al:cl:${lead.id}:${nav}` }]);
+  }
+  keyboard.push(
+    [{ text: '📜 История чата', callback_data: `al:hist:${lead.id}:${nav}:0` }],
+    [{ text: '👔 Назначить ответственного', callback_data: `al:as:${lead.id}:${nav}` }],
+    [{ text: '◀️ К заявке', callback_data: `al:l:${lead.id}:${nav}` }],
+    [homeButton()],
+  );
+  await editAdminMessage(message, `⋯ Другие действия\n\n${lead.name}`, { inline_keyboard: keyboard });
+}
+
+async function renderLeadChatHistory(
+  admin: SupabaseClient,
+  message: AdminMessage,
+  lead: LeadRow,
+  category: LeadListCategory,
+  page: number,
+  beforeId: number,
+): Promise<void> {
+  const nav = listNavSuffix(category, page);
+  const rows = await listLeadMessages(admin, lead.id, {
+    limit: CHAT_HISTORY_PAGE + 1,
+    beforeId: beforeId > 0 ? beforeId : undefined,
+  });
+  const hasMore = rows.length > CHAT_HISTORY_PAGE;
+  const slice = hasMore ? rows.slice(0, CHAT_HISTORY_PAGE) : rows;
+  const chronological = [...slice].reverse();
+  const lines = ['📜 История чата', lead.name, ''];
+  if (chronological.length === 0) {
+    const fallback = leadInitialMessage(lead);
+    if (fallback) {
+      lines.push(`${lead.name.split(' ')[0] ?? 'Клиент'}:`, fallback);
+    } else lines.push('Пока нет сохранённых сообщений.');
+  } else {
+    for (const msg of chronological) {
+      const who = msg.direction === 'admin_to_client' ? 'Админ' : lead.name.split(' ')[0] ?? 'Клиент';
+      const body =
+        msg.body?.trim() ||
+        (msg.message_type === 'photo'
+          ? '📷 Фото'
+          : msg.message_type === 'voice'
+            ? '🎤 Голосовое'
+            : msg.message_type === 'document'
+              ? '📎 Документ'
+              : `[${msg.message_type}]`);
+      lines.push(`${who}:`, body, '');
+    }
+  }
+  const oldestId = slice.length > 0 ? slice[slice.length - 1]!.id : 0;
+  const keyboard: InlineButton[][] = [];
+  if (hasMore && oldestId > 0) {
+    keyboard.push([
+      { text: '⬆️ Более ранние сообщения', callback_data: `al:hist:${lead.id}:${nav}:${oldestId}` },
+    ]);
+  }
+  keyboard.push([{ text: '⬅️ Назад', callback_data: `al:l:${lead.id}:${nav}` }], [homeButton()]);
+  await editAdminMessage(message, lines.join('\n').trim(), { inline_keyboard: keyboard });
+}
+
+async function startLeadReply(
+  admin: SupabaseClient,
+  adminTelegramId: number,
+  message: AdminMessage,
+  lead: LeadRow,
+  category: LeadListCategory,
+  page: number,
+): Promise<void> {
+  const nav = listNavSuffix(category, page);
+  const linkedId = await resolveLinkedTelegramId(admin, lead);
+  if (!linkedId) {
+    await editAdminMessage(message, 'Не удалось найти Telegram клиента для этой заявки.', {
+      inline_keyboard: [[{ text: '◀️ Назад', callback_data: `al:l:${lead.id}:${nav}` }], [homeButton()]],
+    });
+    return;
+  }
+  if (statusOf(lead) === 'new') {
+    await setLeadStatus(admin, lead.id, 'in_progress', adminTelegramId);
+  }
+  await saveState(admin, adminTelegramId, message, 'admin:lead:reply', {
+    leadReplyLeadId: lead.id,
+    leadReplyNav: nav,
+    leadReplyClientTelegramId: linkedId,
+  });
+  await sendAdminMessage(
+    message.chatId,
+    `💬 Переписка с ${lead.name}\n\nНапишите сообщение — оно уйдёт клиенту от имени District.\nКаждое сообщение отправляется отдельно.\n\nЗавершить: кнопка ниже или «⬅️ Обзор».`,
+    {
+      inline_keyboard: [
+        [{ text: '⏹ Завершить переписку', callback_data: `al:rp:stop:${lead.id}:${nav}` }],
+        [{ text: '◀️ К заявке', callback_data: `al:l:${lead.id}:${nav}` }],
+        [homeButton()],
+      ],
+    },
+  );
+}
+
+export async function handleAdminLeadReplyStep(
+  admin: SupabaseClient,
+  adminTelegramId: number,
+  state: ConversationState,
+  text: string,
+): Promise<boolean> {
+  if (state.step !== 'admin:lead:reply') return false;
+  const leadId = state.payload.leadReplyLeadId;
+  const clientTgId = state.payload.leadReplyClientTelegramId;
+  const nav = state.payload.leadReplyNav ?? 'a:0';
+  if (!leadId || !clientTgId) {
+    await clearState(admin, adminTelegramId);
+    return true;
+  }
+  const body = text.trim();
+  if (!body) {
+    await sendAdminMessage(state.chat_id, 'Введите непустой текст.');
+    return true;
+  }
+  const chatId = await resolveMemberChatId(admin, clientTgId);
+  if (!chatId) {
+    await sendAdminMessage(state.chat_id, 'У клиента нет chat_id — бот не может написать.');
+    return true;
+  }
+  const result = await telegramSend('sendMessage', { chat_id: chatId, text: body });
+  if (result.ok && result.result && typeof result.result === 'object') {
+    const tgMsgId = (result.result as { message_id?: number }).message_id;
+    await insertLeadMessage(admin, {
+      leadId,
+      direction: 'admin_to_client',
+      senderTelegramId: adminTelegramId,
+      telegramMessageId: tgMsgId ?? null,
+      body,
+    });
+    const { logLeadEvent } = await import('./lead-events');
+    await logLeadEvent(admin, {
+      leadId,
+      eventType: 'admin_reply',
+      actorTelegramId: adminTelegramId,
+      detail: { length: body.length },
+    });
+    await setLeadStatus(admin, leadId, 'in_progress', adminTelegramId);
+    await logAdminAction(admin, {
+      actorTelegramId: adminTelegramId,
+      action: 'lead.reply',
+      entityType: 'lead',
+      entityId: leadId,
+      detail: { length: body.length },
+    });
+  }
+  await sendAdminMessage(
+    state.chat_id,
+    result.ok ? '✅ Отправлено клиенту.' : `❌ Не удалось: ${result.description ?? 'ошибка'}`,
+    {
+      inline_keyboard: [
+        [{ text: '⏹ Завершить переписку', callback_data: `al:rp:stop:${leadId}:${nav}` }],
+        [{ text: '◀️ К заявке', callback_data: `al:l:${leadId}:${nav}` }],
+        [homeButton()],
+      ],
+    },
+  );
+  return true;
+}
+
+async function promptLeadSearch(
+  admin: SupabaseClient,
+  telegramId: number,
+  message: AdminMessage,
+): Promise<void> {
+  await saveState(admin, telegramId, message, 'admin:leads:search', { searchBack: 'al:menu' });
+  await editAdminMessage(
+    message,
+    '🔎 Поиск заявки\n\nИмя, телефон, Telegram ID, username или короткий ID (#2dc03f).\nМинимум 2 символа.',
+    {
+      inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'al:menu' }], [homeButton()]],
+    },
+  );
+}
+
+export async function renderLeadsSearchResults(
+  admin: SupabaseClient,
+  state: ConversationState,
+  query: string,
+): Promise<void> {
+  const chatId = state.chat_id;
+  const trimmed = query.trim();
+  if (trimmed.length < 2) {
+    await sendAdminMessage(chatId, 'Запрос слишком короткий — минимум 2 символа.', {
+      inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'al:menu' }], [homeButton()]],
+    });
+    return;
+  }
+  const columns = await resolveLeadColumns(admin);
+  const leads = await searchLeads(admin, trimmed, columns);
+  if (leads.length === 0) {
+    await sendAdminMessage(chatId, `По «${trimmed}» заявок не найдено.`, {
+      inline_keyboard: [[{ text: '⬅️ Назад', callback_data: 'al:menu' }], [homeButton()]],
+    });
+    return;
+  }
+  const lines = ['🔎 Результаты', ''];
+  for (const lead of leads) {
+    lines.push(`${formatShortDisplayId(lead.id) ?? '—'} · ${lead.name}`, `📱 ${lead.contact}`, '');
+  }
+  const keyboard: InlineButton[][] = leads.map((lead) => [
+    {
+      text: `👤 ${shorten(lead.name, 36)} ${formatShortDisplayId(lead.id) ?? ''}`.trim(),
+      callback_data: `al:l:${lead.id}:a:0`,
+    },
+  ]);
+  keyboard.push([{ text: '⬅️ Назад', callback_data: 'al:menu' }], [homeButton()]);
+  await sendAdminMessage(chatId, lines.join('\n').trim(), { inline_keyboard: keyboard });
 }
 
 async function renderLeadAssignPicker(
   admin: SupabaseClient,
   message: AdminMessage,
   lead: LeadRow,
-  filter: LeadFilter,
+  category: LeadListCategory,
   page: number,
-  source: LeadSourceFilter,
 ): Promise<void> {
-  const nav = listNavSuffix(filter, page, source);
+  const nav = listNavSuffix(category, page);
   const candidates = await listAdminAssigneeCandidates(admin);
   const keyboard: InlineButton[][] = candidates.map((row) => [
     {
@@ -639,29 +1035,42 @@ export async function handleLeadsAction(
   const columns = await resolveLeadColumns(admin);
 
   try {
+    if (isLeadTrialAction(data)) {
+      return await handleLeadTrialAction(admin, data, message, actorTelegramId, deliver);
+    }
+    if (isLeadEnrollmentAction(data)) {
+      return await handleLeadEnrollmentAction(admin, data, message, actorTelegramId, deliver);
+    }
+    if (data.startsWith('al:fu:')) {
+      return await handleLeadFollowupAction(admin, data, message, actorTelegramId);
+    }
+
     if (data === 'al:menu') {
-      await renderLeadsMenu(admin, deliver);
+      await renderLeadsHub(admin, deliver);
       return true;
     }
 
-    // al:so:<источник>:<фильтр>:<страница>
+    const { isLeadQuestionsAction, handleLeadQuestionsAction } = await import('./lead-questions');
+    if (isLeadQuestionsAction(data)) {
+      return handleLeadQuestionsAction(admin, data, message, actorTelegramId);
+    }
+
+    if (data === 'al:search') {
+      await promptLeadSearch(admin, actorTelegramId, message);
+      return true;
+    }
+
     if (data.startsWith('al:so:')) {
-      const [, , srcCode, filterCode, pageRaw] = data.split(':');
-      await renderLeadsScreen(
-        admin,
-        deliver,
-        filterFromCode(filterCode),
-        Math.max(0, Number(pageRaw) || 0),
-        sourceFromCode(srcCode),
-      );
+      const [, , , filterCode, pageRaw] = data.split(':');
+      const category = categoryFromCode(filterCode);
+      await renderLeadsList(admin, deliver, category, Math.max(0, Number(pageRaw) || 0));
       return true;
     }
 
-    // al:f:<фильтр>:<страница>[:источник]
     if (data.startsWith('al:f:')) {
       const parts = data.slice('al:f:'.length).split(':');
       const ctx = parseListContext(parts);
-      await renderLeadsScreen(admin, deliver, ctx.filter, ctx.page, ctx.source);
+      await renderLeadsList(admin, deliver, ctx.category, ctx.page);
       return true;
     }
 
@@ -677,7 +1086,100 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadDetail(admin, message, lead, ctx.filter, ctx.page, ctx.source, actorTelegramId);
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
+      return true;
+    }
+
+    if (data.startsWith('al:mo:')) {
+      const rest = data.slice('al:mo:'.length);
+      const colon = rest.indexOf(':');
+      const id = colon >= 0 ? rest.slice(0, colon) : rest;
+      const ctx = parseListContext((colon >= 0 ? rest.slice(colon + 1) : 'a:0').split(':'));
+      const lead = await getLead(admin, id, columns);
+      if (!lead) {
+        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
+        return true;
+      }
+      await renderLeadMoreMenu(admin, message, lead, ctx.category, ctx.page);
+      return true;
+    }
+
+    if (data.startsWith('al:hist:')) {
+      const parts = data.slice('al:hist:'.length).split(':');
+      const id = parts[0] ?? '';
+      const ctx = parseListContext(parts.slice(1, 3));
+      const beforeId = Number(parts[3]) || 0;
+      const lead = await getLead(admin, id, columns);
+      if (!lead) {
+        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
+        return true;
+      }
+      await renderLeadChatHistory(admin, message, lead, ctx.category, ctx.page, beforeId);
+      return true;
+    }
+
+    if (data.startsWith('al:rp:stop:')) {
+      const rest = data.slice('al:rp:stop:'.length);
+      const colon = rest.indexOf(':');
+      const id = colon >= 0 ? rest.slice(0, colon) : rest;
+      const ctx = parseListContext((colon >= 0 ? rest.slice(colon + 1) : 'a:0').split(':'));
+      await clearState(admin, actorTelegramId);
+      const lead = await getLead(admin, id, columns);
+      if (lead) await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
+      else await deliver('Переписка завершена.', { inline_keyboard: [[homeButton()]] });
+      return true;
+    }
+
+    if (data.startsWith('al:rp:')) {
+      const rest = data.slice('al:rp:'.length);
+      const colon = rest.indexOf(':');
+      const id = colon >= 0 ? rest.slice(0, colon) : rest;
+      const ctx = parseListContext((colon >= 0 ? rest.slice(colon + 1) : 'a:0').split(':'));
+      const lead = await getLead(admin, id, columns);
+      if (!lead) {
+        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
+        return true;
+      }
+      await startLeadReply(admin, actorTelegramId, message, lead, ctx.category, ctx.page);
+      return true;
+    }
+
+    if (data.startsWith('al:cl:')) {
+      const rest = data.slice('al:cl:'.length);
+      const colon = rest.indexOf(':');
+      const id = colon >= 0 ? rest.slice(0, colon) : rest;
+      const ctx = parseListContext((colon >= 0 ? rest.slice(colon + 1) : 'a:0').split(':'));
+      await setLeadStatus(admin, id, 'cancelled', actorTelegramId);
+      const { logLeadEvent } = await import('./lead-events');
+      await logLeadEvent(admin, {
+        leadId: id,
+        eventType: 'lead_closed',
+        actorTelegramId,
+        detail: { reason: 'manual' },
+      });
+      const lead = await getLead(admin, id, columns);
+      if (!lead) {
+        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
+        return true;
+      }
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
+      return true;
+    }
+
+    if (data.startsWith('al:rw:')) {
+      const rest = data.slice('al:rw:'.length);
+      const colon = rest.indexOf(':');
+      const id = colon >= 0 ? rest.slice(0, colon) : rest;
+      const ctx = parseListContext((colon >= 0 ? rest.slice(colon + 1) : 'a:0').split(':'));
+      await setLeadStatus(admin, id, 'in_progress', actorTelegramId);
+      const { logLeadEvent: logReopen } = await import('./lead-events');
+      await logReopen(admin, { leadId: id, eventType: 'lead_reopened', actorTelegramId });
+      const lead = await getLead(admin, id, columns);
+      if (!lead) {
+        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
+        return true;
+      }
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
       return true;
     }
 
@@ -692,7 +1194,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadAssignPicker(admin, message, lead, ctx.filter, ctx.page, ctx.source);
+      await renderLeadAssignPicker(admin, message, lead, ctx.category, ctx.page);
       return true;
     }
 
@@ -708,7 +1210,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadDetail(admin, message, lead, ctx.filter, ctx.page, ctx.source, actorTelegramId);
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
       return true;
     }
 
@@ -724,7 +1226,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadDetail(admin, message, lead, ctx.filter, ctx.page, ctx.source, actorTelegramId);
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
       return true;
     }
 
@@ -741,7 +1243,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadDetail(admin, message, lead, ctx.filter, ctx.page, ctx.source, actorTelegramId);
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
       return true;
     }
 
@@ -760,7 +1262,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await renderLeadDetail(admin, message, lead, ctx.filter, ctx.page, ctx.source, actorTelegramId);
+      await renderLeadDetail(admin, message, lead, ctx.category, ctx.page, actorTelegramId);
       return true;
     }
   } catch (error) {
@@ -813,7 +1315,15 @@ async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
 // Ошибка доставки не откатывает уже сохранённую заявку — вызывающий код
 // логирует её и продолжает.
 export async function notifyAdminsOfNewLead(admin: SupabaseClient, lead: LeadRow): Promise<number> {
-  const lines = ['🔔 *Новая заявка*', leadSourceLabel(lead), '', `👤 ${lead.name}`, `📞 ${lead.contact}`];
+  const shortId = formatShortDisplayId(lead.id);
+  const lines = [
+    '🔔 *Новая заявка*',
+    shortId ? shortId : '',
+    leadSourceLabel(lead),
+    '',
+    `👤 ${lead.name}`,
+    `📞 ${lead.contact}`,
+  ].filter(Boolean);
   if (lead.teacher) lines.push(`👨‍🏫 ${lead.teacher}`);
   if (lead.service) lines.push(`📚 ${lead.service}`);
   if (lead.grade) lines.push(`🎓 ${lead.grade} класс`);
