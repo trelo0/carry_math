@@ -68,8 +68,8 @@ export function renderCuratorHomeworkHub(
   const n = navOrDefault(nav);
   return {
     text:
-      '📝 ДОМАШНИЕ ЗАДАНИЯ\n\n' +
-      'Очереди по закреплённым ученикам. Условия заданий — в «Программе курса» или на сайте.',
+      '📝 Домашние задания курса\n\n' +
+      'Сданные работы учеников онлайн-курса. Выберите очередь:',
     keyboard: {
       inline_keyboard: withCuratorCabinetRow(
         [
@@ -77,10 +77,10 @@ export function renderCuratorHomeworkHub(
           [{ text: '🔄 На доработке', callback_data: 'c:hw:q:revision' }],
           [{ text: '🟢 Проверенные', callback_data: 'c:hw:q:done' }],
           [{ text: '📋 Все', callback_data: 'c:hw:q:all' }],
-          [{ text: '📚 Программа курса', callback_data: 'c:lib' }],
           [backButton('⬅️ Главное меню', n.mainMenuBack ?? 'c:menu')],
         ],
         cabinetUrl,
+        { includeCabinet: false },
       ),
     },
   };
@@ -113,6 +113,7 @@ export function renderCuratorHomeworkList(
           [backButton('⬅️ К категориям', n.categoriesBack ?? 'c:hw')],
         ],
         cabinetUrl,
+        { includeCabinet: false },
       ),
     },
   };

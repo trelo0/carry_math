@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
 import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
+import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
+import { isClientReplyLabel } from '@/lib/bot/client-menu';
 
 export async function beginStudentSupport(
   admin: SupabaseClient,
@@ -14,13 +16,10 @@ export async function beginStudentSupport(
     if (!isConversationStateTableError(error)) throw error;
   }
 
-  await sendAdminMessage(
-    chatId,
-    '🆘 Связаться с администратором\n\nОпишите вопрос одним сообщением — текст, фото или документ.',
-    {
-      inline_keyboard: [[{ text: '❌ Отменить', callback_data: 'cl:support:cancel' }]],
-    },
-  );
+  const intro = await getBotCopy(BOT_COPY_KEYS.guestSupportIntro);
+  await sendAdminMessage(chatId, intro, {
+    inline_keyboard: [[{ text: '❌ Отменить', callback_data: 'cl:support:cancel' }]],
+  });
 }
 
 async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
@@ -84,6 +83,8 @@ export async function handleStudentSupportMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
+  if (isClientReplyLabel(text)) return false;
+
   let state = null;
   try {
     state = await getState(admin, telegramId);

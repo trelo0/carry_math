@@ -2,39 +2,42 @@ import type { AdminHubMetrics } from './hub-metrics';
 
 export type AttentionItem = { text: string; callback: string };
 
-/** Пункты «требует внимания» по счётчикам hub (фаза 1 + расширения). */
+/** Пункты «требует внимания» — только задачи, где нужно действие админа. */
 export function buildAttentionItems(metrics: AdminHubMetrics): AttentionItem[] {
   const items: AttentionItem[] = [];
   if (metrics.leadsNew > 0) {
-    items.push({ text: `📨 Новая заявка — обработать (${metrics.leadsNew})`, callback: 'ah:go:leads:new' });
-  }
-  if (metrics.leadsInProgress > 0) {
     items.push({
-      text: `📨 Заявки в работе (${metrics.leadsInProgress})`,
-      callback: 'ah:go:leads:progress',
+      text: `📨 Новые заявки — ${metrics.leadsNew}`,
+      callback: 'ah:go:leads:new',
     });
   }
   if (metrics.purchasesPending > 0) {
     items.push({
-      text: `💳 Подтвердить оплату (${metrics.purchasesPending})`,
+      text: `💳 Ожидают оплаты — ${metrics.purchasesPending}`,
       callback: 'ah:go:finance:pending',
     });
   }
   if (metrics.packagesLow > 0) {
     items.push({
-      text: `📦 Пакеты заканчиваются (${metrics.packagesLow})`,
+      text: `📦 Пакеты заканчиваются — ${metrics.packagesLow}`,
       callback: 'ah:go:finance:packages',
     });
   }
-  if (metrics.homeworkPendingReview > 0) {
+  if (metrics.homeworkLongPending > 0) {
     items.push({
-      text: `📝 ДЗ на проверке — ${metrics.homeworkPendingReview}`,
+      text: `📝 Домашки долго не проверяются — ${metrics.homeworkLongPending}`,
       callback: 'ah:hw:pending',
+    });
+  }
+  if (metrics.scheduleProblems > 0) {
+    items.push({
+      text: `📅 Проблемы расписания — ${metrics.scheduleProblems}`,
+      callback: 'ah:go:finance:overbook',
     });
   }
   if (metrics.violationsPending > 0) {
     items.push({
-      text: `🚨 Нарушения переписки (${metrics.violationsPending})`,
+      text: `⚠️ Другие проблемы — ${metrics.violationsPending}`,
       callback: 'ah:go:moderation',
     });
   }

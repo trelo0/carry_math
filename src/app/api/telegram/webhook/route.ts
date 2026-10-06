@@ -9,6 +9,7 @@ import {
   handleAdminMessage,
   sendAdminStart,
 } from '@/lib/bot/admin';
+import { ADMIN_REPLY_LABEL_SET } from '@/lib/bot/admin/core';
 import { analyzeUserMessage, enforceModerationRestrictions } from '@/lib/bot/moderation';
 import { handleStudentMessage } from '@/lib/bot/studentFlow';
 import { beginStudentPurchase, handleStudentPurchaseCallback, parsePayStartPayload } from '@/lib/bot/studentPurchaseFlow';
@@ -61,10 +62,12 @@ import { isAccessProduct } from '@/lib/bot/accesses';
 import {
   handleClientCallback,
   handleClientMessage,
+  handleClientReplyMenuNavigation,
   handleClientUnknownText,
   refreshClientMenu,
   sendClientStart,
 } from '@/lib/bot/client-flow';
+import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
 import {
   handleClientLessonHomeworkAttachment,
@@ -641,6 +644,23 @@ export async function POST(request: Request) {
       if (courseApplyHandled) return NextResponse.json({ ok: true });
     }
 
+    // Reply Keyboard админа — до ученических и client-обработчиков.
+    if (
+      update.message?.text &&
+      !update.message.text.startsWith('/') &&
+      update.message.chat &&
+      update.message.from &&
+      ADMIN_REPLY_LABEL_SET.has(update.message.text)
+    ) {
+      const adminMenuHandled = await handleAdminMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (adminMenuHandled) return NextResponse.json({ ok: true });
+    }
+
     // Кнопки Reply Keyboard ученика: обрабатываются до контроля переписки,
     // чтобы нажатия разделов не анализировались детектором.
     if (
@@ -664,6 +684,30 @@ export async function POST(request: Request) {
         update.message.text,
       );
       if (mentorHandled) return NextResponse.json({ ok: true });
+
+      const memberInfoEarly = await ensureMember(
+        admin,
+        update.message.from.id,
+        memberPatch(update.message.from, update.message.chat.id),
+      );
+      const effectiveClientRoleEarly = resolveEffectiveRoleWithFooter(
+        memberInfoEarly,
+        update.message.from.id,
+      ).role;
+
+      if (
+        usesClientBotUi(effectiveClientRoleEarly) &&
+        isClientReplyLabel(update.message.text)
+      ) {
+        const menuNavHandled = await handleClientReplyMenuNavigation(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+          memberInfoEarly.role,
+        );
+        if (menuNavHandled) return NextResponse.json({ ok: true });
+      }
 
       const supportHandled = await handleStudentSupportMessage(
         admin,

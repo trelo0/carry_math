@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getBaseUrlString } from '@/lib/siteUrl';
+import { getPublicSiteUrl } from '@/lib/siteUrl';
 
 const TOKEN_TTL_MS = 15 * 60_000;
 
@@ -17,7 +17,7 @@ export async function createCabinetLoginUrl(
   telegramId: number,
   path = '/cabinet',
 ): Promise<string> {
-  const base = getBaseUrlString();
+  const base = getPublicSiteUrl();
   const token = randomBytes(24).toString('base64url');
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
 

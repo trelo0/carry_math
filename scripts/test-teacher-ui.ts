@@ -13,6 +13,16 @@ import {
   teacherReplyKeyboard,
 } from '../src/lib/bot/teacher/teacherFlow';
 import type { TeacherBotSnapshot } from '../src/lib/bot/staff/teacher-data';
+import {
+  homeworkListLabel,
+  renderHomeworkCardText,
+  type TeacherHomeworkListItem,
+} from '../src/lib/bot/staff/teacher-homework';
+import {
+  renderTeacherHomeworkHub,
+  renderTeacherHomeworkList,
+  renderTeacherMessagesInbox,
+} from '../src/lib/bot/staff/teacher-messages-screens';
 
 let passed = 0;
 let failed = 0;
@@ -91,7 +101,8 @@ function main(): void {
     const keyboard = teacherReplyKeyboard();
     const labels = keyboard.keyboard.flat().map((button) => button.text);
     check('5 пунктов меню', labels.length === 5);
-    check('есть расписание', labels.includes('📅 РАСПИСАНИЕ'));
+    check('есть расписание', labels.includes('📅 Расписание'));
+    check('без капса в меню', !labels.some((l) => l.includes('РАСПИСАНИЕ')));
     check('label-set совпадает', TEACHER_MENU_LABEL_SET.size === 5);
   }
 
@@ -128,6 +139,48 @@ function main(): void {
     check('участник', callbacksOf(members.keyboard).includes('t:gs:5:200'));
     const memberCard = renderTeacherGroupMemberCard(snapshot, snapshot.groups[0]!, 200);
     check('карточка участника', memberCard.text.includes('Мария'));
+  }
+
+  console.log('Тест 6: домашние задания (подписи и без панели)');
+  {
+    const individual: TeacherHomeworkListItem = {
+      homeworkId: 1,
+      lessonId: 10,
+      reviewStatus: 'submitted',
+      topic: 'Квадраты',
+      startsAt: new Date().toISOString(),
+      lessonKind: 'individual',
+      groupId: null,
+      groupTitle: null,
+      studentTelegramId: 100,
+      studentName: 'Иван Петров',
+      submittedAt: new Date().toISOString(),
+    };
+    const group: TeacherHomeworkListItem = {
+      ...individual,
+      homeworkId: 2,
+      lessonId: 11,
+      lessonKind: 'group',
+      groupId: 5,
+      groupTitle: '10А',
+      topic: 'Геометрия',
+    };
+    check('индив. метка 👤', homeworkListLabel(individual).startsWith('👤'));
+    check('группа в метке', homeworkListLabel(group).includes('10А'));
+    const card = renderHomeworkCardText(group, null);
+    check('карточка: формат группы', card.includes('Группа «10А»'));
+    const hub = renderTeacherHomeworkHub(null);
+    const hubCallbacks = callbacksOf(hub.keyboard);
+    check('хаб ДЗ без панели', !hubCallbacks.includes('t:cab'));
+    const list = renderTeacherHomeworkList('pending', [individual, group], null);
+    check('список ДЗ без url панели', !JSON.stringify(list.keyboard).includes('Панель управления'));
+  }
+
+  console.log('Тест 7: сообщения (inbox)');
+  {
+    const screen = renderTeacherMessagesInbox([], true, null);
+    check('заголовок сообщений', screen.text.includes('СООБЩЕНИЯ'));
+    check('пустой inbox', screen.text.includes('Диалогов пока нет'));
   }
 
   console.log(`\nИтого: ${passed} ok, ${failed} fail`);

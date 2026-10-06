@@ -165,6 +165,7 @@ export function renderTeacherHomeworkList(
           [backButton('⬅️ К категориям', n.categoriesBack ?? 't:hw')],
         ],
         cabinetUrl,
+        { includeCabinet: false },
       ),
     },
   };
@@ -185,11 +186,8 @@ export function renderTeacherHomeworkCardActions(
       [{ text: '❌ На доработку', callback_data: `t:hw:rev:${lessonId}` }],
     );
   }
-  rows.push(
-    [{ text: '🌐 Подробнее на сайте', callback_data: 't:cab' }],
-    [backButton('⬅️ К списку', listBack)],
-  );
-  return { inline_keyboard: withTeacherCabinetRow(rows, cabinetUrl) };
+  rows.push([backButton('⬅️ К списку', listBack)]);
+  return { inline_keyboard: withTeacherCabinetRow(rows, cabinetUrl, { includeCabinet: false }) };
 }
 
 export function renderTeacherHomeworkHub(
@@ -209,6 +207,7 @@ export function renderTeacherHomeworkHub(
           [backButton('⬅️ Главное меню', n.mainMenuBack ?? 't:menu')],
         ],
         cabinetUrl,
+        { includeCabinet: false },
       ),
     },
   };

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { CABINET_UPLOAD_MAX_BYTES, cabinetUploadTooLargeMessage } from '@/lib/api/read-error';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import {
   deleteCourseLessonFile,
@@ -31,6 +32,9 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
   if (!(file instanceof File) || file.size === 0) {
     return NextResponse.json({ error: 'File required' }, { status: 400 });
+  }
+  if (file.size > CABINET_UPLOAD_MAX_BYTES) {
+    return NextResponse.json({ error: cabinetUploadTooLargeMessage() }, { status: 413 });
   }
 
   try {

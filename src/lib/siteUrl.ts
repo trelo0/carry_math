@@ -11,6 +11,13 @@ export function getBaseUrlString() {
   return base.replace(/\/$/, '');
 }
 
+/** Публичные ссылки бота и кабинета — всегда основной домен, не preview vercel.app. */
+export function getPublicSiteUrl(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  return SITE_URL_FALLBACK;
+}
+
 export function getMetadataBaseUrl() {
   return new URL(getBaseUrlString());
 }

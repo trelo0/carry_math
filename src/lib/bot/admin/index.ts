@@ -72,14 +72,21 @@ export async function sendAdminStart(
   testFooter = '',
   admin?: SupabaseClient,
 ): Promise<void> {
+  if (admin) {
+    await renderAdminHomeDashboard(admin, sendDeliver(chatId), testFooter);
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: '⬇️',
+      disable_notification: true,
+      reply_markup: adminReplyKeyboard(),
+    });
+    return;
+  }
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: ADMIN_HOME_TEXT + testFooter,
     reply_markup: adminReplyKeyboard(),
   });
-  if (admin) {
-    await renderAdminHomeDashboard(admin, sendDeliver(chatId));
-  }
 }
 
 // Разделы, открываемые кнопками Reply Keyboard. Каждый раздел — новое
@@ -202,14 +209,6 @@ export async function handleAdminMessage(
   text: string,
 ): Promise<boolean> {
   if (!(await isAdmin(admin, telegramId))) return false;
-
-  let earlyState: ConversationState | null = null;
-  try {
-    earlyState = await getState(admin, telegramId);
-  } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
-  }
-  if (earlyState?.step && CLIENT_DIALOG_STEPS.has(earlyState.step)) return false;
 
   // Кнопки Reply Keyboard приходят точным текстом: раздел открывается новым
   // сообщением, активный сценарий сбрасывается.

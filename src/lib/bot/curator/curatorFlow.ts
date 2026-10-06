@@ -55,8 +55,6 @@ import {
   pendingHomeworkFromStudents,
   renderCuratorActivityHome,
   renderCuratorActivityReviewList,
-  renderCuratorLowActivityList,
-  renderCuratorLowLivesList,
 } from '../staff/curator-activity-screens';
 import { formatTelegramFileRef } from '../studentHomeworkFlow';
 import { enrichCuratorStudentCard } from '../staff/curator-student-enrich';
@@ -76,10 +74,16 @@ import {
 } from '../studentHomeworkFlow';
 import { COMBINED_HOME_TEXT } from '../staff/staff-combined-flow';
 import {
+  COMBINED_CURATOR_COURSE_NAV,
   COMBINED_CURATOR_HW_NAV,
   COMBINED_CURATOR_MSG_NAV,
   type StaffScreenNav,
 } from '../staff/staff-screen-nav';
+import {
+  renderCuratorAttentionList,
+  renderCuratorCourseStudentsBotList,
+} from '../staff/curator-activity-screens';
+import { loadCuratorCourseStudents } from '@/lib/curator/students';
 import {
   CURATOR_BOT_MENU_LABELS,
   isStaffMenuLabel,
@@ -310,14 +314,20 @@ export async function renderCuratorLibraryFile(taskId: string): Promise<{ text: 
 
 // --- Ученики (§5, §6) -------------------------------------------------------
 
-export function renderCuratorStudentsList(students: CuratorStudentRecord[]): { text: string; keyboard: InlineKeyboard } {
+export function renderCuratorStudentsList(
+  students: CuratorStudentRecord[],
+  nav?: StaffScreenNav,
+): { text: string; keyboard: InlineKeyboard } {
+  const back = nav?.listBack ?? 'c:stud';
   if (students.length === 0) {
     return {
-      text: '👤 МОИ УЧЕНИКИ\n\nПока нет закреплённых учеников.',
-      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
+      text:
+        '👤 Ученики курса\n\n' +
+        'Пока никого с активным доступом. Проверьте course_enrollments и user_accesses (product=course).',
+      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', back)]] },
     };
   }
-  const text = `👤 МОИ УЧЕНИКИ\n\n${students.map((s) => listCuratorStudentLabel(s)).join('\n')}`;
+  const text = `👤 Ученики курса\n\n${students.map((s) => listCuratorStudentLabel(s)).join('\n')}`;
   return {
     text,
     keyboard: {
@@ -325,7 +335,7 @@ export function renderCuratorStudentsList(students: CuratorStudentRecord[]): { t
         ...students.map((s): InlineButton[] => [
           { text: listCuratorStudentLabel(s), callback_data: `c:sp:${s.id}` },
         ]),
-        [backButton('⬅️ Назад', 'c:menu')],
+        [backButton('⬅️ Назад', back)],
       ],
     },
   };
@@ -664,7 +674,7 @@ export async function handleCuratorMessage(
   }
   if (text === CURATOR_MENU_LABELS.course) {
     const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
-    const screen = renderCuratorActivityHome(snapshot, cabinetUrl);
+    const screen = renderCuratorActivityHome(snapshot, cabinetUrl, undefined);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
@@ -828,6 +838,7 @@ async function routeCuratorCallback(
   const combined = resolveStaffBotMode(caps) === 'combined';
   const hwNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_HW_NAV : undefined;
   const msgNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_MSG_NAV : undefined;
+  const courseNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_COURSE_NAV : undefined;
 
   switch (action) {
     case 'menu': {
@@ -855,29 +866,28 @@ async function routeCuratorCallback(
 
     case 'act': {
       const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
+      if (id === 'students') {
+        const { students } = await loadCuratorCourseStudents(admin, telegramId);
+        const screen = renderCuratorCourseStudentsBotList(students, courseNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'attn') {
+        const screen = renderCuratorAttentionList(snapshot.attentionItems, courseNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
       if (id === 'review') {
         const students = await loadCuratorStudents(admin, telegramId);
-        const screen = renderCuratorActivityReviewList(pendingHomeworkFromStudents(students), cabinetUrl);
+        const screen = renderCuratorActivityReviewList(
+          pendingHomeworkFromStudents(students),
+          cabinetUrl,
+          courseNav,
+        );
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      if (id === 'msg') {
-        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
-        const screen = renderCuratorUnreadThreadsInbox(threads, storageEnabled, cabinetUrl, msgNav);
-        await editCuratorScreen(message, screen.text, screen.keyboard);
-        return true;
-      }
-      if (id === 'lives') {
-        const screen = renderCuratorLowLivesList(snapshot.lowLives, cabinetUrl);
-        await editCuratorScreen(message, screen.text, screen.keyboard);
-        return true;
-      }
-      if (id === 'low') {
-        const screen = renderCuratorLowActivityList(snapshot.lowActivityStudents, cabinetUrl);
-        await editCuratorScreen(message, screen.text, screen.keyboard);
-        return true;
-      }
-      const home = renderCuratorActivityHome(snapshot, cabinetUrl);
+      const home = renderCuratorActivityHome(snapshot, cabinetUrl, courseNav);
       await editCuratorScreen(message, home.text, home.keyboard);
       return true;
     }

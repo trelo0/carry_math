@@ -11,6 +11,7 @@ import {
   studentDisplayName,
   type TeacherBotSnapshot,
 } from './teacher-data';
+import type { StaffScreenNav } from './staff-screen-nav';
 
 function backButton(text: string, callback: string) {
   return { text, callback_data: callback };
@@ -133,7 +134,11 @@ export function renderTeacherStudentsHub(): { text: string; keyboard: InlineKeyb
   };
 }
 
-export function renderTeacherIndividualList(snapshot: TeacherBotSnapshot): { text: string; keyboard: InlineKeyboard } {
+export function renderTeacherIndividualList(
+  snapshot: TeacherBotSnapshot,
+  nav?: StaffScreenNav,
+): { text: string; keyboard: InlineKeyboard } {
+  const back = nav?.listBack ?? 't:stu';
   const students = snapshot.students
     .filter((s) => s.individualCount > 0 || s.lessons.some((l) => l.kind === 'individual'))
     .sort((a, b) => studentDisplayName(a).localeCompare(studentDisplayName(b), 'ru'));
@@ -141,7 +146,7 @@ export function renderTeacherIndividualList(snapshot: TeacherBotSnapshot): { tex
   if (students.length === 0) {
     return {
       text: '👤 ИНДИВИДУАЛЬНЫЕ\n\nПока нет индивидуальных учеников.',
-      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 't:stu')]] },
+      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', back)]] },
     };
   }
 
@@ -150,18 +155,22 @@ export function renderTeacherIndividualList(snapshot: TeacherBotSnapshot): { tex
     keyboard: {
       inline_keyboard: [
         ...students.map((s) => [{ text: studentDisplayName(s), callback_data: `t:st:${s.telegramId}` }]),
-        [backButton('⬅️ Назад', 't:stu')],
+        [backButton('⬅️ Назад', back)],
       ],
     },
   };
 }
 
-export function renderTeacherGroupList(snapshot: TeacherBotSnapshot): { text: string; keyboard: InlineKeyboard } {
+export function renderTeacherGroupList(
+  snapshot: TeacherBotSnapshot,
+  nav?: StaffScreenNav,
+): { text: string; keyboard: InlineKeyboard } {
+  const back = nav?.listBack ?? 't:stu';
   const groups = snapshot.groups;
   if (groups.length === 0) {
     return {
       text: '👥 МИНИ-ГРУППЫ\n\nПока нет активных групп.',
-      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 't:stu')]] },
+      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', back)]] },
     };
   }
   return {
@@ -169,7 +178,7 @@ export function renderTeacherGroupList(snapshot: TeacherBotSnapshot): { text: st
     keyboard: {
       inline_keyboard: [
         ...groups.map((g) => [{ text: g.title, callback_data: `t:gr:${g.id}` }]),
-        [backButton('⬅️ Назад', 't:stu')],
+        [backButton('⬅️ Назад', back)],
       ],
     },
   };

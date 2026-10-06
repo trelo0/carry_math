@@ -10,6 +10,8 @@ import {
   type CourseHomeworkLessonRef,
 } from '../education/course-homework';
 import type { CourseLessonStudentProgress } from '../education/course-progress';
+import { resolveCourseIdForContent } from '../education/course-record';
+import { listCourseStudentTelegramIds } from '@/lib/curator/students';
 
 export type CuratorHomeworkRecord = CuratorHwItem & {
   sanityLessonId: string;
@@ -82,7 +84,15 @@ export async function loadCuratorStudents(
   const content = await getDistrictCourseContent();
   if (!content) return [];
 
-  const studentIds = await listCuratorStudentTelegramIds(admin, curatorTelegramId);
+  let studentIds = await listCuratorStudentTelegramIds(admin, curatorTelegramId);
+  try {
+    const courseId = await resolveCourseIdForContent(admin, content);
+    if (courseId == null) throw new Error('no course');
+    const onCourse = await listCourseStudentTelegramIds(admin, courseId);
+    studentIds = [...new Set([...studentIds, ...onCourse])];
+  } catch {
+    /* course row optional */
+  }
   if (studentIds.length === 0) return [];
 
   const lessons = flattenCourseLessons(content)

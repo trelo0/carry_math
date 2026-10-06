@@ -4,8 +4,10 @@ import type { InlineKeyboard } from '@/lib/bot/admin/core';
 export function withTeacherCabinetRow(
   keyboard: InlineKeyboard['inline_keyboard'],
   cabinetUrl: string | null,
+  options?: { includeCabinet?: boolean },
 ): InlineKeyboard['inline_keyboard'] {
   const rows = [...keyboard];
+  if (options?.includeCabinet === false) return rows;
   if (cabinetUrl) {
     rows.push([{ text: '🌐 Панель управления', url: cabinetUrl }]);
   } else {

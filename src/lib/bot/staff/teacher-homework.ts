@@ -20,6 +20,9 @@ export type TeacherHomeworkListItem = {
   reviewStatus: LessonHomeworkReviewStatus;
   topic: string;
   startsAt: string;
+  lessonKind: 'individual' | 'group';
+  groupId: number | null;
+  groupTitle: string | null;
   studentTelegramId: number | null;
   studentName: string | null;
   submittedAt: string | null;
@@ -32,37 +35,55 @@ export async function loadTeacherHomeworkItems(
   const { data, error } = await admin
     .from('homework_assignments')
     .select(
-      'id, lesson_id, review_status, submitted_at, scheduled_lessons!inner(topic, starts_at, teacher_telegram_id, telegram_id)',
+      'id, lesson_id, review_status, submitted_at, scheduled_lessons!inner(topic, starts_at, teacher_telegram_id, telegram_id, kind, group_id)',
     )
     .eq('scheduled_lessons.teacher_telegram_id', teacherTelegramId)
     .order('submitted_at', { ascending: false, nullsFirst: false });
   if (error) throw error;
 
   const studentIds = new Set<number>();
+  const groupIds = new Set<number>();
   const rawRows: Array<{
     homeworkId: number;
     lessonId: number;
     reviewStatus: LessonHomeworkReviewStatus;
     topic: string;
     startsAt: string;
+    lessonKind: 'individual' | 'group';
+    groupId: number | null;
     studentTelegramId: number | null;
     submittedAt: string | null;
   }> = [];
 
   for (const row of data ?? []) {
     const lesson = row.scheduled_lessons as
-      | { topic: string; starts_at: string; telegram_id: number | null }
-      | { topic: string; starts_at: string; telegram_id: number | null }[]
+      | {
+          topic: string;
+          starts_at: string;
+          telegram_id: number | null;
+          kind: 'individual' | 'group';
+          group_id: number | null;
+        }
+      | {
+          topic: string;
+          starts_at: string;
+          telegram_id: number | null;
+          kind: 'individual' | 'group';
+          group_id: number | null;
+        }[]
       | null;
     const l = Array.isArray(lesson) ? lesson[0] : lesson;
     if (!l) continue;
     if (l.telegram_id) studentIds.add(l.telegram_id);
+    if (l.group_id) groupIds.add(l.group_id);
     rawRows.push({
       homeworkId: row.id as number,
       lessonId: row.lesson_id as number,
       reviewStatus: row.review_status as LessonHomeworkReviewStatus,
       topic: l.topic,
       startsAt: l.starts_at,
+      lessonKind: l.kind === 'group' ? 'group' : 'individual',
+      groupId: l.group_id,
       studentTelegramId: l.telegram_id,
       submittedAt: (row.submitted_at as string | null) ?? null,
     });
@@ -79,8 +100,20 @@ export async function loadTeacherHomeworkItems(
     }
   }
 
+  const groupTitles = new Map<number, string>();
+  if (groupIds.size > 0) {
+    const { data: groups } = await admin
+      .from('groups')
+      .select('id, title')
+      .in('id', [...groupIds]);
+    for (const g of groups ?? []) {
+      groupTitles.set(g.id as number, (g.title as string) ?? '');
+    }
+  }
+
   return rawRows.map((r) => ({
     ...r,
+    groupTitle: r.groupId ? groupTitles.get(r.groupId) ?? null : null,
     studentName: r.studentTelegramId ? names.get(r.studentTelegramId) || null : null,
   }));
 }
@@ -105,9 +138,21 @@ export function filterHomeworkByQueue(
   return items.filter((i) => i.reviewStatus === 'done').slice(0, 30);
 }
 
+export function homeworkLessonFormatLabel(item: TeacherHomeworkListItem): string {
+  if (item.lessonKind === 'group') {
+    return item.groupTitle ? `Группа «${item.groupTitle}»` : 'Групповое занятие';
+  }
+  return 'Индивидуальное';
+}
+
 export function homeworkListLabel(item: TeacherHomeworkListItem): string {
-  const who = item.studentName ?? (item.studentTelegramId ? `ID ${item.studentTelegramId}` : 'Группа');
-  return `${who} · ${item.topic}`.slice(0, 60);
+  const format = item.lessonKind === 'group' ? '👥' : '👤';
+  const who =
+    item.studentName?.trim() ||
+    (item.studentTelegramId ? `ID ${item.studentTelegramId}` : item.groupTitle ?? '—');
+  const groupHint =
+    item.lessonKind === 'group' && item.groupTitle ? ` · ${item.groupTitle}` : '';
+  return `${format} ${who}${groupHint} · ${item.topic}`.slice(0, 64);
 }
 
 export async function sendHomeworkSubmissionPreview(
@@ -161,11 +206,12 @@ async function sendSubmissionFile(
 
 export function renderHomeworkCardText(item: TeacherHomeworkListItem, homework: Awaited<ReturnType<typeof getLessonHomework>>): string {
   const lines = [
-    '📝 ДОМАШНЕЕ ЗАДАНИЕ',
+    '📝 Домашнее задание',
     '',
+    `Формат: ${homeworkLessonFormatLabel(item)}`,
     `Занятие: ${item.topic}`,
     `Дата: ${formatLessonDateTimeRu(item.startsAt)}`,
-    `Ученик: ${item.studentName ?? '—'}`,
+    `Ученик (сдал): ${item.studentName ?? '—'}`,
     `Статус: ${homeworkReviewStatusLabel(item.reviewStatus)}`,
   ];
   if (homework?.submittedAt) {

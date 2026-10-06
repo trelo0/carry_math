@@ -10,6 +10,8 @@ import {
   type CuratorStudentRecord,
 } from '@/lib/bot/curator/curatorData';
 import { listCuratorThreads } from './messaging';
+import { loadCuratorCourseStudents } from '@/lib/curator/students';
+import { buildCuratorAttentionItems, type CuratorAttentionItem } from './curator-attention';
 
 /** Порог «мало жизней» для Arena (v1). */
 export const CURATOR_LOW_LIVES_THRESHOLD = 2;
@@ -26,12 +28,13 @@ export type CuratorLowLivesEntry = {
 export type CuratorActivitySnapshot = {
   awaitingReview: number;
   newQuestions: number;
-  lowLivesCount: number;
-  lowActivityCount: number;
+  attentionCount: number;
+  courseStudentCount: number;
   liveLine: string;
   nextLine: string;
   lowLives: CuratorLowLivesEntry[];
   lowActivityStudents: CuratorStudentRecord[];
+  attentionItems: CuratorAttentionItem[];
 };
 
 async function listLowLivesStudents(
@@ -141,11 +144,39 @@ function formatNextLine(nextTitle: string | null, nextAt: string | null): string
   return `📅 Ближайший урок: ${nextTitle} · ${when}`;
 }
 
+async function listPaymentWarnings(
+  admin: SupabaseClient,
+  students: CuratorStudentRecord[],
+): Promise<Array<{ student: CuratorStudentRecord; expiresAt: string }>> {
+  const ids = students.map((s) => s.telegramId);
+  if (ids.length === 0) return [];
+  const soon = Date.now() + 7 * 86400000;
+  const { data, error } = await admin
+    .from('user_accesses')
+    .select('telegram_id, expires_at')
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .in('telegram_id', ids)
+    .not('expires_at', 'is', null);
+  if (error) return [];
+  const byId = new Map(students.map((s) => [s.telegramId, s]));
+  const out: Array<{ student: CuratorStudentRecord; expiresAt: string }> = [];
+  for (const row of data ?? []) {
+    const exp = String(row.expires_at ?? '');
+    const ts = Date.parse(exp);
+    if (!Number.isFinite(ts) || ts > soon) continue;
+    const student = byId.get(row.telegram_id as number);
+    if (student) out.push({ student, expiresAt: exp });
+  }
+  return out;
+}
+
 export async function loadCuratorActivitySnapshot(
   admin: SupabaseClient,
   curatorTelegramId: number,
 ): Promise<CuratorActivitySnapshot> {
-  const [students, { threads }, cabinet] = await Promise.all([
+  const [{ students: courseViews }, students, { threads }, cabinet] = await Promise.all([
+    loadCuratorCourseStudents(admin, curatorTelegramId),
     loadCuratorStudents(admin, curatorTelegramId),
     listCuratorThreads(admin, curatorTelegramId),
     getCuratorCabinetData(admin, curatorTelegramId, null),
@@ -155,6 +186,14 @@ export async function loadCuratorActivitySnapshot(
   const newQuestions = threads.filter((t) => t.unreadCount > 0).length;
   const lowLives = await listLowLivesStudents(admin, students);
   const lowActivityStudents = await listLowActivityStudents(admin, students);
+  const accessBlockedStudents = courseViews.filter((s) => s.accessBlocked);
+  const paymentWarnings = await listPaymentWarnings(admin, students);
+  const attentionItems = buildCuratorAttentionItems({
+    lowLives,
+    lowActivityStudents,
+    accessBlockedStudents,
+    paymentWarnings,
+  });
 
   const liveTitles = cabinet.dashboard.liveLessons.map((l) => `Урок ${l.lessonNumber}`);
   const next = cabinet.dashboard.nextLesson;
@@ -162,11 +201,12 @@ export async function loadCuratorActivitySnapshot(
   return {
     awaitingReview: hw.awaitingReview,
     newQuestions,
-    lowLivesCount: lowLives.length,
-    lowActivityCount: lowActivityStudents.length,
+    attentionCount: attentionItems.length,
+    courseStudentCount: courseViews.length,
     liveLine: formatLiveLine(cabinet.dashboard.liveNow, liveTitles),
     nextLine: formatNextLine(next?.title ?? null, next?.scheduledAt ?? null),
     lowLives,
     lowActivityStudents,
+    attentionItems,
   };
 }

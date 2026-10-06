@@ -192,29 +192,27 @@ export async function showClientLessonsMenu(
     '📅 Мои занятия\n\n' +
     'Выберите подраздел: ближайшее, будущие или прошедшие занятия.';
 
-  const rows: Array<Array<Record<string, string>>> = [];
-  if (hasNext) rows.push([{ text: '⏭ Ближайшее', callback_data: 'cl:less:next' }]);
-  if (hasFuture) rows.push([{ text: '📆 Будущие', callback_data: 'cl:less:future' }]);
-  if (hasPast) rows.push([{ text: '📚 Прошедшие', callback_data: 'cl:less:p:0' }]);
-  if (rows.length === 0) {
-    rows.push([{ text: '—', callback_data: 'cl:less:empty' }]);
-  }
-  rows.push([clientHomeButton()]);
+  const rows: Array<Array<Record<string, string>>> = [
+    [{ text: '⏭ Ближайшее', callback_data: 'cl:less:next' }],
+    [{ text: '📆 Будущие', callback_data: 'cl:less:future' }],
+    [{ text: '📚 Прошедшие', callback_data: 'cl:less:p:0' }],
+    [clientHomeButton()],
+  ];
 
-  if (rows.length === 1 && rows[0][0].callback_data === 'cl:less:empty') {
-    await renderHub(
-      admin,
-      telegramId,
-      chatId,
-      undefined,
-      'lessons-empty',
-      '📅 Мои занятия\n\nПока нет занятий в истории. Когда администратор назначит занятие, оно появится здесь.',
-      { inline_keyboard: [[clientHomeButton()]] },
-    );
-    return;
-  }
+  const subtitle =
+    !hasNext && !hasFuture && !hasPast
+      ? '\n\nПока нет занятий — разделы ниже откроются, когда появятся уроки.'
+      : '';
 
-  await renderHub(admin, telegramId, chatId, undefined, 'lessons-menu', text, { inline_keyboard: rows });
+  await renderHub(
+    admin,
+    telegramId,
+    chatId,
+    undefined,
+    'lessons-menu',
+    text + subtitle,
+    { inline_keyboard: rows },
+  );
 }
 
 export async function showClientScheduleMenu(

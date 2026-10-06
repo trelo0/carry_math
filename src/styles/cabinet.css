@@ -8570,6 +8570,17 @@ body.cab-app.cab-drawer-open {
   border-color: rgba(255, 90, 90, 0.35);
 }
 
+.curator-link-btn--danger {
+  background: rgba(255, 90, 90, 0.12);
+  border-color: rgba(255, 90, 90, 0.32);
+  color: #ffb4b4;
+}
+
+.curator-link-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 90, 90, 0.2);
+  border-color: rgba(255, 90, 90, 0.45);
+}
+
 .curator-btn-ghost {
   background: transparent;
 }
@@ -9231,6 +9242,15 @@ body.cab-app.cab-drawer-open {
 .staff-cabinet .course-page .curator-link-btn:hover:not(:disabled) {
   background: rgba(142, 197, 255, 0.08);
   border-color: rgba(142, 197, 255, 0.4);
+}
+.staff-cabinet .course-page .curator-link-btn--danger {
+  background: rgba(255, 90, 90, 0.1);
+  color: #ff9a9a;
+  border-color: rgba(255, 90, 90, 0.35);
+}
+.staff-cabinet .course-page .curator-link-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 90, 90, 0.18);
+  border-color: rgba(255, 90, 90, 0.5);
 }
 .staff-cabinet .course-page .curator-back-btn {
   background: rgba(6, 12, 26, 0.72);

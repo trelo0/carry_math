@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import { SITE_URL_FALLBACK } from '@/lib/siteUrl';
-import { listMentorPickerCandidates } from '@/lib/bot/admin/staff-roster';
+import { getPublicSiteUrl } from '@/lib/siteUrl';
+import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
+import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
 import { beginStudentPurchase } from './studentPurchaseFlow';
 import { beginStudentSupport, handleStudentSupportCancel } from './studentSupportFlow';
 import { handleClientLeadCallback, isClientLeadCallback } from './client-lead-flow';
@@ -13,6 +14,7 @@ import {
   showClientPackageMenu,
   showClientScheduleMenu,
 } from './client-lessons-flow';
+import { showClientPurchaseHistory } from './client-purchase-history';
 import {
   handleClientLessonHomeworkCallback,
   isClientLessonHomeworkCallback,
@@ -20,7 +22,7 @@ import {
 import { resolveClientState, type ClientStateSnapshot } from './client-state';
 import {
   buildClientReplyKeyboard,
-  buildClientWelcomeText,
+  buildClientWelcomeTextAsync,
   CLIENT_LABELS,
   isClientReplyLabel,
 } from './client-menu';
@@ -43,22 +45,18 @@ type CardMode =
   | { kind: 'push'; chatId: number }
   | { kind: 'edit'; hub: ClientHubState; navStack?: string[] };
 
-function publicSiteUrl(path = ''): string {
-  const base = (process.env.NEXT_PUBLIC_SITE_URL?.trim() || SITE_URL_FALLBACK).replace(/\/$/, '');
-  return path ? `${base}${path.startsWith('/') ? path : `/${path}`}` : base;
-}
-
 function courseInfoUrl(): string {
-  return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || publicSiteUrl('/');
+  return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || getPublicSiteUrl();
 }
 
-async function formatTeacherList(admin: SupabaseClient): Promise<string> {
-  const teachers = await listMentorPickerCandidates(admin, 'teacher');
-  if (teachers.length === 0) {
+async function formatTeacherList(): Promise<string> {
+  const pricing = await getCabinetPricing();
+  const names = pricing.teachers.map((t) => t.name.trim()).filter(Boolean);
+  if (names.length === 0) {
     return 'Преподаватели: команда District — уточним при заявке.';
   }
-  const lines = teachers.slice(0, 8).map((t) => `• ${t.full_name?.trim() || `ID ${t.telegram_id}`}`);
-  const more = teachers.length > 8 ? `\n… и ещё ${teachers.length - 8}` : '';
+  const lines = names.slice(0, 12).map((name) => `• ${name}`);
+  const more = names.length > 12 ? `\n… и ещё ${names.length - 12}` : '';
   return `Преподаватели:\n${lines.join('\n')}${more}`;
 }
 
@@ -82,15 +80,7 @@ async function showOnlineCourseScreen(
   state: ClientStateSnapshot,
   mode: CardMode,
 ): Promise<void> {
-  const lines = [
-    '🎓 Онлайн-курс District',
-    '',
-    'Системная подготовка к ЦТ/ЦЭ по математике: вебинары, практика, домашние задания и поддержка куратора.',
-    '',
-    'Подходит, если нужен понятный маршрут к экзамену без хаоса в материалах.',
-    '',
-    'Оплата и доступ — на сайте школы; после покупки материалы открываются в личном кабинете.',
-  ];
+  const lines = (await getBotCopy(BOT_COPY_KEYS.guestCourseScreen)).split('\n');
 
   const keyboard: { inline_keyboard: Array<Array<Record<string, string>>> } = {
     inline_keyboard: [],
@@ -113,10 +103,7 @@ async function showLessonsHub(
   state: ClientStateSnapshot,
   mode: CardMode,
 ): Promise<void> {
-  const text =
-    '👨‍🏫 Занятия с преподавателем\n\n' +
-    'Живые занятия по математике с разбором тем и домашними заданиями.\n\n' +
-    'Выберите формат — дальше покажем подробности и кнопку заявки.';
+  const text = await getBotCopy(BOT_COPY_KEYS.guestLessonsHub);
   const keyboard = {
     inline_keyboard: [
       [{ text: '📚 Индивидуальные', callback_data: 'cl:lessons:individual' }],
@@ -133,12 +120,12 @@ async function showLessonFormatScreen(
   format: 'individual' | 'group',
   mode: CardMode,
 ): Promise<void> {
-  const teachersBlock = await formatTeacherList(admin);
+  const teachersBlock = await formatTeacherList();
   const title = format === 'individual' ? 'Индивидуальные занятия' : 'Групповые занятия';
   const body =
     format === 'individual'
-      ? 'Занятия один на один: разбор тем, домашние задания, расписание под ученика.'
-      : 'Небольшая группа, общий темп, занятия с преподавателем и поддержка куратора.';
+      ? await getBotCopy(BOT_COPY_KEYS.guestLessonsIndividualBody)
+      : await getBotCopy(BOT_COPY_KEYS.guestLessonsGroupBody);
   const screenId = format === 'individual' ? 'lesson-individual' : 'lesson-group';
   const text = [`📚 ${title}`, '', body, '', teachersBlock, '', 'Оставьте заявку — администратор согласует расписание и стоимость.'].join(
     '\n',
@@ -226,7 +213,7 @@ export async function sendClientStart(
   options?: { testFooter?: string; memberRole?: BotRole },
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId, { memberRole: options?.memberRole });
-  const welcome = buildClientWelcomeText(state, options?.testFooter ?? '');
+  const welcome = await buildClientWelcomeTextAsync(state, options?.testFooter ?? '');
   const replyMarkup = buildClientReplyKeyboard(state);
 
   const result = await telegramSend('sendMessage', {
@@ -257,6 +244,19 @@ export async function refreshClientMenu(
   memberRole?: BotRole,
 ): Promise<void> {
   await sendClientStart(admin, telegramId, chatId, { memberRole });
+}
+
+/** Нижнее меню: сброс заявки/поддержки и переход в раздел. */
+export async function handleClientReplyMenuNavigation(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  text: string,
+  memberRole?: BotRole,
+): Promise<boolean> {
+  if (!isClientReplyLabel(text)) return false;
+  await resetClientDialogToHub(admin, telegramId);
+  return handleClientMessage(admin, telegramId, chatId, text, memberRole);
 }
 
 export async function handleClientMessage(
@@ -290,6 +290,9 @@ export async function handleClientMessage(
       return true;
     case CLIENT_LABELS.myPackage:
       await showClientPackageMenu(admin, telegramId, chatId);
+      return true;
+    case CLIENT_LABELS.purchaseHistory:
+      await showClientPurchaseHistory(admin, telegramId, chatId);
       return true;
     default:
       return false;

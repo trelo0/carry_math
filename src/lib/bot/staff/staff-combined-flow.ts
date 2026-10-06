@@ -32,8 +32,10 @@ import { renderCuratorActivityHome } from './curator-activity-screens';
 import { renderCuratorHomeworkHub } from './curator-homework-screens';
 import { renderCuratorMessagesInbox } from './curator-messages-screens';
 import {
+  COMBINED_CURATOR_COURSE_NAV,
   COMBINED_CURATOR_HW_NAV,
   COMBINED_CURATOR_MSG_NAV,
+  COMBINED_STUDENTS_NAV,
   COMBINED_TEACHER_HW_NAV,
   COMBINED_TEACHER_MSG_NAV,
 } from './staff-screen-nav';
@@ -43,7 +45,8 @@ import { teacherCabinetScreen } from '@/lib/bot/teacher/teacherFlow';
 
 export const COMBINED_HOME_TEXT =
   '👨‍🏫 Кабинет сотрудника District\n\n' +
-  'Преподаватель и куратор — одно меню. Контексты занятий и курса не смешиваются.';
+  'У вас одновременно роли преподавателя и куратора — общее меню с разделением по контексту.\n' +
+  'Только куратор: primary role=curator без teacher в extra_roles → отдельное меню куратора.';
 
 async function combinedCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {
@@ -120,7 +123,7 @@ export async function handleCombinedStaffMessage(
   }
   if (text === COMBINED_STAFF_MENU_LABELS.course) {
     const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
-    const screen = renderCuratorActivityHome(snapshot, cabinetUrl);
+    const screen = renderCuratorActivityHome(snapshot, cabinetUrl, COMBINED_CURATOR_COURSE_NAV);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
@@ -158,21 +161,21 @@ export async function handleCombinedStaffCallback(
     case 'stu': {
       if (sub === 'c') {
         const students = await loadCuratorStudents(admin, telegramId);
-        const screen = renderCuratorStudentsList(students);
+        const screen = renderCuratorStudentsList(students, COMBINED_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
       if (sub === 'i') {
         const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
-        const screen = renderTeacherIndividualList(snapshot);
+        const screen = renderTeacherIndividualList(snapshot, COMBINED_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
       if (sub === 'g') {
         const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
-        const screen = renderTeacherGroupList(snapshot);
+        const screen = renderTeacherGroupList(snapshot, COMBINED_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;

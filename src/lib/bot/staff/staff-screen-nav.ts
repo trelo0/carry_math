@@ -36,3 +36,14 @@ export const COMBINED_CURATOR_MSG_NAV: StaffScreenNav = {
   mainMenuBack: 's:menu',
   listBack: 's:msg',
 };
+
+export const COMBINED_STUDENTS_NAV: StaffScreenNav = {
+  listBack: 's:stu',
+  mainMenuBack: 's:menu',
+};
+
+export const COMBINED_CURATOR_COURSE_NAV: StaffScreenNav = {
+  mainMenuBack: 's:menu',
+  categoriesBack: 's:menu',
+  listBack: 's:menu',
+};

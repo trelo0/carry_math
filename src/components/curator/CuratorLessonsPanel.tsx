@@ -6,6 +6,11 @@ import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithKeyedFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import {
+  CABINET_UPLOAD_MAX_BYTES,
+  cabinetUploadTooLargeMessage,
+  readApiErrorMessage,
+} from '@/lib/api/read-error';
+import {
   formatDate,
   formatDateTime,
   sessionLabel,
@@ -21,6 +26,7 @@ function FileBlock({
   feedback,
   onUpload,
   onToggle,
+  onDelete,
 }: {
   title: string;
   files: CuratorLessonView['materials'];
@@ -29,6 +35,7 @@ function FileBlock({
   feedback?: ActionFeedback | null;
   onUpload: (file: File) => void;
   onToggle: (index: number, published: boolean) => void;
+  onDelete: (index: number, fileName: string | null) => void;
 }) {
   return (
     <section className="curator-card curator-card--files">
@@ -45,33 +52,48 @@ function FileBlock({
                 </a>
               ) : null}
               {writeEnabled ? (
-                <button
-                  type="button"
-                  className="curator-link-btn"
-                  disabled={busy}
-                  onClick={() => onToggle(file.index, !file.published)}
-                >
-                  {file.published ? 'Снять' : 'Опубликовать'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="curator-link-btn"
+                    disabled={busy}
+                    onClick={() => onToggle(file.index, !file.published)}
+                  >
+                    {file.published ? 'Снять' : 'Опубликовать'}
+                  </button>
+                  <button
+                    type="button"
+                    className="curator-link-btn curator-link-btn--danger"
+                    disabled={busy}
+                    onClick={() => onDelete(file.index, file.fileName)}
+                  >
+                    Удалить
+                  </button>
+                </>
               ) : null}
             </span>
           </li>
         ))}
       </ul>
       {writeEnabled ? (
-        <label className="curator-upload">
-          <span className="curator-btn curator-btn-ghost">+ Загрузить файл</span>
-          <input
-            type="file"
-            hidden
-            disabled={busy}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUpload(file);
-              e.target.value = '';
-            }}
-          />
-        </label>
+        <>
+          <p className="curator-muted" style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
+            До {Math.floor(CABINET_UPLOAD_MAX_BYTES / (1024 * 1024))} МБ на файл.
+          </p>
+          <label className="curator-upload">
+            <span className="curator-btn curator-btn-ghost">+ Загрузить файл</span>
+            <input
+              type="file"
+              hidden
+              disabled={busy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onUpload(file);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </>
       ) : null}
       <CabinetFeedback feedback={feedback} />
     </section>
@@ -113,8 +135,7 @@ function LessonEditor({
         }),
       });
       if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось сохранить');
+        throw new Error(await readApiErrorMessage(res, 'Не удалось сохранить'));
       }
     },
       'Занятие сохранено',
@@ -181,6 +202,9 @@ function LessonEditor({
       setFeedbacks,
       field,
       async () => {
+      if (file.size > CABINET_UPLOAD_MAX_BYTES) {
+        throw new Error(cabinetUploadTooLargeMessage());
+      }
       const form = new FormData();
       form.set('field', field);
       form.set('file', file);
@@ -189,8 +213,7 @@ function LessonEditor({
         { method: 'POST', body: form },
       );
       if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось загрузить файл');
+        throw new Error(await readApiErrorMessage(res, 'Не удалось загрузить файл'));
       }
     },
       'Файл загружен',
@@ -215,12 +238,34 @@ function LessonEditor({
         },
       );
       if (!res.ok) {
-        const body = (await res.json()) as { error?: string };
-        throw new Error(body.error ?? 'Не удалось обновить файл');
+        throw new Error(await readApiErrorMessage(res, 'Не удалось обновить файл'));
       }
     },
       published ? 'Файл опубликован' : 'Публикация снята',
     );
+
+  const deleteFile = (field: 'lessonMaterials' | 'lessonHomeworkFiles', index: number, fileName: string | null) => {
+    const label = fileName ?? 'файл';
+    if (!window.confirm(`Удалить «${label}» с занятия? Это действие нельзя отменить.`)) {
+      return;
+    }
+    void runWithKeyedFeedback(
+      runAction,
+      setFeedbacks,
+      `delete-${field}-${index}`,
+      async () => {
+        const params = new URLSearchParams({ field, index: String(index) });
+        const res = await fetch(
+          `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files?${params}`,
+          { method: 'DELETE' },
+        );
+        if (!res.ok) {
+          throw new Error(await readApiErrorMessage(res, 'Не удалось удалить файл'));
+        }
+      },
+      'Файл удалён',
+    );
+  };
 
   const canStart = lesson.sessionStatus !== 'live';
   const canEnd = lesson.sessionStatus === 'live';
@@ -355,6 +400,7 @@ function LessonEditor({
           feedback={feedbacks.lessonMaterials}
           onUpload={(file) => uploadFile('lessonMaterials', file)}
           onToggle={(index, published) => togglePublished('lessonMaterials', index, published)}
+          onDelete={(index, fileName) => deleteFile('lessonMaterials', index, fileName)}
         />
         <FileBlock
           title="Домашнее задание"
@@ -364,6 +410,7 @@ function LessonEditor({
           feedback={feedbacks.lessonHomeworkFiles}
           onUpload={(file) => uploadFile('lessonHomeworkFiles', file)}
           onToggle={(index, published) => togglePublished('lessonHomeworkFiles', index, published)}
+          onDelete={(index, fileName) => deleteFile('lessonHomeworkFiles', index, fileName)}
         />
       </div>
     </div>

@@ -6,7 +6,7 @@ import { buildAttentionItems } from './home-attention';
 
 const LONG_HW_MS = 3 * 86400000;
 
-async function countOverbookedPackages(admin: SupabaseClient): Promise<number> {
+export async function countOverbookedPackages(admin: SupabaseClient): Promise<number> {
   const { data, error } = await admin
     .from('lesson_packages')
     .select('id, remaining_lessons')

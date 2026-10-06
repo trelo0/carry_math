@@ -3,30 +3,30 @@ import type { StaffCapabilities } from './capabilities';
 
 /** Reply-меню куратора (без расписания преподавателя). */
 export const CURATOR_BOT_MENU_LABELS = {
-  students: '👥 МОИ УЧЕНИКИ',
-  homework: '📝 ДОМАШНИЕ ЗАДАНИЯ',
-  messages: '💬 СООБЩЕНИЯ',
-  course: '🎓 КУРС И ПРОГРЕСС',
-  cabinet: '🌐 ПАНЕЛЬ УПРАВЛЕНИЯ',
+  students: '👥 Мои ученики',
+  homework: '📝 Домашние задания',
+  messages: '💬 Сообщения',
+  course: '🎓 Курс и прогресс',
+  cabinet: '🌐 Панель управления',
 } as const;
 
 export const TEACHER_BOT_MENU_LABELS = {
-  schedule: '📅 РАСПИСАНИЕ',
-  students: '👥 МОИ УЧЕНИКИ',
-  homework: '📝 ДОМАШНИЕ ЗАДАНИЯ',
-  messages: '💬 СООБЩЕНИЯ',
-  cabinet: '🌐 ПАНЕЛЬ УПРАВЛЕНИЯ',
+  schedule: '📅 Расписание',
+  students: '👥 Мои ученики',
+  homework: '📝 Домашние задания',
+  messages: '💬 Сообщения',
+  cabinet: '🌐 Панель управления',
 } as const;
 
 export type StaffBotMode = 'combined' | 'teacher_only' | 'curator_only' | null;
 
 export const COMBINED_STAFF_MENU_LABELS = {
-  schedule: '📅 РАСПИСАНИЕ',
-  students: '👥 МОИ УЧЕНИКИ',
-  homework: '📝 ДОМАШНИЕ ЗАДАНИЯ',
-  messages: '💬 СООБЩЕНИЯ',
-  course: '🎓 КУРС И ПРОГРЕСС',
-  cabinet: '🌐 ПАНЕЛЬ УПРАВЛЕНИЯ',
+  schedule: '📅 Расписание',
+  students: '👥 Мои ученики',
+  homework: '📝 Домашние задания',
+  messages: '💬 Сообщения',
+  course: '🎓 Курс и прогресс',
+  cabinet: '🌐 Панель управления',
 } as const;
 
 export const COMBINED_STAFF_MENU_LABEL_SET = new Set<string>(

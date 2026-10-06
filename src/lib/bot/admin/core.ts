@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isCreatorTelegramId } from '@/lib/bot/roles';
+import { canUseTesterTools, isCreatorTelegramId, normalizeMemberRole } from '@/lib/bot/roles';
 import { telegramSend } from '@/lib/telegram';
 import type { ReminderType } from '@/lib/webinarReminders';
 
@@ -76,7 +76,7 @@ export type AdminPayload = {
   leadGrade?: string;
   leadWishes?: string;
   leadContact?: string;
-  leadStep?: 'name' | 'grade' | 'wishes' | 'contact' | 'confirm';
+  leadStep?: 'name' | 'grade' | 'preferredTeacher' | 'wishes' | 'contact' | 'confirm';
   leadSubmittedAt?: string;
   leadSubmitting?: boolean;
   hwLessonId?: number;
@@ -152,11 +152,14 @@ export async function isAdmin(admin: SupabaseClient, telegramId: number): Promis
   if (isCreatorTelegramId(telegramId)) return true;
   const { data, error } = await admin
     .from('bot_members')
-    .select('role')
+    .select('role, view_role')
     .eq('telegram_id', telegramId)
     .maybeSingle();
   if (error) throw error;
-  return data?.role === 'admin';
+  const primary = normalizeMemberRole(String(data?.role ?? 'guest'));
+  if (primary === 'admin') return true;
+  const view = data?.view_role ? normalizeMemberRole(String(data.view_role)) : null;
+  return Boolean(canUseTesterTools(telegramId, primary) && view === 'admin');
 }
 
 export async function editAdminMessage(
@@ -365,8 +368,7 @@ export const ADMIN_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы панели — на кнопках меню под полем ввода.';
 
 export const ADMIN_HOME_TEXT =
-  '🔐 Панель администратора District\n\n' +
-  '🏠 Главная — что требует внимания. Разделы — на кнопках под полем ввода.';
+  '🔐 Панель администратора District\n\n🏠 Главная администратора';
 
 const ADMIN_HOME_POINTER_TEXT =
   '🏠 Главное меню администратора\n\nКнопки разделов — на постоянной клавиатуре под полем ввода.';

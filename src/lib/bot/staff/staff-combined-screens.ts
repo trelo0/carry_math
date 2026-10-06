@@ -25,7 +25,10 @@ export function renderCombinedStudentsHub(cabinetUrl: string | null): { text: st
 
 export function renderCombinedHomeworkHub(cabinetUrl: string | null): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: '📝 ДОМАШНИЕ ЗАДАНИЯ\n\nДва независимых контура — выберите:',
+    text:
+      '📝 Домашние задания\n\n' +
+      '🏫 — с занятий с преподавателем (individual/group)\n' +
+      '🎓 — с онлайн-курса (Sanity, проверяет куратор)',
     keyboard: {
       inline_keyboard: withTeacherCabinetRow(
         [

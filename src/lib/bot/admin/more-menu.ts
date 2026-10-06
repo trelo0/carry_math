@@ -20,6 +20,7 @@ export async function renderMoreMenu(deliver: Deliver): Promise<void> {
       { text: '🔔 Шаблоны уведомлений', callback_data: 'an:menu' },
       { text: '🧪 Тест уведомлений', callback_data: 'ar:menu' },
     ],
+    [{ text: '💬 Тексты бота (гость)', callback_data: 'ah:botcopy' }],
     [{ text: '🔐 Личный кабинет', callback_data: 'ah:cabinet' }],
     [homeButton()],
   ];

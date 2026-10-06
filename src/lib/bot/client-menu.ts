@@ -1,4 +1,5 @@
 import type { ClientStateSnapshot, ClientUiPhase } from './client-state';
+import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
 
 export const CLIENT_LABELS = {
   onlineCourse: '🎓 Онлайн-курс',
@@ -10,6 +11,7 @@ export const CLIENT_LABELS = {
   myLessons: '📅 Мои занятия',
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
+  purchaseHistory: '🧾 История покупок',
 } as const;
 
 export type ClientReplyLabel = (typeof CLIENT_LABELS)[keyof typeof CLIENT_LABELS];
@@ -25,21 +27,17 @@ export type ClientReplyKeyboard = {
   resize_keyboard: boolean;
 };
 
-const WELCOME: Record<ClientUiPhase, string> = {
-  guest:
-    '👋 Добро пожаловать в онлайн-школу математики District!\n\n' +
-    'Мы готовим к ЦТ/ЦЭ: онлайн-курс, индивидуальные и групповые занятия с опытными преподавателями.\n\n' +
-    'Изучите форматы обучения в меню ниже и выберите, что вам подходит.',
-  client_idle:
-    '👋 С возвращением в District!\n\n' +
-    'Сейчас у вас нет активного обучения. Выберите формат обучения или посмотрите историю занятий.',
-  client_active:
-    '👋 District — ваше обучение\n\n' +
-    'Выберите раздел в меню ниже: занятия, расписание, курс или новые программы.',
+const WELCOME_KEY: Record<ClientUiPhase, (typeof BOT_COPY_KEYS)[keyof typeof BOT_COPY_KEYS]> = {
+  guest: BOT_COPY_KEYS.guestWelcome,
+  client_idle: BOT_COPY_KEYS.guestWelcomeIdle,
+  client_active: BOT_COPY_KEYS.guestWelcomeActive,
 };
 
-export function buildClientWelcomeText(state: ClientStateSnapshot, testFooter = ''): string {
-  return WELCOME[state.phase] + testFooter;
+export async function buildClientWelcomeTextAsync(
+  state: ClientStateSnapshot,
+  testFooter = '',
+): Promise<string> {
+  return (await getBotCopy(WELCOME_KEY[state.phase])) + testFooter;
 }
 
 export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientReplyKeyboard {
@@ -54,16 +52,13 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
       break;
     case 'client_idle':
       rows.push(
+        [{ text: CLIENT_LABELS.myLessons }],
+        [{ text: CLIENT_LABELS.purchaseHistory }],
+        [{ text: CLIENT_LABELS.schedule }],
         [{ text: CLIENT_LABELS.onlineCourse }],
         [{ text: CLIENT_LABELS.lessonsWithTeacher }],
+        [{ text: CLIENT_LABELS.contactAdmin }],
       );
-      if (state.hasLessonHistory) {
-        rows.push([{ text: CLIENT_LABELS.myLessons }]);
-      }
-      if (state.hasUpcomingLessons) {
-        rows.push([{ text: CLIENT_LABELS.schedule }]);
-      }
-      rows.push([{ text: CLIENT_LABELS.contactAdmin }]);
       break;
     case 'client_active':
       if (state.hasActiveLessonProduct || state.hasLessonHistory) {

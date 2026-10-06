@@ -21,17 +21,21 @@ import {
   notifyAdminsOfNewLead,
   type LeadRow,
 } from './admin/leads';
+import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
+import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
+import { isClientReplyLabel } from '@/lib/bot/client-menu';
 
 export const CLIENT_LEAD_FORM_STEP = 'client:lead-form' as const;
 
 export type LeadFormat = 'individual' | 'group';
 
-type LeadFormStep = 'name' | 'grade' | 'wishes' | 'contact' | 'confirm';
+type LeadFormStep = 'name' | 'grade' | 'preferredTeacher' | 'wishes' | 'contact' | 'confirm';
 
 export type LeadFormPayload = AdminPayload & {
   leadFormat?: LeadFormat;
   leadStudentName?: string;
   leadGrade?: string;
+  leadPreferredTeacher?: string;
   leadWishes?: string;
   leadContact?: string;
   leadStep?: LeadFormStep;
@@ -48,40 +52,75 @@ const FORMAT_LABEL: Record<LeadFormat, string> = {
 
 const TELEGRAM_ID_TAG = (id: number) => `telegram_id:${id}`;
 
-const STEP_ORDER: LeadFormStep[] = ['name', 'grade', 'wishes', 'contact', 'confirm'];
-
 function formatLabel(format: LeadFormat): string {
   return FORMAT_LABEL[format];
 }
 
-function previousStep(step: LeadFormStep): LeadFormStep | null {
-  const i = STEP_ORDER.indexOf(step);
-  if (i <= 0) return null;
-  return STEP_ORDER[i - 1] ?? null;
+function leadSteps(format: LeadFormat | undefined): LeadFormStep[] {
+  if (format === 'individual') {
+    return ['name', 'grade', 'preferredTeacher', 'wishes', 'contact', 'confirm'];
+  }
+  return ['name', 'grade', 'wishes', 'contact', 'confirm'];
 }
 
-function stepPrompt(step: LeadFormStep): string {
+function previousStep(format: LeadFormat | undefined, step: LeadFormStep): LeadFormStep | null {
+  const order = leadSteps(format);
+  const i = order.indexOf(step);
+  if (i <= 0) return null;
+  return order[i - 1] ?? null;
+}
+
+function stepIndexLabel(format: LeadFormat | undefined, step: LeadFormStep): string {
+  if (step === 'confirm') return '';
+  const order = leadSteps(format).filter((s) => s !== 'confirm') as Exclude<
+    LeadFormStep,
+    'confirm'
+  >[];
+  const i = order.indexOf(step as Exclude<LeadFormStep, 'confirm'>);
+  if (i < 0) return '';
+  return `Шаг ${i + 1} из ${order.length} — `;
+}
+
+async function stepPrompt(format: LeadFormat | undefined, step: LeadFormStep): Promise<string> {
+  const prefix = stepIndexLabel(format, step);
   switch (step) {
     case 'name':
-      return 'Шаг 1 из 4 — имя ученика\n\nНапишите имя или имя и фамилию одним сообщением.';
+      return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepName));
     case 'grade':
-      return 'Шаг 2 из 4 — класс\n\nНапример: 9, 10 или 11.';
+      return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepGrade));
+    case 'preferredTeacher':
+      return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepPreferredTeacher));
     case 'wishes':
-      return 'Шаг 3 из 4 — цель и пожелания (необязательно)\n\nКратко опишите цель или нажмите «Пропустить».';
+      return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepWishes));
     case 'contact':
-      return 'Шаг 4 из 4 — контакт (необязательно)\n\nТелефон или другой способ связи, либо «Пропустить».';
+      return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepContact));
     default:
       return '';
   }
 }
 
-function leadFormKeyboard(step: LeadFormStep): { inline_keyboard: Array<Array<Record<string, string>>> } {
+async function leadFormKeyboard(
+  format: LeadFormat | undefined,
+  step: LeadFormStep,
+): Promise<{ inline_keyboard: Array<Array<Record<string, string>>> }> {
   const row: Array<Record<string, string>> = [];
-  if (previousStep(step)) {
+  if (previousStep(format, step)) {
     row.push({ text: '◀️ На шаг назад', callback_data: 'cl:lead:back' });
   }
   row.push({ text: '❌ Отменить', callback_data: 'cl:lead:cancel' });
   const rows: Array<Array<Record<string, string>>> = [row];
+  if (step === 'preferredTeacher') {
+    const pricing = await getCabinetPricing();
+    for (const teacher of pricing.teachers) {
+      rows.push([
+        {
+          text: teacher.name,
+          callback_data: `cl:lead:pick:${encodeURIComponent(teacher.teacherId)}`,
+        },
+      ]);
+    }
+    rows.push([{ text: 'Не важно', callback_data: 'cl:lead:skip:teacher' }]);
+  }
   if (step === 'wishes') {
     rows.push([{ text: 'Пропустить', callback_data: 'cl:lead:skip:wishes' }]);
   }
@@ -93,17 +132,27 @@ function leadFormKeyboard(step: LeadFormStep): { inline_keyboard: Array<Array<Re
 
 function confirmSummary(payload: LeadFormPayload): string {
   const format = payload.leadFormat!;
-  return [
+  const lines = [
     '📝 Проверьте заявку',
     '',
     `Формат: ${formatLabel(format)}`,
     `Имя ученика: ${payload.leadStudentName}`,
     `Класс: ${payload.leadGrade}`,
+  ];
+  if (payload.leadFormat === 'individual') {
+    lines.push(
+      payload.leadPreferredTeacher?.trim()
+        ? `Желаемый преподаватель: ${payload.leadPreferredTeacher.trim()}`
+        : 'Желаемый преподаватель: не указан',
+    );
+  }
+  lines.push(
     payload.leadWishes?.trim() ? `Пожелания: ${payload.leadWishes.trim()}` : 'Пожелания: не указаны',
     payload.leadContact?.trim()
       ? `Контакт: ${payload.leadContact.trim()}`
       : 'Контакт: не указан (связь через Telegram)',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 async function clearInlineKeyboard(chatId: number, messageId: number | undefined): Promise<void> {
@@ -126,10 +175,11 @@ async function pushLeadStepMessage(
 ): Promise<void> {
   await clearInlineKeyboard(chatId, options?.retireMessageId ?? payload.leadFormMessageId);
 
+  const header = await getBotCopy(BOT_COPY_KEYS.guestLeadHeader);
   const text =
     step === 'confirm'
       ? confirmSummary(payload)
-      : ['📝 Заявка на занятия', '', stepPrompt(step)].join('\n');
+      : [header, '', await stepPrompt(payload.leadFormat, step)].join('\n');
   const keyboard =
     step === 'confirm'
       ? {
@@ -139,7 +189,7 @@ async function pushLeadStepMessage(
             [{ text: '❌ Отменить', callback_data: 'cl:lead:cancel' }],
           ],
         }
-      : leadFormKeyboard(step);
+      : await leadFormKeyboard(payload.leadFormat, step);
 
   const messageId = await sendHubMessage(chatId, text, keyboard);
   if (!messageId) return;
@@ -263,9 +313,43 @@ export async function handleClientLeadCallback(
     if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
     const payload = state.payload as LeadFormPayload;
     const step = payload.leadStep ?? 'name';
-    const prev = previousStep(step === 'confirm' ? 'contact' : step);
+    const prev = previousStep(payload.leadFormat, step === 'confirm' ? 'contact' : step);
     const target = prev ?? 'name';
     await pushLeadStepMessage(admin, telegramId, chatId, payload, target, { retireMessageId: messageId });
+    return true;
+  }
+
+  if (data === 'cl:lead:skip:teacher') {
+    let state = null;
+    try {
+      state = await getState(admin, telegramId);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      return true;
+    }
+    if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
+    const payload = { ...(state.payload as LeadFormPayload), leadPreferredTeacher: '' };
+    await pushLeadStepMessage(admin, telegramId, chatId, payload, 'wishes', { retireMessageId: messageId });
+    return true;
+  }
+
+  if (data.startsWith('cl:lead:pick:')) {
+    const teacherId = decodeURIComponent(data.slice('cl:lead:pick:'.length));
+    let state = null;
+    try {
+      state = await getState(admin, telegramId);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      return true;
+    }
+    if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
+    const pricing = await getCabinetPricing();
+    const teacher = pricing.teachers.find((t) => t.teacherId === teacherId);
+    const payload = {
+      ...(state.payload as LeadFormPayload),
+      leadPreferredTeacher: teacher?.name ?? teacherId,
+    };
+    await pushLeadStepMessage(admin, telegramId, chatId, payload, 'wishes', { retireMessageId: messageId });
     return true;
   }
 
@@ -360,6 +444,9 @@ export async function handleClientLeadCallback(
       service: formatLabel(payload.leadFormat),
       source: 'telegram_bot',
     };
+    if (payload.leadFormat === 'individual' && payload.leadPreferredTeacher?.trim()) {
+      insertRow.teacher = payload.leadPreferredTeacher.trim();
+    }
 
     const { data: inserted, error } = await admin
       .from('leads')
@@ -409,6 +496,8 @@ export async function handleClientLeadMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
+  if (isClientReplyLabel(text)) return false;
+
   let state = null;
   try {
     state = await getState(admin, telegramId);
@@ -430,7 +519,7 @@ export async function handleClientLeadMessage(
       await sendHubMessage(
         chatId,
         '⚠️ Имя слишком короткое — напишите полное имя (от 3 символов).',
-        leadFormKeyboard('name'),
+        await leadFormKeyboard(payload.leadFormat, 'name'),
       );
       return true;
     }
@@ -441,10 +530,24 @@ export async function handleClientLeadMessage(
 
   if (step === 'grade') {
     if (trimmed.length < 1) {
-      await sendHubMessage(chatId, 'Укажите класс (например: 10).', leadFormKeyboard('grade'));
+      await sendHubMessage(
+        chatId,
+        'Укажите класс (например: 10).',
+        await leadFormKeyboard(payload.leadFormat, 'grade'),
+      );
       return true;
     }
     payload.leadGrade = trimmed;
+    const next =
+      payload.leadFormat === 'individual'
+        ? ('preferredTeacher' as LeadFormStep)
+        : ('wishes' as LeadFormStep);
+    await pushLeadStepMessage(admin, telegramId, chatId, payload, next, { retireMessageId: retireId });
+    return true;
+  }
+
+  if (step === 'preferredTeacher') {
+    payload.leadPreferredTeacher = trimmed;
     await pushLeadStepMessage(admin, telegramId, chatId, payload, 'wishes', { retireMessageId: retireId });
     return true;
   }

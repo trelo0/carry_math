@@ -30,6 +30,24 @@ export function isPurchaseRequestTableError(error: unknown): boolean {
   );
 }
 
+export async function listPurchaseRequestsForTelegram(
+  admin: SupabaseClient,
+  telegramId: number,
+  limit = 15,
+): Promise<PurchaseRequestRow[]> {
+  const { data, error } = await admin
+    .from('purchase_requests')
+    .select(REQUEST_COLUMNS)
+    .eq('telegram_id', telegramId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isPurchaseRequestTableError(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as PurchaseRequestRow[];
+}
+
 export async function getPurchaseRequest(
   admin: SupabaseClient,
   id: string,

@@ -111,9 +111,11 @@ export async function resolveClientState(
     products.individual || products.group || activePackageLessons;
   const hasActiveProducts = hasActiveCourse || hasActiveLessonProduct;
 
-  const memberRole = options?.memberRole;
+  const memberRole = options?.memberRole ?? 'guest';
+  /** Учёт в кабинете/боте как student — отдельный сценарий от чистого guest. */
+  const isRegisteredStudent = memberRole === 'student';
   const isIdentifiedClient =
-    memberRole === 'student' ||
+    isRegisteredStudent ||
     telegramLinked ||
     hasAccessHistory ||
     hasPackageHistory ||
@@ -122,7 +124,8 @@ export async function resolveClientState(
 
   let phase: ClientUiPhase = 'guest';
   if (hasActiveProducts) phase = 'client_active';
-  else if (isIdentifiedClient) phase = 'client_idle';
+  else if (isRegisteredStudent) phase = 'client_idle';
+  else if (memberRole !== 'guest' && isIdentifiedClient) phase = 'client_idle';
 
   return {
     phase,
