@@ -17,12 +17,9 @@ type BgShape = {
 
 const BG_SHAPES: BgShape[] = [
   { top: '6%', left: '5%', size: 210, kind: 'ring', tone: 'blue', duration: 90 },
-  { top: '15%', right: '9%', size: 150, kind: 'orbit', tone: 'amber', duration: 70, reverse: true },
   { top: '29%', left: '4%', size: 90, kind: 'diamond', tone: 'blue', duration: 60 },
   { top: '44%', right: '5%', size: 250, kind: 'ring-dashed', tone: 'blue', duration: 140 },
-  { top: '59%', left: '7%', size: 130, kind: 'orbit', tone: 'blue', duration: 80 },
   { top: '73%', right: '6%', size: 80, kind: 'diamond', tone: 'amber', duration: 55, reverse: true },
-  { top: '87%', left: '5%', size: 180, kind: 'ring', tone: 'amber', duration: 110 },
 ];
 
 type Constellation = {
@@ -76,15 +73,10 @@ type DecoSymbol = {
 const DECO_SYMBOLS: DecoSymbol[] = [
   { top: '5%', left: '4%', s: '∑', size: 44, rot: -8 },
   { top: '11%', right: '6%', s: 'π', size: 34, rot: 6, accent: true },
-  { top: '21%', left: '7%', s: '∫', size: 52, rot: 4 },
   { top: '29%', right: '4%', s: '√x', size: 30, rot: -5 },
-  { top: '39%', left: '3%', s: 'Δ', size: 40, rot: 8, accent: true },
   { top: '47%', right: '8%', s: '∞', size: 36, rot: -6 },
-  { top: '56%', left: '6%', s: '±', size: 30, rot: 5 },
   { top: '63%', right: '5%', s: 'ƒ(x)', size: 26, rot: -4, accent: true },
-  { top: '72%', left: '4%', s: '≠', size: 34, rot: 7 },
   { top: '80%', right: '7%', s: 'x²', size: 30, rot: -7 },
-  { top: '88%', left: '8%', s: '÷', size: 36, rot: 4, accent: true },
   { top: '94%', right: '4%', s: 'θ', size: 30, rot: -6 },
 ];
 

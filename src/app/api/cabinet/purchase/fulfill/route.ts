@@ -14,6 +14,7 @@ type Body = {
   product?: string;
   packageIndex?: number;
   teacherId?: string;
+  courseSlug?: string;
   externalId?: string;
   /** Только при вызове с PURCHASE_FULFILL_SECRET — для ручной выдачи ops. */
   telegramId?: number;
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
       product: body.product,
       packageIndex: body.packageIndex,
       teacherId: body.teacherId,
+      courseSlug: body.courseSlug,
       externalId: body.externalId,
     });
     return NextResponse.json(result);

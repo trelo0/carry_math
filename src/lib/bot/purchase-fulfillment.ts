@@ -7,8 +7,9 @@ import {
   type PurchaseFulfillmentSnapshot,
 } from './purchase-verification';
 import {
-  countPublishedLessons,
+  getCoursePaymentOfferBySlug,
   getDistrictCourseContent,
+  listCoursePaymentOffers,
 } from '@/lib/studio/courseContent';
 import {
   getCabinetPricing,
@@ -22,6 +23,8 @@ export type PurchaseFulfillInput = {
   packageIndex?: number;
   /** Преподаватель для individual/group. */
   teacherId?: string;
+  /** Slug курса в Sanity (product=course). */
+  courseSlug?: string;
   /** Idempotency key (будет у платёжки). */
   externalId?: string;
   courseId?: number;
@@ -92,16 +95,50 @@ export async function resolvePurchaseOffer(
   }
 
   if (input.product === 'course') {
-    const offer = pricing.course.offer;
+    const slug = input.courseSlug?.trim();
+    const offer = slug
+      ? await getCoursePaymentOfferBySlug(slug)
+      : (await listCoursePaymentOffers())[0] ?? null;
+
+    if (offer) {
+      return {
+        product: 'course',
+        title: offer.title,
+        lessons: offer.grantedLessons,
+        amountByn: offer.priceByn,
+      };
+    }
+
+    // Fallback: полный контент курса (если цена ещё не в list, но поля есть на документе).
+    const content = await getDistrictCourseContent(slug || undefined);
+    if (
+      content &&
+      typeof content.priceByn === 'number' &&
+      content.priceByn >= 0 &&
+      typeof content.grantedLessons === 'number' &&
+      content.grantedLessons > 0
+    ) {
+      return {
+        product: 'course',
+        title: content.title,
+        lessons: content.grantedLessons,
+        amountByn: content.priceByn,
+      };
+    }
+
+    // Временный fallback на cabinetSettings, пока в Studio не заполнены поля курса.
+    const legacy = pricing.course.offer;
     const lessons =
       options?.courseLessonCount && options.courseLessonCount > 0
         ? options.courseLessonCount
-        : 1;
+        : content?.grantedLessons && content.grantedLessons > 0
+          ? content.grantedLessons
+          : 1;
     return {
       product: 'course',
-      title: pricing.course.label,
+      title: content?.title ?? pricing.course.label,
       lessons,
-      amountByn: offer.priceByn,
+      amountByn: legacy.priceByn,
     };
   }
 
@@ -158,10 +195,7 @@ export async function fulfillPurchase(
     const existing = await findPaymentByExternalId(admin, input.externalId);
     if (existing?.packageId) {
       const pricing = await getCabinetPricing();
-      const courseContent = input.product === 'course' ? await getDistrictCourseContent().catch(() => null) : null;
-      const offer = await resolvePurchaseOffer(pricing, input, {
-        courseLessonCount: courseContent ? countPublishedLessons(courseContent) : null,
-      });
+      const offer = await resolvePurchaseOffer(pricing, input);
       const snapshot = await loadPurchaseFulfillmentSnapshot(
         admin,
         telegramId,
@@ -180,10 +214,24 @@ export async function fulfillPurchase(
   }
 
   const pricing = await getCabinetPricing();
-  const courseContent = input.product === 'course' ? await getDistrictCourseContent().catch(() => null) : null;
-  const courseLessonCount = courseContent ? countPublishedLessons(courseContent) : null;
+  const offer = await resolvePurchaseOffer(pricing, input);
 
-  const offer = await resolvePurchaseOffer(pricing, input, { courseLessonCount });
+  let resolvedCourseId = input.courseId;
+  let courseSlug = input.courseSlug;
+  let curatorTelegramId = input.curatorTelegramId;
+  if (input.product === 'course') {
+    const courseContent = await getDistrictCourseContent(courseSlug || undefined).catch(() => null);
+    if (courseContent) {
+      courseSlug = courseContent.slug;
+      if (!resolvedCourseId) {
+        const { resolveCourseIdForContent } = await import('@/lib/bot/education/course-record');
+        resolvedCourseId = (await resolveCourseIdForContent(admin, courseContent)) ?? undefined;
+      }
+      if (curatorTelegramId == null && courseContent.curatorTelegramId != null) {
+        curatorTelegramId = courseContent.curatorTelegramId;
+      }
+    }
+  }
 
   const { packageId } = await completeProductPurchase(admin, telegramId, input.product, {
     title: offer.title,
@@ -191,8 +239,9 @@ export async function fulfillPurchase(
     amountByn: offer.amountByn,
     expiresAt: input.expiresAt ?? null,
     externalId: input.externalId,
-    courseId: input.courseId,
-    curatorTelegramId: input.curatorTelegramId,
+    courseId: resolvedCourseId,
+    courseSlug,
+    curatorTelegramId,
     teacherSanityId: input.teacherId,
   });
 

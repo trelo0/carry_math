@@ -10,18 +10,16 @@ import { createInquiryLead, type InquiryKind } from './inquiry-leads';
 import { getMember } from './roles';
 
 const SUPPORT_INTRO =
-  '💬 Напишите ваше сообщение администрации.\n\n' +
-  'Вы можете отправить текст, фото, документ или другое поддерживаемое сообщение.';
+  '❓ ЗАДАЙТЕ СВОЙ ВОПРОС\n\n' +
+  'Администратор свяжется с вами.\n\n' +
+  'Напишите сообщение ниже — текст, фото или документ.';
 
 const SUPPORT_THREAD_HINT =
   'Можете отправить ещё сообщение по этому обращению или нажать «Отмена», чтобы выйти.';
 
 function supportIntroKeyboard() {
   return {
-    inline_keyboard: [
-      [{ text: '⬅️ Назад', callback_data: 'cl:support:back' }],
-      [{ text: '❌ Отмена', callback_data: 'cl:support:cancel' }],
-    ],
+    inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cl:support:cancel' }]],
   };
 }
 

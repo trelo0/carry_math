@@ -1,0 +1,10 @@
+{
+    "query":  "*[_id==\"districtModule.district-course-m7\"]{ _id, title, sortOrder, \"lessonRefs\": lessons[]{_ref}, \"lessonsByRef\": *[_type==\"districtCourseLesson\" \u0026\u0026 module._ref == ^._id]{_id,title,publicationStatus,moduleOrder} }",
+    "result":  [
+
+               ],
+    "syncTags":  [
+                     "s1:fMOxZw"
+                 ],
+    "ms":  2
+}

@@ -74,3 +74,20 @@ export async function resolveCourseIdForContent(
     return (data?.id as number) ?? null;
   }
 }
+
+/** Быстрый lookup id без UPDATE на каждый запрос кабинета. */
+export async function lookupCourseIdsBySlugs(
+  admin: SupabaseClient,
+  slugs: string[],
+): Promise<Map<string, number>> {
+  const unique = [...new Set(slugs.filter(Boolean))];
+  const map = new Map<string, number>();
+  if (unique.length === 0) return map;
+
+  const { data, error } = await admin.from('courses').select('id, slug').in('slug', unique);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    if (row.slug && row.id != null) map.set(row.slug as string, row.id as number);
+  }
+  return map;
+}

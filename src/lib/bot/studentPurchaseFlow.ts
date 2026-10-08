@@ -25,6 +25,7 @@ export type PurchaseStartOptions = {
   product?: AccessProduct;
   packageIndex?: number;
   teacherIndex?: number;
+  courseSlug?: string;
 };
 
 const PRODUCT_CODES: Record<AccessProduct, string> = {
@@ -45,6 +46,11 @@ export function parsePayStartPayload(source: string): PurchaseStartOptions {
   const productRaw = parts[0];
   if (!isAccessProduct(productRaw)) return {};
   const options: PurchaseStartOptions = { product: productRaw };
+  // pay_course_s_<slug>
+  if (productRaw === 'course' && parts[1] === 's' && parts[2]) {
+    options.courseSlug = parts.slice(2).join('_');
+    return options;
+  }
   if (parts[1] !== undefined && parts[1] !== '') {
     const pkg = Number(parts[1]);
     if (Number.isFinite(pkg)) options.packageIndex = pkg;
@@ -60,7 +66,11 @@ export function buildPayStartPayload(
   product: AccessProduct,
   packageIndex?: number,
   teacherIndex?: number,
+  courseSlug?: string,
 ): string {
+  if (product === 'course' && courseSlug) {
+    return `pay_course_s_${courseSlug}`;
+  }
   let payload = `pay_${product}`;
   if (packageIndex != null) payload += `_${packageIndex}`;
   if (teacherIndex != null) payload += `_${teacherIndex}`;
@@ -120,11 +130,13 @@ async function resolveOffer(
   product: AccessProduct,
   packageIndex: number,
   teacherId?: string,
+  courseSlug?: string,
 ) {
   return resolvePurchaseOffer(pricing, {
     product,
     packageIndex,
     teacherId,
+    courseSlug,
   });
 }
 
@@ -199,13 +211,19 @@ async function renderConfirmStep(
   teacherId: string | undefined,
   chatId: number,
   message?: AdminMessage,
+  courseSlug?: string,
 ): Promise<void> {
-  const offer = await resolveOffer(pricing, product, packageIndex, teacherId);
+  const offer = await resolveOffer(pricing, product, packageIndex, teacherId, courseSlug);
   const teacherIdx = teacherId ? pricing.teachers.findIndex((t) => t.teacherId === teacherId) : 0;
   const safeTeacherIdx = teacherIdx >= 0 ? teacherIdx : 0;
+  const confirmData =
+    product === 'course' && courseSlug
+      ? `sp:y:c:0:${safeTeacherIdx}:s:${courseSlug}`
+      : `sp:y:${productCode(product)}:${packageIndex}:${safeTeacherIdx}`;
   const text =
     `💳 Подтверждение заявки\n\n` +
     `${offer.title}\n` +
+    `Занятий: ${offer.lessons}\n` +
     `Сумма: ${formatMoney(offer.amountByn)}\n\n` +
     `После подтверждения администратор свяжется с вами для оплаты. Доступ появится в личном кабинете после одобрения.`;
 
@@ -218,12 +236,7 @@ async function renderConfirmStep(
 
   const keyboard: InlineKeyboard = {
     inline_keyboard: [
-      [
-        {
-          text: '✅ Отправить заявку',
-          callback_data: `sp:y:${productCode(product)}:${packageIndex}:${safeTeacherIdx}`,
-        },
-      ],
+      [{ text: '✅ Отправить заявку', callback_data: confirmData }],
       [{ text: '◀️ Назад', callback_data: backData }],
     ],
   };
@@ -240,6 +253,7 @@ async function submitPurchaseRequest(
   packageIndex: number,
   teacherIndex: number,
   message?: AdminMessage,
+  courseSlug?: string,
 ): Promise<void> {
   const pricing = await getCabinetPricing();
   const teacher = pricing.teachers[teacherIndex] ?? pricing.teachers[0];
@@ -257,7 +271,7 @@ async function submitPurchaseRequest(
     return;
   }
 
-  const offer = await resolveOffer(pricing, product, packageIndex, teacherId ?? undefined);
+  const offer = await resolveOffer(pricing, product, packageIndex, teacherId ?? undefined, courseSlug);
   let request: PurchaseRequestRow;
   try {
     request = await createPurchaseRequest(admin, {
@@ -313,7 +327,7 @@ export async function beginStudentPurchase(
   }
 
   const pricing = await getCabinetPricing();
-  const { product, packageIndex, teacherIndex } = options;
+  const { product, packageIndex, teacherIndex, courseSlug } = options;
 
   if (!product) {
     await renderProductMenu(chatId);
@@ -322,7 +336,7 @@ export async function beginStudentPurchase(
 
   if (product === 'course') {
     const teacherId = pricing.teachers[0]?.teacherId;
-    await renderConfirmStep(pricing, product, 0, teacherId, chatId);
+    await renderConfirmStep(pricing, product, 0, teacherId, chatId, undefined, courseSlug);
     return;
   }
 
@@ -414,14 +428,25 @@ export async function handleStudentPurchaseCallback(
       return true;
     }
 
-    // sp:y:<code>:<pkg>:<teacherIdx>
+    // sp:y:<code>:<pkg>:<teacherIdx> или sp:y:c:0:<teacherIdx>:s:<courseSlug>
     if (data.startsWith('sp:y:')) {
-      const [, , code, pkgRaw, teacherRaw] = data.split(':');
+      const parts = data.split(':');
+      const code = parts[2];
       const product = productFromCode(code);
       if (!product) return true;
-      const packageIndex = Math.max(0, Number(pkgRaw) || 0);
-      const teacherIndex = Math.max(0, Number(teacherRaw) || 0);
-      await submitPurchaseRequest(admin, telegramId, message.chatId, product, packageIndex, teacherIndex, message);
+      const packageIndex = Math.max(0, Number(parts[3]) || 0);
+      const teacherIndex = Math.max(0, Number(parts[4]) || 0);
+      const courseSlug = parts[5] === 's' && parts[6] ? parts.slice(6).join(':') : undefined;
+      await submitPurchaseRequest(
+        admin,
+        telegramId,
+        message.chatId,
+        product,
+        packageIndex,
+        teacherIndex,
+        message,
+        courseSlug,
+      );
       return true;
     }
   } catch (error) {

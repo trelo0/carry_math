@@ -96,6 +96,7 @@ async function showOnlineCourseScreen(
     keyboard.inline_keyboard.push([{ text: '🌐 Открыть курс в кабинете', url: cabinetUrl }]);
     keyboard.inline_keyboard.push([{ text: '💬 Вопрос куратору по курсу', callback_data: 'cl:course:ask' }]);
   } else {
+    keyboard.inline_keyboard.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
     keyboard.inline_keyboard.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
   }
   keyboard.inline_keyboard.push([clientBackButton()]);

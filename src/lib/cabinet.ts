@@ -1,6 +1,10 @@
 import { notFound, redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
+import {
+  ensureDistrictCourseRecord,
+  lookupCourseIdsBySlugs,
+  resolveCourseIdForContent,
+} from '@/lib/bot/education/course-record';
 import {
   buildCourseMapStops,
   buildCourseMapStopsFromContent,
@@ -11,11 +15,21 @@ import {
   type CourseMapStopStatus,
 } from '@/lib/bot/education/course-progress';
 import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
-import { getCabinetPricing, DEFAULT_CABINET_PRICING, type CabinetPricing } from '@/lib/studio/cabinetSettings';
+import {
+  getCabinetPricing,
+  DEFAULT_CABINET_PRICING,
+  pickDailyCabinetQuote,
+  type CabinetPricing,
+  type CabinetQuote,
+} from '@/lib/studio/cabinetSettings';
 import {
   countCourseLessons,
   getDistrictCourseContent,
+  listCoursePaymentOffers,
+  listDistrictCourseSummaries,
+  type CoursePaymentOffer,
   type DistrictCourseContent,
+  type DistrictCourseSummary,
 } from '@/lib/studio/courseContent';
 import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
 import { HOMEWORK_STATUS_LABELS } from '@/lib/bot/education/course-homework';
@@ -89,12 +103,14 @@ export type CabinetCourseCatalog = {
   homeworkIntro: string | null;
   coverImageUrl: string | null;
   previewImageUrl: string | null;
-  previewInsideItems: string[];
+  previewInsideItems: { title: string; description: string | null }[];
   previewAfterEnrollment: string | null;
   previewAudience: string | null;
   sanityId: string | null;
   curatorName: string | null;
   totalLessons: number;
+  /** Число модулей (для переключателя; детальный список — в modulePreviews). */
+  modulesCount: number;
   modulePreviews: CabinetCourseModulePreview[];
 };
 
@@ -195,12 +211,16 @@ export type CabinetData = {
   /** Продукты, которые когда-либо выдавались (включая expired/cancelled). */
   accessHistory: CabinetAccessProduct[];
   enrollment: CabinetEnrollment | null;
+  /** Все активные зачисления (для порядка «мои курсы»). */
+  courseEnrollments: CabinetEnrollment[];
   /** Активный курс школы для preview и записи (из courses). */
   courseCatalog: CabinetCourseCatalog | null;
-  /** Все доступные курсы — для переключателя, когда их станет больше одного. */
-  courseCatalogs?: CabinetCourseCatalog[];
-  /** Контент курса из Sanity (структура модулей/уроков). */
+  /** Все доступные курсы — для переключателя. */
+  courseCatalogs: CabinetCourseCatalog[];
+  /** Контент активного курса из Sanity (структура модулей/уроков). */
   courseContent: DistrictCourseContent | null;
+  /** Цитата дня для боковой панели. */
+  dailyQuote: CabinetQuote;
   mentors: CabinetMentor[];
   /** Ind/group: были занятия в scheduled_lessons (для gate без полной загрузки lessons). */
   hasOrdinaryStudentTrack: boolean;
@@ -213,6 +233,8 @@ export type CabinetData = {
   lives: CabinetLivesState | null;
   /** Цены пакетов курса / индивидуальных / групповых из Sanity. */
   cabinetPricing: CabinetPricing;
+  /** Карточки оплаты курсов (цена + N занятий из настроек каждого курса). */
+  coursePaymentOffers: CoursePaymentOffer[];
   /** Нажал «Посмотреть карту курса» в превью (student_profiles.course_map_viewed_at). */
   courseMapViewed: boolean;
   /** Все роли участника: основная + extra_roles. */
@@ -542,7 +564,7 @@ export function buildModulePreviewsFromContent(
 ): CabinetCourseModulePreview[] {
   if (!courseContent) return [];
   return courseContent.modules.map((m) => {
-    const visibleLessons = m.lessons.filter((l) => l.publicationStatus !== 'archived');
+    const visibleLessons = m.lessons.filter((l) => l.publicationStatus === 'published');
     return {
       name: m.title,
       about: m.description ?? '',
@@ -709,7 +731,48 @@ async function loadCourseMapData(
   };
 }
 
-export async function getCabinetData(phone: string, createdAt: string): Promise<CabinetData> {
+function catalogFromSummary(
+  summary: DistrictCourseSummary,
+  courseId: number,
+): CabinetCourseCatalog {
+  return {
+    id: courseId,
+    title: summary.title,
+    slug: summary.slug,
+    description: summary.description?.trim() || null,
+    cabinetEyebrow: summary.cabinetEyebrow,
+    deliveryFormat: summary.deliveryFormat,
+    homeworkIntro: summary.homeworkIntro,
+    coverImageUrl: summary.coverImageUrl,
+    previewImageUrl: summary.previewImageUrl,
+    previewInsideItems: summary.previewInsideItems,
+    previewAfterEnrollment: summary.previewAfterEnrollment,
+    previewAudience: summary.previewAudience,
+    sanityId: summary.sanityId,
+    curatorName: summary.curatorName,
+    totalLessons:
+      summary.totalLessons ||
+      summary.modulePreviews.reduce((sum, m) => sum + m.count, 0),
+    modulesCount:
+      summary.moduleCount ||
+      summary.modulePreviews.length ||
+      0,
+    modulePreviews: summary.modulePreviews.map((m) => ({
+      name: m.name,
+      about: m.about,
+      count: m.count,
+      color: m.color,
+      period: m.period,
+      lessons: m.lessons,
+    })),
+  };
+}
+
+export async function getCabinetData(
+  phone: string,
+  createdAt: string,
+  preferredCourseSlug?: string | null,
+): Promise<CabinetData> {
   const empty: CabinetData = {
     phone,
     createdAt,
@@ -718,8 +781,11 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     accesses: [],
     accessHistory: [],
     enrollment: null,
+    courseEnrollments: [],
     courseCatalog: null,
+    courseCatalogs: [],
     courseContent: null,
+    dailyQuote: pickDailyCabinetQuote(DEFAULT_CABINET_PRICING.quotes),
     mentors: [],
     hasOrdinaryStudentTrack: false,
     packages: [],
@@ -729,7 +795,8 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     courseModules: [],
     courseStops: [],
     lives: null,
-    cabinetPricing: await getCabinetPricing(),
+    cabinetPricing: DEFAULT_CABINET_PRICING,
+    coursePaymentOffers: [],
     courseMapViewed: false,
     memberRoles: ['guest'],
   };
@@ -789,83 +856,220 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     ...new Set((historyRows ?? []).map((row) => row.product as CabinetAccessProduct)),
   ];
 
-  // Контент курса из Sanity + запись courses в Supabase (без seed уроков).
+  // Контент курсов из Sanity + lookup courses в Supabase (без UPDATE на каждый заход).
   let courseContent: DistrictCourseContent | null = null;
-  let cabinetPricing: CabinetPricing;
+  let cabinetPricing: CabinetPricing = DEFAULT_CABINET_PRICING;
+  let coursePaymentOffers: CoursePaymentOffer[] = [];
+  let courseSummaries: DistrictCourseSummary[] = [];
   try {
-    [courseContent, cabinetPricing] = await Promise.all([
-      getDistrictCourseContent(),
+    [cabinetPricing, coursePaymentOffers, courseSummaries] = await Promise.all([
       getCabinetPricing(),
+      listCoursePaymentOffers(),
+      listDistrictCourseSummaries(),
     ]);
   } catch (error) {
     console.error('[cabinet] Sanity fetch failed:', error);
-    courseContent = null;
+    coursePaymentOffers = [];
+    courseSummaries = [];
     try {
       cabinetPricing = await getCabinetPricing();
     } catch {
       cabinetPricing = DEFAULT_CABINET_PRICING;
     }
-  }
-
-  let courseCatalog: CabinetCourseCatalog | null = null;
-  let resolvedCourseId: number | null = null;
-  try {
-    resolvedCourseId = await resolveCourseIdForContent(admin, courseContent);
-  } catch {
-    resolvedCourseId = null;
-  }
-
-  if (resolvedCourseId) {
-    const { data: catalogRow } = await admin
-      .from('courses')
-      .select('id, title, slug, description, sanity_id')
-      .eq('id', resolvedCourseId)
-      .maybeSingle();
-
-    if (catalogRow) {
-      const modulePreviews = buildModulePreviewsFromContent(courseContent);
-
-      courseCatalog = {
-        id: catalogRow.id as number,
-        title: (courseContent?.title ?? catalogRow.title) as string,
-        slug: (courseContent?.slug ?? catalogRow.slug) as string,
-        description: courseContent?.description?.trim() || null,
-        cabinetEyebrow: courseContent?.cabinetEyebrow ?? null,
-        deliveryFormat: courseContent?.deliveryFormat ?? null,
-        homeworkIntro: courseContent?.homeworkIntro ?? null,
-        coverImageUrl: courseContent?.coverImageUrl ?? null,
-        previewImageUrl: courseContent?.previewImageUrl ?? null,
-        previewInsideItems: courseContent?.previewInsideItems ?? [],
-        previewAfterEnrollment: courseContent?.previewAfterEnrollment ?? null,
-        previewAudience: courseContent?.previewAudience ?? null,
-        sanityId: (catalogRow.sanity_id as string | null) ?? courseContent?.sanityId ?? null,
-        curatorName: courseContent?.curatorName ?? null,
-        totalLessons: courseContent ? countCourseLessons(courseContent) : 0,
-        modulePreviews,
-      };
+    try {
+      coursePaymentOffers = await listCoursePaymentOffers();
+    } catch {
+      coursePaymentOffers = [];
+    }
+    try {
+      courseSummaries = await listDistrictCourseSummaries();
+    } catch {
+      courseSummaries = [];
     }
   }
 
-  // Активное зачисление на курс.
+  const dailyQuote = pickDailyCabinetQuote(cabinetPricing.quotes);
+
+  const courseCatalogs: CabinetCourseCatalog[] = [];
+  try {
+    const idBySlug = await lookupCourseIdsBySlugs(
+      admin,
+      courseSummaries.map((s) => s.slug),
+    );
+    const missing = courseSummaries.filter((s) => !idBySlug.has(s.slug));
+    if (missing.length > 0) {
+      await Promise.all(
+        missing.map(async (summary) => {
+          try {
+            const id = await ensureDistrictCourseRecord(admin, {
+              sanityId: summary.sanityId,
+              title: summary.title,
+              slug: summary.slug,
+              description: summary.description,
+              cabinetEyebrow: summary.cabinetEyebrow,
+              deliveryFormat: summary.deliveryFormat,
+              homeworkIntro: summary.homeworkIntro,
+              coverImageUrl: summary.coverImageUrl,
+              previewImageUrl: summary.previewImageUrl,
+              previewInsideItems: summary.previewInsideItems,
+              previewAfterEnrollment: summary.previewAfterEnrollment,
+              previewAudience: summary.previewAudience,
+              publicationStatus: summary.publicationStatus,
+              curatorName: summary.curatorName,
+              curatorTelegramId: summary.curatorTelegramId,
+              priceByn: null,
+              grantedLessons: null,
+              pricingCardText: null,
+              modules: [],
+            });
+            if (id) idBySlug.set(summary.slug, id);
+          } catch (error) {
+            console.error('[cabinet] course ensure failed:', summary.slug, error);
+          }
+        }),
+      );
+    }
+    for (const summary of courseSummaries) {
+      const courseId = idBySlug.get(summary.slug);
+      if (courseId) courseCatalogs.push(catalogFromSummary(summary, courseId));
+    }
+  } catch (error) {
+    console.error('[cabinet] course catalog lookup failed:', error);
+  }
+
+  // Активные зачисления (все курсы).
   const { data: enrollmentRows, error: enrollmentError } = await admin
     .from('course_enrollments')
-    .select('status, started_at, course_id, courses(title)')
+    .select('status, started_at, course_id, courses(title, slug)')
     .eq('telegram_id', telegramId)
     .eq('status', ACTIVE)
-    .order('started_at', { ascending: false })
-    .limit(1);
-  let enrollment: CabinetEnrollment | null = null;
-  let enrolledCourseId: number | null = null;
-  if (!enrollmentError && enrollmentRows?.[0]) {
-    const row = enrollmentRows[0];
-    enrolledCourseId = row.course_id as number;
-    const coursesRaw = row.courses as { title?: string } | { title?: string }[] | null;
-    const joinedTitle = Array.isArray(coursesRaw) ? coursesRaw[0]?.title : coursesRaw?.title;
-    enrollment = {
-      courseId: enrolledCourseId,
-      courseTitle: joinedTitle ?? courseCatalog?.title ?? 'Курс District',
+    .order('started_at', { ascending: true });
+
+  type EnrollmentRow = {
+    status: string;
+    started_at: string;
+    course_id: number;
+    courses: { title?: string; slug?: string } | { title?: string; slug?: string }[] | null;
+  };
+  const activeEnrollments = (!enrollmentError ? (enrollmentRows as EnrollmentRow[] | null) : null) ?? [];
+
+  const courseEnrollments: CabinetEnrollment[] = activeEnrollments.map((row) => {
+    const coursesRaw = row.courses;
+    const joined = Array.isArray(coursesRaw) ? coursesRaw[0] : coursesRaw;
+    return {
+      courseId: row.course_id,
+      courseTitle:
+        joined?.title ??
+        courseCatalogs.find((c) => c.id === row.course_id)?.title ??
+        'Курс District',
       status: row.status,
       startedAt: row.started_at,
+    };
+  });
+
+  const preferredNormalized = preferredCourseSlug?.trim() || null;
+  const preferredCatalog =
+    (preferredNormalized
+      ? courseCatalogs.find((c) => c.slug === preferredNormalized)
+      : null) ?? null;
+
+  const enrolledMatchingPreferred = preferredCatalog
+    ? activeEnrollments.find((row) => row.course_id === preferredCatalog.id)
+    : null;
+  // Без ?course= — самый ранний купленный курс (ascending).
+  const primaryEnrollment = enrolledMatchingPreferred ?? activeEnrollments[0] ?? null;
+
+  let enrollment: CabinetEnrollment | null = null;
+  let enrolledCourseId: number | null = null;
+  if (primaryEnrollment) {
+    enrolledCourseId = primaryEnrollment.course_id;
+    enrollment =
+      courseEnrollments.find((e) => e.courseId === enrolledCourseId) ??
+      ({
+        courseId: enrolledCourseId,
+        courseTitle:
+          courseCatalogs.find((c) => c.id === enrolledCourseId)?.title ?? 'Курс District',
+        status: primaryEnrollment.status,
+        startedAt: primaryEnrollment.started_at,
+      } satisfies CabinetEnrollment);
+  }
+
+  const activeSlug =
+    preferredCatalog?.slug ??
+    courseCatalogs.find((c) => c.id === enrolledCourseId)?.slug ??
+    courseCatalogs[0]?.slug ??
+    null;
+
+  try {
+    courseContent = activeSlug
+      ? await getDistrictCourseContent(activeSlug)
+      : await getDistrictCourseContent();
+  } catch (error) {
+    console.error('[cabinet] course content fetch failed:', error);
+    courseContent = null;
+  }
+
+  let courseCatalog: CabinetCourseCatalog | null =
+    (activeSlug ? courseCatalogs.find((c) => c.slug === activeSlug) : null) ??
+    courseCatalogs[0] ??
+    null;
+
+  let resolvedCourseId: number | null = courseCatalog?.id ?? null;
+  if (!resolvedCourseId && courseContent) {
+    try {
+      resolvedCourseId = await resolveCourseIdForContent(admin, courseContent);
+    } catch {
+      resolvedCourseId = null;
+    }
+  }
+
+  if (courseCatalog && courseContent && courseCatalog.slug === courseContent.slug) {
+    courseCatalog = {
+      ...courseCatalog,
+      title: courseContent.title || courseCatalog.title,
+      description: courseContent.description?.trim() || courseCatalog.description,
+      cabinetEyebrow: courseContent.cabinetEyebrow ?? courseCatalog.cabinetEyebrow,
+      deliveryFormat: courseContent.deliveryFormat ?? courseCatalog.deliveryFormat,
+      homeworkIntro: courseContent.homeworkIntro ?? courseCatalog.homeworkIntro,
+      coverImageUrl: courseContent.coverImageUrl ?? courseCatalog.coverImageUrl,
+      previewImageUrl: courseContent.previewImageUrl ?? courseCatalog.previewImageUrl,
+      previewInsideItems:
+        courseContent.previewInsideItems.length > 0
+          ? courseContent.previewInsideItems
+          : courseCatalog.previewInsideItems,
+      previewAfterEnrollment:
+        courseContent.previewAfterEnrollment ?? courseCatalog.previewAfterEnrollment,
+      previewAudience: courseContent.previewAudience ?? courseCatalog.previewAudience,
+      curatorName: courseContent.curatorName ?? courseCatalog.curatorName,
+      totalLessons: countCourseLessons(courseContent) || courseCatalog.totalLessons,
+      modulesCount:
+        courseContent.modules.length ||
+        courseCatalog.modulesCount ||
+        courseCatalog.modulePreviews.length,
+      modulePreviews:
+        courseContent.modules.length > 0
+          ? buildModulePreviewsFromContent(courseContent)
+          : courseCatalog.modulePreviews,
+    };
+  } else if (!courseCatalog && resolvedCourseId && courseContent) {
+    courseCatalog = {
+      id: resolvedCourseId,
+      title: courseContent.title,
+      slug: courseContent.slug,
+      description: courseContent.description?.trim() || null,
+      cabinetEyebrow: courseContent.cabinetEyebrow,
+      deliveryFormat: courseContent.deliveryFormat,
+      homeworkIntro: courseContent.homeworkIntro,
+      coverImageUrl: courseContent.coverImageUrl,
+      previewImageUrl: courseContent.previewImageUrl,
+      previewInsideItems: courseContent.previewInsideItems,
+      previewAfterEnrollment: courseContent.previewAfterEnrollment,
+      previewAudience: courseContent.previewAudience,
+      sanityId: courseContent.sanityId,
+      curatorName: courseContent.curatorName,
+      totalLessons: countCourseLessons(courseContent),
+      modulesCount: courseContent.modules.length,
+      modulePreviews: buildModulePreviewsFromContent(courseContent),
     };
   }
 
@@ -903,7 +1107,7 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
   let courseStops: CabinetCourseStop[] = [];
   let lives: CabinetLivesState | null = null;
 
-  const courseIdForMap = enrolledCourseId ?? resolvedCourseId ?? courseCatalog?.id ?? null;
+  const courseIdForMap = courseCatalog?.id ?? enrolledCourseId ?? resolvedCourseId ?? null;
 
   try {
     packages = await loadPackages(admin, telegramId);
@@ -988,6 +1192,14 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     }
   }
 
+  const catalogsSynced =
+    courseCatalog != null
+      ? courseCatalogs.map((c) => (c.slug === courseCatalog.slug ? courseCatalog : c))
+      : courseCatalogs;
+  if (courseCatalog && !catalogsSynced.some((c) => c.slug === courseCatalog.slug)) {
+    catalogsSynced.unshift(courseCatalog);
+  }
+
   return {
     phone,
     createdAt,
@@ -996,8 +1208,11 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     accesses,
     accessHistory,
     enrollment,
+    courseEnrollments,
     courseCatalog,
+    courseCatalogs: catalogsSynced,
     courseContent,
+    dailyQuote,
     mentors,
     hasOrdinaryStudentTrack,
     packages,
@@ -1008,8 +1223,163 @@ export async function getCabinetData(phone: string, createdAt: string): Promise<
     courseStops,
     lives,
     cabinetPricing,
+    coursePaymentOffers,
     courseMapViewed,
     memberRoles,
+  };
+}
+
+/** Срез активного курса для быстрого переключения без полной перезагрузки кабинета. */
+export type CabinetCourseViewSlice = {
+  slug: string;
+  courseCatalog: CabinetCourseCatalog;
+  courseModules: CabinetCourseModule[];
+  courseStops: CabinetCourseStop[];
+  courseProgress: CabinetCourseProgress[];
+  lives: CabinetLivesState | null;
+  enrollment: CabinetEnrollment | null;
+};
+
+export async function getCabinetCourseViewSlice(
+  phone: string,
+  courseSlug: string,
+): Promise<CabinetCourseViewSlice | null> {
+  const slug = courseSlug.trim();
+  if (!slug) return null;
+
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return null;
+  }
+
+  const { data: link } = await admin
+    .from('telegram_links')
+    .select('telegram_id')
+    .eq('phone', phone)
+    .maybeSingle();
+  if (!link?.telegram_id) return null;
+  const telegramId = link.telegram_id as number;
+
+  const courseContent = await getDistrictCourseContent(slug).catch(() => null);
+  if (!courseContent) return null;
+
+  let courseId: number | null = null;
+  try {
+    courseId = await resolveCourseIdForContent(admin, courseContent);
+  } catch {
+    const ids = await lookupCourseIdsBySlugs(admin, [slug]).catch(() => new Map());
+    courseId = ids.get(slug) ?? null;
+  }
+  if (!courseId) return null;
+
+  const courseCatalog: CabinetCourseCatalog = {
+    id: courseId,
+    title: courseContent.title,
+    slug: courseContent.slug,
+    description: courseContent.description?.trim() || null,
+    cabinetEyebrow: courseContent.cabinetEyebrow,
+    deliveryFormat: courseContent.deliveryFormat,
+    homeworkIntro: courseContent.homeworkIntro,
+    coverImageUrl: courseContent.coverImageUrl,
+    previewImageUrl: courseContent.previewImageUrl,
+    previewInsideItems: courseContent.previewInsideItems,
+    previewAfterEnrollment: courseContent.previewAfterEnrollment,
+    previewAudience: courseContent.previewAudience,
+    sanityId: courseContent.sanityId,
+    curatorName: courseContent.curatorName,
+    totalLessons: countCourseLessons(courseContent),
+    modulesCount: courseContent.modules.length,
+    modulePreviews: buildModulePreviewsFromContent(courseContent),
+  };
+
+  // Enrollment + accesses параллельно; packages/profile для switch не нужны.
+  const [{ data: accessRows }, { data: enrollmentRow }] = await Promise.all([
+    admin
+      .from('user_accesses')
+      .select('product, expires_at')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE),
+    admin
+      .from('course_enrollments')
+      .select('status, started_at, course_id')
+      .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
+      .eq('status', ACTIVE)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const accesses: CabinetAccess[] = (accessRows ?? [])
+    .filter((row) => isNotExpired(row.expires_at ?? null))
+    .map((row) => ({
+      product: row.product as CabinetAccessProduct,
+      expiresAt: row.expires_at ?? null,
+    }));
+
+  const enrollment: CabinetEnrollment | null = enrollmentRow
+    ? {
+        courseId,
+        courseTitle: courseCatalog.title,
+        status: enrollmentRow.status as string,
+        startedAt: enrollmentRow.started_at as string,
+      }
+    : null;
+
+  const hasCourseProductAccess =
+    enrollment != null || accesses.some((a) => a.product === 'course');
+  const courseState: CourseCabinetState = hasCourseProductAccess ? 'full' : 'preview';
+
+  let courseModules: CabinetCourseModule[] = [];
+  let courseStops: CabinetCourseStop[] = [];
+  let courseProgress: CabinetCourseProgress[] = [];
+
+  if (courseContent.modules.length) {
+    try {
+      const mapData = await resolveCourseMapFromContent(admin, telegramId, courseId, courseContent, {
+        courseState,
+        hasCourseProductAccess,
+        withProgress: Boolean(hasCourseProductAccess && courseId),
+      });
+      courseModules = mapData.modules;
+      courseStops = mapData.stops;
+      if (mapData.progress.length > 0) courseProgress = mapData.progress;
+    } catch {
+      courseModules = mapContentToCourseModules(courseContent);
+      courseStops = mapContentToStructureStops(courseContent);
+    }
+    if (courseStops.length === 0) {
+      courseModules = mapContentToCourseModules(courseContent);
+      courseStops = mapContentToStructureStops(courseContent);
+    }
+  }
+
+  let lives: CabinetLivesState | null = null;
+  if (hasCourseProductAccess) {
+    try {
+      const livesState = await getEnrollmentLives(admin, telegramId, courseId);
+      if (livesState) {
+        lives = {
+          current: livesState.lives_current,
+          max: livesState.lives_max,
+          accessBlocked: livesState.access_blocked,
+        };
+      }
+    } catch {
+      lives = null;
+    }
+  }
+
+  return {
+    slug,
+    courseCatalog,
+    courseModules,
+    courseStops,
+    courseProgress,
+    lives,
+    enrollment,
   };
 }
 
@@ -1079,6 +1449,7 @@ export async function getCabinetLessonPageData(
         sanityId: (catalogRow.sanity_id as string | null) ?? courseContent?.sanityId ?? null,
         curatorName: courseContent?.curatorName ?? null,
         totalLessons: courseContent ? countCourseLessons(courseContent) : 0,
+        modulesCount: courseContent?.modules.length ?? 0,
         modulePreviews: buildModulePreviewsFromContent(courseContent),
       };
     }

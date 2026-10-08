@@ -106,24 +106,6 @@ export default defineType({
         'Auto-назначение куратора при покупке курса. ID из админ-бота, роль curator. Пусто — назначаете вручную.',
       type: 'number',
     }),
-    defineField({
-      name: 'examDate',
-      title: 'Дата ЦТ / экзамена',
-      type: 'date',
-      description: 'Для счётчика в боковой панели кабинета',
-    }),
-    defineField({
-      name: 'examLabel',
-      title: 'Подпись счётчика',
-      type: 'string',
-      initialValue: 'До ЦТ по математике',
-    }),
-    defineField({
-      name: 'achievements',
-      title: 'Достижения',
-      type: 'array',
-      of: [defineArrayMember({ type: 'cabinetAchievement' })],
-    }),
   ],
   preview: {
     prepare() {

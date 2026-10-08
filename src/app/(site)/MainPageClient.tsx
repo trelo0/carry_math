@@ -460,8 +460,12 @@ export default function MainPageClient({
             <div className="mentor-card">
               <div className="mentor-frame">
                 <img
-                  src="/teachers/lidia2.png"
+                  src="/teachers/lidia2.webp"
                   alt="Лидия Владимировна — наставник по математике"
+                  width={900}
+                  height={1449}
+                  decoding="async"
+                  loading="lazy"
                 />
                 <div className="mentor-plate">
                   <span className="mentor-class">{mentorClass}</span>
@@ -603,21 +607,21 @@ export default function MainPageClient({
                   <circle key={i} className="road-dot" cx={dot.x} cy={dot.y} r="3.5" />
                 ))}
 
-                {/* фонари у острых поворотов */}
+                {/* фонари у острых поворотов (долина y=370 → бордюр ±36) */}
                 <g className="lamp" transform="translate(420 0)">
-                  <line x1="0" y1="318" x2="0" y2="348" />
-                  <circle className="lamp-glow" cx="0" cy="314" r="11" />
-                  <circle className="lamp-head" cx="0" cy="314" r="5" />
+                  <line x1="0" y1="312" x2="0" y2="334" />
+                  <circle className="lamp-glow" cx="0" cy="308" r="11" />
+                  <circle className="lamp-head" cx="0" cy="308" r="5" />
                 </g>
                 <g className="lamp" transform="translate(800 0)">
-                  <line x1="0" y1="348" x2="0" y2="378" />
-                  <circle className="lamp-glow" cx="0" cy="382" r="11" />
-                  <circle className="lamp-head" cx="0" cy="382" r="5" />
+                  <line x1="0" y1="406" x2="0" y2="428" />
+                  <circle className="lamp-glow" cx="0" cy="432" r="11" />
+                  <circle className="lamp-head" cx="0" cy="432" r="5" />
                 </g>
                 <g className="lamp" transform="translate(1180 0)">
-                  <line x1="0" y1="318" x2="0" y2="348" />
-                  <circle className="lamp-glow" cx="0" cy="314" r="11" />
-                  <circle className="lamp-head" cx="0" cy="314" r="5" />
+                  <line x1="0" y1="312" x2="0" y2="334" />
+                  <circle className="lamp-glow" cx="0" cy="308" r="11" />
+                  <circle className="lamp-head" cx="0" cy="308" r="5" />
                 </g>
 
                 {/* терминал START */}

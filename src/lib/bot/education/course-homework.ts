@@ -141,19 +141,6 @@ export async function assertCuratorAssigned(
   if (error) throw error;
   if (data) return;
 
-  const content = await getDistrictCourseContent();
-  if (content) {
-    try {
-      const courseId = await resolveCourseIdForContent(admin, content);
-      if (courseId == null) throw new CourseHomeworkError('Курс не найден.', 'NOT_ASSIGNED');
-      const { listCourseStudentTelegramIds } = await import('@/lib/curator/students');
-      const enrolled = await listCourseStudentTelegramIds(admin, courseId);
-      if (enrolled.includes(studentTelegramId)) return;
-    } catch {
-      /* ignore */
-    }
-  }
-
   throw new CourseHomeworkError('Ученик не закреплён за этим куратором.', 'NOT_ASSIGNED');
 }
 

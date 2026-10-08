@@ -31,8 +31,12 @@ export type LeadFormat = 'individual' | 'group';
 
 type LeadFormStep = 'name' | 'grade' | 'preferredTeacher' | 'wishes' | 'contact' | 'confirm';
 
+export type LeadIntent = 'trial' | 'enroll';
+
 export type LeadFormPayload = AdminPayload & {
   leadFormat?: LeadFormat;
+  leadIntent?: LeadIntent;
+  leadTeacherLocked?: boolean;
   leadStudentName?: string;
   leadGrade?: string;
   leadPreferredTeacher?: string;
@@ -56,23 +60,34 @@ function formatLabel(format: LeadFormat): string {
   return FORMAT_LABEL[format];
 }
 
-function leadSteps(format: LeadFormat | undefined): LeadFormStep[] {
-  if (format === 'individual') {
+function intentLabel(intent: LeadIntent | undefined): string {
+  return intent === 'trial' ? 'Пробное занятие' : 'Запись на занятия';
+}
+
+function serviceLabel(payload: LeadFormPayload): string {
+  const format = payload.leadFormat ? formatLabel(payload.leadFormat) : 'Занятия';
+  if (payload.leadIntent === 'trial') return `${format} · Пробное`;
+  if (payload.leadIntent === 'enroll') return `${format} · Запись`;
+  return format;
+}
+
+function leadSteps(payload: Pick<LeadFormPayload, 'leadFormat' | 'leadTeacherLocked'>): LeadFormStep[] {
+  if (payload.leadFormat === 'individual' && !payload.leadTeacherLocked) {
     return ['name', 'grade', 'preferredTeacher', 'wishes', 'contact', 'confirm'];
   }
   return ['name', 'grade', 'wishes', 'contact', 'confirm'];
 }
 
-function previousStep(format: LeadFormat | undefined, step: LeadFormStep): LeadFormStep | null {
-  const order = leadSteps(format);
+function previousStep(payload: LeadFormPayload, step: LeadFormStep): LeadFormStep | null {
+  const order = leadSteps(payload);
   const i = order.indexOf(step);
   if (i <= 0) return null;
   return order[i - 1] ?? null;
 }
 
-function stepIndexLabel(format: LeadFormat | undefined, step: LeadFormStep): string {
+function stepIndexLabel(payload: LeadFormPayload, step: LeadFormStep): string {
   if (step === 'confirm') return '';
-  const order = leadSteps(format).filter((s) => s !== 'confirm') as Exclude<
+  const order = leadSteps(payload).filter((s) => s !== 'confirm') as Exclude<
     LeadFormStep,
     'confirm'
   >[];
@@ -81,8 +96,8 @@ function stepIndexLabel(format: LeadFormat | undefined, step: LeadFormStep): str
   return `Шаг ${i + 1} из ${order.length} — `;
 }
 
-async function stepPrompt(format: LeadFormat | undefined, step: LeadFormStep): Promise<string> {
-  const prefix = stepIndexLabel(format, step);
+async function stepPrompt(payload: LeadFormPayload, step: LeadFormStep): Promise<string> {
+  const prefix = stepIndexLabel(payload, step);
   switch (step) {
     case 'name':
       return prefix + (await getBotCopy(BOT_COPY_KEYS.guestLeadStepName));
@@ -100,11 +115,11 @@ async function stepPrompt(format: LeadFormat | undefined, step: LeadFormStep): P
 }
 
 async function leadFormKeyboard(
-  format: LeadFormat | undefined,
+  payload: LeadFormPayload,
   step: LeadFormStep,
 ): Promise<{ inline_keyboard: Array<Array<Record<string, string>>> }> {
   const row: Array<Record<string, string>> = [];
-  if (previousStep(format, step)) {
+  if (previousStep(payload, step)) {
     row.push({ text: '◀️ На шаг назад', callback_data: 'cl:lead:back' });
   }
   row.push({ text: '❌ Отменить', callback_data: 'cl:lead:cancel' });
@@ -136,14 +151,15 @@ function confirmSummary(payload: LeadFormPayload): string {
     '📝 Проверьте заявку',
     '',
     `Формат: ${formatLabel(format)}`,
+    `Тип: ${intentLabel(payload.leadIntent)}`,
     `Имя ученика: ${payload.leadStudentName}`,
     `Класс: ${payload.leadGrade}`,
   ];
-  if (payload.leadFormat === 'individual') {
+  if (payload.leadFormat === 'individual' || payload.leadPreferredTeacher?.trim()) {
     lines.push(
       payload.leadPreferredTeacher?.trim()
-        ? `Желаемый преподаватель: ${payload.leadPreferredTeacher.trim()}`
-        : 'Желаемый преподаватель: не указан',
+        ? `Преподаватель: ${payload.leadPreferredTeacher.trim()}`
+        : 'Преподаватель: не указан',
     );
   }
   lines.push(
@@ -179,7 +195,7 @@ async function pushLeadStepMessage(
   const text =
     step === 'confirm'
       ? confirmSummary(payload)
-      : [header, '', await stepPrompt(payload.leadFormat, step)].join('\n');
+      : [header, '', await stepPrompt(payload, step)].join('\n');
   const keyboard =
     step === 'confirm'
       ? {
@@ -189,7 +205,7 @@ async function pushLeadStepMessage(
             [{ text: '❌ Отменить', callback_data: 'cl:lead:cancel' }],
           ],
         }
-      : await leadFormKeyboard(payload.leadFormat, step);
+      : await leadFormKeyboard(payload, step);
 
   const messageId = await sendHubMessage(chatId, text, keyboard);
   if (!messageId) return;
@@ -231,11 +247,12 @@ async function findRecentDuplicateLead(
 ): Promise<boolean> {
   const tag = TELEGRAM_ID_TAG(telegramId);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const servicePrefix = formatLabel(format);
   const { data, error } = await admin
     .from('leads')
     .select('id')
     .eq('source', 'telegram_bot')
-    .eq('service', formatLabel(format))
+    .ilike('service', `${servicePrefix}%`)
     .gte('created_at', since)
     .ilike('comment', `%${tag}%`)
     .eq('status', 'new')
@@ -245,7 +262,7 @@ async function findRecentDuplicateLead(
       .from('leads')
       .select('id')
       .eq('source', 'telegram_bot')
-      .eq('service', formatLabel(format))
+      .ilike('service', `${servicePrefix}%`)
       .gte('created_at', since)
       .ilike('comment', `%${tag}%`)
       .limit(1);
@@ -260,9 +277,51 @@ export async function beginClientLeadForm(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
-  options: { format: LeadFormat },
+  options: {
+    format: LeadFormat;
+    intent?: LeadIntent;
+    teacherId?: string;
+    teacherName?: string;
+    teacherLocked?: boolean;
+  },
 ): Promise<void> {
-  const payload: LeadFormPayload = { leadFormat: options.format };
+  let teacherName = options.teacherName?.trim() || '';
+  if (!teacherName && options.teacherId) {
+    const pricing = await getCabinetPricing().catch(() => null);
+    const matched = pricing?.teachers.find((t) => t.teacherId === options.teacherId);
+    teacherName = matched?.name ?? '';
+  }
+
+  const teacherLocked = Boolean(
+    options.teacherLocked ?? (options.teacherId || options.teacherName),
+  );
+
+  const payload: LeadFormPayload = {
+    leadFormat: options.format,
+    leadIntent: options.intent ?? 'enroll',
+    leadTeacherLocked: teacherLocked && Boolean(teacherName),
+    leadPreferredTeacher: teacherName || undefined,
+  };
+
+  const introBits = [
+    `Формат: ${formatLabel(options.format)}`,
+    `Тип: ${intentLabel(payload.leadIntent)}`,
+  ];
+  if (payload.leadPreferredTeacher) {
+    introBits.push(`Преподаватель: ${payload.leadPreferredTeacher}`);
+  }
+
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: [
+      'Спасибо, что заинтересовались занятиями! 🙌',
+      '',
+      ...introBits,
+      '',
+      'Осталось коротко заполнить заявку — администратор свяжется с вами.',
+    ].join('\n'),
+  });
+
   await pushLeadStepMessage(admin, telegramId, chatId, payload, 'name');
 }
 
@@ -313,7 +372,7 @@ export async function handleClientLeadCallback(
     if (!state || state.step !== CLIENT_LEAD_FORM_STEP) return true;
     const payload = state.payload as LeadFormPayload;
     const step = payload.leadStep ?? 'name';
-    const prev = previousStep(payload.leadFormat, step === 'confirm' ? 'contact' : step);
+    const prev = previousStep(payload, step === 'confirm' ? 'contact' : step);
     const target = prev ?? 'name';
     await pushLeadStepMessage(admin, telegramId, chatId, payload, target, { retireMessageId: messageId });
     return true;
@@ -434,19 +493,22 @@ export async function handleClientLeadCallback(
     await persistLeadFormState(admin, telegramId, chatId, { ...payload, leadSubmitting: true }, 'confirm');
 
     const wishesBlock = payload.leadWishes?.trim() || null;
-    const comment = [wishesBlock, TELEGRAM_ID_TAG(telegramId)].filter(Boolean).join('\n\n');
+    const intentBlock = `Тип: ${intentLabel(payload.leadIntent)}`;
+    const comment = [intentBlock, wishesBlock, TELEGRAM_ID_TAG(telegramId)]
+      .filter(Boolean)
+      .join('\n\n');
 
     const insertRow: Record<string, unknown> = {
       name: payload.leadStudentName.trim(),
       contact,
       grade: payload.leadGrade.trim(),
       comment,
-      service: formatLabel(payload.leadFormat),
+      service: serviceLabel(payload),
       source: 'telegram_bot',
       inquiry_kind: 'application',
       client_telegram_id: telegramId,
     };
-    if (payload.leadFormat === 'individual' && payload.leadPreferredTeacher?.trim()) {
+    if (payload.leadPreferredTeacher?.trim()) {
       insertRow.teacher = payload.leadPreferredTeacher.trim();
     }
 
@@ -532,7 +594,7 @@ export async function handleClientLeadMessage(
       await sendHubMessage(
         chatId,
         '⚠️ Имя слишком короткое — напишите полное имя (от 3 символов).',
-        await leadFormKeyboard(payload.leadFormat, 'name'),
+        await leadFormKeyboard(payload, 'name'),
       );
       return true;
     }
@@ -546,15 +608,14 @@ export async function handleClientLeadMessage(
       await sendHubMessage(
         chatId,
         'Укажите класс (например: 10).',
-        await leadFormKeyboard(payload.leadFormat, 'grade'),
+        await leadFormKeyboard(payload, 'grade'),
       );
       return true;
     }
     payload.leadGrade = trimmed;
-    const next =
-      payload.leadFormat === 'individual'
-        ? ('preferredTeacher' as LeadFormStep)
-        : ('wishes' as LeadFormStep);
+    const steps = leadSteps(payload);
+    const gradeIdx = steps.indexOf('grade');
+    const next = steps[gradeIdx + 1] ?? 'wishes';
     await pushLeadStepMessage(admin, telegramId, chatId, payload, next, { retireMessageId: retireId });
     return true;
   }

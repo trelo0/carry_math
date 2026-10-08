@@ -10,6 +10,7 @@ type WebhookBody = {
   product?: string;
   packageIndex?: number;
   teacherId?: string;
+  courseSlug?: string;
   externalId?: string;
   /** Оплата пробного по lead_payments.external_id */
   trialExternalId?: string;
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
       product: body.product,
       packageIndex: body.packageIndex,
       teacherId: body.teacherId,
+      courseSlug: body.courseSlug,
       externalId: body.externalId.trim(),
     });
     return NextResponse.json({

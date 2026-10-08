@@ -85,6 +85,9 @@ export type AdminPayload = {
   clientHubMessageId?: number;
   clientScreen?: string;
   leadFormat?: 'individual' | 'group';
+  leadIntent?: 'trial' | 'enroll';
+  leadTeacherLocked?: boolean;
+  leadPreferredTeacher?: string;
   leadStudentName?: string;
   leadGrade?: string;
   leadWishes?: string;
@@ -110,6 +113,11 @@ export type AdminPayload = {
   leadTrialRescheduleLessonId?: number;
   leadFollowupLeadId?: string;
   leadFollowupNav?: string;
+  courseApplyStep?: 'name' | 'wishes' | 'contact' | 'confirm';
+  courseApplyName?: string;
+  courseApplyWishes?: string;
+  courseApplyContact?: string;
+  courseApplyFormMessageId?: number;
 };
 
 export type ConversationStep =
@@ -155,6 +163,7 @@ export type ConversationStep =
   | 'student:mentor'
   | 'student:course-hw-submit'
   | 'course-apply:link-phone'
+  | 'course-apply:form'
   | 'client:hub'
   | 'client:lead-form'
   | 'client:lesson-hw-submit'

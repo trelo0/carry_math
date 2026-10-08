@@ -1,7 +1,11 @@
 import type { CabinetData, CourseCabinetState, CabinetCourseCatalog } from '@/lib/cabinet';
 import { formatModulePeriodFromLessons, mapContentToCourseModules, mapContentToStructureStops } from '@/lib/cabinet';
-import { DEFAULT_CABINET_PRICING, getCabinetPricing } from '@/lib/studio/cabinetSettings';
-import { getDistrictCourseContent } from '@/lib/studio/courseContent';
+import {
+  DEFAULT_CABINET_PRICING,
+  getCabinetPricing,
+  pickDailyCabinetQuote,
+} from '@/lib/studio/cabinetSettings';
+import { getDistrictCourseContent, listDistrictCourseSummaries } from '@/lib/studio/courseContent';
 
 const COURSE_CATALOG: CabinetCourseCatalog = {
   id: 1,
@@ -16,10 +20,10 @@ const COURSE_CATALOG: CabinetCourseCatalog = {
   coverImageUrl: null,
   previewImageUrl: '/prewiev.jpg',
   previewInsideItems: [
-    'Базовый и углублённый уровень подготовки',
-    'Регулярные вебинары и практика',
-    'Домашние задания с разбором',
-    'Поддержка преподавателя на каждом этапе',
+    { title: 'Системная подготовка', description: 'От базы до сложных задач' },
+    { title: 'Теория + практика', description: 'Только то, что реально нужно' },
+    { title: 'Проверка заданий', description: 'Развёрнутая обратная связь' },
+    { title: 'Актуальные задания ЦЭ/ЦТ', description: 'Реальные форматы и критерии' },
   ],
   previewAfterEnrollment:
     'Программа курса откроется сразу после записи. Ты получишь доступ ко всем материалам и сможешь начать обучение в любой момент.',
@@ -28,6 +32,7 @@ const COURSE_CATALOG: CabinetCourseCatalog = {
   sanityId: null,
   curatorName: 'Кристина Денисовна',
   totalLessons: 74,
+  modulesCount: 2,
   modulePreviews: [
     {
       name: 'Диагностика',
@@ -81,8 +86,22 @@ export function buildCabinetPreviewData(
     accesses,
     accessHistory,
     enrollment,
+    courseEnrollments: enrollment ? [enrollment] : [],
     courseCatalog: COURSE_CATALOG,
+    courseCatalogs: [COURSE_CATALOG],
     courseContent: null,
+    dailyQuote: pickDailyCabinetQuote(DEFAULT_CABINET_PRICING.quotes),
+    coursePaymentOffers: [
+      {
+        sanityId: 'preview-course',
+        slug: 'district-course',
+        title: 'Курс District',
+        description: 'Полный доступ к программе подготовки',
+        cardText: 'Полный доступ к программе подготовки',
+        priceByn: 120,
+        grantedLessons: 8,
+      },
+    ],
     mentors: [{ kind: 'curator', name: 'Кристина Денисовна' }],
     hasOrdinaryStudentTrack: false,
     packages:
@@ -122,16 +141,40 @@ export function buildCabinetPreviewData(
 
 /** Подмешивает реальный контент курса и цены из Sanity в dev-превью. */
 export async function enrichCabinetPreviewWithSanity(data: CabinetData): Promise<CabinetData> {
-  const [courseContent, cabinetPricing] = await Promise.all([
+  const [courseContent, cabinetPricing, summaries] = await Promise.all([
     getDistrictCourseContent().catch(() => null),
     getCabinetPricing().catch(() => data.cabinetPricing),
+    listDistrictCourseSummaries().catch(() => []),
   ]);
 
   const next: CabinetData = {
     ...data,
     courseContent,
     cabinetPricing,
+    dailyQuote: pickDailyCabinetQuote(cabinetPricing.quotes),
   };
+
+  if (summaries.length > 0) {
+    next.courseCatalogs = summaries.map((s, i) => ({
+      id: i + 1,
+      title: s.title,
+      slug: s.slug,
+      description: s.description,
+      cabinetEyebrow: s.cabinetEyebrow,
+      deliveryFormat: s.deliveryFormat,
+      homeworkIntro: s.homeworkIntro,
+      coverImageUrl: s.coverImageUrl,
+      previewImageUrl: s.previewImageUrl,
+      previewInsideItems: s.previewInsideItems,
+      previewAfterEnrollment: s.previewAfterEnrollment,
+      previewAudience: s.previewAudience,
+      sanityId: s.sanityId,
+      curatorName: s.curatorName,
+      totalLessons: s.totalLessons || s.modulePreviews.reduce((sum, m) => sum + m.count, 0),
+      modulesCount: s.moduleCount || s.modulePreviews.length,
+      modulePreviews: s.modulePreviews,
+    }));
+  }
 
   if (courseContent?.modules.length) {
     next.courseModules = mapContentToCourseModules(courseContent);
@@ -155,6 +198,7 @@ export async function enrichCabinetPreviewWithSanity(data: CabinetData): Promise
         (sum, m) => sum + m.lessons.filter((l) => l.publicationStatus === 'published').length,
         0,
       ),
+      modulesCount: courseContent.modules.length,
       modulePreviews: courseContent.modules.map((m) => {
         const visibleLessons = m.lessons.filter((l) => l.publicationStatus !== 'archived');
         return {
@@ -167,6 +211,9 @@ export async function enrichCabinetPreviewWithSanity(data: CabinetData): Promise
         };
       }),
     };
+    if (!next.courseCatalogs.some((c) => c.slug === next.courseCatalog!.slug)) {
+      next.courseCatalogs = [next.courseCatalog, ...next.courseCatalogs];
+    }
   }
 
   return next;

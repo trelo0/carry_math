@@ -53,10 +53,12 @@ import {
 } from '@/lib/bot/roles';
 import {
   beginCourseApplication,
+  handleCourseApplyCallback,
   handleCourseApplyContact,
   handleCourseApplyPhoneMessage,
   tryCompleteCourseApplyAfterExternalLink,
 } from '@/lib/bot/courseApplyFlow';
+import { parseLeadApplyStartParam } from '@/lib/lead-apply-link';
 import { handlePrivilegedBotCommands } from '@/lib/bot/privilegedCommands';
 import { linkTelegramToPhone } from '@/lib/bot/telegram-account-link';
 import { isAccessProduct } from '@/lib/bot/accesses';
@@ -69,7 +71,7 @@ import {
   sendClientStart,
 } from '@/lib/bot/client-flow';
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
-import { handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
+import { beginClientLeadForm, handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
 import {
   handleClientTrialPayCallback,
   handleTrialPayDeepLink,
@@ -215,6 +217,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    // /start lead_it_kristina — заявка с /individual (формат + intent + препод).
+    if (startSource && update.message?.chat && update.message.from) {
+      const leadApply = parseLeadApplyStartParam(startSource);
+      if (leadApply) {
+        await ensureMember(
+          admin,
+          update.message.from.id,
+          memberPatch(update.message.from, update.message.chat.id),
+        );
+        await beginClientLeadForm(admin, update.message.from.id, update.message.chat.id, {
+          format: leadApply.format,
+          intent: leadApply.intent,
+          teacherId: leadApply.teacherId,
+          teacherLocked: Boolean(leadApply.teacherId),
+        });
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     if (startSource && update.message?.chat && update.message.from) {
       const trialPayId = parseTrialPayStart(startSource);
       if (trialPayId) {
@@ -321,8 +342,40 @@ export async function POST(request: Request) {
     }
 
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
+    // Не перехватываем известные deep-link префиксы (lead_/pay_/course_/… уже обработаны выше).
     if (update.message?.text?.startsWith('/start ') && update.message.chat) {
       const token = update.message.text.slice('/start '.length).trim();
+      const knownDeepLink =
+        token.startsWith('lead_') ||
+        token.startsWith('pay_') ||
+        token.startsWith('hw_') ||
+        token.startsWith('course_') ||
+        token === 'course_apply' ||
+        token === 'support' ||
+        token === 'mentor' ||
+        token === 'mentor_course' ||
+        token === 'mentor_hw' ||
+        AD_START_SOURCES.includes(token);
+
+      if (knownDeepLink) {
+        if (update.message.from) {
+          const member = await ensureMember(
+            admin,
+            update.message.from.id,
+            memberPatch(update.message.from, update.message.chat.id),
+          );
+          const role = resolveEffectiveRoleWithFooter(member, update.message.from.id).role;
+          if (usesClientBotUi(role)) {
+            await sendClientStart(admin, update.message.from.id, update.message.chat.id, {
+              memberRole: member.role,
+            });
+          } else {
+            await renderMainMenu(update.message.chat.id);
+          }
+        }
+        return NextResponse.json({ ok: true });
+      }
+
       if (update.message.from) {
         await ensureMember(
           admin,
@@ -972,6 +1025,16 @@ export async function POST(request: Request) {
         );
         if (rescheduleHandled) return NextResponse.json({ ok: true });
       }
+
+      const courseApplyCallbackHandled = await handleCourseApplyCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (courseApplyCallbackHandled) return NextResponse.json({ ok: true });
 
       const purchaseHandled = await handleStudentPurchaseCallback(
         admin,

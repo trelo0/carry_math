@@ -63,6 +63,37 @@ export type CourseModuleContent = {
   lessons: CourseLessonContent[];
 };
 
+/** Карточка «Что внутри» в превью курса. */
+export type CoursePreviewInsideItem = {
+  title: string;
+  description: string | null;
+};
+
+function normalizePreviewInsideItems(raw: unknown): CoursePreviewInsideItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CoursePreviewInsideItem[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const title = item.trim();
+      if (title) out.push({ title, description: null });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const row = item as { title?: unknown; description?: unknown; text?: unknown };
+    const title =
+      (typeof row.title === 'string' && row.title.trim()) ||
+      (typeof row.text === 'string' && row.text.trim()) ||
+      '';
+    if (!title) continue;
+    const description =
+      typeof row.description === 'string' && row.description.trim()
+        ? row.description.trim()
+        : null;
+    out.push({ title, description });
+  }
+  return out;
+}
+
 export type DistrictCourseContent = {
   sanityId: string;
   title: string;
@@ -73,12 +104,32 @@ export type DistrictCourseContent = {
   homeworkIntro: string | null;
   coverImageUrl: string | null;
   previewImageUrl: string | null;
-  previewInsideItems: string[];
+  previewInsideItems: CoursePreviewInsideItem[];
   previewAfterEnrollment: string | null;
   previewAudience: string | null;
   publicationStatus: SanityPublicationStatus;
   curatorName: string | null;
+  /** Telegram ID куратора этого курса (Sanity). */
+  curatorTelegramId: number | null;
+  /** Цена оплаты в кабинете (BYN). */
+  priceByn: number | null;
+  /** Сколько занятий выдаётся после оплаты. */
+  grantedLessons: number | null;
+  /** Текст на карточке оплаты. */
+  pricingCardText: string | null;
   modules: CourseModuleContent[];
+};
+
+/** Карточка оффера курса для раздела оплат / checkout. */
+export type CoursePaymentOffer = {
+  sanityId: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  /** Текст карточки оплаты (отдельно от описания курса). */
+  cardText: string | null;
+  priceByn: number;
+  grantedLessons: number;
 };
 
 type FetchOptions = { preview?: boolean; includeDrafts?: boolean };
@@ -153,10 +204,34 @@ const MODULE_FIELDS = groq`{
   description,
   color,
   sortOrder,
-  "lessons": lessons[]->${LESSON_FIELDS}
+  "lessons": *[_type == "districtCourseLesson" && module._ref == ^._id] | order(moduleOrder asc) ${LESSON_FIELDS}
 }`;
 
 const COURSE_CONTENT_QUERY = groq`*[_type == "districtCourse" && (slug.current == $slug || _id == $docId)][0]{
+  "sanityId": _id,
+  title,
+  "slug": slug.current,
+  description,
+  cabinetEyebrow,
+  deliveryFormat,
+  homeworkIntro,
+  publicationStatus,
+  priceByn,
+  grantedLessons,
+  pricing,
+  "coverImageUrl": coverImage.asset->url,
+  "previewImageUrl": coalesce(cabinetPreviewImage.asset->url, coverImage.asset->url),
+  cabinetPreviewInside,
+  cabinetPreviewAfterEnrollment,
+  cabinetPreviewAudience,
+  "curatorName": curator->name,
+  curatorTelegramId,
+  "modulesFromCourse": modules[]->${MODULE_FIELDS},
+  "modulesFromRefs": *[_type == "districtModule" && course._ref == ^._id] | order(sortOrder asc) ${MODULE_FIELDS}
+}`;
+
+/** Лёгкий список курсов для переключателя — счётчики без выгрузки всех уроков. */
+const COURSE_SUMMARIES_QUERY = groq`*[_type == "districtCourse" && defined(slug.current)] | order(title asc) {
   "sanityId": _id,
   title,
   "slug": slug.current,
@@ -171,9 +246,52 @@ const COURSE_CONTENT_QUERY = groq`*[_type == "districtCourse" && (slug.current =
   cabinetPreviewAfterEnrollment,
   cabinetPreviewAudience,
   "curatorName": curator->name,
-  "modulesFromCourse": modules[]->${MODULE_FIELDS},
-  "modulesFromRefs": *[_type == "districtModule" && course._ref == ^._id] | order(sortOrder asc) ${MODULE_FIELDS}
+  curatorTelegramId,
+  "moduleCount": count(coalesce(modules, *[_type == "districtModule" && course._ref == ^._id])),
+  "totalLessons": count(*[_type == "districtCourseLesson" && (
+    module._ref in coalesce(modules[]._ref, []) ||
+    module->course._ref == ^._id
+  ) && publicationStatus != "archived"])
 }`;
+
+const COURSE_OFFERS_QUERY = groq`*[_type == "districtCourse" && defined(slug.current) && (
+  (defined(pricing.priceByn) && pricing.priceByn >= 0 && defined(pricing.grantedLessons) && pricing.grantedLessons > 0) ||
+  (defined(priceByn) && priceByn >= 0 && defined(grantedLessons) && grantedLessons > 0)
+)] | order(title asc) {
+  "sanityId": _id,
+  title,
+  "slug": slug.current,
+  description,
+  pricing,
+  priceByn,
+  grantedLessons
+}`;
+
+function resolveCoursePricing(raw: {
+  pricing?: { priceByn?: number; grantedLessons?: number; cardText?: string | null } | null;
+  priceByn?: number;
+  grantedLessons?: number;
+}): { priceByn: number | null; grantedLessons: number | null; cardText: string | null } {
+  const nested = raw.pricing;
+  const price =
+    typeof nested?.priceByn === 'number' && Number.isFinite(nested.priceByn)
+      ? nested.priceByn
+      : typeof raw.priceByn === 'number' && Number.isFinite(raw.priceByn)
+        ? raw.priceByn
+        : null;
+  const lessons =
+    typeof nested?.grantedLessons === 'number' &&
+    Number.isFinite(nested.grantedLessons) &&
+    nested.grantedLessons > 0
+      ? Math.floor(nested.grantedLessons)
+      : typeof raw.grantedLessons === 'number' &&
+          Number.isFinite(raw.grantedLessons) &&
+          raw.grantedLessons > 0
+        ? Math.floor(raw.grantedLessons)
+        : null;
+  const cardText = nested?.cardText?.trim() || null;
+  return { priceByn: price, grantedLessons: lessons, cardText };
+}
 
 function normalizeLesson(raw: Record<string, unknown> | null): CourseLessonContent | null {
   if (!raw?.sanityId || !raw.title) return null;
@@ -343,6 +461,14 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     })
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
+  const pricing = resolveCoursePricing(
+    raw as {
+      pricing?: { priceByn?: number; grantedLessons?: number; cardText?: string | null } | null;
+      priceByn?: number;
+      grantedLessons?: number;
+    },
+  );
+
   return {
     sanityId: raw.sanityId as string,
     title: raw.title as string,
@@ -353,11 +479,18 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     homeworkIntro: (raw.homeworkIntro as string | null) ?? null,
     coverImageUrl: (raw.coverImageUrl as string | null) ?? null,
     previewImageUrl: (raw.previewImageUrl as string | null) ?? null,
-    previewInsideItems: ((raw.cabinetPreviewInside as string[] | null) ?? []).filter(Boolean),
+    previewInsideItems: normalizePreviewInsideItems(raw.cabinetPreviewInside),
     previewAfterEnrollment: (raw.cabinetPreviewAfterEnrollment as string | null) ?? null,
     previewAudience: (raw.cabinetPreviewAudience as string | null) ?? null,
     publicationStatus: (raw.publicationStatus as SanityPublicationStatus) ?? 'draft',
     curatorName: (raw.curatorName as string | null) ?? null,
+    curatorTelegramId:
+      typeof raw.curatorTelegramId === 'number' && Number.isFinite(raw.curatorTelegramId)
+        ? (raw.curatorTelegramId as number)
+        : null,
+    priceByn: pricing.priceByn,
+    grantedLessons: pricing.grantedLessons,
+    pricingCardText: pricing.cardText,
     modules,
   };
 }
@@ -412,13 +545,134 @@ export const getDistrictCourseContent = cache(async function getDistrictCourseCo
   options: FetchOptions = {},
 ): Promise<DistrictCourseContent | null> {
   const client = getClient(options);
+  const docId = slug === DISTRICT_COURSE_SLUG ? DISTRICT_COURSE_DOC_ID : `districtCourse.${slug}`;
   const raw = await client.fetch<Record<string, unknown> | null>(
     COURSE_CONTENT_QUERY,
-    { slug, docId: DISTRICT_COURSE_DOC_ID },
+    { slug, docId },
     getSanityFetchOptions(options),
   );
   return normalizeCourse(raw);
 });
+
+export type DistrictCourseSummary = {
+  sanityId: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  cabinetEyebrow: string | null;
+  deliveryFormat: string | null;
+  homeworkIntro: string | null;
+  publicationStatus: SanityPublicationStatus;
+  coverImageUrl: string | null;
+  previewImageUrl: string | null;
+  previewInsideItems: CoursePreviewInsideItem[];
+  previewAfterEnrollment: string | null;
+  previewAudience: string | null;
+  curatorName: string | null;
+  curatorTelegramId: number | null;
+  moduleCount: number;
+  totalLessons: number;
+  modulePreviews: {
+    name: string;
+    about: string;
+    count: number;
+    color: string;
+    period: string | null;
+    lessons: { title: string }[];
+  }[];
+};
+
+/** Лёгкий список всех курсов для переключателя в кабинете. */
+export const listDistrictCourseSummaries = cache(async function listDistrictCourseSummaries(
+  options: FetchOptions = {},
+): Promise<DistrictCourseSummary[]> {
+  const client = getClient(options);
+  const rows = await client.fetch<Record<string, unknown>[]>(
+    COURSE_SUMMARIES_QUERY,
+    {},
+    getSanityFetchOptions(options),
+  );
+
+  const out: DistrictCourseSummary[] = [];
+  for (const raw of rows ?? []) {
+    if (!raw?.sanityId || !raw.title || !raw.slug) continue;
+    out.push({
+      sanityId: raw.sanityId as string,
+      title: raw.title as string,
+      slug: raw.slug as string,
+      description: (raw.description as string | null) ?? null,
+      cabinetEyebrow: (raw.cabinetEyebrow as string | null) ?? null,
+      deliveryFormat: (raw.deliveryFormat as string | null) ?? null,
+      homeworkIntro: (raw.homeworkIntro as string | null) ?? null,
+      publicationStatus: (raw.publicationStatus as SanityPublicationStatus) ?? 'draft',
+      coverImageUrl: (raw.coverImageUrl as string | null) ?? null,
+      previewImageUrl: (raw.previewImageUrl as string | null) ?? null,
+      previewInsideItems: normalizePreviewInsideItems(raw.cabinetPreviewInside),
+      previewAfterEnrollment: (raw.cabinetPreviewAfterEnrollment as string | null) ?? null,
+      previewAudience: (raw.cabinetPreviewAudience as string | null) ?? null,
+      curatorName: (raw.curatorName as string | null) ?? null,
+      curatorTelegramId:
+        typeof raw.curatorTelegramId === 'number' && Number.isFinite(raw.curatorTelegramId)
+          ? (raw.curatorTelegramId as number)
+          : null,
+      moduleCount:
+        typeof raw.moduleCount === 'number' && Number.isFinite(raw.moduleCount)
+          ? Math.max(0, Math.floor(raw.moduleCount as number))
+          : 0,
+      totalLessons:
+        typeof raw.totalLessons === 'number' && Number.isFinite(raw.totalLessons)
+          ? Math.max(0, Math.floor(raw.totalLessons as number))
+          : 0,
+      // Детали модулей — у активного курса через getDistrictCourseContent.
+      modulePreviews: [],
+    });
+  }
+  return out;
+});
+
+/** Курсы с ценой и числом занятий — карточки оплаты в кабинете. */
+export const listCoursePaymentOffers = cache(async function listCoursePaymentOffers(
+  options: FetchOptions = {},
+): Promise<CoursePaymentOffer[]> {
+  const client = getClient(options);
+  const rows = await client.fetch<
+    {
+      sanityId?: string;
+      slug?: string;
+      title?: string;
+      description?: string | null;
+      pricing?: { priceByn?: number; grantedLessons?: number; cardText?: string | null } | null;
+      priceByn?: number;
+      grantedLessons?: number;
+    }[]
+  >(COURSE_OFFERS_QUERY, {}, getSanityFetchOptions(options));
+
+  const out: CoursePaymentOffer[] = [];
+  for (const row of rows ?? []) {
+    if (!row?.sanityId || !row.slug || !row.title) continue;
+    const pricing = resolveCoursePricing(row);
+    if (pricing.priceByn == null || pricing.priceByn < 0) continue;
+    if (pricing.grantedLessons == null || pricing.grantedLessons < 1) continue;
+    out.push({
+      sanityId: row.sanityId,
+      slug: row.slug,
+      title: row.title,
+      description: row.description ?? null,
+      cardText: pricing.cardText,
+      priceByn: pricing.priceByn,
+      grantedLessons: pricing.grantedLessons,
+    });
+  }
+  return out;
+});
+
+export async function getCoursePaymentOfferBySlug(
+  slug: string,
+  options: FetchOptions = {},
+): Promise<CoursePaymentOffer | null> {
+  const offers = await listCoursePaymentOffers(options);
+  return offers.find((o) => o.slug === slug) ?? null;
+}
 
 /** Плоский список уроков в порядке модулей. */
 export function flattenCourseLessons(content: DistrictCourseContent): CourseLessonContent[] {

@@ -76,7 +76,7 @@
     transparent 100%
   );
 
-  /* /individual — чуть светлее общего фона */
-  --subpage-bg: #1a4488;
-  --subpage-bg-soft: #1e4e96;
+  /* /individual — верх страницы ближе к #143263 */
+  --subpage-bg: #143263;
+  --subpage-bg-soft: #16386c;
 }

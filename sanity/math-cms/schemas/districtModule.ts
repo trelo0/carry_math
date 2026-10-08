@@ -40,10 +40,16 @@ export default defineType({
     defineField({
       name: 'lessons',
       title: 'Привязанные занятия',
-      description: 'Список формируется автоматически при добавлении занятий в модуль',
+      description:
+        'Служебный список. Чтобы удалить занятие, используйте кнопку «Удалить» у занятия — ссылка из модуля снимется автоматически.',
       type: 'array',
       readOnly: true,
-      of: [defineArrayMember({ type: 'reference', to: [{ type: 'districtCourseLesson' }] })],
+      of: [
+        defineArrayMember({
+          type: 'reference',
+          to: [{ type: 'districtCourseLesson' }],
+        }),
+      ],
     }),
     defineField({
       name: 'course',

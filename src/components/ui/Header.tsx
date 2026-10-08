@@ -72,7 +72,9 @@ export function Header({
   const [activeSection, setActiveSection] = useState<string>("hero");
 
   useEffect(() => {
-    const onScroll = () => {
+    let raf = 0;
+    const update = () => {
+      raf = 0;
       const scrollY = window.scrollY;
       setScrolled(scrollY > 10);
       const max = document.documentElement.scrollHeight - window.innerHeight;
@@ -80,19 +82,26 @@ export function Header({
 
       const offset = 90;
       let current: string = sectionIds[0];
-      sectionIds.forEach((id) => {
+      for (const id of sectionIds) {
         const el = document.getElementById(id);
-        if (!el) return;
+        if (!el) continue;
         if (el.getBoundingClientRect().top - offset <= 0) {
           current = id;
         }
-      });
+      }
       setActiveSection(current);
     };
+    const onScroll = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(update);
+    };
 
-    onScroll();
+    update();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
   }, [sectionIds]);
 
   useEffect(() => {

@@ -32,6 +32,11 @@ export type CabinetExamCountdown = {
   date: string;
 };
 
+export type CabinetQuote = {
+  text: string;
+  author: string;
+};
+
 export type CabinetPricing = {
   teachers: CabinetTeacher[];
   course: {
@@ -52,7 +57,34 @@ export type CabinetPricing = {
   achievements: CabinetAchievementDef[];
   /** Auto-назначение куратора при покупке курса. */
   defaultCuratorTelegramId: number | null;
+  /** Цитаты боковой панели кабинета (ротация по дням). */
+  quotes: CabinetQuote[];
 };
+
+export const DEFAULT_CABINET_QUOTES: CabinetQuote[] = [
+  { text: 'Главное — не идеальность, а регулярность.', author: 'District' },
+  { text: 'Каждая решённая задача — шаг к уверенности на экзамене.', author: 'District' },
+  { text: 'Ошибки — не провал, а карта того, что стоит подтянуть.', author: 'District' },
+  { text: 'Лучше 30 минут каждый день, чем 5 часов раз в неделю.', author: 'District' },
+  { text: 'Формулы запоминаются, когда ими пользуешься.', author: 'District' },
+  { text: 'Сложное становится простым, когда разбираешь его по шагам.', author: 'District' },
+  { text: 'Прогресс заметнее, если смотреть на путь, а не только на результат.', author: 'District' },
+  { text: 'Домашка — тренировка перед матчем, а не наказание.', author: 'District' },
+  { text: 'Спроси, когда непонятно: так учатся быстрее.', author: 'District' },
+  { text: 'Сегодняшняя практика — завтрашние баллы.', author: 'District' },
+  { text: 'Не сравнивай себя с другими — сравнивай с собой вчерашним.', author: 'District' },
+  { text: 'План без действий — мечта. Действия без плана — хаос.', author: 'District' },
+  { text: 'Математика любит тех, кто возвращается к задачам снова.', author: 'District' },
+  { text: 'Один понятый приём экономит часы на экзамене.', author: 'District' },
+  { text: 'Дисциплина сегодня — спокойствие в день ЦТ.', author: 'District' },
+];
+
+export const DEFAULT_CABINET_ACHIEVEMENTS: CabinetAchievementDef[] = [
+  { title: 'Первый шаг', subtitle: 'Пройди диагностику', ruleKey: 'lesson_1' },
+  { title: 'Алгебра старт', subtitle: 'Посети 1 вебинар', ruleKey: 'lesson_1' },
+  { title: 'Геометр мастер', subtitle: 'Пройди 3 вебинара', ruleKey: 'webinar_3' },
+  { title: 'На пути к 100', subtitle: 'Набери 100 баллов', ruleKey: 'score_100' },
+];
 
 export const DEFAULT_CABINET_PRICING: CabinetPricing = {
   teachers: [
@@ -91,12 +123,8 @@ export const DEFAULT_CABINET_PRICING: CabinetPricing = {
     date: '2027-05-27',
   },
   defaultCuratorTelegramId: null,
-  achievements: [
-    { title: 'Первый шаг', subtitle: 'Пройди диагностику', ruleKey: 'lesson_1' },
-    { title: 'Алгебра старт', subtitle: 'Посети 1 вебинар', ruleKey: 'lesson_1' },
-    { title: 'Геометр мастер', subtitle: 'Пройди 3 вебинара', ruleKey: 'webinar_3' },
-    { title: 'На пути к 100', subtitle: 'Набери 100 баллов', ruleKey: 'score_100' },
-  ],
+  achievements: DEFAULT_CABINET_ACHIEVEMENTS,
+  quotes: DEFAULT_CABINET_QUOTES,
 };
 
 const CABINET_SETTINGS_QUERY = groq`*[_type == "cabinetSettings" && _id == "cabinetSettings"][0]{
@@ -107,10 +135,14 @@ const CABINET_SETTINGS_QUERY = groq`*[_type == "cabinetSettings" && _id == "cabi
   individualPackages[]{ name, savingsChip, prices[]{ teacherId, priceByn } },
   groupPackages[]{ name, savingsChip, prices[]{ teacherId, priceByn } },
   individualOffer{ description },
-  groupOffer{ description },
+  groupOffer{ description }
+}`;
+
+const CABINET_ASIDE_QUERY = groq`*[_type == "cabinetAsideSettings" && _id == "cabinetAsideSettings"][0]{
+  cabinetQuotes[]{ text, author },
+  achievements[]{ title, subtitle, ruleKey },
   examDate,
-  examLabel,
-  achievements[]{ title, subtitle, ruleKey }
+  examLabel
 }`;
 
 function mapLessonPackages(
@@ -156,8 +188,43 @@ function mapCourseOffer(raw: Record<string, unknown> | null): CabinetCourseOffer
   return DEFAULT_CABINET_PRICING.course.offer;
 }
 
-function normalize(raw: Record<string, unknown> | null): CabinetPricing {
-  if (!raw) return DEFAULT_CABINET_PRICING;
+function mapQuotes(raw: { text?: string; author?: string }[] | null | undefined): CabinetQuote[] {
+  const quotes = (raw ?? [])
+    .filter((q) => typeof q?.text === 'string' && q.text.trim())
+    .map((q) => ({
+      text: q.text!.trim(),
+      author: (q.author?.trim() || 'District') as string,
+    }));
+  return quotes.length > 0 ? quotes : DEFAULT_CABINET_QUOTES;
+}
+
+function mapAchievements(
+  raw: { title?: string; subtitle?: string; ruleKey?: string }[] | null | undefined,
+): CabinetAchievementDef[] {
+  const achievements = (raw ?? [])
+    .filter((item) => item?.title && item?.subtitle && item?.ruleKey)
+    .map((item) => ({
+      title: item.title as string,
+      subtitle: item.subtitle as string,
+      ruleKey: item.ruleKey as CabinetAchievementRuleKey,
+    }));
+  return achievements.length > 0 ? achievements : DEFAULT_CABINET_ACHIEVEMENTS;
+}
+
+function mapExam(aside: Record<string, unknown> | null): CabinetExamCountdown | null {
+  const examDate = typeof aside?.examDate === 'string' ? aside.examDate : null;
+  const examLabel =
+    typeof aside?.examLabel === 'string' && aside.examLabel.trim()
+      ? aside.examLabel.trim()
+      : DEFAULT_CABINET_PRICING.exam?.label ?? 'До ЦТ по математике';
+  return examDate ? { label: examLabel, date: examDate } : DEFAULT_CABINET_PRICING.exam;
+}
+
+function normalizePricing(raw: Record<string, unknown> | null): Omit<CabinetPricing, 'quotes' | 'achievements' | 'exam'> {
+  if (!raw) {
+    const { quotes: _q, achievements: _a, exam: _e, ...rest } = DEFAULT_CABINET_PRICING;
+    return rest;
+  }
 
   const teachers = ((raw.teachers as { teacherId?: string; name?: string; telegramId?: number }[] | null) ?? [])
     .filter((t) => t?.teacherId && t?.name)
@@ -180,20 +247,6 @@ function normalize(raw: Record<string, unknown> | null): CabinetPricing {
 
   const individualOffer = raw.individualOffer as { description?: string | null } | null | undefined;
   const groupOffer = raw.groupOffer as { description?: string | null } | null | undefined;
-  const examDate = typeof raw.examDate === 'string' ? raw.examDate : null;
-  const examLabel =
-    typeof raw.examLabel === 'string' && raw.examLabel.trim()
-      ? raw.examLabel.trim()
-      : DEFAULT_CABINET_PRICING.exam?.label ?? 'До ЦТ по математике';
-
-  const achievementsRaw = (raw.achievements as { title?: string; subtitle?: string; ruleKey?: string }[] | null) ?? [];
-  const achievements = achievementsRaw
-    .filter((item) => item?.title && item?.subtitle && item?.ruleKey)
-    .map((item) => ({
-      title: item.title as string,
-      subtitle: item.subtitle as string,
-      ruleKey: item.ruleKey as CabinetAchievementRuleKey,
-    }));
 
   return {
     teachers: resolvedTeachers,
@@ -215,10 +268,6 @@ function normalize(raw: Record<string, unknown> | null): CabinetPricing {
         groupOffer?.description?.trim() || DEFAULT_CABINET_PRICING.group.offerDescription,
       options: groupOptions.length > 0 ? groupOptions : DEFAULT_CABINET_PRICING.group.options,
     },
-    exam: examDate
-      ? { label: examLabel, date: examDate }
-      : DEFAULT_CABINET_PRICING.exam,
-    achievements: achievements.length > 0 ? achievements : DEFAULT_CABINET_PRICING.achievements,
     defaultCuratorTelegramId:
       typeof raw.defaultCuratorTelegramId === 'number' && Number.isFinite(raw.defaultCuratorTelegramId)
         ? raw.defaultCuratorTelegramId
@@ -226,14 +275,33 @@ function normalize(raw: Record<string, unknown> | null): CabinetPricing {
   };
 }
 
+/** Цитата дня: индекс = день года по кругу. */
+export function pickDailyCabinetQuote(quotes: CabinetQuote[], now = new Date()): CabinetQuote {
+  const list = quotes.length > 0 ? quotes : DEFAULT_CABINET_QUOTES;
+  const start = new Date(now.getFullYear(), 0, 0);
+  const dayOfYear = Math.floor((now.getTime() - start.getTime()) / 86_400_000);
+  return list[((dayOfYear % list.length) + list.length) % list.length]!;
+}
+
 export async function getCabinetPricing(): Promise<CabinetPricing> {
   const client = getSanityClient();
-  const raw = await client.fetch<Record<string, unknown> | null>(
-    CABINET_SETTINGS_QUERY,
-    {},
-    { cache: 'no-store' },
-  );
-  return normalize(raw);
+  const [pricingRaw, asideRaw] = await Promise.all([
+    client.fetch<Record<string, unknown> | null>(CABINET_SETTINGS_QUERY, {}, { cache: 'no-store' }),
+    client.fetch<Record<string, unknown> | null>(CABINET_ASIDE_QUERY, {}, { cache: 'no-store' }),
+  ]);
+
+  const pricing = normalizePricing(pricingRaw);
+  return {
+    ...pricing,
+    quotes: mapQuotes(
+      (asideRaw?.cabinetQuotes as { text?: string; author?: string }[] | null) ?? null,
+    ),
+    achievements: mapAchievements(
+      (asideRaw?.achievements as { title?: string; subtitle?: string; ruleKey?: string }[] | null) ??
+        null,
+    ),
+    exam: mapExam(asideRaw),
+  };
 }
 
 export function priceForTeacher(

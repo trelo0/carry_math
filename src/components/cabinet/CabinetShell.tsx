@@ -4,7 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import type { CabinetCourseProgress, CabinetData, CabinetCourseCatalog, CabinetCourseModulePreview, CabinetCourseStop, CourseCabinetState } from '@/lib/cabinet';
+import type {
+  CabinetCourseProgress,
+  CabinetCourseViewSlice,
+  CabinetData,
+  CabinetCourseCatalog,
+  CabinetCourseModulePreview,
+  CabinetCourseStop,
+  CourseCabinetState,
+} from '@/lib/cabinet';
 import CourseCabinetGate from '@/components/cabinet/CourseCabinetGate';
 import {
   buildModulesFromCatalogPreviews,
@@ -99,7 +107,8 @@ function packagesHref(): string {
   return '/cabinet?section=payments';
 }
 
-function checkoutHref(): string {
+function checkoutHref(courseSlug?: string): string {
+  if (courseSlug) return `/cabinet/checkout?product=course&course=${encodeURIComponent(courseSlug)}`;
   return '/cabinet/checkout?product=course';
 }
 
@@ -140,12 +149,15 @@ const ICONS: Record<string, string> = {
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
   send: 'M22 2 11 13 M22 2 15 22l-4-9-9-4 20-7z',
   check: 'M4 12.5 9.5 18 20 6.5',
+  x: 'M6 6l12 12 M18 6 6 18',
   lock: 'M6 11h12v10H6V11z M9 11V8a3 3 0 0 1 6 0v3',
   trophy: 'M8 4h8v6a4 4 0 0 1-8 0V4z M8 5H4.5a3 3 0 0 0 3.5 4 M16 5h3.5a3 3 0 0 1-3.5 4 M12 14v4 M8 21h8 M10 18h4',
   play: 'M9 6.5v11l9-5.5-9-5.5z',
   file: 'M6 2h9l5 5v15H6V2z M14 2v6h6',
   download: 'M12 3v11 M7 10l5 5 5-5 M4 20h16',
   chevron: 'm9 5 7 7-7 7',
+  chevronLeft: 'm15 5-7 7 7 7',
+  star: 'M12 3.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 15.6 7.2 18.1l.9-5.4L4.2 8.9l5.4-.8L12 3.2z',
   back: 'M19 12H5 M11 18l-6-6 6-6',
   users: 'M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M2 19a5 5 0 0 1 10 0 M17 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 19a5 5 0 0 1 10 0',
   edit: 'M4 20h4L20 8l-4-4L4 16v4z M13 6l4 4',
@@ -157,7 +169,9 @@ const ICONS: Record<string, string> = {
   expand: 'M8 3H3v5 M16 3h5v5 M8 21H3v-5 M16 21h5v-5',
   compass: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z M12 6v5l3.5 2 M12 2v2 M12 20v2 M2 12h2 M20 12h2',
   shield: 'M12 2 4 5v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V5l-8-3z M9 12l2 2 4-4',
-  spark: 'M12 2l1.2 4.8L18 8l-4.8 1.2L12 14l-1.2-4.8L6 8l4.8-1.2L12 2z',
+  spark: 'M12 2.5 14.8 9.2 21.5 12 14.8 14.8 12 21.5 9.2 14.8 2.5 12 9.2 9.2 Z',
+  brain:
+    'M9.5 5.2C8 5.5 7 6.8 7 8.4c-1.4.3-2.5 1.5-2.5 3.1 0 1.2.6 2.2 1.5 2.8-.2.5-.3 1.1-.3 1.7 0 2.2 1.7 3.5 3.8 3.5h4.9c2.1 0 3.8-1.3 3.8-3.5 0-.6-.1-1.2-.3-1.7.9-.6 1.5-1.6 1.5-2.8 0-1.6-1.1-2.8-2.5-3.1 0-1.6-1-2.9-2.5-3.2-.7-.8-1.8-1.3-3-1.3-1.1 0-2.1.4-2.9 1.1z M9.2 10.5v4.2 M14.8 10.5v4.2 M12 9.2v6.2',
   feather: 'M20 4.5C14 10 10 14 6.5 20L4 21l1-2.5C10.5 14 14 10 20 4.5z',
   screen: 'M3 4h18v11H3V4z M12 15v4 M8 21h8 M7 8h7 M7 11h5',
   flask: 'M9 3h6 M10 3v6.5L5.6 17A2 2 0 0 0 7.4 20h9.2a2 2 0 0 0 1.8-3L14 9.5V3 M7.8 14h8.4',
@@ -423,14 +437,6 @@ function CourseMap({
   const geometry = useMemo(() => buildRoadmapGeometry(stops, modules.length), [stops, modules.length]);
   const nowIndex = locked ? -1 : stops.findIndex((s) => s.status === 'now');
 
-  if (stops.length === 0) {
-    return (
-      <div className="cab-roadmap-frame">
-        <ComingSoon text="Программа курса скоро появится. Если вы куратор — проверьте, что уроки опубликованы в Sanity." />
-      </div>
-    );
-  }
-
   const syncThumb = useCallback(() => {
     const wrap = wrapRef.current;
     if (!wrap || wrap.scrollWidth <= wrap.clientWidth) {
@@ -444,13 +450,14 @@ function CourseMap({
   }, []);
 
   useEffect(() => {
+    if (stops.length === 0) return;
     const raf = requestAnimationFrame(syncThumb);
     window.addEventListener('resize', syncThumb);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', syncThumb);
     };
-  }, [syncThumb]);
+  }, [syncThumb, stops.length]);
 
   const jumpTo = (clientX: number) => {
     const track = trackRef.current;
@@ -463,6 +470,7 @@ function CourseMap({
   };
 
   useEffect(() => {
+    if (stops.length === 0) return;
     const wrap = wrapRef.current;
     const el = wrap?.querySelector<HTMLElement>(`[data-stop="${selected}"] .cab-rm-node`);
     if (!wrap || !el) return;
@@ -483,7 +491,15 @@ function CourseMap({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [selected]);
+  }, [selected, stops.length]);
+
+  if (stops.length === 0) {
+    return (
+      <div className="cab-roadmap-frame">
+        <ComingSoon text="Программа курса скоро появится. Если вы куратор — проверьте, что уроки опубликованы в Sanity." />
+      </div>
+    );
+  }
 
   return (
     <div className={`cab-roadmap-frame${locked ? ' is-locked' : ''}`}>
@@ -712,170 +728,272 @@ const MODULE_STATUS_LABELS: Record<'current' | 'done' | 'locked' | 'empty', stri
   empty: '—',
 };
 
-/* Переключатель курсов — появляется, когда курсов больше одного. */
+const COURSE_TONES = [
+  { accent: '#38c6ff', soft: 'rgba(56, 198, 255, 0.14)', border: 'rgba(56, 198, 255, 0.42)' },
+  { accent: '#ff9a2e', soft: 'rgba(255, 154, 46, 0.14)', border: 'rgba(255, 154, 46, 0.42)' },
+  { accent: '#8b7cff', soft: 'rgba(139, 124, 255, 0.14)', border: 'rgba(139, 124, 255, 0.42)' },
+  { accent: '#3dd68c', soft: 'rgba(61, 214, 140, 0.14)', border: 'rgba(61, 214, 140, 0.42)' },
+] as const;
+
+function courseToneAt(index: number) {
+  return COURSE_TONES[((index % COURSE_TONES.length) + COURSE_TONES.length) % COURSE_TONES.length]!;
+}
+
+type SwitcherCourse = {
+  id: number;
+  slug: string;
+  title: string;
+  modulesCount: number;
+  purchased: boolean;
+};
+
+/* Переключатель «Доступные курсы» — карусель всех курсов каталога. */
 function CourseSwitcher({
   courses,
   activeId,
+  loading,
   onSelect,
 }: {
-  courses: { id: number; title: string }[];
+  courses: SwitcherCourse[];
   activeId: number | null;
-  onSelect: (id: number) => void;
+  loading?: boolean;
+  onSelect: (course: SwitcherCourse) => void;
 }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   if (courses.length < 2) return null;
+
+  const scrollByCard = (dir: -1 | 1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const card = el.querySelector<HTMLElement>('.cab-mycourses-card');
+    const step = (card?.offsetWidth ?? 220) + 12;
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+  };
+
   return (
-    <div className="cab-course-switch" role="tablist" aria-label="Курс">
-      {courses.map((c) => (
+    <div className={`cab-mycourses${loading ? ' is-loading' : ''}`} aria-label="Доступные курсы">
+      <div className="cab-mycourses-label">
+        <span className="cab-mycourses-label-ico" aria-hidden="true">
+          <Icon d={ICONS.cap} />
+        </span>
+        <span className="cab-mycourses-label-text">Доступные курсы</span>
+        <span className="cab-mycourses-count">{courses.length}</span>
+      </div>
+
+      <div className="cab-mycourses-rail">
         <button
-          key={c.id}
           type="button"
-          role="tab"
-          aria-selected={c.id === activeId}
-          className={`cab-course-switch-btn${c.id === activeId ? ' is-active' : ''}`}
-          onClick={() => onSelect(c.id)}
+          className="cab-mycourses-arrow"
+          aria-label="Предыдущий курс"
+          onClick={() => scrollByCard(-1)}
         >
-          <Icon d={ICONS.course} className="cab-course-switch-ico" />
-          {c.title}
+          <Icon d={ICONS.chevronLeft} />
         </button>
-      ))}
+
+        <div className="cab-mycourses-scroller" ref={scrollerRef} role="tablist">
+          {courses.map((c, index) => {
+            const active = c.id === activeId;
+            return (
+              <button
+                key={c.slug || c.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                disabled={loading && !active}
+                className={`cab-mycourses-card${active ? ' is-active' : ''}${c.purchased ? ' is-owned' : ''}`}
+                onClick={() => onSelect(c)}
+              >
+                <span className="cab-mycourses-card-ico" aria-hidden="true">
+                  <Icon d={index % 2 === 0 ? ICONS.course : ICONS.compass} />
+                </span>
+                <span className="cab-mycourses-card-copy">
+                  <strong>{c.title}</strong>
+                  <em>
+                    {c.modulesCount > 0
+                      ? `${c.modulesCount} ${
+                          c.modulesCount === 1 ? 'модуль' : c.modulesCount < 5 ? 'модуля' : 'модулей'
+                        }`
+                      : 'Программа'}
+                  </em>
+                </span>
+                <span className="cab-mycourses-card-dot" aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          className="cab-mycourses-arrow"
+          aria-label="Следующий курс"
+          onClick={() => scrollByCard(1)}
+        >
+          <Icon d={ICONS.chevron} />
+        </button>
+      </div>
     </div>
   );
 }
 
-/* Preview курса для пользователя без enrollment (состояние №1). */
+/* Preview курса — layout как на референсе: hero split + о курсе + программа. */
 function CoursePreviewPanel({
   catalog,
   coverUrl,
+  toneIndex = 0,
   onEnrollClick,
 }: {
   catalog: CabinetCourseCatalog | null;
   coverUrl: string | null;
+  toneIndex?: number;
   onEnrollClick: () => void;
 }) {
+  const tone = courseToneAt(toneIndex);
   const [openModule, setOpenModule] = useState<number | null>(null);
-  const title = catalog?.title ?? null;
-  const headline = catalog?.cabinetEyebrow ?? null;
-  const description = catalog?.description ?? null;
+  const title = catalog?.title?.trim() || null;
+  const headline = catalog?.cabinetEyebrow?.trim() || null;
+  const description = catalog?.description?.trim() || null;
   const modules = catalog?.modulePreviews?.length ? catalog.modulePreviews : [];
   const totalLessons = catalog?.totalLessons || modules.reduce((sum, m) => sum + m.count, 0);
-  const teacherName = catalog?.curatorName ?? null;
-  const coverImage = catalog?.coverImageUrl ?? coverUrl ?? null;
-  const courseItems = sanityList(catalog?.previewAfterEnrollment ?? null);
-  const audienceItems = sanityList(catalog?.previewAudience ?? null);
+  const teacherName = catalog?.curatorName?.trim() || null;
+  const delivery = catalog?.deliveryFormat?.trim() || null;
+  const coverImage =
+    catalog?.coverImageUrl ?? catalog?.previewImageUrl ?? coverUrl ?? null;
+  const insideItems = (catalog?.previewInsideItems ?? []).filter((item) => item.title.trim());
+  const featureIcons = [ICONS.target, ICONS.brain, ICONS.shield, ICONS.star];
+  const featureColors = ['#3ec6ff', '#7ec8ff', '#34d399', '#5ad0ff'];
 
-  const facts: { icon: string; value: string; label: string }[] = [
-    { icon: ICONS.schedule, value: String(totalLessons || '—'), label: 'занятия' },
-    { icon: ICONS.course, value: String(modules.length || '—'), label: 'модулей' },
-    { icon: ICONS.screen, value: sanityText(catalog?.deliveryFormat), label: 'формат' },
-    { icon: ICONS.users, value: sanityText(teacherName), label: 'преподаватель' },
-  ];
+  const meta = [
+    modules.length > 0
+      ? { icon: ICONS.course, label: `${modules.length} ${modules.length === 1 ? 'модуль' : modules.length < 5 ? 'модуля' : 'модулей'}` }
+      : null,
+    totalLessons > 0
+      ? { icon: ICONS.schedule, label: `${totalLessons} ${pluralLessons(totalLessons)}` }
+      : null,
+    delivery ? { icon: ICONS.screen, label: delivery } : null,
+    teacherName ? { icon: ICONS.users, label: teacherName } : null,
+  ].filter(Boolean) as { icon: string; label: string }[];
 
   return (
-    <div className="cab-cpv">
-      <div className="cab-cpv-top">
+    <div
+      className="cab-cpv"
+      style={
+        {
+          ['--cab-course-accent']: tone.accent,
+          ['--cab-course-soft']: tone.soft,
+          ['--cab-course-border']: tone.border,
+        } as CSSProperties
+      }
+    >
+      <section className={`cab-cpv-hero${coverImage ? ' has-cover' : ''}`}>
         <div
-          className={`cab-cpv-hero${coverImage ? ' cab-cpv-hero--cover' : ' cab-panel'}`}
+          className="cab-cpv-hero-media"
           style={coverImage ? ({ ['--cab-cpv-cover']: `url("${coverImage}")` } as CSSProperties) : undefined}
-        >
-          <section className="cab-cpv-intro">
-            <span className="cab-k">{sanityText(title)}</span>
-            <h2>{sanityText(headline)}</h2>
-            <p>{sanityText(description)}</p>
-            <button type="button" className="cab-btn cab-btn--join cab-cpv-cta" onClick={onEnrollClick}>
-              Посмотреть карту курса <Icon d={ICONS.chevron} />
-            </button>
-          </section>
-        </div>
-
-        <ul className="cab-panel cab-cpv-facts">
-          {facts.map((f) => (
-            <li key={f.label}>
-              <Icon d={f.icon} />
-              <span>
-                <b>{f.value}</b>
-                <em>{f.label}</em>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="cab-cpv-bottom">
-        <div className="cab-cpv-duo">
-          <section className="cab-panel cab-cpv-card">
-            <header className="cab-cpv-card-head">
-              <Icon d={ICONS.shield} />
-              <h3>Что будет на курсе</h3>
-            </header>
-            <ul className="cab-cpv-list">
-              {courseItems.map((item) => (
-                <li key={item}>
-                  <Icon d={ICONS.check} />
-                  {item}
+          aria-hidden="true"
+        />
+        <div className="cab-cpv-hero-copy">
+          {title ? <span className="cab-cpv-kicker">{title}</span> : null}
+          <h2>{sanityText(headline || title)}</h2>
+          {description ? <p className="cab-cpv-lead">{description}</p> : null}
+          {meta.length > 0 ? (
+            <ul className="cab-cpv-meta">
+              {meta.map((item) => (
+                <li key={item.label}>
+                  <Icon d={item.icon} />
+                  <span>{item.label}</span>
                 </li>
               ))}
             </ul>
-          </section>
-
-          <section className="cab-panel cab-cpv-card">
-            <header className="cab-cpv-card-head">
-              <Icon d={ICONS.users} />
-              <h3>Кому подойдёт</h3>
-            </header>
-            <ul className="cab-cpv-list">
-              {audienceItems.map((item) => (
-                <li key={item}>
-                  <Icon d={ICONS.check} />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </section>
+          ) : null}
+          <button type="button" className="cab-cpv-cta" onClick={onEnrollClick}>
+            Открыть курс
+            <Icon d={ICONS.chevron} />
+          </button>
         </div>
+      </section>
 
-        <section className="cab-panel cab-cpv-card cab-cpv-program">
-          <header className="cab-cpv-card-head">
-            <Icon d={ICONS.course} />
-            <h3>Программа курса</h3>
+      {insideItems.length > 0 ? (
+        <section className="cab-cpv-overview">
+          <header className="cab-cpv-inside-head">
+            <h3>Что внутри курса</h3>
           </header>
-          {modules.length > 0 ? (
-            <ul className="cab-cpv-program-list">
-              {modules.map((m, mi) => {
-                const isOpen = openModule === mi;
-                return (
-                  <li key={`${m.name}-${mi}`} className={isOpen ? 'is-open' : ''}>
-                    <button
-                      type="button"
-                      className="cab-cpv-program-row"
-                      aria-expanded={isOpen}
-                      onClick={() => setOpenModule(isOpen ? null : mi)}
-                    >
-                      <span className="cab-cpv-program-num" style={{ borderColor: m.color, color: m.color }}>
-                        {String(mi + 1).padStart(2, '0')}
-                      </span>
-                      <span className="cab-cpv-program-title">{m.name}</span>
-                      <span className="cab-cpv-program-count">{m.count} {pluralLessons(m.count)}</span>
-                      <Icon d={ICONS.chevron} className="cab-cpv-program-chev" />
-                    </button>
-                    {isOpen && m.lessons.length > 0 && (
-                      <ul className="cab-cpv-program-lessons">
-                        {m.lessons.map((lesson, li) => (
-                          <li key={`${lesson.title}-${li}`}>
-                            <span className="cab-cpv-program-lesson-num">{String(li + 1).padStart(2, '0')}</span>
-                            <span className="cab-cpv-program-lesson-title">{lesson.title}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="cab-note">{SANITY_PLACEHOLDER}</p>
-          )}
+          <ul className="cab-cpv-features">
+            {insideItems.map((item, index) => {
+              const color = featureColors[index % featureColors.length]!;
+              return (
+                <li key={`${item.title}-${index}`}>
+                  <span
+                    className="cab-cpv-feature-ico"
+                    style={
+                      {
+                        color,
+                        ['--cab-feature-glow']: color,
+                      } as CSSProperties
+                    }
+                  >
+                    <Icon d={featureIcons[index % featureIcons.length]!} strokeWidth={1.6} />
+                  </span>
+                  <strong>{item.title}</strong>
+                  {item.description ? <em>{item.description}</em> : null}
+                </li>
+              );
+            })}
+          </ul>
         </section>
-      </div>
+      ) : null}
+
+      <section
+        className={`cab-cpv-program${coverImage ? ' has-bg' : ''}`}
+        style={coverImage ? ({ ['--cab-cpv-cover']: `url("${coverImage}")` } as CSSProperties) : undefined}
+      >
+        <header className="cab-cpv-program-head">
+          <h3>Программа курса</h3>
+        </header>
+        {modules.length > 0 ? (
+          <ul className="cab-cpv-program-list">
+            {modules.map((m, mi) => {
+              const isOpen = openModule === mi;
+              return (
+                <li key={`${m.name}-${mi}`} className={isOpen ? 'is-open' : ''}>
+                  <button
+                    type="button"
+                    className="cab-cpv-program-row"
+                    aria-expanded={isOpen}
+                    onClick={() => setOpenModule(isOpen ? null : mi)}
+                  >
+                    <span
+                      className="cab-cpv-program-num"
+                      style={{ borderColor: m.color, color: m.color, boxShadow: `0 0 12px ${m.color}55` }}
+                    >
+                      {String(mi + 1).padStart(2, '0')}
+                    </span>
+                    <span className="cab-cpv-program-copy">
+                      <strong>{m.name}</strong>
+                      <em>
+                        {m.count} {pluralLessons(m.count)}
+                      </em>
+                    </span>
+                    <Icon d={ICONS.chevron} className="cab-cpv-program-chev" />
+                  </button>
+                  {isOpen && m.lessons.length > 0 ? (
+                    <ul className="cab-cpv-program-lessons">
+                      {m.lessons.map((lesson, li) => (
+                        <li key={`${lesson.title}-${li}`}>
+                          <span className="cab-cpv-program-lesson-num">
+                            {String(li + 1).padStart(2, '0')}
+                          </span>
+                          <span className="cab-cpv-program-lesson-title">{lesson.title}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="cab-note">Программа появится, когда в Sanity добавят модули курса.</p>
+        )}
+      </section>
     </div>
   );
 }
@@ -922,6 +1040,73 @@ function HomeworkReviewModal({
           <button type="button" className="cab-btn cab-btn--line" onClick={onClose}>
             Закрыть
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type PaymentResultKind = 'success' | 'failed';
+
+/** Результат возврата с bePaid: /cabinet?payment=success|failed */
+function PaymentResultModal({
+  result,
+  onClose,
+  onRetry,
+  onGoCourse,
+}: {
+  result: PaymentResultKind | null;
+  onClose: () => void;
+  onRetry: () => void;
+  onGoCourse: () => void;
+}) {
+  if (!result) return null;
+  const ok = result === 'success';
+  return (
+    <div className="cab-modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className={`cab-modal cab-modal--enroll cab-modal--payment is-${result}`}
+        role="dialog"
+        aria-labelledby="payment-result-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span className="cab-modal-icon" aria-hidden="true">
+          <Icon d={ok ? ICONS.check : ICONS.x} />
+        </span>
+        <h3 id="payment-result-title">{ok ? 'Оплата прошла' : 'Оплата не завершена'}</h3>
+        <p>
+          {ok
+            ? 'Спасибо! Платёж принят. Доступ к курсу обновится в кабинете после подтверждения.'
+            : 'Платёж не прошёл или был отменён. Можно попробовать ещё раз или написать в поддержку.'}
+        </p>
+        <div className="cab-modal-actions">
+          {ok ? (
+            <>
+              <button type="button" className="cab-btn cab-btn--join" onClick={onGoCourse}>
+                К курсу <Icon d={ICONS.chevron} />
+              </button>
+              <button type="button" className="cab-btn cab-btn--line" onClick={onClose}>
+                Закрыть
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="cab-btn cab-btn--join" onClick={onRetry}>
+                Повторить оплату
+              </button>
+              <a
+                className="cab-btn cab-btn--line"
+                href={tgBotUrl('support')}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Поддержка
+              </a>
+              <button type="button" className="cab-btn cab-btn--line" onClick={onClose}>
+                Закрыть
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -978,10 +1163,13 @@ function EnrollConfirmModal({
 export default function CabinetShell({
   data,
   initialSection,
+  initialPaymentResult,
   showCabinetPick,
 }: {
   data: CabinetData;
   initialSection?: SectionId;
+  /** Return URL bePaid: ?payment=success|failed */
+  initialPaymentResult?: PaymentResultKind;
   /** Создатель из ADMIN_TELEGRAM_IDS — ссылка на выбор кабинета. */
   showCabinetPick?: boolean;
 }) {
@@ -993,6 +1181,9 @@ export default function CabinetShell({
   const [section, setSection] = useState<SectionId>(normalizedInitial);
   const [enrollOpen, setEnrollOpen] = useState(false);
   const [hwReviewStop, setHwReviewStop] = useState<CabinetCourseStop | null>(null);
+  const [paymentResult, setPaymentResult] = useState<PaymentResultKind | null>(
+    initialPaymentResult ?? null,
+  );
   const [enrolling, setEnrolling] = useState(false);
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1012,6 +1203,24 @@ export default function CabinetShell({
     document.body.classList.toggle('cab-drawer-open', open);
     return () => document.body.classList.remove('cab-drawer-open');
   }, [menuOpen, asideOpen]);
+
+  const clearPaymentQuery = useCallback(() => {
+    const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+    if (!params.has('payment')) return;
+    params.delete('payment');
+    const qs = params.toString();
+    router.replace(qs ? `/cabinet?${qs}` : '/cabinet', { scroll: false });
+  }, [router]);
+
+  const closePaymentResult = useCallback(() => {
+    setPaymentResult(null);
+    clearPaymentQuery();
+  }, [clearPaymentQuery]);
+
+  useEffect(() => {
+    if (!initialPaymentResult) return;
+    clearPaymentQuery();
+  }, [initialPaymentResult, clearPaymentQuery]);
   const [signingOut, setSigningOut] = useState(false);
   const courseStopsFromDb: CourseStop[] = data.courseStops.map((s) => ({
     id: s.id,
@@ -1034,7 +1243,7 @@ export default function CabinetShell({
     count: m.count,
     about: m.about,
   }));
-  const courseModules =
+  const baseCourseModules =
     data.courseModules.length > 0
       ? data.courseModules.map((m) => ({
           name: m.name,
@@ -1083,12 +1292,191 @@ export default function CabinetShell({
     description: s.description,
     materials: s.materials,
   }));
-  const courseStops =
+  const baseCourseStops =
     courseStopsFromDb.length > 0
       ? courseStopsFromDb
       : courseStopsFromSanity.length > 0
         ? applyCourseProgress(courseStopsFromSanity, data.courseProgress)
         : courseStopsFromCatalog;
+
+  const [stopId, setStopId] = useState<number>(
+    () => baseCourseStops.find((s) => s.status === 'now')?.id ?? baseCourseStops[0]?.id ?? 0,
+  );
+  const [courseTab, setCourseTab] = useState<CourseTabId>('program');
+  const [activeCourseId, setActiveCourseId] = useState<number | null>(
+    () => data.courseCatalog?.id ?? data.enrollment?.courseId ?? null,
+  );
+  const [courseSlice, setCourseSlice] = useState<CabinetCourseViewSlice | null>(null);
+  const [courseSwitching, setCourseSwitching] = useState(false);
+  const courseCacheRef = useRef<Map<string, CabinetCourseViewSlice>>(new Map());
+
+  useEffect(() => {
+    if (!data.courseCatalog?.slug) return;
+    courseCacheRef.current.set(data.courseCatalog.slug, {
+      slug: data.courseCatalog.slug,
+      courseCatalog: data.courseCatalog,
+      courseModules: data.courseModules,
+      courseStops: data.courseStops,
+      courseProgress: data.courseProgress,
+      lives: data.lives,
+      enrollment: data.enrollment,
+    });
+  }, [
+    data.courseCatalog,
+    data.courseModules,
+    data.courseStops,
+    data.courseProgress,
+    data.lives,
+    data.enrollment,
+  ]);
+
+  useEffect(() => {
+    const nextId = data.courseCatalog?.id ?? data.enrollment?.courseId ?? null;
+    setActiveCourseId(nextId);
+    const slug = data.courseCatalog?.slug;
+    if (!slug) return;
+    const cached = courseCacheRef.current.get(slug);
+    if (cached) {
+      setCourseSlice(cached);
+      setStopId(
+        cached.courseStops.find((s) => s.status === 'now')?.id ?? cached.courseStops[0]?.id ?? 0,
+      );
+    }
+  }, [data.courseCatalog?.id, data.courseCatalog?.slug, data.enrollment?.courseId]);
+  const [pkgHistoryAll, setPkgHistoryAll] = useState(false);
+  const [profileSaved, setProfileSaved] = useState({
+    name: data.profile?.name ?? '',
+    klass: data.profile?.klass ?? '10',
+    goal: data.profile?.goal ?? 'Подготовка к ЦТ',
+    resultType: (data.profile?.resultType ?? 'ct') as 'ct' | 'grade',
+    resultValue: data.profile?.resultValue ?? null,
+  });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const [profileDraft, setProfileDraft] = useState<{ name: string; klass: string; goal: string; resultType: 'ct' | 'grade'; resultValue: number | null } | null>(null);
+
+  const displayName = profileSaved.name || data.studentName || 'Ученик';
+  const days = daysInSystem(data.createdAt);
+  const courseCabinetGate = shouldShowCourseCabinetGate(data);
+  const noCourseCatalog = !hasCourseCatalogOffer(data);
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+  const botUrl = botUsername ? `https://t.me/${botUsername}` : null;
+  const courseChoices = useMemo(() => {
+    const catalogs =
+      data.courseCatalogs?.length > 0
+        ? data.courseCatalogs
+        : data.courseCatalog
+          ? [data.courseCatalog]
+          : [];
+    const enrollByCourse = new Map(
+      (data.courseEnrollments ?? []).map((e) => [e.courseId, e.startedAt] as const),
+    );
+    const ownedCount = catalogs.filter((c) => enrollByCourse.has(c.id)).length;
+
+    const mapped: SwitcherCourse[] = catalogs.map((c) => ({
+      id: c.id,
+      slug: c.slug,
+      title: c.title,
+      modulesCount: c.modulesCount || c.modulePreviews?.length || 0,
+      purchased: enrollByCourse.has(c.id),
+    }));
+
+    // 1 куплен → он первый; иначе — по дате покупки (раньше выше); без покупок — порядок каталога.
+    return mapped
+      .map((course, index) => ({ course, index }))
+      .sort((a, b) => {
+        const aAt = enrollByCourse.get(a.course.id);
+        const bAt = enrollByCourse.get(b.course.id);
+        if (ownedCount === 1) {
+          if (a.course.purchased !== b.course.purchased) {
+            return a.course.purchased ? -1 : 1;
+          }
+        }
+        if (aAt && bAt) {
+          const byDate = aAt.localeCompare(bAt);
+          if (byDate !== 0) return byDate;
+        } else if (aAt && !bAt) {
+          return -1;
+        } else if (!aAt && bAt) {
+          return 1;
+        }
+        return a.index - b.index;
+      })
+      .map(({ course }) => course);
+  }, [data.courseCatalogs, data.courseCatalog, data.courseEnrollments]);
+
+  // Доступ — по enrollment активного курса (slice только если он уже про этот курс).
+  const activeCourseOwned =
+    courseSlice?.courseCatalog?.id === activeCourseId
+      ? courseSlice.enrollment != null
+      : courseChoices.find((c) => c.id === activeCourseId)?.purchased === true;
+  const courseState: CourseCabinetState = activeCourseOwned
+    ? getCourseCabinetState(data)
+    : 'preview';
+
+  const activeCatalogIndex = Math.max(
+    0,
+    courseChoices.findIndex((c) => c.id === activeCourseId),
+  );
+  const sliceMatchesActive = courseSlice?.courseCatalog?.id === activeCourseId;
+  const activeCatalog =
+    (sliceMatchesActive ? courseSlice?.courseCatalog : null) ??
+    (data.courseCatalog && data.courseCatalog.id === activeCourseId
+      ? data.courseCatalog
+      : null) ??
+    data.courseCatalogs.find((c) => c.id === activeCourseId) ??
+    data.courseCatalog;
+
+  const catalogModulesFallback =
+    activeCatalog?.modulePreviews?.map((m) => ({
+      name: m.name,
+      color: m.color,
+      count: m.count,
+      about: m.about,
+    })) ?? [];
+
+  const courseModules = sliceMatchesActive
+    ? courseSlice!.courseModules.map((m) => ({
+        name: m.name,
+        color: m.color,
+        count: m.count,
+        about: m.about,
+      }))
+    : data.courseCatalog?.id === activeCourseId
+      ? baseCourseModules
+      : catalogModulesFallback;
+
+  const courseStops: CourseStop[] = sliceMatchesActive
+    ? courseSlice!.courseStops.map((s) => ({
+        id: s.id,
+        sanityLessonId: s.sanityLessonId,
+        lessonId: s.lessonId,
+        module: s.module,
+        numInModule: s.numInModule,
+        status: s.status,
+        kind: s.kind,
+        title: s.title,
+        date: s.date,
+        liveUrl: s.liveUrl,
+        recordingUrl: s.recordingUrl,
+        description: s.description,
+        materials: s.materials,
+      }))
+    : data.courseCatalog?.id === activeCourseId
+      ? baseCourseStops
+      : [];
+
+  const cabinetCourseStops = sliceMatchesActive
+    ? (courseSlice?.courseStops ?? data.courseStops)
+    : data.courseCatalog?.id === activeCourseId
+      ? data.courseStops
+      : [];
+  const displayLives = sliceMatchesActive
+    ? (courseSlice?.lives ?? data.lives)
+    : data.courseCatalog?.id === activeCourseId
+      ? data.lives
+      : null;
+
   const moduleRanges = (() => {
     return courseModules.map((_, moduleIndex) => {
       let start = -1;
@@ -1104,57 +1492,118 @@ export default function CabinetShell({
   const courseDoneCount = courseStops.filter((s) => s.status === 'done' || s.status === 'watched').length;
   const courseProgressPct = courseStops.length > 0 ? Math.round((courseDoneCount / courseStops.length) * 100) : 0;
 
-  const [stopId, setStopId] = useState<number>(
-    () => courseStops.find((s) => s.status === 'now')?.id ?? courseStops[0]?.id ?? 0,
-  );
-  const [courseTab, setCourseTab] = useState<CourseTabId>('program');
-  const [activeCourseId, setActiveCourseId] = useState<number | null>(
-    () => data.courseCatalog?.id ?? data.enrollment?.courseId ?? null,
-  );
-  const [pkgHistoryAll, setPkgHistoryAll] = useState(false);
-  const [profileSaved, setProfileSaved] = useState({
-    name: data.profile?.name ?? '',
-    klass: data.profile?.klass ?? '10',
-    goal: data.profile?.goal ?? 'Подготовка к ЦТ',
-    resultType: (data.profile?.resultType ?? 'ct') as 'ct' | 'grade',
-    resultValue: data.profile?.resultValue ?? null,
-  });
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
-  const [profileDraft, setProfileDraft] = useState<{ name: string; klass: string; goal: string; resultType: 'ct' | 'grade'; resultValue: number | null } | null>(null);
+  const syncCourseUrl = useCallback((slug: string) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('section', 'course');
+    if (slug) params.set('course', slug);
+    params.delete('payment');
+    // replaceState — без RSC-рефетча всей страницы кабинета (router.replace тормозит).
+    window.history.replaceState(window.history.state, '', `/cabinet?${params.toString()}`);
+  }, []);
 
-  const displayName = profileSaved.name || data.studentName || 'Ученик';
-  const days = daysInSystem(data.createdAt);
-  const courseState: CourseCabinetState = getCourseCabinetState(data);
-  const courseCabinetGate = shouldShowCourseCabinetGate(data);
-  const noCourseCatalog = !hasCourseCatalogOffer(data);
-  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  const botUrl = botUsername ? `https://t.me/${botUsername}` : null;
-  const courseName = data.courseCatalog?.title ?? data.courseContent?.title ?? null;
-  const courseHeadline = data.courseCatalog?.cabinetEyebrow ?? data.courseContent?.cabinetEyebrow ?? null;
-  const courseDescription = data.courseCatalog?.description ?? data.courseContent?.description ?? null;
-  const courseTeacherName = data.courseCatalog?.curatorName ?? data.courseContent?.curatorName ?? null;
-  const totalCourseLessons =
-    data.courseCatalog?.totalLessons ??
-    (data.courseContent ? data.courseModules.reduce((sum, m) => sum + m.count, 0) : courseStops.length);
-  const courseDelivery = data.courseCatalog?.deliveryFormat ?? data.courseContent?.deliveryFormat ?? null;
-  const homeworkIntro = data.courseCatalog?.homeworkIntro ?? data.courseContent?.homeworkIntro ?? null;
-  const courseCoverUrl =
-    data.courseCatalog?.coverImageUrl ??
-    data.courseCatalog?.previewImageUrl ??
-    data.courseContent?.coverImageUrl ??
-    data.courseContent?.previewImageUrl ??
-    null;
-  /* Задел под несколько курсов: список для переключателя (скрыт, пока курс один). */
-  const courseChoices = useMemo(
-    () =>
-      (data.courseCatalogs?.length ? data.courseCatalogs : data.courseCatalog ? [data.courseCatalog] : []).map((c) => ({
-        id: c.id,
-        title: c.title,
-      })),
-    [data.courseCatalogs, data.courseCatalog],
+  const fetchCourseSlice = useCallback(async (slug: string) => {
+    const res = await fetch(`/api/cabinet/course/view?course=${encodeURIComponent(slug)}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) throw new Error('course view failed');
+    const slice = (await res.json()) as CabinetCourseViewSlice;
+    courseCacheRef.current.set(slug, slice);
+    return slice;
+  }, []);
+
+  const selectCourse = useCallback(
+    async (course: SwitcherCourse | { id: number; slug: string; title: string }) => {
+      if (course.id === activeCourseId || courseSwitching) return;
+      setActiveCourseId(course.id);
+      setSection('course');
+      syncCourseUrl(course.slug);
+
+      const cached = courseCacheRef.current.get(course.slug);
+      if (cached) {
+        setCourseSlice(cached);
+        const nextStop =
+          cached.courseStops.find((s) => s.status === 'now')?.id ?? cached.courseStops[0]?.id ?? 0;
+        setStopId(nextStop);
+        return;
+      }
+
+      // Сразу сбрасываем чужой slice: без покупки сразу preview по каталогу, без ожидания API.
+      const owned = 'purchased' in course ? course.purchased : false;
+      setCourseSlice(null);
+      if (!owned) {
+        setCourseSwitching(false);
+      } else {
+        setCourseSwitching(true);
+      }
+
+      try {
+        const slice = await fetchCourseSlice(course.slug);
+        setCourseSlice(slice);
+        const nextStop =
+          slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0;
+        setStopId(nextStop);
+      } catch (error) {
+        console.error('[cabinet] course switch failed:', error);
+      } finally {
+        setCourseSwitching(false);
+      }
+    },
+    [activeCourseId, courseSwitching, fetchCourseSlice, syncCourseUrl],
   );
+
+  // Прогрев остальных курсов в фоне — первое переключение не ждёт Sanity.
+  useEffect(() => {
+    const pending = courseChoices
+      .filter((c) => c.slug && c.id !== activeCourseId && !courseCacheRef.current.has(c.slug))
+      .slice(0, 4);
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+    const run = () => {
+      void (async () => {
+        for (const course of pending) {
+          if (cancelled) return;
+          try {
+            await fetchCourseSlice(course.slug);
+          } catch {
+            /* ignore prefetch errors */
+          }
+        }
+      })();
+    };
+
+    const ric = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+      .requestIdleCallback;
+    const idleId = ric ? ric(run, { timeout: 1800 }) : window.setTimeout(run, 400);
+    return () => {
+      cancelled = true;
+      if (ric && typeof idleId === 'number') {
+        (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [activeCourseId, courseChoices, fetchCourseSlice]);
+
+  const courseName = activeCatalog?.title ?? data.courseContent?.title ?? null;
+  const courseHeadline = activeCatalog?.cabinetEyebrow ?? data.courseContent?.cabinetEyebrow ?? null;
+  const courseDescription = activeCatalog?.description ?? data.courseContent?.description ?? null;
+  const courseTeacherName = activeCatalog?.curatorName ?? data.courseContent?.curatorName ?? null;
+  const totalCourseLessons =
+    activeCatalog?.totalLessons ||
+    courseModules.reduce((sum, m) => sum + m.count, 0) ||
+    courseStops.length;
+  const courseDelivery = activeCatalog?.deliveryFormat ?? data.courseContent?.deliveryFormat ?? null;
+  const homeworkIntro = activeCatalog?.homeworkIntro ?? data.courseContent?.homeworkIntro ?? null;
+  const courseCoverUrl =
+    activeCatalog?.coverImageUrl ??
+    activeCatalog?.previewImageUrl ??
+    (data.courseCatalog?.id === activeCourseId
+      ? (data.courseContent?.coverImageUrl ?? data.courseContent?.previewImageUrl ?? null)
+      : null);
   const mapCourseStops = courseStops;
+  const activeTone = courseToneAt(activeCatalogIndex);
 
   const myPackages = data.packages;
   const pkgHistory = data.payments;
@@ -1170,7 +1619,7 @@ export default function CabinetShell({
   const stopModule = stop
     ? (courseModules[stop.module] ?? courseModules[0] ?? emptyStopModule)
     : emptyStopModule;
-  const selectedCabinetStop = data.courseStops.find((s) => s.id === stopId) ?? data.courseStops[0];
+  const selectedCabinetStop = cabinetCourseStops.find((s) => s.id === stopId) ?? cabinetCourseStops[0];
   const trialStopId = courseStops.find((s) => s.status !== 'locked')?.id ?? courseStops[0]?.id ?? 1;
   const hasCourse = courseState === 'full';
 
@@ -1240,7 +1689,7 @@ export default function CabinetShell({
 
   /** Отметить просмотр — вызывается при старте плеера внутри карточки занятия. */
   async function markLessonWatched(phase: 'upcoming' | 'live' | 'recording') {
-    const detail = data.courseStops.find((s) => s.id === stopId);
+    const detail = cabinetCourseStops.find((s) => s.id === stopId);
     if (!detail?.sanityLessonId) return;
     const endpoint = phase === 'live' ? 'watch-live' : 'watch-recording';
     await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(detail.sanityLessonId)}/${endpoint}`, {
@@ -1251,16 +1700,16 @@ export default function CabinetShell({
 
   /** «Открыть занятие» — полноценная страница урока. */
   function openCourseLesson() {
-    const detail = data.courseStops.find((s) => s.id === stopId);
+    const detail = cabinetCourseStops.find((s) => s.id === stopId);
     if (!detail) return;
     router.push(lessonPathForStop(detail));
   }
 
   useEffect(() => {
-    const detail = data.courseStops.find((s) => s.id === stopId);
+    const detail = cabinetCourseStops.find((s) => s.id === stopId);
     if (!detail) return;
     router.prefetch(lessonPathForStop(detail));
-  }, [data.courseStops, router, stopId]);
+  }, [cabinetCourseStops, router, stopId]);
 
   async function confirmEnroll() {
     setEnrolling(true);
@@ -1269,7 +1718,9 @@ export default function CabinetShell({
       const res = await fetch('/api/cabinet/course/enroll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: data.courseCatalog?.id ?? data.enrollment?.courseId }),
+        body: JSON.stringify({
+          courseId: activeCatalog?.id ?? data.courseCatalog?.id ?? data.enrollment?.courseId,
+        }),
       });
       const payload = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
@@ -1387,29 +1838,45 @@ export default function CabinetShell({
             )}
 
             {section === 'course' && !courseCabinetGate && courseState === 'preview' && (
-              <>
-                <header className="cab-sched-head">
-                  <div>
-                    <h2>Курс</h2>
-                    <p>Ознакомься с программой и запишись на обучение</p>
-                  </div>
-                  <CourseSwitcher courses={courseChoices} activeId={activeCourseId} onSelect={setActiveCourseId} />
-                </header>
-                <CoursePreviewPanel
-                  catalog={data.courseCatalog}
-                  coverUrl={courseCoverUrl}
-                  onEnrollClick={() => { setEnrollError(null); setEnrollOpen(true); }}
+              <div className="cab-stack cab-course-screen">
+                <CourseSwitcher
+                  courses={courseChoices}
+                  activeId={activeCourseId}
+                  loading={courseSwitching}
+                  onSelect={selectCourse}
                 />
-              </>
+                <div className={courseSwitching ? 'cab-course-view is-switching' : 'cab-course-view'}>
+                  <CoursePreviewPanel
+                    catalog={activeCatalog}
+                    toneIndex={activeCatalogIndex}
+                    coverUrl={
+                      activeCatalog?.coverImageUrl ?? activeCatalog?.previewImageUrl ?? null
+                    }
+                    onEnrollClick={() => { setEnrollError(null); setEnrollOpen(true); }}
+                  />
+                </div>
+              </div>
             )}
 
             {section === 'course' && !courseCabinetGate && courseState !== 'preview' && (
               <div className="cab-stack cab-course-screen">
-                <section className="cab-panel cab-course-shell">
+                <CourseSwitcher
+                  courses={courseChoices}
+                  activeId={activeCourseId}
+                  loading={courseSwitching}
+                  onSelect={selectCourse}
+                />
+                <section
+                  className={`cab-panel cab-course-shell${courseSwitching ? ' is-switching' : ''}`}
+                  style={
+                    {
+                      ['--cab-course-accent']: activeTone.accent,
+                      ['--cab-course-soft']: activeTone.soft,
+                      ['--cab-course-border']: activeTone.border,
+                    } as CSSProperties
+                  }
+                >
                   <div className="cab-course-hero">
-                    {courseChoices.length > 1 && (
-                      <CourseSwitcher courses={courseChoices} activeId={activeCourseId} onSelect={setActiveCourseId} />
-                    )}
                     <div className="cab-course-hero-main">
                       <div className="cab-course-hero-cover" aria-hidden="true">
                         {courseCoverUrl ? (
@@ -1488,7 +1955,7 @@ export default function CabinetShell({
                                   {sanityText(selectedCabinetStop?.description)}
                                 </p>
                               </div>
-                              <LivesWidget locked={!hasCourse} lives={data.lives} />
+                              <LivesWidget locked={!hasCourse} lives={displayLives} />
                             </div>
                           </div>
                         </div>
@@ -1536,7 +2003,7 @@ export default function CabinetShell({
                       </span>
                     </header>
                     <div className="cab-hw-list">
-                      {data.courseStops.map((s) => {
+                      {cabinetCourseStops.map((s) => {
                         const mod = courseModules[s.module];
                         const hw = homeworkRowState(s, hasCourse);
                         return (
@@ -1592,7 +2059,7 @@ export default function CabinetShell({
                           </article>
                         );
                       })}
-                      {!data.courseStops.length && (
+                      {!cabinetCourseStops.length && (
                         <p className="cab-hw-empty">Домашние задания появятся вместе с программой курса.</p>
                       )}
                     </div>
@@ -1748,46 +2215,94 @@ export default function CabinetShell({
 
             {section === 'payments' && (
               <div className="cab-stack cab-payments-course">
-                <header className="cab-sched-head">
+                <header className="cab-pay-pick-head">
+                  <span className="cab-pay-pick-ico" aria-hidden="true">
+                    <Icon d={ICONS.payments} />
+                  </span>
                   <div>
-                    <h2>Оплата курса</h2>
-                    <p>Доступ к онлайн-курсу и история платежей</p>
+                    <h2>Выбор курса</h2>
+                    <p>Выберите курс и удобный способ оплаты</p>
                   </div>
                 </header>
 
-                <section className="cab-panel cab-pack-block cab-course-pay-hero">
-                  <article className="cab-pack-course cab-pack-course--hero">
-                    <span className="cab-pack-course-ico" aria-hidden="true">
-                      <Icon d={ICONS.course} />
-                    </span>
-                    <div className="cab-pack-course-main">
-                      <div className="cab-pack-course-copy">
-                        <strong>{cabinetPricing.course.label}</strong>
-                        {cabinetPricing.course.offer.description ? (
-                          <em>{cabinetPricing.course.offer.description}</em>
-                        ) : null}
-                      </div>
-                      <ul className="cab-pack-course-chips">
-                        {[
-                          { icon: ICONS.play, label: 'Видео' },
-                          { icon: ICONS.homework, label: 'Задания' },
-                          { icon: ICONS.file, label: 'Материалы' },
-                          { icon: ICONS.results, label: 'Прогресс' },
-                        ].map((chip) => (
-                          <li key={chip.label}>
-                            <Icon d={chip.icon} />
-                            {chip.label}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <span className="cab-pack-price cab-pack-price--hero">
-                      {String(cabinetPricing.course.offer.priceByn)} <em>BYN</em>
-                    </span>
-                    <a className="cab-btn cab-btn--join cab-btn--hero" href={checkoutHref()}>
-                      Оплатить курс <Icon d={ICONS.chevron} />
-                    </a>
-                  </article>
+                <section
+                  className="cab-course-pick-grid"
+                  data-count={
+                    data.coursePaymentOffers.length === 4
+                      ? 4
+                      : data.coursePaymentOffers.length === 2
+                        ? 2
+                        : data.coursePaymentOffers.length === 1
+                          ? 1
+                          : 3
+                  }
+                >
+                  {data.coursePaymentOffers.length === 0 ? (
+                    <p className="cab-note cab-pkg-empty-note">
+                      Курсы для оплаты появятся, когда в настройках курса укажут цену и количество занятий.
+                    </p>
+                  ) : (
+                    data.coursePaymentOffers.map((offer, offerIndex) => {
+                      const owned = courseChoices.some(
+                        (c) => c.slug === offer.slug && c.purchased,
+                      );
+                      const lessonsLabel = `${offer.grantedLessons} ${
+                        offer.grantedLessons === 1
+                          ? 'занятие'
+                          : offer.grantedLessons < 5
+                            ? 'занятия'
+                            : 'занятий'
+                      }`;
+                      return (
+                        <article
+                          key={offer.sanityId}
+                          className={`cab-course-pick-card${owned ? ' is-owned' : ''}`}
+                        >
+                          <div className="cab-course-pick-body">
+                            <span className="cab-course-pick-course-ico" aria-hidden="true">
+                              <Icon d={offerIndex % 2 === 0 ? ICONS.spark : ICONS.compass} />
+                            </span>
+                            <div className="cab-course-pick-main">
+                              <div className="cab-course-pick-copy">
+                                <strong>{offer.title}</strong>
+                                <em>
+                                  {offer.cardText?.trim() ||
+                                    `Полный доступ к программе · ${lessonsLabel} после оплаты`}
+                                </em>
+                              </div>
+                              <ul className="cab-course-pick-chips">
+                                {[
+                                  { icon: ICONS.play, label: 'Видео' },
+                                  { icon: ICONS.homework, label: 'Задания' },
+                                  { icon: ICONS.file, label: 'Материалы' },
+                                  { icon: ICONS.results, label: 'Прогресс' },
+                                ].map((chip) => (
+                                  <li key={chip.label}>
+                                    <Icon d={chip.icon} />
+                                    {chip.label}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                            <span className="cab-course-pick-price">
+                              <strong>
+                                {String(offer.priceByn)} <em>BYN</em>
+                              </strong>
+                              <small>
+                                <Icon d={ICONS.users} />
+                                {lessonsLabel}
+                              </small>
+                            </span>
+                          </div>
+                          <a className="cab-course-pick-cta" href={checkoutHref(offer.slug)}>
+                            <Icon d={ICONS.cart} />
+                            Купить пакет
+                            <Icon d={ICONS.chevron} />
+                          </a>
+                        </article>
+                      );
+                    })
+                  )}
                 </section>
 
                 <section className="cab-panel cab-mypkg-block">
@@ -1815,7 +2330,7 @@ export default function CabinetShell({
                     </div>
                   ) : (
                     <p className="cab-note cab-pkg-empty-note">
-                      Пакет курса появится после первой оплаты. Нажми «Оплатить курс» выше или оформи заявку через
+                      Пакет курса появится после первой оплаты. Нажми «Купить пакет» выше или оформи заявку через
                       Telegram-бот.
                     </p>
                   )}
@@ -2126,11 +2641,9 @@ export default function CabinetShell({
             <div className="cab-aside-quote" aria-hidden="true">
               <span className="cab-aside-quote-mark">&ldquo;</span>
               <div className="cab-aside-quote-body">
-                <p className="cab-aside-quote-text">
-                  Главное — не идеальность, <strong>а регулярность.</strong>
-                </p>
+                <p className="cab-aside-quote-text">{data.dailyQuote.text}</p>
                 <span className="cab-aside-quote-rule" />
-                <span className="cab-aside-quote-brand">District</span>
+                <span className="cab-aside-quote-brand">{data.dailyQuote.author}</span>
               </div>
             </div>
       </aside>
@@ -2144,6 +2657,18 @@ export default function CabinetShell({
         onCancel={() => { setEnrollOpen(false); setEnrollError(null); }}
       />
       <HomeworkReviewModal stop={hwReviewStop} onClose={() => setHwReviewStop(null)} />
+      <PaymentResultModal
+        result={paymentResult}
+        onClose={closePaymentResult}
+        onRetry={() => {
+          closePaymentResult();
+          router.push(checkoutHref());
+        }}
+        onGoCourse={() => {
+          setSection('course');
+          closePaymentResult();
+        }}
+      />
     </div>
   );
 }

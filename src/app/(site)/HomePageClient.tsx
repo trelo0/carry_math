@@ -1,17 +1,21 @@
 "use client";
 
-import { Fragment, useState } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import DiagnosticSection from '@/components/ui/DiagnosticSection';
 import IndProcessCardFrame from '@/components/ui/IndProcessCardFrame';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
-import { useForm } from '@/contexts/FormContext';
+import IndTeacherPhotoFrame from '@/components/ui/IndTeacherPhotoFrame';
 import { Principle, ProcessStep, Stat } from '@/data/types';
 import { SiteSettings } from '@/lib/studio/sanityData';
 import type { IndividualPageContent, FormatColumn } from '@/data/individualPageContent';
 import { INDIVIDUAL_PAGE_DEFAULTS } from '@/data/individualPageContent';
 import { pickArr, pickStr } from '@/data/mainPageContent';
 import type { TeacherWithPhoto } from '@/lib/studio/teacherPhotos';
+import {
+  buildLeadApplyTelegramUrl,
+  type LeadApplyIntent,
+} from '@/lib/lead-apply-link';
 
 type Format = 'solo' | 'group';
 type VsFocus = 'solo' | 'group' | null;
@@ -160,9 +164,48 @@ function TeacherBadgeIcon({ badge }: { badge: string }) {
   );
 }
 
+function LeadApplyButton({
+  className,
+  format,
+  intent,
+  teacherId,
+  disabled,
+  title,
+  children,
+}: {
+  className: string;
+  format: 'individual' | 'group';
+  intent: LeadApplyIntent;
+  teacherId?: string;
+  disabled?: boolean;
+  title?: string;
+  children: ReactNode;
+}) {
+  const href = buildLeadApplyTelegramUrl({ format, intent, teacherId });
+  if (disabled || !href) {
+    return (
+      <button type="button" className={className} disabled title={title}>
+        {children}
+      </button>
+    );
+  }
+  return (
+    <a
+      className={className}
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+    >
+      {children}
+    </a>
+  );
+}
+
 export default function HomePageClient({
   content,
   teachers,
+  teacherLeadIds,
   stats,
   principles,
   processSteps,
@@ -170,12 +213,12 @@ export default function HomePageClient({
 }: {
   content: IndividualPageContent | null;
   teachers: TeacherWithPhoto[];
+  teacherLeadIds?: Record<string, string>;
   stats: Stat[];
   principles: Principle[];
   processSteps: ProcessStep[];
   siteSettings?: SiteSettings | null;
 }) {
-  const { openForm } = useForm();
   const [format, setFormat] = useState<Format>('solo');
 
   const handleFormat = (next: Format) => {
@@ -273,7 +316,6 @@ export default function HomePageClient({
   return (
     <div className="main-page sub-page">
       <AtmosphereLayers />
-      <div className="city-backdrop" aria-hidden="true" />
 
       <section className="hero ind-hero" id="hero">
         <div className="hero-hud" aria-hidden="true">
@@ -283,42 +325,35 @@ export default function HomePageClient({
         </div>
 
         <span className="watermark watermark--left" aria-hidden="true">MENTOR</span>
+        <span className="ind-hero-mark ind-hero-mark--ratio" aria-hidden="true">1:1</span>
 
-        <svg className="ind-hero-constellation" viewBox="0 0 520 320" fill="none" aria-hidden="true">
-          <defs>
-            <filter id="ind-star-glow-orange" x="-80%" y="-80%" width="260%" height="260%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="ind-star-glow-blue" x="-80%" y="-80%" width="260%" height="260%">
-              <feGaussianBlur stdDeviation="3.5" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          <g stroke="rgba(120, 185, 255, 0.34)" strokeWidth="1.1">
-            <path d="M214 176 L268 198 L322 142 L378 168 L432 118 L478 146" />
-            <path d="M322 142 L352 92 L378 168" />
-            <path d="M432 118 L468 78 L478 146" />
+        <svg className="ind-hero-decor" viewBox="0 0 1440 900" fill="none" aria-hidden="true">
+          <g className="ind-hero-decor__grid" stroke="rgba(120, 185, 255, 0.08)" strokeWidth="1">
+            {Array.from({ length: 12 }, (_, i) => (
+              <line key={`vg-${i}`} x1={120 + i * 100} y1="40" x2={120 + i * 100} y2="860" />
+            ))}
+            {Array.from({ length: 8 }, (_, i) => (
+              <line key={`hg-${i}`} x1="60" y1={80 + i * 100} x2="1380" y2={80 + i * 100} />
+            ))}
           </g>
-          <g filter="url(#ind-star-glow-orange)">
-            <circle cx="268" cy="198" r="3.5" fill="#ff9a2e" />
-            <circle cx="378" cy="168" r="3.5" fill="#ff9a2e" />
-            <circle cx="478" cy="146" r="4" fill="#ff9a2e" />
-            <circle cx="468" cy="78" r="2.5" fill="#ff9a2e" />
+          <g className="ind-hero-decor__axes" stroke="rgba(140, 190, 255, 0.28)" strokeWidth="1.2">
+            <path d="M70 210 H250 M70 210 V90" />
+            <path d="M70 210 Q130 150 190 120 T250 70" stroke="rgba(0, 190, 255, 0.45)" fill="none" />
+            <text x="78" y="84" fill="rgba(170, 205, 245, 0.45)" fontSize="14" fontFamily="monospace">
+              f(x)=x²
+            </text>
           </g>
-          <g filter="url(#ind-star-glow-blue)">
-            <circle cx="214" cy="176" r="5" fill="#8fd4f0" />
-            <circle cx="322" cy="142" r="4.5" fill="#8fd4f0" />
-            <circle cx="432" cy="118" r="5" fill="#8fd4f0" />
-            <circle cx="352" cy="92" r="2.5" fill="#8fd4f0" />
+          <g className="ind-hero-decor__globe" stroke="rgba(120, 185, 255, 0.28)" strokeWidth="1.1">
+            <circle cx="1180" cy="236" r="78" />
+            <ellipse cx="1180" cy="236" rx="78" ry="30" />
+            <ellipse cx="1180" cy="236" rx="30" ry="78" />
+            <path d="M1102 236 H1258 M1180 158 V314" />
+          </g>
+          <g className="ind-hero-decor__triangle" stroke="rgba(140, 190, 255, 0.3)" strokeWidth="1.2">
+            <path d="M1180 720 L1320 780 L1240 620 Z" />
+            <text x="1170" y="735" fill="rgba(170, 205, 245, 0.4)" fontSize="13" fontFamily="monospace">A</text>
+            <text x="1324" y="792" fill="rgba(170, 205, 245, 0.4)" fontSize="13" fontFamily="monospace">B</text>
+            <text x="1244" y="612" fill="rgba(170, 205, 245, 0.4)" fontSize="13" fontFamily="monospace">C</text>
           </g>
         </svg>
 
@@ -337,6 +372,34 @@ export default function HomePageClient({
               </h1>
 
               <p className="ind-hero-desc">{heroDescription}</p>
+
+              <svg className="ind-hero-constellation" viewBox="0 0 420 120" fill="none" aria-hidden="true">
+                <g stroke="rgba(120, 185, 255, 0.28)" strokeWidth="1.1">
+                  <path d="M18 78 L58 92 L98 56 L138 74 L178 42 L228 68 L278 34 L328 58 L378 48" />
+                  <path d="M98 56 L118 28 L138 74" />
+                </g>
+                <g>
+                  <circle cx="18" cy="78" r="4.5" fill="rgba(143, 212, 240, 0.5)" />
+                  <circle cx="58" cy="92" r="3.2" fill="rgba(255, 154, 46, 0.45)" />
+                  <circle cx="98" cy="56" r="4" fill="rgba(143, 212, 240, 0.5)" />
+                  <circle cx="118" cy="28" r="2.4" fill="rgba(143, 212, 240, 0.45)" />
+                  <circle cx="138" cy="74" r="3.2" fill="rgba(255, 154, 46, 0.45)" />
+                  <circle cx="178" cy="42" r="3.6" fill="rgba(143, 212, 240, 0.5)" />
+                  <circle cx="228" cy="68" r="3" fill="rgba(255, 154, 46, 0.4)" />
+                  <circle cx="278" cy="34" r="4" fill="rgba(143, 212, 240, 0.5)" />
+                  <circle cx="328" cy="58" r="3" fill="rgba(143, 212, 240, 0.45)" />
+                  <circle cx="378" cy="48" r="3.5" fill="rgba(255, 154, 46, 0.45)" />
+                </g>
+                <text
+                  x="248"
+                  y="96"
+                  fill="rgba(180, 205, 240, 0.22)"
+                  fontSize="15"
+                  fontFamily="Georgia, serif"
+                >
+                  a² + b² = c²
+                </text>
+              </svg>
             </div>
 
             <div className="ind-hero-panel-col">
@@ -385,10 +448,14 @@ export default function HomePageClient({
             <div className="teacher-hud-grid">
               {teachers.map((teacher, index) => {
                 const num = String(index + 1).padStart(2, '0');
-                const metaItems = String(teacher.subject || '')
+                const subjectParts = String(teacher.subject || '')
                   .split(/[•·|,]/)
                   .map((part) => part.trim())
                   .filter(Boolean);
+                const isSubjectName = (value: string) =>
+                  /математ|physics|физик|english|англ|информат/i.test(value);
+                const subjectLabel = subjectParts.find(isSubjectName) || 'Математика';
+                const metaItems = subjectParts.filter((part) => !isSubjectName(part));
                 const blockBadges = Array.isArray(teachersBlock?.badges) ? teachersBlock.badges : [];
                 const chips = (
                   Array.isArray(teacher.badges) && teacher.badges.length > 0
@@ -407,14 +474,19 @@ export default function HomePageClient({
                     data-reveal-delay={String(index)}
                   >
                     <div className="teacher-hud__fill" aria-hidden="true" />
-                    <span className="teacher-hud-corner teacher-hud-corner--tl" aria-hidden="true" />
-                    <span className="teacher-hud-corner teacher-hud-corner--br" aria-hidden="true" />
                     <div className="teacher-hud-body">
+                      <p className="teacher-hud-subject">
+                        <span className="teacher-hud-subject-dot" aria-hidden="true" />
+                        {subjectLabel}
+                      </p>
                       <h3 className="teacher-hud-name">{teacher.name}</h3>
                       {metaItems.length > 0 && (
                         <p className="teacher-hud-meta">
                           {metaItems.map((item, itemIndex) => (
-                            <span key={item} className={itemIndex === 0 ? 'is-accent' : undefined}>
+                            <span
+                              key={item}
+                              className={itemIndex === 0 ? 'is-accent' : undefined}
+                            >
                               {item}
                             </span>
                           ))}
@@ -434,6 +506,11 @@ export default function HomePageClient({
                     </div>
 
                     <div className="teacher-hud-photo">
+                      <span className="teacher-hud-photo-grid" aria-hidden="true" />
+                      <IndTeacherPhotoFrame />
+                      <span className="teacher-hud-ghost" aria-hidden="true">
+                        {num}
+                      </span>
                       {teacher.photoUrl ? (
                         <img
                           src={teacher.photoUrl}
@@ -441,10 +518,6 @@ export default function HomePageClient({
                         />
                       ) : null}
                     </div>
-                    <span className="teacher-hud-ghost" aria-hidden="true">
-                      {num}
-                    </span>
-                    <span className="teacher-hud-hatch" aria-hidden="true" />
                   </article>
                 );
               })}
@@ -505,6 +578,70 @@ export default function HomePageClient({
                     </p>
                   </div>
                 ) : null}
+                <div className="ind-principles-bg" aria-hidden="true">
+                  <svg className="ind-principles-bg-svg" viewBox="0 0 560 280" fill="none">
+                    <defs>
+                      <linearGradient id="ind-principles-stroke-fade-a" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#fff" stopOpacity="0.35" />
+                        <stop offset="18%" stopColor="#fff" stopOpacity="0.85" />
+                        <stop offset="36%" stopColor="#fff" stopOpacity="0.4" />
+                        <stop offset="52%" stopColor="#fff" stopOpacity="0.9" />
+                        <stop offset="70%" stopColor="#fff" stopOpacity="0.38" />
+                        <stop offset="86%" stopColor="#fff" stopOpacity="0.78" />
+                        <stop offset="100%" stopColor="#fff" stopOpacity="0.45" />
+                      </linearGradient>
+                      <linearGradient id="ind-principles-stroke-fade-b" x1="100%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor="#fff" stopOpacity="0.38" />
+                        <stop offset="22%" stopColor="#fff" stopOpacity="0.88" />
+                        <stop offset="44%" stopColor="#fff" stopOpacity="0.36" />
+                        <stop offset="62%" stopColor="#fff" stopOpacity="0.82" />
+                        <stop offset="80%" stopColor="#fff" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="#fff" stopOpacity="0.72" />
+                      </linearGradient>
+                      <linearGradient id="ind-principles-stroke-fade-c" x1="0%" y1="100%" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#fff" stopOpacity="0.4" />
+                        <stop offset="20%" stopColor="#fff" stopOpacity="0.8" />
+                        <stop offset="40%" stopColor="#fff" stopOpacity="0.34" />
+                        <stop offset="58%" stopColor="#fff" stopOpacity="0.88" />
+                        <stop offset="76%" stopColor="#fff" stopOpacity="0.38" />
+                        <stop offset="100%" stopColor="#fff" stopOpacity="0.7" />
+                      </linearGradient>
+                      <mask id="ind-principles-mask-1">
+                        <rect width="560" height="280" fill="url(#ind-principles-stroke-fade-a)" />
+                      </mask>
+                      <mask id="ind-principles-mask-2">
+                        <rect width="560" height="280" fill="url(#ind-principles-stroke-fade-b)" />
+                      </mask>
+                      <mask id="ind-principles-mask-3">
+                        <rect width="560" height="280" fill="url(#ind-principles-stroke-fade-c)" />
+                      </mask>
+                    </defs>
+                    <g mask="url(#ind-principles-mask-1)">
+                      <text
+                        className="ind-principles-bg-num"
+                        transform="translate(4 108) scale(1.16 0.88)"
+                      >
+                        01
+                      </text>
+                    </g>
+                    <g mask="url(#ind-principles-mask-2)">
+                      <text
+                        className="ind-principles-bg-num ind-principles-bg-num--2"
+                        transform="translate(155 168) scale(1.16 0.88)"
+                      >
+                        02
+                      </text>
+                    </g>
+                    <g mask="url(#ind-principles-mask-3)">
+                      <text
+                        className="ind-principles-bg-num ind-principles-bg-num--3"
+                        transform="translate(328 228) scale(1.16 0.88)"
+                      >
+                        03
+                      </text>
+                    </g>
+                  </svg>
+                </div>
               </div>
 
               <div className="principles-list ind-principles-list">
@@ -633,6 +770,43 @@ export default function HomePageClient({
                     key={step._id}
                     className={`process-step-alt ${index % 2 === 0 ? 'step-left' : 'step-right'}`}
                   >
+                    <svg
+                      className={`ind-process-ghost ${
+                        index % 2 === 0 ? 'ind-process-ghost--left' : 'ind-process-ghost--right'
+                      }`}
+                      viewBox="0 0 320 200"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <defs>
+                        <linearGradient
+                          id={`ind-process-fade-${index}`}
+                          x1="0%"
+                          y1="0%"
+                          x2="100%"
+                          y2="100%"
+                        >
+                          <stop offset="0%" stopColor="#fff" stopOpacity="0.35" />
+                          <stop offset="18%" stopColor="#fff" stopOpacity="0.85" />
+                          <stop offset="36%" stopColor="#fff" stopOpacity="0.4" />
+                          <stop offset="52%" stopColor="#fff" stopOpacity="0.9" />
+                          <stop offset="70%" stopColor="#fff" stopOpacity="0.38" />
+                          <stop offset="86%" stopColor="#fff" stopOpacity="0.78" />
+                          <stop offset="100%" stopColor="#fff" stopOpacity="0.45" />
+                        </linearGradient>
+                        <mask id={`ind-process-mask-${index}`}>
+                          <rect width="320" height="200" fill={`url(#ind-process-fade-${index})`} />
+                        </mask>
+                      </defs>
+                      <g mask={`url(#ind-process-mask-${index})`}>
+                        <text
+                          className={`ind-process-ghost-num ind-process-ghost-num--${(index % 3) + 1}`}
+                          transform="translate(2 158) scale(1.16 0.88)"
+                        >
+                          {String(index + 1).padStart(2, '0')}
+                        </text>
+                      </g>
+                    </svg>
                     <div
                       className={`step-alt-card ind-process-card ${
                         index % 2 === 0 ? 'ind-process-card--left' : 'ind-process-card--right'
@@ -753,19 +927,14 @@ export default function HomePageClient({
                             Обязательно перед началом индивидуальных занятий
                           </p>
                         </div>
-                        <button
-                          type="button"
+                        <LeadApplyButton
                           className="booking-action booking-action--solo"
-                          onClick={() =>
-                            openForm({
-                              teacher: teacher.name,
-                              service: 'Пробное занятие',
-                              price: teacher.trialLesson.price,
-                            })
-                          }
+                          format="individual"
+                          intent="trial"
+                          teacherId={teacherLeadIds?.[teacher._id]}
                         >
                           Записаться на пробное <span aria-hidden="true">→</span>
-                        </button>
+                        </LeadApplyButton>
                       </aside>
                     </div>
                   ) : (
@@ -826,25 +995,16 @@ export default function HomePageClient({
                                   <strong>{servicePrice}</strong>
                                   <span>за занятие</span>
                                 </div>
-                                <button
-                                  type="button"
+                                <LeadApplyButton
                                   className="booking-action booking-action--group"
+                                  format="group"
+                                  intent="enroll"
+                                  teacherId={teacherLeadIds?.[teacher._id]}
                                   title={statusText}
                                   disabled={raw === 'none'}
-                                  onClick={() =>
-                                    openForm({
-                                      teacher: teacher.name,
-                                      service: serviceTitle,
-                                      price: servicePrice,
-                                      spotsStatus:
-                                        raw === 'many' || raw === 'few' || raw === 'none'
-                                          ? raw
-                                          : undefined,
-                                    })
-                                  }
                                 >
                                   {raw === 'none' ? 'Нет мест' : 'Записаться'}
-                                </button>
+                                </LeadApplyButton>
                               </div>
                             );
                           })}
@@ -864,19 +1024,14 @@ export default function HomePageClient({
                             Познакомьтесь с наставником и форматом до старта
                           </p>
                         </div>
-                        <button
-                          type="button"
+                        <LeadApplyButton
                           className="booking-action booking-action--group-secondary"
-                          onClick={() =>
-                            openForm({
-                              teacher: teacher.name,
-                              service: 'Пробное занятие',
-                              price: teacher.trialLesson?.price || '15 BYN',
-                            })
-                          }
+                          format="group"
+                          intent="trial"
+                          teacherId={teacherLeadIds?.[teacher._id]}
                         >
                           Попробовать занятие
-                        </button>
+                        </LeadApplyButton>
                       </aside>
                     </div>
                   )}

@@ -286,7 +286,8 @@ export async function buildCourseMapStopsFromContent(
   content.modules.forEach((mod, moduleIndex) => {
     let numInModule = 0;
     for (const lesson of mod.lessons) {
-      if (lesson.publicationStatus === 'archived' && !progressSanityIds.has(lesson.sanityId)) continue;
+      // Черновики и архив без прогресса не показываем на карте.
+      if (!isLessonVisible(lesson, progressSanityIds)) continue;
       numInModule += 1;
       visibleLessons.push({ lesson, moduleIndex, numInModule });
     }
@@ -382,10 +383,11 @@ export async function buildCourseMapStopsFromContent(
 export function buildCourseStructureStopsFromContent(content: DistrictCourseContent): CourseMapStop[] {
   const out: CourseMapStop[] = [];
   let lessonIndex = 0;
+  const emptyProgress = new Set<string>();
   content.modules.forEach((mod, moduleIndex) => {
     let numInModule = 0;
     for (const lesson of mod.lessons) {
-      if (lesson.publicationStatus === 'archived') continue;
+      if (!isLessonVisible(lesson, emptyProgress)) continue;
       numInModule += 1;
       out.push({
         sanityLessonId: lesson.sanityId,

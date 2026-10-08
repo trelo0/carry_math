@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 const TEACHER_ROLES = new Set(['teacher']);
 const CURATOR_ROLES = new Set(['curator', 'mentor']);
@@ -43,4 +44,30 @@ export async function resolveDefaultCuratorTelegramId(
 
   const ok = await isBotMemberWithRole(admin, telegramId, CURATOR_ROLES);
   return ok ? telegramId : null;
+}
+
+/**
+ * Куратор для конкретного курса: districtCourse.curatorTelegramId → fallback default.
+ * Проверяет роль curator/mentor в bot_members.
+ */
+export async function resolveCuratorTelegramIdForCourse(
+  admin: SupabaseClient,
+  courseSlug?: string | null,
+  explicitTelegramId?: number | null,
+): Promise<number | null> {
+  if (explicitTelegramId != null && Number.isFinite(explicitTelegramId)) {
+    const ok = await isBotMemberWithRole(admin, explicitTelegramId, CURATOR_ROLES);
+    if (ok) return explicitTelegramId;
+  }
+
+  if (courseSlug) {
+    const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+    const fromCourse = content?.curatorTelegramId;
+    if (fromCourse != null) {
+      const ok = await isBotMemberWithRole(admin, fromCourse, CURATOR_ROLES);
+      if (ok) return fromCourse;
+    }
+  }
+
+  return resolveDefaultCuratorTelegramId(admin);
 }

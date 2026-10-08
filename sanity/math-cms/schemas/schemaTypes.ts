@@ -28,6 +28,7 @@ import districtCourse from './districtCourse'
 import cabinetLessonPackage from './cabinetLessonPackage'
 import cabinetAchievement from './cabinetAchievement'
 import cabinetSettings from './cabinetSettings'
+import cabinetAsideSettings from './cabinetAsideSettings'
 import botSettings from './botSettings'
 
 export default [
@@ -61,5 +62,6 @@ export default [
   cabinetLessonPackage,
   cabinetAchievement,
   cabinetSettings,
+  cabinetAsideSettings,
   botSettings,
 ]

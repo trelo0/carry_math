@@ -2,22 +2,26 @@ import {defineConfig, type SchemaTypeDefinition} from 'sanity'
 import {structureTool, type StructureBuilder} from 'sanity/structure'
 import {visionTool} from '@sanity/vision'
 import schemaTypes from './sanity/math-cms/schemas/schemaTypes'
+import {DeleteCourseAction} from './sanity/actions/DeleteCourseAction'
+import {DeleteCourseLessonAction} from './sanity/actions/DeleteCourseLessonAction'
 
 function coursesStructure(S: StructureBuilder) {
   return S.documentTypeList('districtCourse')
     .title('Курсы')
+    .defaultOrdering([{field: 'title', direction: 'asc'}])
+    .initialValueTemplates([S.initialValueTemplateItem('districtCourse-new')])
     .child((courseId) =>
       S.list()
         .title('Курс')
         .items([
           S.listItem()
-            .title('Настройки курса')
+            .title('① Настройки курса')
             .child(S.document().schemaType('districtCourse').documentId(courseId)),
           S.listItem()
-            .title('Модули')
+            .title('② Модули')
             .child(
               S.documentTypeList('districtModule')
-                .title('Модули')
+                .title('Модули этого курса')
                 .filter('_type == "districtModule" && course._ref == $courseId')
                 .params({courseId})
                 .defaultOrdering([{field: 'sortOrder', direction: 'asc'}])
@@ -32,10 +36,10 @@ function coursesStructure(S: StructureBuilder) {
                         .title('Настройки модуля')
                         .child(S.document().schemaType('districtModule').documentId(moduleId)),
                       S.listItem()
-                        .title('Занятия')
+                        .title('③ Занятия')
                         .child(
                           S.documentTypeList('districtCourseLesson')
-                            .title('Занятия')
+                            .title('Занятия модуля')
                             .filter('_type == "districtCourseLesson" && module._ref == $moduleId')
                             .params({moduleId})
                             .defaultOrdering([{field: 'moduleOrder', direction: 'asc'}])
@@ -222,6 +226,13 @@ export default defineConfig({
                           .schemaType('cabinetSettings')
                           .documentId('cabinetSettings')
                       ),
+                    S.listItem()
+                      .title('Боковая панель')
+                      .child(
+                        S.document()
+                          .schemaType('cabinetAsideSettings')
+                          .documentId('cabinetAsideSettings')
+                      ),
                   ])
               ),
             S.divider(),
@@ -241,6 +252,21 @@ export default defineConfig({
     types: schemaTypes as SchemaTypeDefinition[],
     templates: (prev) => [
       ...prev,
+      {
+        id: 'districtCourse-new',
+        title: 'Новый курс',
+        schemaType: 'districtCourse',
+        value: {
+          cabinetEyebrow: 'Курс подготовки',
+          deliveryFormat: 'Онлайн',
+          publicationStatus: 'published',
+          pricing: {
+            priceByn: 0,
+            grantedLessons: 1,
+            cardText: '',
+          },
+        },
+      },
       {
         id: 'districtModule-in-course',
         title: 'Модуль',
@@ -273,16 +299,38 @@ export default defineConfig({
         return prev.filter(
           (templateItem) =>
             templateItem.templateId !== 'siteSettings' &&
-            templateItem.templateId !== 'cabinetSettings',
+            templateItem.templateId !== 'cabinetSettings' &&
+            templateItem.templateId !== 'cabinetAsideSettings',
         )
+      }
+      // В списке курсов предлагаем шаблон «Новый курс»
+      if (
+        creationContext.type === 'structure' &&
+        (creationContext as {schemaType?: string}).schemaType === 'districtCourse'
+      ) {
+        return prev.filter((t) => t.templateId === 'districtCourse-new' || t.templateId === 'districtCourse')
       }
       return prev
     },
     actions: (prev, {schemaType}) => {
-      if (schemaType === 'siteSettings' || schemaType === 'cabinetSettings') {
+      if (
+        schemaType === 'siteSettings' ||
+        schemaType === 'cabinetSettings' ||
+        schemaType === 'cabinetAsideSettings'
+      ) {
         return prev.filter(
           ({action}) => action !== 'delete' && action !== 'duplicate'
         )
+      }
+      if (schemaType === 'districtCourseLesson') {
+        return prev
+          .filter(({action}) => action !== 'delete')
+          .concat([DeleteCourseLessonAction])
+      }
+      if (schemaType === 'districtCourse') {
+        return prev
+          .filter(({action}) => action !== 'delete')
+          .concat([DeleteCourseAction])
       }
       return prev
     },

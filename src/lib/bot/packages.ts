@@ -8,7 +8,7 @@ import { resolveCourseIdForContent } from './education/course-record';
 import { enrollStudent, getActiveCourses } from './education/courses';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { assignCurator, assignTeacher } from './education/assignments';
-import { resolveDefaultCuratorTelegramId, resolveTeacherTelegramId } from './teacher-mapping';
+import { resolveCuratorTelegramIdForCourse, resolveTeacherTelegramId } from './teacher-mapping';
 import { initEnrollmentLives, isLivesTableError } from './education/lives';
 
 export function isPackageTableError(error: unknown): boolean {
@@ -153,10 +153,13 @@ async function resolveCourseId(admin: SupabaseClient, courseId?: number): Promis
 async function ensureCuratorOnCoursePurchase(
   admin: SupabaseClient,
   telegramId: number,
-  curatorTelegramId?: number,
+  options?: { curatorTelegramId?: number; courseSlug?: string },
 ): Promise<boolean> {
-  const targetId =
-    curatorTelegramId ?? (await resolveDefaultCuratorTelegramId(admin));
+  const targetId = await resolveCuratorTelegramIdForCourse(
+    admin,
+    options?.courseSlug,
+    options?.curatorTelegramId,
+  );
   if (!targetId) return false;
 
   const { data: existing } = await admin
@@ -167,6 +170,7 @@ async function ensureCuratorOnCoursePurchase(
     .eq('status', 'active')
     .limit(1)
     .maybeSingle();
+  // Уже есть куратор — не переназначаем (ручное / прошлый курс).
   if (existing) return true;
 
   try {
@@ -190,6 +194,7 @@ export async function completeProductPurchase(
     expiresAt?: string | null;
     externalId?: string;
     courseId?: number;
+    courseSlug?: string;
     curatorTelegramId?: number;
     teacherSanityId?: string;
   },
@@ -201,7 +206,19 @@ export async function completeProductPurchase(
   let teacherAssigned = false;
   if (product === 'course') {
     resolvedCourseId = await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId);
-    curatorAssigned = await ensureCuratorOnCoursePurchase(admin, telegramId, options.curatorTelegramId);
+    let courseSlug = options.courseSlug;
+    if (!courseSlug && resolvedCourseId) {
+      const { data: courseRow } = await admin
+        .from('courses')
+        .select('slug')
+        .eq('id', resolvedCourseId)
+        .maybeSingle();
+      courseSlug = (courseRow?.slug as string | undefined) ?? undefined;
+    }
+    curatorAssigned = await ensureCuratorOnCoursePurchase(admin, telegramId, {
+      curatorTelegramId: options.curatorTelegramId,
+      courseSlug,
+    });
   }
 
   if ((product === 'individual' || product === 'group') && options.teacherSanityId) {

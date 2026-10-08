@@ -28,22 +28,43 @@ function parseSection(value: string | undefined): CabinetSection | undefined {
   return LEGACY_SECTION_MAP[value];
 }
 
+function parsePaymentResult(value: string | undefined): 'success' | 'failed' | undefined {
+  if (value === 'success' || value === 'failed') return value;
+  return undefined;
+}
+
+function cabinetReturnPath(sp: {
+  section?: string;
+  payment?: string;
+  course?: string;
+}): string {
+  const params = new URLSearchParams();
+  const section = parseSection(sp.section);
+  if (section) params.set('section', section);
+  const payment = parsePaymentResult(sp.payment);
+  if (payment) params.set('payment', payment);
+  if (sp.course?.trim()) params.set('course', sp.course.trim());
+  const qs = params.toString();
+  return qs ? `/cabinet?${qs}` : '/cabinet';
+}
+
 // Личный кабинет ученика: отдельная часть сайта со своим прикладным
 // интерфейсом (без маркетинговой шапки и футера).
 export default async function CabinetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; login?: string }>;
+  searchParams: Promise<{ section?: string; login?: string; payment?: string; course?: string }>;
 }) {
   const sp = await searchParams;
+  const returnTo = cabinetReturnPath(sp);
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
 
   if (!data.user) {
     if (sp.login === '1') {
-      return <CabinetLoginGate returnTo="/cabinet" />;
+      return <CabinetLoginGate returnTo={returnTo} />;
     }
-    redirect(authLoginRedirectPath('/cabinet'));
+    redirect(authLoginRedirectPath(returnTo));
   }
 
   const cleanPath = pathWithoutAuthLoginQuery('/cabinet', sp);
@@ -51,10 +72,10 @@ export default async function CabinetPage({
 
   const phone =
     (data.user.user_metadata?.phone as string) ?? data.user.phone ?? '';
-  const cabinet = await getCabinetData(phone, data.user.created_at);
+  const cabinet = await getCabinetData(phone, data.user.created_at, sp.course);
 
   if (!cabinet.telegramLinked) {
-    return <CabinetTelegramGate returnTo="/cabinet" />;
+    return <CabinetTelegramGate returnTo={returnTo} />;
   }
 
   let showCabinetPick = false;
@@ -81,6 +102,7 @@ export default async function CabinetPage({
     <CabinetShell
       data={cabinet}
       initialSection={parseSection(sp.section)}
+      initialPaymentResult={parsePaymentResult(sp.payment)}
       showCabinetPick={showCabinetPick}
     />
   );
