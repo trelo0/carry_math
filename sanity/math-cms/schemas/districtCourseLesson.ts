@@ -84,6 +84,7 @@ export default defineType({
       name: 'module',
       title: 'Модуль',
       type: 'reference',
+      weak: true,
       to: [{ type: 'districtModule' }],
       hidden: true,
       readOnly: true,

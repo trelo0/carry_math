@@ -1,14 +1,11 @@
 import {useCallback, useState} from 'react'
 import {useClient} from 'sanity'
 import type {DocumentActionComponent, DocumentActionProps} from 'sanity'
-
-function bareId(id: string): string {
-  return id.replace(/^drafts\./, '')
-}
+import {bareId, filterOutRefs, idPair, type SanityRef} from './courseDeleteUtils'
 
 /**
- * Удаляет курс вместе с модулями/занятиями и снимает ссылки,
- * чтобы Sanity не блокировал delete из‑за references (module.course → course).
+ * Удаляет курс вместе с модулями/занятиями и снимает ссылки
+ * (draft + published), чтобы Sanity не блокировал delete.
  */
 export const DeleteCourseAction: DocumentActionComponent = (props: DocumentActionProps) => {
   const {id, type, published, draft, onComplete} = props
@@ -20,17 +17,30 @@ export const DeleteCourseAction: DocumentActionComponent = (props: DocumentActio
     setBusy(true)
     try {
       const courseId = bareId(id)
+      const courseRefs = idPair(courseId)
 
-      const modules = await client.fetch<{_id: string}[]>(
-        `*[_type == "districtModule" && (course._ref == $courseId || course._ref == $draftCourseId)]{_id}`,
-        {courseId, draftCourseId: `drafts.${courseId}`},
+      const modulesByCourse = await client.fetch<{_id: string}[]>(
+        `*[_type == "districtModule" && course._ref in $courseRefs]{_id}`,
+        {courseRefs},
       )
 
-      const moduleBareIds = [...new Set((modules ?? []).map((m) => bareId(m._id)))]
-      const moduleRefVariants = moduleBareIds.flatMap((mid) => [mid, `drafts.${mid}`])
+      const courseDocs = await client.fetch<{_id: string; modules?: SanityRef[]}[]>(
+        `*[_id in $ids]{_id, modules}`,
+        {ids: courseRefs},
+      )
+
+      const moduleBareIds = new Set<string>()
+      for (const mod of modulesByCourse ?? []) moduleBareIds.add(bareId(mod._id))
+      for (const course of courseDocs) {
+        for (const ref of course.modules ?? []) {
+          if (ref?._ref) moduleBareIds.add(bareId(ref._ref))
+        }
+      }
+
+      const moduleRefVariants = [...moduleBareIds].flatMap((mid) => idPair(mid))
 
       const lessons =
-        moduleBareIds.length > 0
+        moduleBareIds.size > 0
           ? await client.fetch<{_id: string}[]>(
               `*[_type == "districtCourseLesson" && module._ref in $moduleRefs]{_id}`,
               {moduleRefs: moduleRefVariants},
@@ -38,20 +48,32 @@ export const DeleteCourseAction: DocumentActionComponent = (props: DocumentActio
           : []
 
       const lessonBareIds = [...new Set((lessons ?? []).map((l) => bareId(l._id)))]
+
+      const moduleDocs =
+        moduleRefVariants.length > 0
+          ? await client.fetch<{_id: string; lessons?: SanityRef[]}[]>(
+              `*[_id in $ids]{_id, lessons}`,
+              {ids: moduleRefVariants},
+            )
+          : []
+
       const tx = client.transaction()
 
-      // Снять ссылки занятий из module.lessons (только у реально существующих docs)
-      for (const mod of modules ?? []) {
-        for (const lessonId of lessonBareIds) {
-          tx.patch(mod._id, (p) =>
-            p.unset([
-              `lessons[_ref=="${lessonId}"]`,
-              `lessons[_ref=="drafts.${lessonId}"]`,
-            ]),
-          )
-        }
+      // 1) Снять legacy course.modules
+      for (const course of courseDocs) {
+        tx.patch(course._id, (p) => p.unset(['modules']))
       }
 
+      // 2) Очистить module.lessons / module.course
+      for (const mod of moduleDocs) {
+        tx.patch(mod._id, (p) =>
+          p.set({lessons: filterOutRefs(mod.lessons, lessonBareIds.flatMap(idPair))}).unset([
+            'course',
+          ]),
+        )
+      }
+
+      // 3) Удалить занятия → модули → курс
       for (const lessonId of lessonBareIds) {
         tx.delete(`drafts.${lessonId}`)
         tx.delete(lessonId)
@@ -62,18 +84,8 @@ export const DeleteCourseAction: DocumentActionComponent = (props: DocumentActio
         tx.delete(mid)
       }
 
-      if (published) {
-        tx.patch(courseId, (p) => p.unset(['modules']))
-        tx.delete(courseId)
-      }
-      if (draft || id.startsWith('drafts.')) {
-        tx.patch(`drafts.${courseId}`, (p) => p.unset(['modules']))
-        tx.delete(`drafts.${courseId}`)
-      }
-      // На случай, если открыт только published id, но draft тоже есть
-      if (published && !draft) {
-        tx.delete(`drafts.${courseId}`)
-      }
+      tx.delete(`drafts.${courseId}`)
+      tx.delete(courseId)
 
       await tx.commit({visibility: 'async'})
       onComplete()
@@ -82,13 +94,13 @@ export const DeleteCourseAction: DocumentActionComponent = (props: DocumentActio
       window.alert(
         error instanceof Error
           ? error.message
-          : 'Не удалось удалить курс. Сначала удалите связанные модули или попробуйте ещё раз.',
+          : 'Не удалось удалить курс. Попробуйте ещё раз.',
       )
     } finally {
       setBusy(false)
       setDialogOpen(false)
     }
-  }, [client, draft, id, onComplete, published])
+  }, [client, id, onComplete])
 
   const doc = draft ?? published
   if (type !== 'districtCourse' || !doc) return null

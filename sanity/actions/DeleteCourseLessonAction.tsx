@@ -1,12 +1,11 @@
 import {useCallback, useState} from 'react'
 import {useClient} from 'sanity'
 import type {DocumentActionComponent, DocumentActionProps} from 'sanity'
+import {bareId, filterOutRefs, idPair, type SanityRef} from './courseDeleteUtils'
 
 /**
- * Удаляет занятие и предварительно убирает ссылки из module.lessons,
- * чтобы Sanity не блокировал delete из‑за references.
- *
- * Важно: все hooks — до любых early return (иначе падает structure tool).
+ * Удаляет занятие и предварительно убирает ссылки из module.lessons
+ * (и draft, и published), чтобы Sanity не блокировал delete.
  */
 export const DeleteCourseLessonAction: DocumentActionComponent = (
   props: DocumentActionProps,
@@ -19,21 +18,40 @@ export const DeleteCourseLessonAction: DocumentActionComponent = (
   const handleDelete = useCallback(async () => {
     setBusy(true)
     try {
-      const lessonId = id.replace(/^drafts\./, '')
+      const lessonId = bareId(id)
+      const lessonRefs = idPair(lessonId)
+
       const modules = await client.fetch<{_id: string}[]>(
-        `*[_type == "districtModule" && references($lessonId)]{_id}`,
-        {lessonId},
+        `*[_type == "districtModule" && (references($lessonId) || references($draftLessonId))]{_id}`,
+        {lessonId, draftLessonId: `drafts.${lessonId}`},
       )
 
-      const tx = client.transaction()
+      const moduleIds = new Set<string>()
       for (const mod of modules ?? []) {
-        tx.patch(mod._id, (p) =>
-          p.unset([
-            `lessons[_ref=="${lessonId}"]`,
-            `lessons[_ref=="drafts.${lessonId}"]`,
-          ]),
-        )
+        for (const mid of idPair(mod._id)) moduleIds.add(mid)
       }
+
+      const [moduleDocs, lessonDocs] = await Promise.all([
+        moduleIds.size > 0
+          ? client.fetch<{_id: string; lessons?: SanityRef[]}[]>(
+              `*[_id in $ids]{_id, lessons}`,
+              {ids: [...moduleIds]},
+            )
+          : Promise.resolve([]),
+        client.fetch<{_id: string}[]>(`*[_id in $ids]{_id}`, {ids: lessonRefs}),
+      ])
+
+      const tx = client.transaction()
+
+      for (const mod of moduleDocs) {
+        tx.patch(mod._id, (p) => p.set({lessons: filterOutRefs(mod.lessons, lessonRefs)}))
+      }
+
+      // Снять module у занятия перед delete (legacy strong refs)
+      for (const lesson of lessonDocs) {
+        tx.patch(lesson._id, (p) => p.unset(['module']))
+      }
+
       tx.delete(`drafts.${lessonId}`)
       tx.delete(lessonId)
       await tx.commit({visibility: 'async'})

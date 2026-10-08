@@ -160,7 +160,13 @@ export default defineType({
       type: 'array',
       group: 'main',
       hidden: true,
-      of: [defineArrayMember({ type: 'reference', to: [{ type: 'districtModule' }] })],
+      of: [
+        defineArrayMember({
+          type: 'reference',
+          weak: true,
+          to: [{ type: 'districtModule' }],
+        }),
+      ],
     }),
     defineField({
       name: 'homeworkIntro',

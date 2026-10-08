@@ -3,7 +3,6 @@ import { telegramSend } from '@/lib/telegram';
 import { maskPhone } from '@/lib/phone';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
-import { resolveDefaultCuratorTelegramId } from '@/lib/bot/teacher-mapping';
 import { getMember, setRole } from '@/lib/bot/roles';
 import { linkTelegramToPhone } from '@/lib/bot/telegram-account-link';
 import {
@@ -56,14 +55,15 @@ async function memberLabel(admin: SupabaseClient, telegramId: number): Promise<s
   return `ID ${telegramId}`;
 }
 
-async function collectStaffChatIds(admin: SupabaseClient): Promise<number[]> {
+/** Только админы (role=admin или ADMIN_TELEGRAM_IDS) — не кураторы/преподы. */
+async function collectAdminChatIds(admin: SupabaseClient): Promise<number[]> {
   const envIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
   const roleFilter = envIds.length
-    ? `role.eq.admin,role.eq.curator,role.eq.mentor,telegram_id.in.(${envIds.join(',')})`
-    : 'role.eq.admin,role.eq.curator,role.eq.mentor';
+    ? `role.eq.admin,telegram_id.in.(${envIds.join(',')})`
+    : 'role.eq.admin';
 
   const { data, error } = await admin
     .from('bot_members')
@@ -77,22 +77,10 @@ async function collectStaffChatIds(admin: SupabaseClient): Promise<number[]> {
     const chatId = row.chat_id as number | null;
     if (typeof chatId === 'number') ids.add(chatId);
   }
-
-  const curatorId = await resolveDefaultCuratorTelegramId(admin);
-  if (curatorId) {
-    const { data: curator } = await admin
-      .from('bot_members')
-      .select('chat_id')
-      .eq('telegram_id', curatorId)
-      .maybeSingle();
-    const chatId = curator?.chat_id as number | undefined;
-    if (chatId) ids.add(chatId);
-  }
-
   return [...ids];
 }
 
-async function notifyStaffCourseApplication(
+async function notifyAdminsCourseApplication(
   admin: SupabaseClient,
   request: PurchaseRequestRow,
   details?: CourseApplyDetails,
@@ -113,11 +101,11 @@ async function notifyStaffCourseApplication(
     .filter(Boolean)
     .join('\n');
 
-  const chatIds = await collectStaffChatIds(admin);
+  const chatIds = await collectAdminChatIds(admin);
   for (const chatId of chatIds) {
     const result = await telegramSend('sendMessage', { chat_id: chatId, text });
     if (!result.ok) {
-      console.error('[courseApply] staff notify failed:', result.description);
+      console.error('[courseApply] admin notify failed:', result.description);
     }
   }
 }
@@ -162,7 +150,7 @@ async function submitCourseApplication(
     await admin.from('bot_members').update({ full_name: namePart }).eq('telegram_id', telegramId);
   }
 
-  await notifyStaffCourseApplication(admin, request, details);
+  await notifyAdminsCourseApplication(admin, request, details);
   return 'created';
 }
 

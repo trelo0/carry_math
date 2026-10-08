@@ -47,6 +47,7 @@ export default defineType({
       of: [
         defineArrayMember({
           type: 'reference',
+          weak: true,
           to: [{ type: 'districtCourseLesson' }],
         }),
       ],
@@ -55,6 +56,7 @@ export default defineType({
       name: 'course',
       title: 'Курс',
       type: 'reference',
+      weak: true,
       to: [{ type: 'districtCourse' }],
       hidden: true,
       readOnly: true,

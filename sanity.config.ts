@@ -4,6 +4,7 @@ import {visionTool} from '@sanity/vision'
 import schemaTypes from './sanity/math-cms/schemas/schemaTypes'
 import {DeleteCourseAction} from './sanity/actions/DeleteCourseAction'
 import {DeleteCourseLessonAction} from './sanity/actions/DeleteCourseLessonAction'
+import {DeleteModuleAction} from './sanity/actions/DeleteModuleAction'
 
 function coursesStructure(S: StructureBuilder) {
   return S.documentTypeList('districtCourse')
@@ -273,7 +274,7 @@ export default defineConfig({
         schemaType: 'districtModule',
         parameters: [{name: 'courseId', type: 'string'}],
         value: ({courseId}: {courseId: string}) => ({
-          course: {_type: 'reference', _ref: courseId},
+          course: {_type: 'reference', _ref: courseId, _weak: true},
           color: '#4f7cff',
           sortOrder: 0,
         }),
@@ -284,7 +285,7 @@ export default defineConfig({
         schemaType: 'districtCourseLesson',
         parameters: [{name: 'moduleId', type: 'string'}],
         value: ({moduleId}: {moduleId: string}) => ({
-          module: {_type: 'reference', _ref: moduleId},
+          module: {_type: 'reference', _ref: moduleId, _weak: true},
           lessonType: 'webinar',
           publicationStatus: 'published',
           moduleOrder: 1,
@@ -326,6 +327,11 @@ export default defineConfig({
         return prev
           .filter(({action}) => action !== 'delete')
           .concat([DeleteCourseLessonAction])
+      }
+      if (schemaType === 'districtModule') {
+        return prev
+          .filter(({action}) => action !== 'delete')
+          .concat([DeleteModuleAction])
       }
       if (schemaType === 'districtCourse') {
         return prev

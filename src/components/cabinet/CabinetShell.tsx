@@ -1573,13 +1573,13 @@ export default function CabinetShell({
       })();
     };
 
-    const ric = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
-      .requestIdleCallback;
-    const idleId = ric ? ric(run, { timeout: 1800 }) : window.setTimeout(run, 400);
+    const ric = window.requestIdleCallback?.bind(window);
+    const usedIdle = typeof ric === 'function';
+    const idleId = usedIdle ? ric(run, { timeout: 1800 }) : window.setTimeout(run, 400);
     return () => {
       cancelled = true;
-      if (ric && typeof idleId === 'number') {
-        (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(idleId);
+      if (usedIdle) {
+        window.cancelIdleCallback?.(idleId);
       } else {
         window.clearTimeout(idleId);
       }
