@@ -12,6 +12,8 @@ import {
   type TodayLessonRow,
 } from './hub-metrics';
 import { memberDisplayName } from './users';
+import { shouldPromptMonthlyLivesRestore } from '@/lib/bot/education/lives';
+import { runHomeworkDeadlineReminders } from '@/lib/bot/education/homework-deadline-notify';
 
 function moscowGreeting(): string {
   const hour = Number(
@@ -115,13 +117,25 @@ export async function buildAdminHomeDashboard(
   telegramId: number,
   testFooter = '',
 ): Promise<AdminHomeDashboard> {
-  const [metrics, tasks, schoolEvents, todayPreview, member] = await Promise.all([
+  const [metrics, tasks, schoolEvents, todayPreview, member, livesPrompt] = await Promise.all([
     fetchAdminHubMetrics(admin),
     fetchHomeAttentionTasks(admin),
     fetchSchoolRecentEvents(admin, 5),
     fetchTodayLessonsPreview(admin, 5),
     getMember(admin, telegramId),
+    shouldPromptMonthlyLivesRestore(admin).catch(() => ({
+      prompt: false,
+      periodKey: '',
+      belowMax: 0,
+      day: 0,
+    })),
   ]);
+
+  // Ленивая проверка дедлайнов ДЗ при открытии админ-дома (без отдельного cron).
+  void runHomeworkDeadlineReminders(admin, new Date(), { limit: 80 }).catch((err) =>
+    console.error('[admin home] hw-deadline sweep failed:', err),
+  );
+
   const eventLines = formatSchoolEventsBlock(schoolEvents);
 
   const adminName = member?.full_name ? String(member.full_name) : null;
@@ -135,9 +149,22 @@ export async function buildAdminHomeDashboard(
   const todayBlock =
     todayLines.length > 0 ? todayLines : ['Занятий сегодня нет.'];
 
+  const livesBlock =
+    livesPrompt.prompt
+      ? [
+          '❤️ ЖИЗНИ ЗА МЕСЯЦ',
+          '',
+          `Период ${livesPrompt.periodKey}: у ${livesPrompt.belowMax} учеников жизни ниже максимума.`,
+          'Нажмите кнопку ниже, чтобы восстановить всем до 3.',
+          'Заморозка снимается, если жизни становятся > 0.',
+          '',
+        ]
+      : [];
+
   const text = [
     buildHeader(adminName, testFooter),
     '',
+    ...livesBlock,
     ...formatAttentionBlock(tasks),
     '',
     ...eventLines,
@@ -152,6 +179,14 @@ export async function buildAdminHomeDashboard(
   ].join('\n');
 
   const keyboard: InlineButton[][] = [];
+  if (livesPrompt.prompt) {
+    keyboard.push([
+      {
+        text: `❤️ Восстановить жизни всем (${livesPrompt.belowMax})`,
+        callback_data: 'al:rm',
+      },
+    ]);
+  }
   for (const task of tasks) {
     keyboard.push([{ text: task.buttonText, callback_data: task.callback }]);
   }

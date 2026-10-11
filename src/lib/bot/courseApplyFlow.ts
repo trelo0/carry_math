@@ -2,8 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { maskPhone } from '@/lib/phone';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
-import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
-import { getMember, setRole } from '@/lib/bot/roles';
+import { getMember } from '@/lib/bot/roles';
 import { linkTelegramToPhone } from '@/lib/bot/telegram-account-link';
 import {
   clearStateIfAvailable,
@@ -13,16 +12,20 @@ import {
   sendAdminMessage,
   type AdminPayload,
 } from '@/lib/bot/admin/core';
-import { resolveClientState } from '@/lib/bot/client-state';
 import {
-  createPurchaseRequest,
-  findPendingPurchaseRequest,
-  isPurchaseRequestTableError,
-  type PurchaseRequestRow,
-} from '@/lib/bot/purchase-requests';
+  isLeadStatusColumnError,
+  LEAD_SELECT_COLUMNS,
+  notifyAdminsOfNewLead,
+  type LeadRow,
+} from '@/lib/bot/admin/leads';
+import { resolveClientState } from '@/lib/bot/client-state';
 
 export const COURSE_APPLY_LINK_STEP = 'course-apply:link-phone' as const;
 export const COURSE_APPLY_FORM_STEP = 'course-apply:form' as const;
+
+const COURSE_SERVICE = 'Онлайн-курс · Запись';
+const TELEGRAM_ID_TAG = (id: number) => `telegram_id:${id}`;
+const OPEN_LEAD_STATUSES = ['new', 'awaiting_reply', 'in_progress'] as const;
 
 type CourseApplyFormStep = 'name' | 'wishes' | 'contact' | 'confirm';
 
@@ -40,76 +43,6 @@ type CourseApplyDetails = {
   contact?: string;
 };
 
-async function memberLabel(admin: SupabaseClient, telegramId: number): Promise<string> {
-  const member = await getMember(admin, telegramId);
-  const { data: link } = await admin
-    .from('telegram_links')
-    .select('phone')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  const phone = link?.phone ?? member?.phone ?? null;
-  const name = member?.full_name ?? null;
-  if (name && phone) return `${name} · ${phone}`;
-  if (name) return name;
-  if (phone) return phone;
-  return `ID ${telegramId}`;
-}
-
-/** Только админы (role=admin или ADMIN_TELEGRAM_IDS) — не кураторы/преподы. */
-async function collectAdminChatIds(admin: SupabaseClient): Promise<number[]> {
-  const envIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const roleFilter = envIds.length
-    ? `role.eq.admin,telegram_id.in.(${envIds.join(',')})`
-    : 'role.eq.admin';
-
-  const { data, error } = await admin
-    .from('bot_members')
-    .select('chat_id, telegram_id')
-    .or(roleFilter)
-    .not('chat_id', 'is', null);
-  if (error) throw error;
-
-  const ids = new Set<number>();
-  for (const row of data ?? []) {
-    const chatId = row.chat_id as number | null;
-    if (typeof chatId === 'number') ids.add(chatId);
-  }
-  return [...ids];
-}
-
-async function notifyAdminsCourseApplication(
-  admin: SupabaseClient,
-  request: PurchaseRequestRow,
-  details?: CourseApplyDetails,
-): Promise<void> {
-  const label = await memberLabel(admin, request.telegram_id);
-  const text = [
-    '🔔 Новая заявка на курс District',
-    '',
-    `👤 ${label}`,
-    details?.name ? `📝 Имя: ${details.name}` : null,
-    details?.wishes ? `💬 Пожелания: ${details.wishes}` : null,
-    details?.contact ? `📞 Контакт: ${details.contact}` : null,
-    `📋 ${request.title}`,
-    `💳 ${request.amount_byn} BYN`,
-    '',
-    'Откройте раздел «Заявки на оплату» в админ-боте.',
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const chatIds = await collectAdminChatIds(admin);
-  for (const chatId of chatIds) {
-    const result = await telegramSend('sendMessage', { chat_id: chatId, text });
-    if (!result.ok) {
-      console.error('[courseApply] admin notify failed:', result.description);
-    }
-  }
-}
-
 type SubmitResult = 'created' | 'already_pending';
 
 function detailsFromPayload(payload?: CourseApplyFormPayload): CourseApplyDetails {
@@ -120,37 +53,129 @@ function detailsFromPayload(payload?: CourseApplyFormPayload): CourseApplyDetail
   };
 }
 
+/** Открытая заявка на запись на курс (не оплата). */
+async function findOpenCourseLead(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<LeadRow | null> {
+  const { data, error } = await admin
+    .from('leads')
+    .select(LEAD_SELECT_COLUMNS)
+    .eq('client_telegram_id', telegramId)
+    .eq('inquiry_kind', 'application')
+    .ilike('service', 'Онлайн-курс%')
+    .in('status', [...OPEN_LEAD_STATUSES])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (
+      isLeadStatusColumnError(error) ||
+      String(error.message ?? '').includes('inquiry_kind') ||
+      String(error.message ?? '').includes('client_telegram_id')
+    ) {
+      const tag = TELEGRAM_ID_TAG(telegramId);
+      const legacy = await admin
+        .from('leads')
+        .select(LEAD_SELECT_COLUMNS)
+        .eq('source', 'telegram_bot')
+        .ilike('service', 'Онлайн-курс%')
+        .ilike('comment', `%${tag}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (legacy.error) throw legacy.error;
+      return (legacy.data as LeadRow | null) ?? null;
+    }
+    throw error;
+  }
+  return (data as LeadRow | null) ?? null;
+}
+
 async function submitCourseApplication(
   admin: SupabaseClient,
   telegramId: number,
   details?: CourseApplyDetails,
 ): Promise<SubmitResult> {
-  const existing = await findPendingPurchaseRequest(admin, telegramId, 'course', 0, null);
+  const existing = await findOpenCourseLead(admin, telegramId);
   if (existing) return 'already_pending';
 
-  const pricing = await getCabinetPricing().catch(() => null);
-  const amountByn = pricing?.course?.offer?.priceByn ?? 0;
   const namePart = details?.name?.trim();
-  const titleParts = ['Заявка на запись на курс District'];
-  if (namePart) titleParts.push(namePart);
+  if (!namePart || namePart.length < 2) {
+    throw new Error('COURSE_APPLY_NAME_REQUIRED');
+  }
 
-  const request = await createPurchaseRequest(admin, {
-    telegramId,
-    product: 'course',
-    packageIndex: 0,
-    title: titleParts.join(' · '),
-    amountByn,
-  });
+  const contactRaw = details?.contact?.trim();
+  const contact = contactRaw && contactRaw.length > 0 ? contactRaw : `Telegram (ID ${telegramId})`;
+  const wishesBlock = details?.wishes?.trim() || null;
+  const comment = ['Тип: Запись на онлайн-курс', wishesBlock, TELEGRAM_ID_TAG(telegramId)]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const insertRow: Record<string, unknown> = {
+    name: namePart,
+    contact,
+    comment,
+    service: COURSE_SERVICE,
+    source: 'telegram_bot',
+    inquiry_kind: 'application',
+    client_telegram_id: telegramId,
+    status: 'new',
+  };
+
+  const { data: inserted, error } = await admin
+    .from('leads')
+    .insert(insertRow)
+    .select(LEAD_SELECT_COLUMNS)
+    .maybeSingle();
+
+  let row: LeadRow | null = null;
+  if (error) {
+    if (
+      String(error.message ?? '').includes('assigned_telegram_id') ||
+      String(error.message ?? '').includes('inquiry_kind') ||
+      String(error.message ?? '').includes('client_telegram_id')
+    ) {
+      const fallback = await admin
+        .from('leads')
+        .insert({
+          name: namePart,
+          contact,
+          comment,
+          service: COURSE_SERVICE,
+          source: 'telegram_bot',
+        })
+        .select(LEAD_SELECT_COLUMNS)
+        .maybeSingle();
+      if (fallback.error) throw fallback.error;
+      row = (fallback.data as LeadRow | null) ?? null;
+    } else {
+      throw error;
+    }
+  } else {
+    row = (inserted as LeadRow | null) ?? null;
+  }
+
+  if (!row) throw new Error('COURSE_APPLY_INSERT_FAILED');
 
   const member = await getMember(admin, telegramId);
-  if (member?.role === 'guest') {
-    await setRole(admin, telegramId, 'student');
-  }
   if (namePart && (!member?.full_name || member.full_name.trim() === '')) {
     await admin.from('bot_members').update({ full_name: namePart }).eq('telegram_id', telegramId);
   }
 
-  await notifyAdminsCourseApplication(admin, request, details);
+  try {
+    const { logLeadEvent } = await import('@/lib/bot/admin/lead-events');
+    await logLeadEvent(admin, {
+      leadId: row.id,
+      eventType: 'lead_created',
+      actorTelegramId: telegramId,
+    });
+  } catch {
+    /* lead_events optional */
+  }
+
+  await notifyAdminsOfNewLead(admin, row);
   return 'created';
 }
 
@@ -167,9 +192,11 @@ async function sendApplicationSuccess(
   }
 
   if (submitResult === 'created') {
-    lines.push('✅ Заявка на курс отправлена. Куратор свяжется с вами в ближайшее время.');
+    lines.push(
+      '✅ Заявка на курс отправлена.\n\nАдминистратор свяжется с вами для уточнения деталей и оплаты.',
+    );
   } else {
-    lines.push('✅ Заявка на курс уже была отправлена ранее. Куратор свяжется с вами.');
+    lines.push('✅ Заявка на курс уже отправлена. Администратор свяжется с вами.');
   }
 
   await telegramSend('sendMessage', {
@@ -221,7 +248,7 @@ function confirmSummary(payload: CourseApplyFormPayload): string {
     `Пожелания: ${payload.courseApplyWishes?.trim() || '—'}`,
     `Контакт: ${payload.courseApplyContact?.trim() || '—'}`,
     '',
-    'После отправки куратор свяжется с вами.',
+    'После отправки администратор свяжется с вами.',
   ].join('\n');
 }
 
@@ -338,16 +365,13 @@ async function finishSubmitAfterLink(
     const submitResult = await submitCourseApplication(admin, telegramId, detailsFromPayload(formPayload));
     await sendApplicationSuccess(chatId, submitResult, linkedJustNow, phone);
   } catch (error) {
-    if (isPurchaseRequestTableError(error)) {
-      await sendAdminMessage(
-        chatId,
-        linkedJustNow
-          ? '✅ Telegram привязан, но заявки временно недоступны. Попробуйте позже или напишите в поддержку.'
-          : '⚠️ Заявки временно недоступны. Напишите нам в поддержку или попробуйте позже.',
-      );
-      return;
-    }
-    throw error;
+    console.error('[courseApply] submit after link failed:', error);
+    await sendAdminMessage(
+      chatId,
+      linkedJustNow
+        ? '✅ Telegram привязан, но заявку не удалось отправить. Напишите в поддержку или попробуйте позже.'
+        : '⚠️ Заявку не удалось отправить. Напишите в поддержку или попробуйте позже.',
+    );
   }
 }
 
@@ -396,14 +420,11 @@ async function submitCourseForm(
     const submitResult = await submitCourseApplication(admin, telegramId, detailsFromPayload(payload));
     await sendApplicationSuccess(chatId, submitResult, false);
   } catch (error) {
-    if (isPurchaseRequestTableError(error)) {
-      await sendAdminMessage(
-        chatId,
-        '⚠️ Заявки временно недоступны. Напишите нам в поддержку или попробуйте позже.',
-      );
-      return;
-    }
-    throw error;
+    console.error('[courseApply] submit failed:', error);
+    await sendAdminMessage(
+      chatId,
+      '⚠️ Заявку не удалось отправить. Напишите в поддержку или попробуйте позже.',
+    );
   }
 }
 
@@ -436,6 +457,15 @@ export async function handleCourseApplyCallback(
         reply_markup: {
           inline_keyboard: [[{ text: '🌐 Открыть курс в кабинете', url: cabinetUrl }]],
         },
+      });
+      return true;
+    }
+    const openLead = await findOpenCourseLead(admin, telegramId).catch(() => null);
+    if (openLead) {
+      await clearInlineKeyboard(chatId, messageId);
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: '✅ Заявка на курс уже отправлена. Администратор свяжется с вами.',
       });
       return true;
     }
@@ -689,16 +719,14 @@ export async function beginCourseApplication(
     return;
   }
 
-  const pending = await findPendingPurchaseRequest(admin, telegramId, 'course', 0, null).catch(
-    (error) => {
-      if (isPurchaseRequestTableError(error)) return null;
-      throw error;
-    },
-  );
+  const pending = await findOpenCourseLead(admin, telegramId).catch((error) => {
+    console.error('[courseApply] findOpenCourseLead failed:', error);
+    return null;
+  });
   if (pending) {
     await telegramSend('sendMessage', {
       chat_id: chatId,
-      text: '✅ Заявка на курс уже отправлена. Куратор свяжется с вами.',
+      text: '✅ Заявка на курс уже отправлена. Администратор свяжется с вами.',
     });
     return;
   }

@@ -35,11 +35,22 @@ export const COMBINED_STAFF_MENU_LABEL_SET = new Set<string>(
 );
 
 export function resolveStaffBotMode(caps: StaffCapabilities): StaffBotMode {
-  const hasTeacher = memberHasRole(caps.roles, 'teacher');
-  const hasCurator = memberHasRole(caps.roles, 'curator');
-  if (hasTeacher && hasCurator) return 'combined';
-  if (hasTeacher) return 'teacher_only';
-  if (hasCurator || caps.canCuratorBot) return 'curator_only';
+  // Эффективная роль / маска важнее сырых flags (admin preview иначе ломал teacher UI).
+  if (caps.effectiveRole === 'teacher' && caps.canTeacherBot && !caps.canCuratorBot) {
+    return 'teacher_only';
+  }
+  if (caps.effectiveRole === 'curator' && caps.canCuratorBot && !caps.canTeacherBot) {
+    return 'curator_only';
+  }
+
+  const hasTeacher = memberHasRole(caps.roles, 'teacher') || caps.effectiveRole === 'teacher';
+  const hasCurator = memberHasRole(caps.roles, 'curator') || caps.effectiveRole === 'curator';
+  if (caps.canTeacherBot && caps.canCuratorBot && hasTeacher && hasCurator) return 'combined';
+  if (caps.canTeacherBot && (hasTeacher || caps.effectiveRole === 'teacher')) return 'teacher_only';
+  if (caps.canCuratorBot && (hasCurator || caps.effectiveRole === 'curator')) return 'curator_only';
+  if (caps.canTeacherBot && caps.canCuratorBot) return 'combined';
+  if (caps.canTeacherBot) return 'teacher_only';
+  if (caps.canCuratorBot) return 'curator_only';
   return null;
 }
 

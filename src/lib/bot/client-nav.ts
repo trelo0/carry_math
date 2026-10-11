@@ -32,6 +32,10 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   'student:support',
   'student:support-thread',
   'client:lesson-hw-submit',
+  'student:course-hw-submit',
+  'student:course-hw-comment',
+  'student:course-hw-confirm',
+  'student:mentor',
 ]);
 
 export type ClientHubState = {

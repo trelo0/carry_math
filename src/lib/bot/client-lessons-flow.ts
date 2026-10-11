@@ -242,21 +242,70 @@ export async function showClientLessonsMenu(
   );
 }
 
+async function formatNextCourseWebinarLine(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<string | null> {
+  const state = await resolveClientState(admin, telegramId);
+  if (!state.hasActiveCourse) return null;
+  try {
+    const { flattenCourseLessons, getDistrictCourseContent } = await import(
+      '@/lib/studio/courseContent'
+    );
+    const { loadSanityLessonSessionMap, resolveWebinarSessionStatus } = await import(
+      '@/lib/curator/lesson-session'
+    );
+    const { formatDateTimeShort } = await import('./client-format');
+    const content = await getDistrictCourseContent();
+    if (!content) return null;
+    const lessons = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
+    const now = Date.now();
+    const sessionMap = await loadSanityLessonSessionMap(
+      admin,
+      lessons.map((l) => l.sanityId),
+    );
+    const next = lessons
+      .filter((l) => {
+        const at = l.scheduledAt ? Date.parse(l.scheduledAt) : NaN;
+        if (!Number.isFinite(at) || at < now) return false;
+        const status = resolveWebinarSessionStatus(l.scheduledAt, sessionMap.get(l.sanityId));
+        return status !== 'completed' && status !== 'cancelled';
+      })
+      .sort((a, b) => Date.parse(a.scheduledAt!) - Date.parse(b.scheduledAt!))[0];
+    if (!next) return '🎓 Ближайший вебинар курса: не запланирован';
+    return `🎓 Вебинар курса: №${next.lessonNumber} «${next.title}»\n   ${formatDateTimeShort(next.scheduledAt)}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function showClientScheduleMenu(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const lessons = await fetchFutureClientLessons(admin, telegramId, 25);
+  const [lessons, webinarLine] = await Promise.all([
+    fetchFutureClientLessons(admin, telegramId, 25),
+    formatNextCourseWebinarLine(admin, telegramId),
+  ]);
+
   if (lessons.length === 0) {
+    const emptyLines = [
+      '🗓 Расписание',
+      '',
+      webinarLine ?? 'Ближайших занятий пока нет.',
+      webinarLine ? '' : null,
+      webinarLine ? 'Обычных занятий с преподавателем пока нет.' : null,
+    ].filter((x): x is string => x != null);
+
     await renderHub(
       admin,
       telegramId,
       chatId,
       undefined,
       'schedule-empty',
-      '🗓 Расписание\n\nБлижайших занятий пока нет.',
+      emptyLines.join('\n'),
       { inline_keyboard: [[clientHomeButton()]] },
       deliver,
     );
@@ -271,7 +320,12 @@ export async function showClientScheduleMenu(
     groups.set(key, list);
   }
 
-  const lines = ['🗓 Расписание занятий', ''];
+  const lines = ['🗓 Расписание', ''];
+  if (webinarLine) {
+    lines.push(webinarLine, '');
+  }
+  lines.push('Занятия с преподавателем:', '');
+
   const keyboardRows: Array<Array<Record<string, string>>> = [];
 
   for (const [day, dayLessons] of groups) {

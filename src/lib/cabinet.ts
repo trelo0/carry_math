@@ -1,4 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
+﻿import { notFound, redirect } from 'next/navigation';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   ensureDistrictCourseRecord,
@@ -15,6 +15,7 @@ import {
   type CourseMapStopStatus,
 } from '@/lib/bot/education/course-progress';
 import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
+import { processHomeworkDeadlinesForStudent } from '@/lib/bot/education/homework-deadline-notify';
 import {
   getCabinetPricing,
   DEFAULT_CABINET_PRICING,
@@ -24,14 +25,33 @@ import {
 } from '@/lib/studio/cabinetSettings';
 import {
   countCourseLessons,
+  DEFAULT_LESSON_CONTENT_CHIPS,
+  flattenCourseLessons,
   getDistrictCourseContent,
   listCoursePaymentOffers,
   listDistrictCourseSummaries,
+  mapLessonKind,
   type CoursePaymentOffer,
   type DistrictCourseContent,
   type DistrictCourseSummary,
 } from '@/lib/studio/courseContent';
-import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
+import {
+  computeMapStopStatus,
+  type CourseLessonStudentProgress,
+  type HomeworkProgressStatus,
+} from '@/lib/bot/education/course-progress';
+import {
+  computeLessonProgressPercent,
+  lessonHasHomework,
+} from '@/lib/bot/education/lesson-progress-calc';
+import {
+  isCourseLessonCleared,
+  previousCourseLessonsCleared,
+} from '@/lib/bot/education/course-access';
+import {
+  loadSanityLessonSessionMap,
+  resolveWebinarSessionStatus,
+} from '@/lib/curator/lesson-session';
 import { HOMEWORK_STATUS_LABELS } from '@/lib/bot/education/course-homework';
 import {
   isPurchaseRequestTableError,
@@ -55,18 +75,18 @@ export function formatModulePeriodFromLessons(lessons: { lessonDate: string | nu
   const fmt = (d: Date) =>
     d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }).replace(/\./g, '');
   if (dates.length === 1) return fmt(dates[0]);
-  return `${fmt(dates[0])} – ${fmt(dates[dates.length - 1])}`;
+  return `${fmt(dates[0])} вЂ“ ${fmt(dates[dates.length - 1])}`;
 }
 
-// Данные личного кабинета ученика.
+// Р”Р°РЅРЅС‹Рµ Р»РёС‡РЅРѕРіРѕ РєР°Р±РёРЅРµС‚Р° СѓС‡РµРЅРёРєР°.
 //
-// Схема проекта связывает ученика с учебными данными так:
-//   auth-пользователь (телефон) → telegram_links → telegram_id →
-//   → user_accesses / course_enrollments / groups / mentor_assignments.
+// РЎС…РµРјР° РїСЂРѕРµРєС‚Р° СЃРІСЏР·С‹РІР°РµС‚ СѓС‡РµРЅРёРєР° СЃ СѓС‡РµР±РЅС‹РјРё РґР°РЅРЅС‹РјРё С‚Р°Рє:
+//   auth-РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ (С‚РµР»РµС„РѕРЅ) в†’ telegram_links в†’ telegram_id в†’
+//   в†’ user_accesses / course_enrollments / groups / mentor_assignments.
 //
-// Все таблицы закрыты RLS (только service_role), поэтому чтение идёт
-// через серверный admin-клиент. Никаких новых таблиц не создаём:
-// разделы без данных (ДЗ, платежи, жизни) отображаются как «скоро».
+// Р’СЃРµ С‚Р°Р±Р»РёС†С‹ Р·Р°РєСЂС‹С‚С‹ RLS (С‚РѕР»СЊРєРѕ service_role), РїРѕСЌС‚РѕРјСѓ С‡С‚РµРЅРёРµ РёРґС‘С‚
+// С‡РµСЂРµР· СЃРµСЂРІРµСЂРЅС‹Р№ admin-РєР»РёРµРЅС‚. РќРёРєР°РєРёС… РЅРѕРІС‹С… С‚Р°Р±Р»РёС† РЅРµ СЃРѕР·РґР°С‘Рј:
+// СЂР°Р·РґРµР»С‹ Р±РµР· РґР°РЅРЅС‹С… (Р”Р—, РїР»Р°С‚РµР¶Рё, Р¶РёР·РЅРё) РѕС‚РѕР±СЂР°Р¶Р°СЋС‚СЃСЏ РєР°Рє В«СЃРєРѕСЂРѕВ».
 
 export type CabinetSection = 'course' | 'lessons' | 'schedule' | 'payments' | 'settings';
 export type CabinetAccessProduct = 'course' | 'individual' | 'group';
@@ -74,7 +94,7 @@ export type CourseCabinetState = 'preview' | 'enrolled_locked' | 'full';
 
 export type CabinetAccess = {
   product: CabinetAccessProduct;
-  expiresAt: string | null; // null = бессрочный
+  expiresAt: string | null; // null = Р±РµСЃСЃСЂРѕС‡РЅС‹Р№
 };
 
 export type CabinetEnrollment = {
@@ -109,7 +129,7 @@ export type CabinetCourseCatalog = {
   sanityId: string | null;
   curatorName: string | null;
   totalLessons: number;
-  /** Число модулей (для переключателя; детальный список — в modulePreviews). */
+  /** Р§РёСЃР»Рѕ РјРѕРґСѓР»РµР№ (РґР»СЏ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЏ; РґРµС‚Р°Р»СЊРЅС‹Р№ СЃРїРёСЃРѕРє вЂ” РІ modulePreviews). */
   modulesCount: number;
   modulePreviews: CabinetCourseModulePreview[];
 };
@@ -185,6 +205,12 @@ export type CabinetCourseStop = {
   homeworkTitle: string | null;
   homeworkReviewNote: string | null;
   homeworkCompletedAt: string | null;
+  homeworkDeadlineAt: string | null;
+  homeworkRemainingMs: number | null;
+  homeworkOverdueAt: string | null;
+  /** 0-100: material 60% + HW 40% */
+  lessonProgressPercent: number;
+  isTrialFree: boolean;
   contentChips: string[];
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
   homeworkFiles: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
@@ -194,6 +220,7 @@ export type CabinetLivesState = {
   current: number;
   max: number;
   accessBlocked: boolean;
+  fullyBlocked: boolean;
 };
 
 export type CabinetCourseProgress = {
@@ -206,23 +233,23 @@ export type CabinetData = {
   createdAt: string;
   studentName: string | null;
   telegramLinked: boolean;
-  /** Действующие продуктовые доступы. */
+  /** Р”РµР№СЃС‚РІСѓСЋС‰РёРµ РїСЂРѕРґСѓРєС‚РѕРІС‹Рµ РґРѕСЃС‚СѓРїС‹. */
   accesses: CabinetAccess[];
-  /** Продукты, которые когда-либо выдавались (включая expired/cancelled). */
+  /** РџСЂРѕРґСѓРєС‚С‹, РєРѕС‚РѕСЂС‹Рµ РєРѕРіРґР°-Р»РёР±Рѕ РІС‹РґР°РІР°Р»РёСЃСЊ (РІРєР»СЋС‡Р°СЏ expired/cancelled). */
   accessHistory: CabinetAccessProduct[];
   enrollment: CabinetEnrollment | null;
-  /** Все активные зачисления (для порядка «мои курсы»). */
+  /** Р’СЃРµ Р°РєС‚РёРІРЅС‹Рµ Р·Р°С‡РёСЃР»РµРЅРёСЏ (РґР»СЏ РїРѕСЂСЏРґРєР° В«РјРѕРё РєСѓСЂСЃС‹В»). */
   courseEnrollments: CabinetEnrollment[];
-  /** Активный курс школы для preview и записи (из courses). */
+  /** РђРєС‚РёРІРЅС‹Р№ РєСѓСЂСЃ С€РєРѕР»С‹ РґР»СЏ preview Рё Р·Р°РїРёСЃРё (РёР· courses). */
   courseCatalog: CabinetCourseCatalog | null;
-  /** Все доступные курсы — для переключателя. */
+  /** Р’СЃРµ РґРѕСЃС‚СѓРїРЅС‹Рµ РєСѓСЂСЃС‹ вЂ” РґР»СЏ РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЏ. */
   courseCatalogs: CabinetCourseCatalog[];
-  /** Контент активного курса из Sanity (структура модулей/уроков). */
+  /** РљРѕРЅС‚РµРЅС‚ Р°РєС‚РёРІРЅРѕРіРѕ РєСѓСЂСЃР° РёР· Sanity (СЃС‚СЂСѓРєС‚СѓСЂР° РјРѕРґСѓР»РµР№/СѓСЂРѕРєРѕРІ). */
   courseContent: DistrictCourseContent | null;
-  /** Цитата дня для боковой панели. */
+  /** Р¦РёС‚Р°С‚Р° РґРЅСЏ РґР»СЏ Р±РѕРєРѕРІРѕР№ РїР°РЅРµР»Рё. */
   dailyQuote: CabinetQuote;
   mentors: CabinetMentor[];
-  /** Ind/group: были занятия в scheduled_lessons (для gate без полной загрузки lessons). */
+  /** Ind/group: Р±С‹Р»Рё Р·Р°РЅСЏС‚РёСЏ РІ scheduled_lessons (РґР»СЏ gate Р±РµР· РїРѕР»РЅРѕР№ Р·Р°РіСЂСѓР·РєРё lessons). */
   hasOrdinaryStudentTrack: boolean;
   packages: CabinetPackage[];
   payments: CabinetPayment[];
@@ -231,13 +258,13 @@ export type CabinetData = {
   courseModules: CabinetCourseModule[];
   courseStops: CabinetCourseStop[];
   lives: CabinetLivesState | null;
-  /** Цены пакетов курса / индивидуальных / групповых из Sanity. */
+  /** Р¦РµРЅС‹ РїР°РєРµС‚РѕРІ РєСѓСЂСЃР° / РёРЅРґРёРІРёРґСѓР°Р»СЊРЅС‹С… / РіСЂСѓРїРїРѕРІС‹С… РёР· Sanity. */
   cabinetPricing: CabinetPricing;
-  /** Карточки оплаты курсов (цена + N занятий из настроек каждого курса). */
+  /** РљР°СЂС‚РѕС‡РєРё РѕРїР»Р°С‚С‹ РєСѓСЂСЃРѕРІ (С†РµРЅР° + N Р·Р°РЅСЏС‚РёР№ РёР· РЅР°СЃС‚СЂРѕРµРє РєР°Р¶РґРѕРіРѕ РєСѓСЂСЃР°). */
   coursePaymentOffers: CoursePaymentOffer[];
-  /** Нажал «Посмотреть карту курса» в превью (student_profiles.course_map_viewed_at). */
+  /** РќР°Р¶Р°Р» В«РџРѕСЃРјРѕС‚СЂРµС‚СЊ РєР°СЂС‚Сѓ РєСѓСЂСЃР°В» РІ РїСЂРµРІСЊСЋ (student_profiles.course_map_viewed_at). */
   courseMapViewed: boolean;
-  /** Все роли участника: основная + extra_roles. */
+  /** Р’СЃРµ СЂРѕР»Рё СѓС‡Р°СЃС‚РЅРёРєР°: РѕСЃРЅРѕРІРЅР°СЏ + extra_roles. */
   memberRoles: BotRole[];
 };
 
@@ -270,18 +297,18 @@ export function hadAnyLessonsProduct(data: CabinetData): boolean {
   return data.hasOrdinaryStudentTrack;
 }
 
-/** Оплата курса: доступ product=course или активный пакет занятий курса. */
+/** РћРїР»Р°С‚Р° РєСѓСЂСЃР°: РґРѕСЃС‚СѓРї product=course РёР»Рё Р°РєС‚РёРІРЅС‹Р№ РїР°РєРµС‚ Р·Р°РЅСЏС‚РёР№ РєСѓСЂСЃР°. */
 export function hasCoursePayment(data: Pick<CabinetData, 'accesses' | 'packages'>): boolean {
   if (data.accesses.some((a) => a.product === 'course')) return true;
   return data.packages.some((p) => p.product === 'course' && p.active && p.total > 0);
 }
 
-/** Превью скрывается после клика «Посмотреть карту» или если курс уже оплачен. */
+/** РџСЂРµРІСЊСЋ СЃРєСЂС‹РІР°РµС‚СЃСЏ РїРѕСЃР»Рµ РєР»РёРєР° В«РџРѕСЃРјРѕС‚СЂРµС‚СЊ РєР°СЂС‚СѓВ» РёР»Рё РµСЃР»Рё РєСѓСЂСЃ СѓР¶Рµ РѕРїР»Р°С‡РµРЅ. */
 export function hasViewedCourseMap(data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages'>): boolean {
   return data.courseMapViewed || hasCoursePayment(data);
 }
 
-/** preview — первый визит; enrolled_locked — карта без оплаты; full — есть оплата курса. */
+/** preview вЂ” РїРµСЂРІС‹Р№ РІРёР·РёС‚; enrolled_locked вЂ” РєР°СЂС‚Р° Р±РµР· РѕРїР»Р°С‚С‹; full вЂ” РµСЃС‚СЊ РѕРїР»Р°С‚Р° РєСѓСЂСЃР°. */
 export function getCourseCabinetState(
   data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages'>,
 ): CourseCabinetState {
@@ -290,12 +317,12 @@ export function getCourseCabinetState(
   return 'full';
 }
 
-/** «Записан на курс» = оплатил (есть пакет / доступ), не клик по превью. */
+/** В«Р—Р°РїРёСЃР°РЅ РЅР° РєСѓСЂСЃВ» = РѕРїР»Р°С‚РёР» (РµСЃС‚СЊ РїР°РєРµС‚ / РґРѕСЃС‚СѓРї), РЅРµ РєР»РёРє РїРѕ РїСЂРµРІСЊСЋ. */
 export function isEnrolledOnCourse(data: Pick<CabinetData, 'accesses' | 'packages'>): boolean {
   return hasCoursePayment(data);
 }
 
-/** Куратор показывается только при полном доступе или при 0 жизнях. */
+/** РљСѓСЂР°С‚РѕСЂ РїРѕРєР°Р·С‹РІР°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ РїСЂРё РїРѕР»РЅРѕРј РґРѕСЃС‚СѓРїРµ РёР»Рё РїСЂРё 0 Р¶РёР·РЅСЏС…. */
 export function shouldShowCourseCurator(data: CabinetData): boolean {
   const state = getCourseCabinetState(data);
   if (state === 'full') return !!data.mentors.find((m) => m.kind === 'curator');
@@ -303,13 +330,13 @@ export function shouldShowCourseCurator(data: CabinetData): boolean {
   return false;
 }
 
-/** В Sanity/Supabase есть предложение онлайн-курса для кабинета. */
+/** Р’ Sanity/Supabase РµСЃС‚СЊ РїСЂРµРґР»РѕР¶РµРЅРёРµ РѕРЅР»Р°Р№РЅ-РєСѓСЂСЃР° РґР»СЏ РєР°Р±РёРЅРµС‚Р°. */
 export function hasCourseCatalogOffer(data: Pick<CabinetData, 'courseCatalog' | 'courseContent'>): boolean {
   if (data.courseCatalog) return true;
   return (data.courseContent?.modules.length ?? 0) > 0;
 }
 
-/** Ученик начал путь онлайн-курса (запись, оплата или открытие карты). */
+/** РЈС‡РµРЅРёРє РЅР°С‡Р°Р» РїСѓС‚СЊ РѕРЅР»Р°Р№РЅ-РєСѓСЂСЃР° (Р·Р°РїРёСЃСЊ, РѕРїР»Р°С‚Р° РёР»Рё РѕС‚РєСЂС‹С‚РёРµ РєР°СЂС‚С‹). */
 export function hasStartedCourseCabinetTrack(
   data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages' | 'enrollment'>,
 ): boolean {
@@ -319,8 +346,8 @@ export function hasStartedCourseCabinetTrack(
 }
 
 /**
- * Экран «кабинет только для курса»: ind/group без онлайн-курса
- * или нет данных каталога — не показываем карту/превью.
+ * Р­РєСЂР°РЅ В«РєР°Р±РёРЅРµС‚ С‚РѕР»СЊРєРѕ РґР»СЏ РєСѓСЂСЃР°В»: ind/group Р±РµР· РѕРЅР»Р°Р№РЅ-РєСѓСЂСЃР°
+ * РёР»Рё РЅРµС‚ РґР°РЅРЅС‹С… РєР°С‚Р°Р»РѕРіР° вЂ” РЅРµ РїРѕРєР°Р·С‹РІР°РµРј РєР°СЂС‚Сѓ/РїСЂРµРІСЊСЋ.
  */
 export function shouldShowCourseCabinetGate(data: CabinetData): boolean {
   if (!hasCourseCatalogOffer(data)) return true;
@@ -354,9 +381,9 @@ function formatPaymentDate(iso: string): string {
 }
 
 const PRODUCT_LABELS: Record<CabinetAccessProduct, string> = {
-  course: 'Курс District',
-  individual: 'Индивидуальные занятия',
-  group: 'Групповые занятия',
+  course: 'РљСѓСЂСЃ District',
+  individual: 'РРЅРґРёРІРёРґСѓР°Р»СЊРЅС‹Рµ Р·Р°РЅСЏС‚РёСЏ',
+  group: 'Р“СЂСѓРїРїРѕРІС‹Рµ Р·Р°РЅСЏС‚РёСЏ',
 };
 
 function mergeAccessHistoryFromPurchases(
@@ -506,7 +533,7 @@ async function loadProfile(
 }
 
 function formatSessionDate(iso: string | null): string {
-  if (!iso) return '—';
+  if (!iso) return 'вЂ”';
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
@@ -534,6 +561,11 @@ function mapStopToCabinet(stop: CourseMapStop): CabinetCourseStop {
     homeworkTitle: stop.homeworkTitle,
     homeworkReviewNote: stop.homeworkReviewNote,
     homeworkCompletedAt: stop.homeworkCompletedAt,
+    homeworkDeadlineAt: stop.homeworkDeadlineAt,
+    homeworkRemainingMs: stop.homeworkRemainingMs,
+    homeworkOverdueAt: stop.homeworkOverdueAt,
+    lessonProgressPercent: stop.lessonProgressPercent,
+    isTrialFree: stop.isTrialFree,
     contentChips: stop.contentChips,
     materials: stop.materials,
     homeworkFiles: stop.homeworkFiles,
@@ -558,7 +590,7 @@ export function mapContentToStructureStops(content: DistrictCourseContent): Cabi
   return buildCourseStructureStopsFromContent(content).map(mapStopToCabinet);
 }
 
-/** Fallback карты из preview-модулей каталога, если Sanity-уроки недоступны. */
+/** Fallback РєР°СЂС‚С‹ РёР· preview-РјРѕРґСѓР»РµР№ РєР°С‚Р°Р»РѕРіР°, РµСЃР»Рё Sanity-СѓСЂРѕРєРё РЅРµРґРѕСЃС‚СѓРїРЅС‹. */
 export function buildModulePreviewsFromContent(
   courseContent: DistrictCourseContent | null,
 ): CabinetCourseModulePreview[] {
@@ -576,7 +608,7 @@ export function buildModulePreviewsFromContent(
   });
 }
 
-/** URL страницы занятия — Sanity ID или порядковый номер на карте. */
+/** URL СЃС‚СЂР°РЅРёС†С‹ Р·Р°РЅСЏС‚РёСЏ вЂ” Sanity ID РёР»Рё РїРѕСЂСЏРґРєРѕРІС‹Р№ РЅРѕРјРµСЂ РЅР° РєР°СЂС‚Рµ. */
 export function lessonPathForStop(stop: Pick<CabinetCourseStop, 'sanityLessonId' | 'id'>): string {
   return `/cabinet/lesson/${encodeURIComponent(stop.sanityLessonId ?? String(stop.id))}`;
 }
@@ -601,7 +633,7 @@ export function buildStopsFromCatalogPreviews(catalog: CabinetCourseCatalog | nu
     const lessonTitles: CabinetCourseModulePreview['lessons'] =
       mod.lessons.length > 0
         ? mod.lessons
-        : Array.from({ length: Math.max(mod.count, 1) }, (_, i) => ({ title: `Занятие ${i + 1}` }));
+        : Array.from({ length: Math.max(mod.count, 1) }, (_, i) => ({ title: `Р—Р°РЅСЏС‚РёРµ ${i + 1}` }));
     lessonTitles.forEach((lesson, numInModuleIndex) => {
       stops.push({
         id: lessonIndex + 1,
@@ -614,7 +646,7 @@ export function buildStopsFromCatalogPreviews(catalog: CabinetCourseCatalog | nu
         kind: 'webinar',
         title: lesson.title,
         description: mod.about || null,
-        date: mod.period ?? '—',
+        date: mod.period ?? 'вЂ”',
         sessionStartsAt: null,
         liveUrl: null,
         recordingUrl: null,
@@ -624,6 +656,11 @@ export function buildStopsFromCatalogPreviews(catalog: CabinetCourseCatalog | nu
         homeworkTitle: null,
         homeworkReviewNote: null,
         homeworkCompletedAt: null,
+        homeworkDeadlineAt: null,
+        homeworkRemainingMs: null,
+        homeworkOverdueAt: null,
+        lessonProgressPercent: 0,
+        isTrialFree: false,
         contentChips: [],
         materials: [],
         homeworkFiles: [],
@@ -671,6 +708,7 @@ async function resolveCourseMapFromContent(
     const mapStops = await buildCourseMapStopsFromContent(admin, telegramId, content, accessBlocked, {
       courseState: options.courseState,
       hasCourseProductAccess: options.hasCourseProductAccess,
+      fullyBlocked: livesState?.fully_blocked ?? false,
     });
     return {
       modules,
@@ -805,11 +843,11 @@ export async function getCabinetData(
   try {
     admin = createAdminClient();
   } catch {
-    // Supabase service role не настроен — не роняем кабинет.
+    // Supabase service role РЅРµ РЅР°СЃС‚СЂРѕРµРЅ вЂ” РЅРµ СЂРѕРЅСЏРµРј РєР°Р±РёРЅРµС‚.
     return empty;
   }
 
-  // Привязка телефона к Telegram.
+  // РџСЂРёРІСЏР·РєР° С‚РµР»РµС„РѕРЅР° Рє Telegram.
   const { data: link, error: linkError } = await admin
     .from('telegram_links')
     .select('telegram_id')
@@ -818,7 +856,7 @@ export async function getCabinetData(
   if (linkError || !link?.telegram_id) return empty;
   const telegramId = link.telegram_id as number;
 
-  // Имя и роли участника из профиля бота.
+  // РРјСЏ Рё СЂРѕР»Рё СѓС‡Р°СЃС‚РЅРёРєР° РёР· РїСЂРѕС„РёР»СЏ Р±РѕС‚Р°.
   let memberRoles: BotRole[] = ['guest'];
   let studentName: string | null = null;
   try {
@@ -833,7 +871,7 @@ export async function getCabinetData(
     if (!isCabinetTableError(error)) throw error;
   }
 
-  // Активные продуктовые доступы.
+  // РђРєС‚РёРІРЅС‹Рµ РїСЂРѕРґСѓРєС‚РѕРІС‹Рµ РґРѕСЃС‚СѓРїС‹.
   const { data: accessRows, error: accessError } = await admin
     .from('user_accesses')
     .select('product, expires_at')
@@ -856,7 +894,7 @@ export async function getCabinetData(
     ...new Set((historyRows ?? []).map((row) => row.product as CabinetAccessProduct)),
   ];
 
-  // Контент курсов из Sanity + lookup courses в Supabase (без UPDATE на каждый заход).
+  // РљРѕРЅС‚РµРЅС‚ РєСѓСЂСЃРѕРІ РёР· Sanity + lookup courses РІ Supabase (Р±РµР· UPDATE РЅР° РєР°Р¶РґС‹Р№ Р·Р°С…РѕРґ).
   let courseContent: DistrictCourseContent | null = null;
   let cabinetPricing: CabinetPricing = DEFAULT_CABINET_PRICING;
   let coursePaymentOffers: CoursePaymentOffer[] = [];
@@ -920,6 +958,8 @@ export async function getCabinetData(
               priceByn: null,
               grantedLessons: null,
               pricingCardText: null,
+              purchaseScenarios: null,
+              activeModuleOverride: null,
               modules: [],
             });
             if (id) idBySlug.set(summary.slug, id);
@@ -937,7 +977,7 @@ export async function getCabinetData(
     console.error('[cabinet] course catalog lookup failed:', error);
   }
 
-  // Активные зачисления (все курсы).
+  // РђРєС‚РёРІРЅС‹Рµ Р·Р°С‡РёСЃР»РµРЅРёСЏ (РІСЃРµ РєСѓСЂСЃС‹).
   const { data: enrollmentRows, error: enrollmentError } = await admin
     .from('course_enrollments')
     .select('status, started_at, course_id, courses(title, slug)')
@@ -961,7 +1001,7 @@ export async function getCabinetData(
       courseTitle:
         joined?.title ??
         courseCatalogs.find((c) => c.id === row.course_id)?.title ??
-        'Курс District',
+        'РљСѓСЂСЃ District',
       status: row.status,
       startedAt: row.started_at,
     };
@@ -976,7 +1016,7 @@ export async function getCabinetData(
   const enrolledMatchingPreferred = preferredCatalog
     ? activeEnrollments.find((row) => row.course_id === preferredCatalog.id)
     : null;
-  // Без ?course= — самый ранний купленный курс (ascending).
+  // Р‘РµР· ?course= вЂ” СЃР°РјС‹Р№ СЂР°РЅРЅРёР№ РєСѓРїР»РµРЅРЅС‹Р№ РєСѓСЂСЃ (ascending).
   const primaryEnrollment = enrolledMatchingPreferred ?? activeEnrollments[0] ?? null;
 
   let enrollment: CabinetEnrollment | null = null;
@@ -988,7 +1028,7 @@ export async function getCabinetData(
       ({
         courseId: enrolledCourseId,
         courseTitle:
-          courseCatalogs.find((c) => c.id === enrolledCourseId)?.title ?? 'Курс District',
+          courseCatalogs.find((c) => c.id === enrolledCourseId)?.title ?? 'РљСѓСЂСЃ District',
         status: primaryEnrollment.status,
         startedAt: primaryEnrollment.started_at,
       } satisfies CabinetEnrollment);
@@ -1073,7 +1113,7 @@ export async function getCabinetData(
     };
   }
 
-  // Активные наставники (преподаватель/куратор).
+  // РђРєС‚РёРІРЅС‹Рµ РЅР°СЃС‚Р°РІРЅРёРєРё (РїСЂРµРїРѕРґР°РІР°С‚РµР»СЊ/РєСѓСЂР°С‚РѕСЂ).
   const { data: mentorRows, error: mentorError } = await admin
     .from('mentor_assignments')
     .select('kind, mentor_telegram_id')
@@ -1149,7 +1189,8 @@ export async function getCabinetData(
       const mapData = await resolveCourseMapFromContent(admin, telegramId, courseIdForMap, courseContent, {
         courseState,
         hasCourseProductAccess,
-        withProgress: Boolean(viewedCourseMap && courseIdForMap),
+        // РџСЂРѕРіСЂРµСЃСЃ РЅСѓР¶РµРЅ Рё РЅР° РїСЂРѕР±РЅРѕРј (enrolled_locked), РЅРµ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ РѕРїР»Р°С‚С‹.
+        withProgress: Boolean(courseIdForMap && (viewedCourseMap || courseState !== 'preview')),
       });
       courseModules = mapData.modules;
       courseStops = mapData.stops;
@@ -1185,8 +1226,10 @@ export async function getCabinetData(
           current: livesState.lives_current,
           max: livesState.lives_max,
           accessBlocked: livesState.access_blocked,
+          fullyBlocked: livesState.fully_blocked,
         };
       }
+      void processHomeworkDeadlinesForStudent(admin, telegramId);
     } catch (error) {
       if (!isLivesTableError(error)) throw error;
     }
@@ -1229,7 +1272,7 @@ export async function getCabinetData(
   };
 }
 
-/** Срез активного курса для быстрого переключения без полной перезагрузки кабинета. */
+/** РЎСЂРµР· Р°РєС‚РёРІРЅРѕРіРѕ РєСѓСЂСЃР° РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РїРµСЂРµРєР»СЋС‡РµРЅРёСЏ Р±РµР· РїРѕР»РЅРѕР№ РїРµСЂРµР·Р°РіСЂСѓР·РєРё РєР°Р±РёРЅРµС‚Р°. */
 export type CabinetCourseViewSlice = {
   slug: string;
   courseCatalog: CabinetCourseCatalog;
@@ -1294,7 +1337,7 @@ export async function getCabinetCourseViewSlice(
     modulePreviews: buildModulePreviewsFromContent(courseContent),
   };
 
-  // Enrollment + accesses параллельно; packages/profile для switch не нужны.
+  // Enrollment + accesses РїР°СЂР°Р»Р»РµР»СЊРЅРѕ; packages/profile РґР»СЏ switch РЅРµ РЅСѓР¶РЅС‹.
   const [{ data: accessRows }, { data: enrollmentRow }] = await Promise.all([
     admin
       .from('user_accesses')
@@ -1365,6 +1408,7 @@ export async function getCabinetCourseViewSlice(
           current: livesState.lives_current,
           max: livesState.lives_max,
           accessBlocked: livesState.access_blocked,
+          fullyBlocked: livesState.fully_blocked,
         };
       }
     } catch {
@@ -1390,7 +1434,7 @@ export type CabinetLessonPageData = {
   courseState: CourseCabinetState;
 };
 
-/** Облегчённая загрузка для страницы одного занятия (без платежей, расписания и т.д.). */
+/** РўРѕР»СЊРєРѕ РѕРґРЅРѕ Р·Р°РЅСЏС‚РёРµ: Р±РµР· РїРѕР»РЅРѕР№ РєР°СЂС‚С‹ РєСѓСЂСЃР° / РїСЂРѕС„РёР»СЏ / РѕС„С„РµСЂРѕРІ. */
 export async function getCabinetLessonPageData(
   phone: string,
   lessonId: string,
@@ -1402,60 +1446,55 @@ export async function getCabinetLessonPageData(
     return null;
   }
 
-  const { data: link, error: linkError } = await admin
-    .from('telegram_links')
-    .select('telegram_id')
-    .eq('phone', phone)
-    .maybeSingle();
-  if (linkError || !link?.telegram_id) return null;
-  const telegramId = link.telegram_id as number;
+  const lessonKey = decodeURIComponent(lessonId).trim();
 
-  let courseContent: DistrictCourseContent | null = null;
-  try {
-    courseContent = await getDistrictCourseContent();
-  } catch {
-    courseContent = null;
-  }
+  const [linkRes, courseContent] = await Promise.all([
+    admin.from('telegram_links').select('telegram_id').eq('phone', phone).maybeSingle(),
+    getDistrictCourseContent().catch(() => null),
+  ]);
 
-  let resolvedCourseId: number | null = null;
-  try {
-    resolvedCourseId = await resolveCourseIdForContent(admin, courseContent);
-  } catch {
-    resolvedCourseId = null;
-  }
+  if (linkRes.error || !linkRes.data?.telegram_id) return null;
+  const telegramId = linkRes.data.telegram_id as number;
+  if (!courseContent?.modules.length) notFound();
 
-  let courseCatalog: CabinetCourseCatalog | null = null;
-  if (resolvedCourseId) {
-    const { data: catalogRow } = await admin
-      .from('courses')
-      .select('id, title, slug, description, sanity_id')
-      .eq('id', resolvedCourseId)
-      .maybeSingle();
+  type Located = {
+    lesson: (typeof courseContent.modules)[0]['lessons'][0];
+    moduleIndex: number;
+    numInModule: number;
+    lessonIndex: number;
+  };
 
-    if (catalogRow) {
-      courseCatalog = {
-        id: catalogRow.id as number,
-        title: (courseContent?.title ?? catalogRow.title) as string,
-        slug: (courseContent?.slug ?? catalogRow.slug) as string,
-        description: courseContent?.description?.trim() || null,
-        cabinetEyebrow: courseContent?.cabinetEyebrow ?? null,
-        deliveryFormat: courseContent?.deliveryFormat ?? null,
-        homeworkIntro: courseContent?.homeworkIntro ?? null,
-        coverImageUrl: courseContent?.coverImageUrl ?? null,
-        previewImageUrl: courseContent?.previewImageUrl ?? null,
-        previewInsideItems: courseContent?.previewInsideItems ?? [],
-        previewAfterEnrollment: courseContent?.previewAfterEnrollment ?? null,
-        previewAudience: courseContent?.previewAudience ?? null,
-        sanityId: (catalogRow.sanity_id as string | null) ?? courseContent?.sanityId ?? null,
-        curatorName: courseContent?.curatorName ?? null,
-        totalLessons: courseContent ? countCourseLessons(courseContent) : 0,
-        modulesCount: courseContent?.modules.length ?? 0,
-        modulePreviews: buildModulePreviewsFromContent(courseContent),
-      };
+  const allVisible: Located[] = [];
+  courseContent.modules.forEach((mod, moduleIndex) => {
+    let numInModule = 0;
+    for (const lesson of mod.lessons) {
+      if (lesson.publicationStatus === 'archived') continue;
+      numInModule += 1;
+      allVisible.push({
+        lesson,
+        moduleIndex,
+        numInModule,
+        lessonIndex: allVisible.length,
+      });
     }
-  }
+  });
 
-  const [{ data: enrollmentRows }, { data: accessRows }, { data: packageRows }, profileLoad] =
+  const located =
+    allVisible.find((x) => x.lesson.sanityId === lessonKey) ??
+    allVisible.find((x) => String(x.lessonIndex + 1) === lessonKey) ??
+    allVisible.find((x) => String(x.lesson.lessonNumber) === lessonKey);
+
+  if (!located) notFound();
+
+  const orderedPublished = flattenCourseLessons(courseContent).filter(
+    (l) => l.publicationStatus === 'published',
+  );
+  const publishedIndex = orderedPublished.findIndex((l) => l.sanityId === located.lesson.sanityId);
+  const gateLessons =
+    publishedIndex >= 0 ? orderedPublished.slice(0, publishedIndex + 1) : [located.lesson];
+  const gateIds = gateLessons.map((l) => l.sanityId);
+
+  const [{ data: enrollmentRows }, { data: accessProductRows }, { data: packageRows }, accessProg, sessionMap] =
     await Promise.all([
       admin
         .from('course_enrollments')
@@ -1474,12 +1513,33 @@ export async function getCabinetLessonPageData(
         .select('product, total_lessons, remaining_lessons, status')
         .eq('telegram_id', telegramId)
         .eq('status', 'active'),
-      loadProfile(admin, telegramId).catch(() => ({ profile: null, courseMapViewed: false })),
+      Promise.all([
+        admin
+          .from('course_lesson_access')
+          .select('sanity_lesson_id, access_status')
+          .eq('telegram_id', telegramId)
+          .in('sanity_lesson_id', gateIds),
+        admin
+          .from('course_lesson_student_progress')
+          .select('*')
+          .eq('telegram_id', telegramId)
+          .in('sanity_lesson_id', gateIds),
+      ]),
+      loadSanityLessonSessionMap(admin, [located.lesson.sanityId]),
     ]);
 
-  const enrollment = enrollmentRows?.[0] ?? null;
-  const enrolledCourseId = (enrollment?.course_id as number) ?? null;
-  const accesses: CabinetAccess[] = (accessRows ?? [])
+  const [accessRes, progressRes] = accessProg;
+  const accessMap = new Map(
+    (accessRes.data ?? []).map((r) => [r.sanity_lesson_id as string, r.access_status as string]),
+  );
+  const progressMap = new Map<string, CourseLessonStudentProgress | undefined>(
+    (progressRes.data ?? []).map((r) => [
+      r.sanity_lesson_id as string,
+      r as CourseLessonStudentProgress,
+    ]),
+  );
+
+  const accesses: CabinetAccess[] = (accessProductRows ?? [])
     .filter((row) => isNotExpired(row.expires_at ?? null))
     .map((row) => ({
       product: row.product as CabinetAccessProduct,
@@ -1494,57 +1554,131 @@ export async function getCabinetLessonPageData(
     total: row.total_lessons as number,
     active: row.status === 'active' && (row.remaining_lessons as number) > 0,
   }));
-  const courseMapViewed = profileLoad.courseMapViewed;
-  const cabinetSlice = { courseMapViewed, accesses, packages };
+
+  const enrolled = Boolean(enrollmentRows?.[0]);
+  const cabinetSlice = { courseMapViewed: enrolled, accesses, packages };
   const courseState = getCourseCabinetState(cabinetSlice);
-  const hasCourseProductAccess = hasCoursePayment(cabinetSlice);
-  const viewedCourseMap = hasViewedCourseMap(cabinetSlice);
-
-  const courseIdForMap = enrolledCourseId ?? resolvedCourseId ?? courseCatalog?.id ?? null;
-  let courseModules: CabinetCourseModule[] = [];
-  let courseStops: CabinetCourseStop[] = [];
-
-  if (courseContent?.modules.length && courseIdForMap) {
-    try {
-      const mapData = await resolveCourseMapFromContent(admin, telegramId, courseIdForMap, courseContent, {
-        courseState,
-        hasCourseProductAccess,
-        withProgress: Boolean(viewedCourseMap && courseIdForMap),
-      });
-      courseModules = mapData.modules;
-      courseStops = mapData.stops;
-    } catch {
-      courseModules = mapContentToCourseModules(courseContent);
-      courseStops = mapContentToStructureStops(courseContent);
-    }
-    if (courseStops.length === 0) {
-      courseModules = mapContentToCourseModules(courseContent);
-      courseStops = mapContentToStructureStops(courseContent);
-    }
-  } else if (viewedCourseMap && courseIdForMap) {
-    try {
-      const mapData = await loadCourseMapData(admin, telegramId, courseIdForMap, courseContent, {
-        courseState,
-        hasCourseProductAccess,
-      });
-      courseModules = mapData.modules;
-      courseStops = mapData.stops;
-    } catch {
-      // fallback ниже
-    }
-  }
-
-  if (courseStops.length === 0 && courseCatalog) {
-    courseStops = buildStopsFromCatalogPreviews(courseCatalog);
-    courseModules = buildModulesFromCatalogPreviews(courseCatalog);
-  }
-
   if (courseState === 'preview') {
     redirect('/cabinet?section=course');
   }
 
-  const stop = findCabinetStopByLessonParam(courseStops, lessonId);
-  if (!stop) notFound();
+  const previousCleared =
+    publishedIndex <= 0
+      ? true
+      : previousCourseLessonsCleared(orderedPublished, publishedIndex, progressMap);
+
+  const rawAccess = accessMap.get(located.lesson.sanityId) ?? null;
+  let hasAccess = false;
+  let accessStatus: string | null = rawAccess;
+  if (!previousCleared) {
+    hasAccess = false;
+  } else if (rawAccess === 'available' || rawAccess === 'blocked_lives') {
+    hasAccess = true;
+  } else if (rawAccess === 'revoked') {
+    hasAccess = false;
+  } else if (courseState === 'enrolled_locked' && located.lesson.isTrialFree) {
+    hasAccess = true;
+    accessStatus = 'available';
+  }
+
+  const progress = progressMap.get(located.lesson.sanityId);
+  // Таймер ДЗ стартует только по Play на /cabinet/lesson (watch-*), не при открытии страницы.
+  if (hasAccess) {
+    void processHomeworkDeadlinesForStudent(admin, telegramId);
+  }
+
+  const sessionStatus =
+    located.lesson.lessonType === 'webinar'
+      ? resolveWebinarSessionStatus(
+          located.lesson.scheduledAt,
+          sessionMap.get(located.lesson.sanityId),
+        )
+      : null;
+
+  const isCurrent =
+    hasAccess &&
+    !isCourseLessonCleared(located.lesson, progress) &&
+    previousCleared;
+
+  const status = computeMapStopStatus({
+    hasAccess,
+    accessBlocked: false,
+    accessStatus,
+    sessionStatus,
+    progress,
+    isCurrent,
+  });
+
+  const stop: CabinetCourseStop = {
+    id: located.lessonIndex + 1,
+    sanityLessonId: located.lesson.sanityId,
+    lessonId: null,
+    module: located.moduleIndex,
+    numInModule: located.numInModule,
+    isCurrent,
+    status,
+    kind: mapLessonKind(located.lesson.lessonType),
+    title: located.lesson.title,
+    description: located.lesson.description,
+    date: formatSessionDate(located.lesson.scheduledAt),
+    sessionStartsAt: located.lesson.scheduledAt,
+    liveUrl: located.lesson.liveUrl,
+    recordingUrl: located.lesson.recordingUrl,
+    webinarSessionStatus: sessionStatus,
+    mandatoryHomework: located.lesson.mandatoryHomework,
+    homeworkStatus: progress?.homework_status ?? null,
+    homeworkTitle: located.lesson.homework?.title ?? null,
+    homeworkReviewNote: progress?.review_note ?? null,
+    homeworkCompletedAt: progress?.homework_completed_at ?? null,
+    homeworkDeadlineAt: progress?.homework_deadline_at ?? null,
+    homeworkRemainingMs:
+      typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null,
+    homeworkOverdueAt: progress?.homework_overdue_at ?? null,
+    lessonProgressPercent: computeLessonProgressPercent({
+      recordingWatchedAt: progress?.recording_watched_at,
+      liveAttendedAt: progress?.live_attended_at,
+      homeworkStatus: progress?.homework_status,
+      hasHomework: lessonHasHomework(located.lesson),
+    }),
+    isTrialFree: located.lesson.isTrialFree,
+    contentChips:
+      located.lesson.contentChips?.length > 0
+        ? located.lesson.contentChips
+        : [...DEFAULT_LESSON_CONTENT_CHIPS],
+    materials: located.lesson.materials.map((m) => ({
+      title: m.title,
+      fileName: m.fileName,
+      fileSize: m.fileSize,
+      url: m.url,
+    })),
+    homeworkFiles: located.lesson.homeworkFiles.map((m) => ({
+      title: m.title,
+      fileName: m.fileName,
+      fileSize: m.fileSize,
+      url: m.url,
+    })),
+  };
+
+  const courseModules = mapContentToCourseModules(courseContent);
+  const courseCatalog: CabinetCourseCatalog = {
+    id: 0,
+    title: courseContent.title,
+    slug: courseContent.slug,
+    description: courseContent.description?.trim() || null,
+    cabinetEyebrow: courseContent.cabinetEyebrow ?? null,
+    deliveryFormat: courseContent.deliveryFormat ?? null,
+    homeworkIntro: courseContent.homeworkIntro ?? null,
+    coverImageUrl: courseContent.coverImageUrl ?? null,
+    previewImageUrl: courseContent.previewImageUrl ?? null,
+    previewInsideItems: courseContent.previewInsideItems ?? [],
+    previewAfterEnrollment: courseContent.previewAfterEnrollment ?? null,
+    previewAudience: courseContent.previewAudience ?? null,
+    sanityId: courseContent.sanityId ?? null,
+    curatorName: courseContent.curatorName ?? null,
+    totalLessons: countCourseLessons(courseContent),
+    modulesCount: courseContent.modules.length,
+    modulePreviews: [],
+  };
 
   return {
     courseCatalog,

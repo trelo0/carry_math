@@ -3,13 +3,14 @@ import { type AccessProduct, grantAccess, isAccessTableError } from './accesses'
 import {
   grantPackageLessonAccess,
   isCourseAccessTableError,
+  resetCourseLearningForRepurchase,
 } from './education/course-access';
 import { resolveCourseIdForContent } from './education/course-record';
 import { enrollStudent, getActiveCourses } from './education/courses';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { assignCurator, assignTeacher } from './education/assignments';
 import { resolveCuratorTelegramIdForCourse, resolveTeacherTelegramId } from './teacher-mapping';
-import { initEnrollmentLives, isLivesTableError } from './education/lives';
+import { getEnrollmentLives, initEnrollmentLives, isLivesTableError } from './education/lives';
 
 export function isPackageTableError(error: unknown): boolean {
   const details = error as { message?: unknown; code?: unknown } | null;
@@ -129,13 +130,24 @@ export async function ensureCourseEnrollmentOnPurchase(
 
   if (!existing) {
     await enrollStudent(admin, telegramId, targetCourseId);
-    return targetCourseId;
   }
 
   try {
-    await initEnrollmentLives(admin, telegramId, targetCourseId);
+    const lives = await getEnrollmentLives(admin, telegramId, targetCourseId);
+    // После full block + новая оплата: сброс прогресса и блокировок «с нуля».
+    if (lives?.fully_blocked) {
+      const courseContent = await getDistrictCourseContent().catch(() => null);
+      await resetCourseLearningForRepurchase(
+        admin,
+        telegramId,
+        targetCourseId,
+        courseContent,
+      );
+    } else if (existing) {
+      await initEnrollmentLives(admin, telegramId, targetCourseId);
+    }
   } catch (error) {
-    if (!isLivesTableError(error)) throw error;
+    if (!isLivesTableError(error) && !isCourseAccessTableError(error)) throw error;
   }
 
   return targetCourseId;

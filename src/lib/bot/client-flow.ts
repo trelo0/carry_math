@@ -22,8 +22,22 @@ import { showClientPurchaseHistory } from './client-purchase-history';
 import {
   handleClientLessonHomeworkCallback,
   isClientLessonHomeworkCallback,
+  showClientLessonHomeworkHub,
 } from './client-lesson-homework-flow';
-import { resolveClientState, type ClientStateSnapshot } from './client-state';
+import {
+  handleClientCourseHomeworkCallback,
+  isClientCourseHomeworkCallback,
+  showClientCourseHomeworkHub,
+} from './client-course-homework-hub';
+import { showClientMyCourseHub } from './client-course-hub';
+import {
+  handleClientSharedHubCallback,
+  isClientSharedHubCallback,
+  showClientContactHub,
+  showClientMiscHub,
+  showClientPaymentsHub,
+} from './client-shared-hubs';
+import { getClientProductMode, resolveClientState, type ClientStateSnapshot } from './client-state';
 import {
   buildClientReplyKeyboard,
   buildClientWelcomeTextAsync,
@@ -294,7 +308,54 @@ export async function handleClientMessage(
 
   switch (text) {
     case CLIENT_LABELS.onlineCourse:
-      await showOnlineCourseScreen(admin, state, { kind: 'push', chatId });
+      if (state.hasActiveCourse) {
+        await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true });
+      } else {
+        await showOnlineCourseScreen(admin, state, { kind: 'push', chatId });
+      }
+      return true;
+    case CLIENT_LABELS.myCourse:
+      await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true });
+      return true;
+    case CLIENT_LABELS.homework: {
+      const mode = getClientProductMode(state);
+      if (mode === 'course') {
+        await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      } else {
+        await showClientLessonHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      }
+      return true;
+    }
+    case CLIENT_LABELS.contactTeacher:
+      if (!state.hasActiveLessonProduct) {
+        await telegramSend('sendMessage', {
+          chat_id: chatId,
+          text: 'Раздел доступен при активных занятиях с преподавателем.',
+          reply_markup: buildClientReplyKeyboard(state),
+        });
+        return true;
+      }
+      await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
+      return true;
+    case CLIENT_LABELS.contactCurator:
+      if (!state.hasActiveCourse) {
+        await telegramSend('sendMessage', {
+          chat_id: chatId,
+          text: 'Раздел доступен после подключения онлайн-курса.',
+          reply_markup: buildClientReplyKeyboard(state),
+        });
+        return true;
+      }
+      await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'course' });
+      return true;
+    case CLIENT_LABELS.contact:
+      await showClientContactHub(admin, telegramId, chatId, { forcePush: true });
+      return true;
+    case CLIENT_LABELS.payments:
+      await showClientPaymentsHub(admin, telegramId, chatId, { forcePush: true });
+      return true;
+    case CLIENT_LABELS.misc:
+      await showClientMiscHub(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.lessonsWithTeacher:
     case CLIENT_LABELS.buy:
@@ -374,6 +435,14 @@ export async function handleClientCallback(
 
   if (isClientLessonHomeworkCallback(data)) {
     return handleClientLessonHomeworkCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
+  }
+
+  if (isClientCourseHomeworkCallback(data)) {
+    return handleClientCourseHomeworkCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
+  }
+
+  if (isClientSharedHubCallback(data)) {
+    return handleClientSharedHubCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
   }
 
   const known =

@@ -15,6 +15,7 @@ import { handleStudentMessage } from '@/lib/bot/studentFlow';
 import { beginStudentPurchase, handleStudentPurchaseCallback, parsePayStartPayload } from '@/lib/bot/studentPurchaseFlow';
 import {
   beginCourseHomeworkSubmit,
+  handleCourseHomeworkCallback,
   handleStudentHomeworkAttachment,
   handleStudentHomeworkMessage,
 } from '@/lib/bot/studentHomeworkFlow';
@@ -902,22 +903,8 @@ export async function POST(request: Request) {
       }
     }
 
-    if (
-      update.message?.text &&
-      !update.message.text.startsWith('/') &&
-      update.message.chat &&
-      update.message.from
-    ) {
-      const adminTextHandled = await handleAdminMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (adminTextHandled) return NextResponse.json({ ok: true });
-    }
-
-    // Combined staff (teacher + curator): единое Reply-меню.
+    // Staff (teacher/curator/combined) — до catch-all админа, иначе creator/admin
+    // с role|/as teacher|curator получал «Я не понял… панели».
     if (
       update.message?.text &&
       !update.message.text.startsWith('/') &&
@@ -931,40 +918,37 @@ export async function POST(request: Request) {
         update.message.text,
       );
       if (combinedHandled) return NextResponse.json({ ok: true });
+
+      const teacherHandled = await handleTeacherMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (teacherHandled) return NextResponse.json({ ok: true });
+
+      const curatorHandled = await handleCuratorMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (curatorHandled) return NextResponse.json({ ok: true });
     }
 
-    // Reply Keyboard преподавателя: разделы меню и ввод «сообщения ученику».
     if (
       update.message?.text &&
       !update.message.text.startsWith('/') &&
       update.message.chat &&
       update.message.from
     ) {
-      const handled = await handleTeacherMessage(
+      const adminTextHandled = await handleAdminMessage(
         admin,
         update.message.from.id,
         update.message.chat.id,
         update.message.text,
       );
-      if (handled) return NextResponse.json({ ok: true });
-    }
-
-    // Reply Keyboard ментора: разделы меню и текстовый комментарий
-    // при отклонении ДЗ. До контроля переписки, чтобы черновики
-    // комментариев не анализировались детектором.
-    if (
-      update.message?.text &&
-      !update.message.text.startsWith('/') &&
-      update.message.chat &&
-      update.message.from
-    ) {
-      const handled = await handleCuratorMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (handled) return NextResponse.json({ ok: true });
+      if (adminTextHandled) return NextResponse.json({ ok: true });
     }
 
     // Контроль переписки (§1): текст не-админов проверяется ДО дальнейшей
@@ -1044,6 +1028,9 @@ export async function POST(request: Request) {
         id,
       );
       if (purchaseHandled) return NextResponse.json({ ok: true });
+
+      const courseHwCb = await handleCourseHomeworkCallback(admin, data, chatId, from.id, id);
+      if (courseHwCb) return NextResponse.json({ ok: true });
 
       const trialPayHandled = await handleClientTrialPayCallback(admin, data, chatId, from.id);
       if (trialPayHandled) return NextResponse.json({ ok: true });

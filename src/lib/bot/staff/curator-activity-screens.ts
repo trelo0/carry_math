@@ -28,12 +28,15 @@ export function renderCuratorActivityHome(
   const parts = [
     '🎓 Курс и прогресс',
     '',
-    snapshot.liveLine,
+    snapshot.lastLine,
     snapshot.nextLine,
+    snapshot.liveLine,
     '',
     `Учеников на курсе: ${snapshot.courseStudentCount}`,
     `ДЗ на проверке: ${snapshot.awaitingReview}`,
-    `Требует внимания: ${snapshot.attentionCount}`,
+    `Просрочки ДЗ: ${snapshot.overdueCount}`,
+    `Заморозка (0 жизней): ${snapshot.frozenCount}`,
+    `⚠️ Требует внимания: ${snapshot.attentionCount}`,
   ];
   if (snapshot.newQuestions > 0) {
     parts.push(`Непрочитанных диалогов: ${snapshot.newQuestions} (раздел «Сообщения»)`);
@@ -47,16 +50,23 @@ export function renderCuratorActivityHome(
           [{ text: '👨‍🎓 Ученики курса', callback_data: 'c:act:students' }],
           [
             {
+              text: `⚠️ Проблемы (${snapshot.attentionCount})`,
+              callback_data: 'c:act:attn',
+            },
+          ],
+          [
+            {
               text: `🔴 ДЗ на проверке (${snapshot.awaitingReview})`,
               callback_data: 'c:act:review',
             },
           ],
           [
             {
-              text: `⚠️ Требует внимания (${snapshot.attentionCount})`,
-              callback_data: 'c:act:attn',
+              text: `❤️ Мало жизней (${snapshot.lowLives.length})`,
+              callback_data: 'c:act:lives',
             },
           ],
+          [{ text: '📅 Назначить дату занятия', callback_data: 'c:sch:list' }],
           [backButton('⬅️ Главное меню', navBack(nav))],
         ],
         cabinetUrl,
@@ -70,13 +80,14 @@ export function renderCuratorCourseStudentsBotList(
   students: CuratorStudentView[],
   nav?: StaffScreenNav,
 ): { text: string; keyboard: InlineKeyboard } {
+  const back = nav?.listBack ?? 'c:act';
   if (students.length === 0) {
     return {
       text:
         '👨‍🎓 Ученики курса\n\n' +
         'Пока никого с активным доступом к курсу. Проверьте зачисление и user_accesses / course_enrollments.',
       keyboard: {
-        inline_keyboard: [[backButton('⬅️ Назад', 'c:act')]],
+        inline_keyboard: [[backButton('⬅️ Назад', back)]],
       },
     };
   }
@@ -96,7 +107,7 @@ export function renderCuratorCourseStudentsBotList(
         ...students.map((s) => [
           { text: s.name.slice(0, 50), callback_data: `c:sp:${s.id}` },
         ]),
-        [backButton('⬅️ Назад', 'c:act')],
+        [backButton('⬅️ Назад', back)],
       ],
     },
   };
@@ -108,7 +119,10 @@ export function renderCuratorAttentionList(
 ): { text: string; keyboard: InlineKeyboard } {
   const parts = ['⚠️ Требует внимания', ''];
   if (items.length === 0) {
-    parts.push('Сейчас нет ситуаций по порогам (жизни, активность, доступ, оплата).');
+    parts.push(
+      'Сейчас нет ситуаций по порогам:',
+      'жизни, заморозка, просрочки, активность, доступ, оплата, stale review.',
+    );
   } else {
     parts.push(...items.map((i) => `• ${i.label}`));
   }
@@ -116,7 +130,9 @@ export function renderCuratorAttentionList(
     text: parts.join('\n').slice(0, 3900),
     keyboard: {
       inline_keyboard: [
-        ...items.map((i) => [{ text: i.label.slice(0, 60), callback_data: `c:sp:${i.studentId}` }]),
+        ...items.slice(0, 30).map((i) => [
+          { text: i.label.slice(0, 60), callback_data: `c:sp:${i.studentId}` },
+        ]),
         [backButton('⬅️ Назад', 'c:act')],
       ],
     },
@@ -138,27 +154,29 @@ export function renderCuratorLowLivesList(
   entries: CuratorLowLivesEntry[],
   cabinetUrl: string | null,
 ): { text: string; keyboard: InlineKeyboard } {
-  const parts = ['❤️ МАЛО ЖИЗНЕЙ ARENA', ''];
+  const parts = ['❤️ Мало жизней', '', 'Можно открыть карточку или сразу +1 / −1.', ''];
   if (entries.length === 0) {
     parts.push('Сейчас никто не ниже порога.');
-  } else {
-    parts.push('Выберите ученика:');
   }
 
-  const buttons = entries.map((e) => [
-    {
-      text: `${e.student.name} — ${e.livesCurrent}${e.livesMax != null ? `/${e.livesMax}` : ''}`.slice(0, 60),
-      callback_data: `c:sp:${e.student.id}`,
-    },
-  ]);
+  const rows: InlineKeyboard['inline_keyboard'] = [];
+  for (const e of entries.slice(0, 20)) {
+    const lives = `${e.livesCurrent}${e.livesMax != null ? `/${e.livesMax}` : ''}`;
+    rows.push([
+      {
+        text: `${e.student.name} — ${lives}`.slice(0, 40),
+        callback_data: `c:sp:${e.student.id}`,
+      },
+      { text: '+1', callback_data: `c:life:g:${e.student.telegramId}` },
+      { text: '−1', callback_data: `c:life:d:${e.student.telegramId}` },
+    ]);
+  }
+  rows.push([backButton('⬅️ К курсу', 'c:act')]);
 
   return {
     text: parts.join('\n'),
     keyboard: {
-      inline_keyboard: withCuratorCabinetRow(
-        [...buttons, [backButton('⬅️ К активности', 'c:act')]],
-        cabinetUrl,
-      ),
+      inline_keyboard: withCuratorCabinetRow(rows, cabinetUrl, { includeCabinet: false }),
     },
   };
 }

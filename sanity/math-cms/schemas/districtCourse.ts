@@ -198,6 +198,118 @@ export default defineType({
       hidden: true,
       initialValue: 'published',
     }),
+
+    defineField({
+      name: 'purchaseScenarios',
+      title: 'Сценарии покупки',
+      description: 'Две карточки выбора формата обучения при покупке курса',
+      type: 'object',
+      group: 'pricing',
+      options: { collapsible: false },
+      fields: [
+        defineField({
+          name: 'startFromBeginning',
+          title: 'Начать с начала',
+          type: 'object',
+          fields: [
+            defineField({
+              name: 'title',
+              title: 'Заголовок',
+              type: 'string',
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'description',
+              title: 'Описание',
+              type: 'text',
+              rows: 3,
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'benefits',
+              title: 'Преимущества',
+              description: 'Список преимуществ (обычно 3-4 пункта)',
+              type: 'array',
+              of: [
+                defineArrayMember({
+                  type: 'string',
+                }),
+              ],
+              validation: (Rule) => Rule.required().min(1),
+            }),
+            defineField({
+              name: 'buttonLabel',
+              title: 'Текст кнопки',
+              type: 'string',
+              initialValue: 'Начать с начала',
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'subtitle',
+              title: 'Подпись',
+              description: 'Дополнительная подпись, поясняющая кому подходит этот формат',
+              type: 'text',
+              rows: 2,
+            }),
+          ],
+        }),
+        defineField({
+          name: 'joinCurrent',
+          title: 'Подключиться к курсу',
+          type: 'object',
+          fields: [
+            defineField({
+              name: 'title',
+              title: 'Заголовок',
+              type: 'string',
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'description',
+              title: 'Описание',
+              type: 'text',
+              rows: 3,
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'benefits',
+              title: 'Преимущества',
+              description: 'Список преимуществ (обычно 3-4 пункта)',
+              type: 'array',
+              of: [
+                defineArrayMember({
+                  type: 'string',
+                }),
+              ],
+              validation: (Rule) => Rule.required().min(1),
+            }),
+            defineField({
+              name: 'buttonLabel',
+              title: 'Текст кнопки',
+              type: 'string',
+              initialValue: 'Подключиться к курсу',
+              validation: (Rule) => Rule.required(),
+            }),
+            defineField({
+              name: 'subtitle',
+              title: 'Подпись',
+              description: 'Дополнительная подпись, поясняющая кому подходит этот формат',
+              type: 'text',
+              rows: 2,
+            }),
+          ],
+        }),
+      ],
+    }),
+
+    defineField({
+      name: 'activeModuleOverride',
+      title: 'Ручной выбор активного модуля',
+      description: 'Если выбран, этот модуль будет считаться активным для сценария "Подключиться к курсу". Если не выбран — автоматическое определение по вебинарам.',
+      type: 'reference',
+      to: [{ type: 'districtModule' }],
+      group: 'main',
+    }),
   ],
   preview: {
     select: {

@@ -94,6 +94,19 @@ function normalizePreviewInsideItems(raw: unknown): CoursePreviewInsideItem[] {
   return out;
 }
 
+export type PurchaseScenarioCard = {
+  title: string;
+  description: string;
+  benefits: string[];
+  buttonLabel: string;
+  subtitle?: string;
+};
+
+export type PurchaseScenarios = {
+  startFromBeginning: PurchaseScenarioCard;
+  joinCurrent: PurchaseScenarioCard;
+};
+
 export type DistrictCourseContent = {
   sanityId: string;
   title: string;
@@ -117,6 +130,10 @@ export type DistrictCourseContent = {
   grantedLessons: number | null;
   /** Текст на карточке оплаты. */
   pricingCardText: string | null;
+  /** Сценарии покупки курса. */
+  purchaseScenarios: PurchaseScenarios | null;
+  /** Ручной выбор активного модуля ( Sanity ID). */
+  activeModuleOverride: string | null;
   modules: CourseModuleContent[];
 };
 
@@ -219,6 +236,8 @@ const COURSE_CONTENT_QUERY = groq`*[_type == "districtCourse" && (slug.current =
   priceByn,
   grantedLessons,
   pricing,
+  purchaseScenarios,
+  "activeModuleOverride": activeModuleOverride._id,
   "coverImageUrl": coverImage.asset->url,
   "previewImageUrl": coalesce(cabinetPreviewImage.asset->url, coverImage.asset->url),
   cabinetPreviewInside,
@@ -436,6 +455,25 @@ function buildLessonHomework(raw: Record<string, unknown>): CourseLessonHomework
   };
 }
 
+function normalizePurchaseScenarioCard(raw: Record<string, unknown> | null): PurchaseScenarioCard | null {
+  if (!raw?.title || !raw.description) return null;
+  return {
+    title: raw.title as string,
+    description: raw.description as string,
+    benefits: ((raw.benefits as string[] | null) ?? []).filter(Boolean),
+    buttonLabel: (raw.buttonLabel as string) ?? 'Выбрать',
+    subtitle: (raw.subtitle as string | null) ?? undefined,
+  };
+}
+
+function normalizePurchaseScenarios(raw: Record<string, unknown> | null): PurchaseScenarios | null {
+  if (!raw) return null;
+  const startFromBeginning = normalizePurchaseScenarioCard(raw.startFromBeginning as Record<string, unknown> | null);
+  const joinCurrent = normalizePurchaseScenarioCard(raw.joinCurrent as Record<string, unknown> | null);
+  if (!startFromBeginning || !joinCurrent) return null;
+  return { startFromBeginning, joinCurrent };
+}
+
 function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseContent | null {
   if (!raw?.sanityId || !raw.title || !raw.slug) return null;
 
@@ -491,6 +529,8 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     priceByn: pricing.priceByn,
     grantedLessons: pricing.grantedLessons,
     pricingCardText: pricing.cardText,
+    purchaseScenarios: normalizePurchaseScenarios(raw.purchaseScenarios as Record<string, unknown> | null),
+    activeModuleOverride: (raw.activeModuleOverride as string | null) ?? null,
     modules,
   };
 }

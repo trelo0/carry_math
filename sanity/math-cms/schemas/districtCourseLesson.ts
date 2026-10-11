@@ -112,9 +112,10 @@ export default defineType({
     }),
     defineField({
       name: 'isTrialFree',
-      title: 'Пробное',
+      title: 'Пробное / бесплатное',
+      description:
+        'Включено — занятие открывается при записи на курс бесплатно и не списывает кредит из оплаченного пакета. Можно включать/выключать в любой момент.',
       type: 'boolean',
-      hidden: true,
       initialValue: false,
     }),
     defineField({

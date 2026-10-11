@@ -55,6 +55,9 @@ import {
   pendingHomeworkFromStudents,
   renderCuratorActivityHome,
   renderCuratorActivityReviewList,
+  renderCuratorAttentionList,
+  renderCuratorCourseStudentsBotList,
+  renderCuratorLowLivesList,
 } from '../staff/curator-activity-screens';
 import { formatTelegramFileRef } from '../studentHomeworkFlow';
 import { enrichCuratorStudentCard } from '../staff/curator-student-enrich';
@@ -65,7 +68,13 @@ import {
   rejectCourseHomeworkByCurator,
   CourseHomeworkError,
 } from '../education/course-homework';
-import { getEnrollmentLives } from '../education/lives';
+import {
+  adjustLives,
+  getEnrollmentLives,
+  grantBonusLife,
+  initEnrollmentLives,
+  isLivesTableError,
+} from '../education/lives';
 import { resolveCourseIdForContent } from '../education/course-record';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import {
@@ -77,12 +86,9 @@ import {
   COMBINED_CURATOR_COURSE_NAV,
   COMBINED_CURATOR_HW_NAV,
   COMBINED_CURATOR_MSG_NAV,
+  COMBINED_STUDENTS_NAV,
   type StaffScreenNav,
 } from '../staff/staff-screen-nav';
-import {
-  renderCuratorAttentionList,
-  renderCuratorCourseStudentsBotList,
-} from '../staff/curator-activity-screens';
 import { loadCuratorCourseStudents } from '@/lib/curator/students';
 import {
   CURATOR_BOT_MENU_LABELS,
@@ -97,6 +103,18 @@ import {
   CURATOR_REJECT_VOICE_STEP,
   STAFF_CURATOR_REPLY_STEP,
 } from '../staff/staff-steps';
+import { buildCuratorHomeScreen } from '../staff/curator-home';
+import {
+  applyCuratorLessonSchedule,
+  CURATOR_SCHEDULE_DATETIME_STEP,
+  listCuratorLessonsForSchedule,
+  loadCuratorLessonForSchedule,
+  parseCuratorScheduleInput,
+  renderCuratorScheduleLessonList,
+  renderCuratorSchedulePrompt,
+  type CuratorSchedulePayload,
+} from '../staff/curator-schedule-bot';
+import { formatLessonDateTimeRu } from '@/lib/teacher/format';
 
 // ---------------------------------------------------------------------------
 // Кабинет куратора курса (role = curator). Данные — Supabase + Sanity.
@@ -117,10 +135,8 @@ export const CURATOR_MENU_LABELS = CURATOR_BOT_MENU_LABELS;
 
 export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU_LABELS));
 
-const CURATOR_HOME_TEXT =
-  '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
-  'Здесь вы можете посмотреть учеников, курс и прогресс, домашние задания и сообщения.\n\n' +
-  'Выберите нужный раздел:';
+const CURATOR_HOME_FALLBACK =
+  '👋 Кабинет куратора\n\n👥 Ученики · 📝 ДЗ · 💬 Сообщения · 🎓 Курс и прогресс · 🌐 Панель';
 
 async function curatorCabinetScreen(
   admin: SupabaseClient,
@@ -218,11 +234,27 @@ export async function sendCuratorStart(
   testFooter = '',
 ): Promise<void> {
   const caps = await loadStaffCapabilities(admin, telegramId);
+  let homeText = CURATOR_HOME_FALLBACK;
+  let homeKeyboard: InlineKeyboard | undefined;
+  try {
+    const home = await buildCuratorHomeScreen(admin, telegramId);
+    homeText = home.text;
+    homeKeyboard = home.keyboard;
+  } catch (error) {
+    console.error('[curator] home screen failed:', error);
+  }
   await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: CURATOR_HOME_TEXT + testFooter,
+    text: homeText + testFooter,
     reply_markup: staffReplyKeyboard(caps),
   });
+  if (homeKeyboard) {
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: 'Быстрые действия по занятиям:',
+      reply_markup: homeKeyboard,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -342,20 +374,72 @@ export function renderCuratorStudentsList(
   };
 }
 
+export type CuratorStudentProfileExtra = {
+  livesCurrent: number | null;
+  livesMax: number | null;
+  accessBlocked: boolean;
+  fullyBlocked: boolean;
+  progressPercent?: number;
+  completedLessons?: number;
+  totalLessons?: number;
+  lastActivityAt?: string | null;
+  overdueHomeworkCount?: number;
+  phone?: string | null;
+};
+
 export function renderCuratorStudentProfile(
   student: CuratorStudentRecord,
-  lives: number | null,
+  livesOrExtra: number | null | CuratorStudentProfileExtra,
 ): { text: string; keyboard: InlineKeyboard } {
-  const summary = summarizeCuratorStudent(student);
+  const extra: CuratorStudentProfileExtra =
+    typeof livesOrExtra === 'object' && livesOrExtra !== null
+      ? livesOrExtra
+      : {
+          livesCurrent: livesOrExtra,
+          livesMax: null,
+          accessBlocked: false,
+          fullyBlocked: false,
+        };
 
+  const summary = summarizeCuratorStudent(student);
   const enrich = enrichCuratorStudentCard(student);
+  const livesLabel =
+    extra.livesCurrent == null
+      ? '—'
+      : `${extra.livesCurrent}${extra.livesMax != null ? `/${extra.livesMax}` : ''}`;
+  const activityLabel = extra.lastActivityAt
+    ? new Date(extra.lastActivityAt).toLocaleString('ru-RU', {
+        timeZone: 'Europe/Moscow',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : 'нет данных';
+
   const parts = [
     `👨‍🎓 ${student.name}`,
     '',
-    `❤️ Жизни на Арене: ${lives ?? '—'}`,
+    `❤️ Жизни: ${livesLabel}`,
+    extra.fullyBlocked
+      ? '🔒 Полная блокировка: да'
+      : extra.accessBlocked
+        ? '⏸️ Заморозка: да'
+        : '⏸️ Заморозка: нет',
     enrich.progressLine,
-    '',
   ];
+  if (extra.totalLessons != null && extra.completedLessons != null) {
+    parts.push(
+      `📚 Уроки курса: ${extra.completedLessons}/${extra.totalLessons} (${extra.progressPercent ?? 0}%)`,
+    );
+  }
+  parts.push(`🕐 Последняя активность: ${activityLabel}`);
+  if ((extra.overdueHomeworkCount ?? 0) > 0) {
+    parts.push(`⏱ Просроченных ДЗ: ${extra.overdueHomeworkCount}`);
+  }
+  if (extra.phone?.trim()) parts.push(`☎️ ${extra.phone.trim()}`);
+  parts.push('');
+
   if (enrich.activeHomeworkLine) {
     parts.push(enrich.activeHomeworkLine, '');
   }
@@ -385,8 +469,13 @@ export function renderCuratorStudentProfile(
     text,
     keyboard: {
       inline_keyboard: [
-        [{ text: '💬 Написать ученику', callback_data: `c:msg:w:${student.telegramId}` }],
-        ...hwButtons,
+        [
+          { text: '+1 жизнь', callback_data: `c:life:g:${student.telegramId}` },
+          { text: '−1 жизнь', callback_data: `c:life:d:${student.telegramId}` },
+        ],
+        [{ text: '💬 Написать в боте', callback_data: `c:msg:w:${student.telegramId}` }],
+        [{ text: '📲 Открыть в Telegram', url: `tg://user?id=${student.telegramId}` }],
+        ...hwButtons.slice(0, 12),
         [backButton('⬅️ Назад', 'c:stud')],
       ],
     },
@@ -604,6 +693,57 @@ export async function handleCuratorMessage(
     return true;
   }
 
+  // Дата следующего / выбранного занятия → Sanity.
+  if (state && step === CURATOR_SCHEDULE_DATETIME_STEP) {
+    const payload = state.payload as CuratorSchedulePayload;
+    const sanityLessonId = payload.sanityLessonId;
+    if (!sanityLessonId) return false;
+    if (isStaffMenuLabel(text, caps)) {
+      await clearStateIfAvailable(admin, telegramId);
+      return false;
+    }
+    if (/^отмена$/i.test(text.trim())) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Назначение даты отменено.');
+      return true;
+    }
+    const parsed = parseCuratorScheduleInput(text);
+    if (!parsed) {
+      await sendAdminMessage(
+        chatId,
+        'Не понял дату. Формат: ДД.ММ.ГГГГ ЧЧ:ММ (МСК)\nПример: 15.10.2026 18:00',
+      );
+      return true;
+    }
+    try {
+      await applyCuratorLessonSchedule(
+        admin,
+        sanityLessonId,
+        parsed.scheduledAtIso,
+        parsed.lessonDate,
+      );
+      await clearStateIfAvailable(admin, telegramId);
+      const when = formatLessonDateTimeRu(parsed.scheduledAtIso);
+      await sendAdminMessage(
+        chatId,
+        `✅ Дата сохранена в Sanity и на сайте.\n\n` +
+          `${payload.lessonTitle ?? 'Урок'}\n${when}`,
+        {
+          inline_keyboard: [
+            [{ text: '📅 Ещё занятие', callback_data: 'c:sch:list' }],
+            [{ text: '🏠 На главную', callback_data: 'c:home' }],
+          ],
+        },
+      );
+    } catch (error) {
+      await sendAdminMessage(
+        chatId,
+        error instanceof Error ? error.message : 'Не удалось сохранить дату.',
+      );
+    }
+    return true;
+  }
+
   // Комментарий при отклонении ДЗ текстом (§11).
   if (state && step === STEP_REJECT_TEXT) {
     await clearStateIfAvailable(admin, telegramId);
@@ -648,7 +788,12 @@ export async function handleCuratorMessage(
   if (staffMode === 'combined') return false;
 
   if (!CURATOR_MENU_LABEL_SET.has(text)) {
-    if (state && (step === STAFF_CURATOR_REPLY_STEP || step === STEP_REJECT_TEXT)) {
+    if (
+      state &&
+      (step === STAFF_CURATOR_REPLY_STEP ||
+        step === STEP_REJECT_TEXT ||
+        step === CURATOR_SCHEDULE_DATETIME_STEP)
+    ) {
       return false;
     }
     await sendAdminMessage(chatId, CURATOR_UNKNOWN_TEXT);
@@ -728,10 +873,16 @@ export async function handleCuratorAttachment(
     return true;
   }
 
-  if (kind === 'document') return false;
-
-  const expected = kind === 'voice' ? STEP_REJECT_VOICE : STEP_REJECT_PHOTO;
-  if (!state || step !== expected) return false;
+  const expected =
+    kind === 'voice'
+      ? STEP_REJECT_VOICE
+      : kind === 'photo' || kind === 'document'
+        ? STEP_REJECT_PHOTO
+        : null;
+  if (!expected || !state || step !== expected) {
+    if (kind === 'document') return false;
+    return false;
+  }
 
   await clearStateIfAvailable(admin, telegramId);
   const payload = state.payload as RejectPayload;
@@ -753,27 +904,17 @@ export async function handleCuratorAttachment(
     const mediaNote =
       kind === 'voice'
         ? 'Голосовой комментарий от куратора — см. сообщение ниже.'
-        : 'Комментарий на фото от куратора — см. сообщение ниже.';
+        : kind === 'document'
+          ? 'Файл с правками от куратора — см. вложение ниже.'
+          : 'Комментарий на фото от куратора — см. сообщение ниже.';
     await notifyStudentHomeworkReviewed(admin, student.telegramId, {
       lessonNumber: lesson.lessonNumber,
       title: lesson.title,
       approved: false,
       note: mediaNote,
+      reviewFileRef: formatTelegramFileRef(fileId),
+      reviewFileKind: kind === 'voice' ? 'voice' : kind === 'photo' ? 'photo' : 'document',
     });
-
-    const { data: studentMember } = await admin
-      .from('bot_members')
-      .select('chat_id')
-      .eq('telegram_id', student.telegramId)
-      .maybeSingle();
-    const studentChatId = studentMember?.chat_id as number | undefined;
-    if (studentChatId) {
-      if (kind === 'voice') {
-        await telegramSend('sendVoice', { chat_id: studentChatId, voice: fileId });
-      } else {
-        await telegramSend('sendPhoto', { chat_id: studentChatId, photo: fileId });
-      }
-    }
 
     await sendAdminMessage(
       chatId,
@@ -814,18 +955,6 @@ export async function handleCuratorCallback(
   return true;
 }
 
-async function loadStudentLives(
-  admin: SupabaseClient,
-  studentTelegramId: number,
-): Promise<number | null> {
-  const content = await getDistrictCourseContent();
-  if (!content) return null;
-  const courseId = await resolveCourseIdForContent(admin, content);
-  if (!courseId) return null;
-  const lives = await getEnrollmentLives(admin, studentTelegramId, courseId);
-  return lives?.lives_current ?? null;
-}
-
 async function routeCuratorCallback(
   admin: SupabaseClient,
   message: AdminMessage,
@@ -833,6 +962,7 @@ async function routeCuratorCallback(
   parts: string[],
 ): Promise<boolean> {
   const [, action, id, subId] = parts;
+  const restId = parts.slice(3).join(':');
   const hwNumber = Number(subId);
   const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
@@ -842,11 +972,119 @@ async function routeCuratorCallback(
   const courseNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_COURSE_NAV : undefined;
 
   switch (action) {
-    case 'menu': {
+    case 'menu':
+    case 'home': {
       if (combined) {
         await editCuratorScreen(message, COMBINED_HOME_TEXT, { inline_keyboard: [] });
-      } else {
-        await editCuratorScreen(message, CURATOR_HOME_TEXT, { inline_keyboard: [] });
+        return true;
+      }
+      try {
+        const home = await buildCuratorHomeScreen(admin, telegramId);
+        await editCuratorScreen(message, home.text, home.keyboard);
+      } catch {
+        await editCuratorScreen(message, CURATOR_HOME_FALLBACK, { inline_keyboard: [] });
+      }
+      return true;
+    }
+
+    case 'sch': {
+      if (id === 'list') {
+        const lessons = await listCuratorLessonsForSchedule(admin, telegramId);
+        const screen = renderCuratorScheduleLessonList(
+          lessons,
+          combined ? { mainMenuBack: 's:sch:c' } : undefined,
+        );
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'pick' && restId) {
+        const lesson = await loadCuratorLessonForSchedule(admin, telegramId, restId);
+        if (!lesson) {
+          await editCuratorScreen(message, 'Урок не найден.', notFoundKeyboard('Назад', 'c:sch:list'));
+          return true;
+        }
+        try {
+          await clearConflictingStaffStates(admin, telegramId, 'curator_schedule');
+          await saveState(
+            admin,
+            telegramId,
+            { chatId: message.chatId, messageId: message.messageId },
+            CURATOR_SCHEDULE_DATETIME_STEP as never,
+            { sanityLessonId: lesson.sanityId, lessonTitle: lesson.title } as never,
+          );
+        } catch (error) {
+          if (!isConversationStateTableError(error)) throw error;
+          await sendAdminMessage(message.chatId, migrationText('bot_conversation_states.sql'));
+          return true;
+        }
+        const screen = renderCuratorSchedulePrompt(lesson);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      return true;
+    }
+
+    case 'life': {
+      const op = id; // g | d
+      const studentTelegramId = Number(subId);
+      if ((op !== 'g' && op !== 'd') || !Number.isFinite(studentTelegramId)) return true;
+      try {
+        const content = await getDistrictCourseContent();
+        const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
+        if (!courseId) {
+          await sendAdminMessage(message.chatId, 'Курс не найден — жизни недоступны.');
+          return true;
+        }
+        await initEnrollmentLives(admin, studentTelegramId, courseId);
+        if (op === 'g') {
+          await grantBonusLife(admin, {
+            telegramId: studentTelegramId,
+            courseId,
+            curatorTelegramId: telegramId,
+            reason: 'Начисление куратором',
+          });
+          await sendAdminMessage(message.chatId, '✅ +1 жизнь начислена.');
+        } else {
+          await adjustLives(admin, {
+            telegramId: studentTelegramId,
+            courseId,
+            delta: -1,
+            reason: 'Списание куратором',
+            actorTelegramId: telegramId,
+            operationType: 'correction',
+          });
+          await sendAdminMessage(message.chatId, '✅ −1 жизнь списана.');
+        }
+        // Обновить карточку если возможно
+        const students = await loadCuratorStudents(admin, telegramId);
+        const student = getCuratorStudentRecord(students, String(studentTelegramId));
+        if (student) {
+          const { students: courseViews } = await loadCuratorCourseStudents(admin, telegramId);
+          const view = courseViews.find((s) => s.telegramId === studentTelegramId);
+          const lives = await getEnrollmentLives(admin, studentTelegramId, courseId);
+          const screen = renderCuratorStudentProfile(student, {
+            livesCurrent: lives?.lives_current ?? null,
+            livesMax: lives?.lives_max ?? null,
+            accessBlocked: Boolean(lives?.access_blocked),
+            fullyBlocked: Boolean(lives?.fully_blocked),
+            progressPercent: view?.progressPercent,
+            completedLessons: view?.completedLessons,
+            totalLessons: view?.totalLessons,
+            lastActivityAt: view?.lastActivityAt ?? null,
+            overdueHomeworkCount: view?.overdueHomeworkCount,
+            phone: view?.phone ?? null,
+          });
+          await editCuratorScreen(message, screen.text, screen.keyboard);
+        }
+      } catch (error) {
+        if (isLivesTableError(error)) {
+          await sendAdminMessage(message.chatId, 'Таблицы жизней недоступны.');
+          return true;
+        }
+        await sendAdminMessage(
+          message.chatId,
+          error instanceof Error ? error.message : 'Не удалось изменить жизни.',
+        );
       }
       return true;
     }
@@ -875,6 +1113,11 @@ async function routeCuratorCallback(
       }
       if (id === 'attn') {
         const screen = renderCuratorAttentionList(snapshot.attentionItems, courseNav);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'lives') {
+        const screen = renderCuratorLowLivesList(snapshot.lowLives, cabinetUrl);
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
       }
@@ -968,6 +1211,12 @@ async function routeCuratorCallback(
 
     // Ученики: список → профиль → карточка ДЗ.
     case 'stud': {
+      if (combined) {
+        const { students } = await loadCuratorCourseStudents(admin, telegramId);
+        const screen = renderCuratorCourseStudentsBotList(students, COMBINED_STUDENTS_NAV);
+        await editCuratorScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
       const students = await loadCuratorStudents(admin, telegramId);
       const screen = renderCuratorStudentsList(students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
@@ -975,13 +1224,39 @@ async function routeCuratorCallback(
     }
     case 'sp': {
       const students = await loadCuratorStudents(admin, telegramId);
-      const student = id ? getCuratorStudentRecord(students, id) : undefined;
-      if (!student) {
-        await editCuratorScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 'c:stud'));
-        return true;
+      let student = id ? getCuratorStudentRecord(students, id) : undefined;
+      // id может быть telegramId строкой (ученики курса)
+      if (!student && id && Number.isFinite(Number(id))) {
+        student = students.find((s) => s.telegramId === Number(id));
       }
-      const lives = await loadStudentLives(admin, student.telegramId);
-      const screen = renderCuratorStudentProfile(student, lives);
+      if (!student) {
+        const { students: courseViews } = await loadCuratorCourseStudents(admin, telegramId);
+        const view = courseViews.find((s) => s.id === id || String(s.telegramId) === id);
+        if (!view) {
+          await editCuratorScreen(message, 'Ученик не найден.', notFoundKeyboard('Назад', 'c:stud'));
+          return true;
+        }
+        student = view;
+      }
+      const { students: courseViews } = await loadCuratorCourseStudents(admin, telegramId);
+      const view = courseViews.find((s) => s.telegramId === student!.telegramId);
+      const content = await getDistrictCourseContent();
+      const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
+      const lives = courseId
+        ? await getEnrollmentLives(admin, student.telegramId, courseId)
+        : null;
+      const screen = renderCuratorStudentProfile(student, {
+        livesCurrent: lives?.lives_current ?? view?.livesCurrent ?? null,
+        livesMax: lives?.lives_max ?? view?.livesMax ?? null,
+        accessBlocked: Boolean(lives?.access_blocked ?? view?.accessBlocked),
+        fullyBlocked: Boolean(lives?.fully_blocked ?? view?.fullyBlocked),
+        progressPercent: view?.progressPercent,
+        completedLessons: view?.completedLessons,
+        totalLessons: view?.totalLessons,
+        lastActivityAt: view?.lastActivityAt ?? null,
+        overdueHomeworkCount: view?.overdueHomeworkCount,
+        phone: view?.phone ?? null,
+      });
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
@@ -1131,10 +1406,10 @@ async function routeCuratorCallback(
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
         return true;
       }
-      if (homework.status !== 'waiting') {
+      if (homework.status !== 'waiting' && homework.status !== 'revision') {
         await editCuratorScreen(
           message,
-          'Снять жизнь можно только за несданное домашнее задание.',
+          'Снять жизнь можно за несданное или просроченное ДЗ (не на проверке/одобренное).',
           notFoundKeyboard('Назад', `c:shw:${id}:${hwNumber}`),
         );
         return true;
@@ -1145,7 +1420,7 @@ async function routeCuratorCallback(
           telegramId,
           student.telegramId,
           homework.sanityLessonId,
-          'notSubmitted',
+          'overdue',
         );
         const note = lifeDeduction?.deducted
           ? `❤️ Жизнь снята за ДЗ №${hwNumber}.`
@@ -1154,7 +1429,9 @@ async function routeCuratorCallback(
             : 'Не удалось обновить жизни.';
         const tail = lifeDeduction
           ? `\n\nОсталось: ${lifeDeduction.livesCurrent} из ${lifeDeduction.livesMax}.` +
-            (lifeDeduction.accessBlocked ? '\n\n⚠️ Доступ к урокам заблокирован.' : '')
+            (lifeDeduction.accessBlocked
+              ? '\n\n⚠️ Курс заморожен — новые занятия откроются после восстановления жизней.'
+              : '')
           : '';
         await sendAdminMessage(message.chatId, `${note}${tail}`, {
           inline_keyboard: [[backButton('⬅️ Назад', `c:shw:${id}:${hwNumber}`)]],

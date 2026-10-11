@@ -15,6 +15,28 @@ import {
   isLessonVisible,
   mapLessonKind,
 } from '@/lib/studio/courseContent';
+import {
+  isCourseLessonCleared,
+  previousCourseLessonsCleared,
+} from '@/lib/bot/education/course-access';
+import {
+  computeLessonProgressPercent,
+  isLessonProgressCompleted,
+  lessonHasHomework,
+} from '@/lib/bot/education/lesson-progress-calc';
+
+function normalizeMaterialsOpened(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+}
+
+function normalizeProgressRow(row: CourseLessonStudentProgress): CourseLessonStudentProgress {
+  return {
+    ...row,
+    watch_percent: typeof row.watch_percent === 'number' ? row.watch_percent : 0,
+    materials_opened: normalizeMaterialsOpened(row.materials_opened),
+  };
+}
 
 type CourseCabinetState = 'preview' | 'enrolled_locked' | 'full';
 
@@ -29,6 +51,10 @@ export type CourseLessonStudentProgress = {
   sanity_lesson_id: string | null;
   live_attended_at: string | null;
   recording_watched_at: string | null;
+  /** 0–100, макс. % просмотра видео */
+  watch_percent: number;
+  /** Ключи открытых файлов материалов */
+  materials_opened: string[];
   homework_status: HomeworkProgressStatus;
   homework_submitted_at: string | null;
   homework_completed_at: string | null;
@@ -37,6 +63,16 @@ export type CourseLessonStudentProgress = {
   review_note: string | null;
   completed_at: string | null;
   updated_at: string;
+  /** Первое открытие занятия (старт таймера ДЗ). */
+  lesson_first_opened_at?: string | null;
+  homework_deadline_at?: string | null;
+  homework_remaining_ms?: number | null;
+  homework_overdue_at?: string | null;
+  hw_remind_12h_at?: string | null;
+  hw_remind_6h_at?: string | null;
+  hw_remind_2h_at?: string | null;
+  hw_overdue_student_at?: string | null;
+  hw_overdue_curator_at?: string | null;
 };
 
 export type CourseLessonCatalogRow = {
@@ -90,6 +126,12 @@ export type CourseMapStop = {
   homeworkTitle: string | null;
   homeworkReviewNote: string | null;
   homeworkCompletedAt: string | null;
+  homeworkDeadlineAt: string | null;
+  homeworkRemainingMs: number | null;
+  homeworkOverdueAt: string | null;
+  /** 0–100 вычисляемый прогресс урока (материал 60% + ДЗ 40%) */
+  lessonProgressPercent: number;
+  isTrialFree: boolean;
   contentChips: string[];
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
   homeworkFiles: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
@@ -147,15 +189,13 @@ function resolveLessonAccess(params: {
   hasCourseProductAccess: boolean;
   accessStatus: string | null;
   isTrialFree: boolean;
+  previousCleared: boolean;
 }): { hasAccess: boolean; accessStatus: string | null } {
   if (params.courseState === 'preview') {
     return { hasAccess: false, accessStatus: null };
   }
-  if (params.courseState === 'full' && params.hasCourseProductAccess) {
-    return {
-      hasAccess: true,
-      accessStatus: params.accessStatus ?? 'available',
-    };
+  if (!params.previousCleared) {
+    return { hasAccess: false, accessStatus: params.accessStatus };
   }
   if (params.accessStatus === 'available' || params.accessStatus === 'blocked_lives') {
     return { hasAccess: true, accessStatus: params.accessStatus };
@@ -163,6 +203,7 @@ function resolveLessonAccess(params: {
   if (params.accessStatus === 'revoked') {
     return { hasAccess: false, accessStatus: params.accessStatus };
   }
+  // Пробное без строки access (ещё не выдали) — только в enrolled_locked
   if (params.courseState === 'enrolled_locked' && params.isTrialFree) {
     return { hasAccess: true, accessStatus: 'available' };
   }
@@ -246,7 +287,10 @@ async function loadProgressAndAccessBySanity(
   return {
     accessMap,
     progressMap: new Map(
-      (progressRows ?? []).map((r) => [r.sanity_lesson_id as string, r as CourseLessonStudentProgress]),
+      (progressRows ?? []).map((r) => [
+        r.sanity_lesson_id as string,
+        normalizeProgressRow(r as CourseLessonStudentProgress),
+      ]),
     ),
   };
 }
@@ -260,8 +304,10 @@ export async function buildCourseMapStopsFromContent(
   options: {
     courseState: CourseCabinetState;
     hasCourseProductAccess: boolean;
+    fullyBlocked?: boolean;
   },
 ): Promise<CourseMapStop[]> {
+  const fullyBlocked = Boolean(options.fullyBlocked);
   const allLessons = flattenCourseLessons(content);
   const [{ progressMap: initialProgress }, { data: allProgressRows }] = await Promise.all([
     loadProgressAndAccessBySanity(
@@ -299,28 +345,91 @@ export async function buildCourseMapStopsFromContent(
     loadSanityLessonSessionMap(admin, sanityIds),
   ]);
 
-  const accessibleIncomplete = visibleLessons
-    .filter(({ lesson }) => {
-      const access = resolveLessonAccess({
-        courseState: options.courseState,
-        hasCourseProductAccess: options.hasCourseProductAccess,
-        accessStatus: accessMap.get(lesson.sanityId) ?? null,
-        isTrialFree: lesson.isTrialFree,
-      });
-      if (!access.hasAccess) return false;
-      const accessStatus = access.accessStatus;
-      if (accessBlocked && accessStatus === 'blocked_lives') return false;
-      return !progressMap.get(lesson.sanityId)?.completed_at;
-    })
-    .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
+  // Проверяем сценарий в course_enrollments
+  const { resolveCourseIdForContent } = await import('./course-record');
+  const courseId = await resolveCourseIdForContent(admin, content);
+  let scenario: 'start_from_beginning' | 'join_current' | null = null;
+  let startLessonSanityId: string | null = null;
+  
+  if (courseId) {
+    const { data: enrollment } = await admin
+      .from('course_enrollments')
+      .select('purchase_scenario, start_lesson_id')
+      .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+    
+    scenario = enrollment?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
+    const startLessonId = enrollment?.start_lesson_id as number | null;
+    
+    if (startLessonId) {
+      const { data: startLessonRow } = await admin
+        .from('course_lessons')
+        .select('sanity_lesson_id')
+        .eq('id', startLessonId)
+        .maybeSingle();
+      startLessonSanityId = startLessonRow?.sanity_lesson_id as string | null;
+    }
+  }
+
+  const orderedLessons = visibleLessons.map((v) => v.lesson);
+  const progressForGate = new Map<string, CourseLessonStudentProgress | undefined>();
+  for (const { lesson } of visibleLessons) {
+    progressForGate.set(
+      lesson.sanityId,
+      progressMap.get(lesson.sanityId) ?? initialProgress.get(lesson.sanityId),
+    );
+  }
+
+  // Для join_current: определяем startIndex и помечаем архивные уроки
+  const isArchiveLesson = new Set<string>();
+  
+  if (scenario === 'join_current' && startLessonSanityId) {
+    const startLessonIndex = orderedLessons.findIndex((l) => l.sanityId === startLessonSanityId);
+    if (startLessonIndex >= 0) {
+      // Помечаем уроки до стартового как архив
+      for (let i = 0; i < startLessonIndex; i++) {
+        isArchiveLesson.add(orderedLessons[i]?.sanityId ?? '');
+      }
+    }
+  }
+
+  const accessibleIncomplete = fullyBlocked
+    ? []
+    : visibleLessons
+        .filter(({ lesson }, index) => {
+          // Архивные уроки всегда доступны
+          if (isArchiveLesson.has(lesson.sanityId)) return true;
+          
+          const access = resolveLessonAccess({
+            courseState: options.courseState,
+            hasCourseProductAccess: options.hasCourseProductAccess,
+            accessStatus: accessMap.get(lesson.sanityId) ?? null,
+            isTrialFree: lesson.isTrialFree,
+            previousCleared: previousCourseLessonsCleared(orderedLessons, index, progressForGate),
+          });
+          if (!access.hasAccess) return false;
+          const accessStatus = access.accessStatus;
+          if (accessBlocked && accessStatus === 'blocked_lives') return false;
+          return !isCourseLessonCleared(lesson, progressForGate.get(lesson.sanityId));
+        })
+        .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
   const currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
 
   return visibleLessons.map(({ lesson, moduleIndex, numInModule }, lessonIndex) => {
+    const isArchive = isArchiveLesson.has(lesson.sanityId);
+    
+    // Для архивных уроков не требуем выполнения предыдущих уроков
+    const effectivePreviousCleared = isArchive 
+      ? true 
+      : previousCourseLessonsCleared(orderedLessons, lessonIndex, progressForGate);
+    
     const access = resolveLessonAccess({
       courseState: options.courseState,
       hasCourseProductAccess: options.hasCourseProductAccess,
       accessStatus: accessMap.get(lesson.sanityId) ?? null,
       isTrialFree: lesson.isTrialFree,
+      previousCleared: effectivePreviousCleared,
     });
     const progress = progressMap.get(lesson.sanityId) ?? initialProgress.get(lesson.sanityId);
     const sessionStatus =
@@ -331,12 +440,12 @@ export async function buildCourseMapStopsFromContent(
           )
         : null;
     const status = computeMapStopStatus({
-      hasAccess: access.hasAccess,
+      hasAccess: fullyBlocked ? false : access.hasAccess,
       accessBlocked,
       accessStatus: access.accessStatus,
       sessionStatus,
       progress,
-      isCurrent: lesson.sanityId === currentSanityId,
+      isCurrent: !fullyBlocked && lesson.sanityId === currentSanityId,
     });
 
     return {
@@ -354,16 +463,27 @@ export async function buildCourseMapStopsFromContent(
       liveUrl: lesson.liveUrl,
       recordingUrl: lesson.recordingUrl,
       sessionStatus,
-      mandatoryHomework: lesson.mandatoryHomework,
-      homeworkStatus: progress?.homework_status ?? null,
+      mandatoryHomework: isArchive ? false : lesson.mandatoryHomework, // Архивные уроки без обязательного ДЗ
+      homeworkStatus: isArchive ? null : (progress?.homework_status ?? null),
       homeworkTitle: lesson.homework?.title ?? null,
       homeworkReviewNote: progress?.review_note ?? null,
       homeworkCompletedAt: progress?.homework_completed_at ?? null,
+      homeworkDeadlineAt: isArchive ? null : (progress?.homework_deadline_at ?? null),
+      homeworkRemainingMs: isArchive ? null : (typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null),
+      homeworkOverdueAt: isArchive ? null : (progress?.homework_overdue_at ?? null),
+      lessonProgressPercent: computeLessonProgressPercent({
+        recordingWatchedAt: progress?.recording_watched_at,
+        liveAttendedAt: progress?.live_attended_at,
+        homeworkStatus: isArchive ? null : progress?.homework_status,
+        hasHomework: isArchive ? false : lessonHasHomework(lesson),
+      }),
+      isTrialFree: lesson.isTrialFree,
       contentChips:
         lesson.contentChips?.length > 0
           ? lesson.contentChips
           : [...DEFAULT_LESSON_CONTENT_CHIPS],
       materials: lesson.materials.map((m) => ({
+
         title: m.title,
         fileName: m.fileName,
         fileSize: m.fileSize,
@@ -412,6 +532,11 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         homeworkTitle: lesson.homework?.title ?? null,
         homeworkReviewNote: null,
         homeworkCompletedAt: null,
+        homeworkDeadlineAt: null,
+        homeworkRemainingMs: null,
+        homeworkOverdueAt: null,
+        lessonProgressPercent: 0,
+        isTrialFree: lesson.isTrialFree,
         contentChips:
           lesson.contentChips?.length > 0
             ? lesson.contentChips
@@ -544,6 +669,12 @@ export async function buildCourseMapStops(
       homeworkTitle: null,
       homeworkReviewNote: progress?.review_note ?? null,
       homeworkCompletedAt: progress?.homework_completed_at ?? null,
+      homeworkDeadlineAt: progress?.homework_deadline_at ?? null,
+      homeworkRemainingMs:
+        typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null,
+      homeworkOverdueAt: progress?.homework_overdue_at ?? null,
+      lessonProgressPercent: 0,
+      isTrialFree: Boolean(lesson.is_trial_free),
       contentChips: [...DEFAULT_LESSON_CONTENT_CHIPS],
       materials: [],
       homeworkFiles: [],
@@ -555,68 +686,85 @@ type LessonProgressKey =
   | { sanityLessonId: string; courseLessonId?: null }
   | { sanityLessonId?: null; courseLessonId: number };
 
+/**
+ * Partial unique index на (telegram_id, sanity_lesson_id) ломает PostgREST upsert —
+ * пишем через update / insert.
+ */
+async function writeProgressRow(
+  admin: SupabaseClient,
+  telegramId: number,
+  key: LessonProgressKey,
+  patch: Record<string, unknown>,
+): Promise<CourseLessonStudentProgress> {
+  const filter =
+    key.sanityLessonId != null
+      ? { sanity_lesson_id: key.sanityLessonId }
+      : { course_lesson_id: key.courseLessonId };
+
+  const { data: existing, error: findError } = await admin
+    .from('course_lesson_student_progress')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .match(filter)
+    .maybeSingle();
+  if (findError) throw findError;
+
+  if (existing?.id) {
+    const { data, error } = await admin
+      .from('course_lesson_student_progress')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return normalizeProgressRow(data as CourseLessonStudentProgress);
+  }
+
+  const insertRow: Record<string, unknown> = {
+    telegram_id: telegramId,
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+  if (key.sanityLessonId != null) {
+    insertRow.sanity_lesson_id = key.sanityLessonId;
+    insertRow.course_lesson_id = null;
+  } else {
+    insertRow.course_lesson_id = key.courseLessonId;
+  }
+
+  const { data, error } = await admin
+    .from('course_lesson_student_progress')
+    .insert(insertRow)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return normalizeProgressRow(data as CourseLessonStudentProgress);
+}
+
 export async function markRecordingWatched(
   admin: SupabaseClient,
   telegramId: number,
   key: LessonProgressKey,
+  _watchPercent?: number,
 ): Promise<CourseLessonStudentProgress> {
   const now = new Date().toISOString();
-  const row =
-    key.sanityLessonId != null
-      ? {
-          telegram_id: telegramId,
-          sanity_lesson_id: key.sanityLessonId,
-          recording_watched_at: now,
-          updated_at: now,
-        }
-      : {
-          telegram_id: telegramId,
-          course_lesson_id: key.courseLessonId,
-          recording_watched_at: now,
-          updated_at: now,
-        };
-
-  const onConflict = key.sanityLessonId != null ? 'telegram_id,sanity_lesson_id' : 'telegram_id,course_lesson_id';
-
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .upsert(row as Record<string, unknown>, { onConflict })
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data as CourseLessonStudentProgress;
+  return writeProgressRow(admin, telegramId, key, {
+    recording_watched_at: now,
+    watch_percent: 100,
+  });
 }
 
 export async function markLiveAttended(
   admin: SupabaseClient,
   telegramId: number,
   key: LessonProgressKey,
+  _watchPercent?: number,
 ): Promise<CourseLessonStudentProgress> {
   const now = new Date().toISOString();
-  const row =
-    key.sanityLessonId != null
-      ? {
-          telegram_id: telegramId,
-          sanity_lesson_id: key.sanityLessonId,
-          live_attended_at: now,
-          updated_at: now,
-        }
-      : {
-          telegram_id: telegramId,
-          course_lesson_id: key.courseLessonId,
-          live_attended_at: now,
-          updated_at: now,
-        };
-
-  const onConflict = key.sanityLessonId != null ? 'telegram_id,sanity_lesson_id' : 'telegram_id,course_lesson_id';
-
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .upsert(row as Record<string, unknown>, { onConflict })
-    .select('*')
-    .single();
-  if (error) throw error;
-  return data as CourseLessonStudentProgress;
+  return writeProgressRow(admin, telegramId, key, {
+    live_attended_at: now,
+    watch_percent: 100,
+  });
 }
 
 export async function markHomeworkApproved(
@@ -624,6 +772,7 @@ export async function markHomeworkApproved(
   telegramId: number,
   key: LessonProgressKey,
   reviewNote?: string,
+  options?: { materialKeys?: string[]; hasHomework?: boolean },
 ): Promise<CourseLessonStudentProgress> {
   const now = new Date().toISOString();
   const filter =
@@ -638,40 +787,60 @@ export async function markHomeworkApproved(
     .match(filter)
     .maybeSingle();
 
-  const watched = existing?.live_attended_at || existing?.recording_watched_at;
-  const completedAt = watched ? now : null;
+  const existingNorm = existing
+    ? normalizeProgressRow(existing as CourseLessonStudentProgress)
+    : null;
+  const hasHomework = options?.hasHomework ?? true;
+  const fullyDone = isLessonProgressCompleted({
+    recordingWatchedAt: existingNorm?.recording_watched_at,
+    liveAttendedAt: existingNorm?.live_attended_at,
+    homeworkStatus: 'approved',
+    hasHomework,
+  });
 
-  const trimmedReview = reviewNote?.trim() || null;
-  const row =
-    key.sanityLessonId != null
-      ? {
-          telegram_id: telegramId,
-          sanity_lesson_id: key.sanityLessonId,
-          homework_status: 'approved' as const,
-          homework_completed_at: now,
-          review_note: trimmedReview,
-          completed_at: completedAt,
-          updated_at: now,
-        }
-      : {
-          telegram_id: telegramId,
-          course_lesson_id: key.courseLessonId,
-          homework_status: 'approved' as const,
-          homework_completed_at: now,
-          review_note: trimmedReview,
-          completed_at: completedAt,
-          updated_at: now,
-        };
+  return writeProgressRow(admin, telegramId, key, {
+    homework_status: 'approved',
+    homework_completed_at: now,
+    review_note: reviewNote?.trim() || null,
+    completed_at: fullyDone ? now : null,
+  });
+}
 
-  const onConflict = key.sanityLessonId != null ? 'telegram_id,sanity_lesson_id' : 'telegram_id,course_lesson_id';
+/** @deprecated вариант B — в A не используется UI, оставлен для API-совместимости */
+export async function reportWatchPercent(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+  watchPercent: number,
+): Promise<CourseLessonStudentProgress> {
+  const pct = Math.max(0, Math.min(100, Math.round(watchPercent)));
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { watch_percent: pct };
+  if (pct >= 50) patch.recording_watched_at = now;
+  return writeProgressRow(admin, telegramId, { sanityLessonId }, patch);
+}
 
-  const { data, error } = await admin
+/** @deprecated вариант B */
+export async function reportMaterialOpened(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+  materialKey: string,
+): Promise<CourseLessonStudentProgress> {
+  const key = materialKey.trim();
+  if (!key) throw new Error('Empty material key');
+  const { data: existing } = await admin
     .from('course_lesson_student_progress')
-    .upsert(row as Record<string, unknown>, { onConflict })
     .select('*')
-    .single();
-  if (error) throw error;
-  return data as CourseLessonStudentProgress;
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  const prev = existing ? normalizeProgressRow(existing as CourseLessonStudentProgress) : null;
+  const opened = new Set(prev?.materials_opened ?? []);
+  opened.add(key);
+  return writeProgressRow(admin, telegramId, { sanityLessonId }, {
+    materials_opened: [...opened],
+  });
 }
 
 export function countCompletedLessons(stops: CourseMapStop[]): number {

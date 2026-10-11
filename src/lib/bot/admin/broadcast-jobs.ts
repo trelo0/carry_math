@@ -309,7 +309,7 @@ export async function runBroadcastDispatch(
       continue;
     }
 
-    let pending = [...row.pending_chat_ids];
+    const pending = [...row.pending_chat_ids];
     let delivered = row.delivered;
     let failed = row.failed;
     const errors: BroadcastError[] = Array.isArray(row.errors)

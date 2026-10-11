@@ -69,7 +69,7 @@ async function resolveStudentFilterIds(admin: SupabaseClient, filter: StudentFil
       .select('telegram_id')
       .eq('status', 'active')
       .eq('product', product);
-    let ids = new Set((data ?? []).map((r) => r.telegram_id as number));
+    const ids = new Set((data ?? []).map((r) => r.telegram_id as number));
     if (filter === 'group') {
       const { data: gm } = await admin.from('group_members').select('telegram_id').eq('status', 'active');
       for (const row of gm ?? []) ids.add(row.telegram_id as number);

@@ -25,8 +25,10 @@ import {
   shouldShowCourseCabinetGate,
 } from '@/lib/cabinet';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
+import { aggregateCourseProgress } from '@/lib/bot/education/lesson-progress-calc';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
+import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
 import {
   buildRoadmapGeometry,
   buildRoadSegments,
@@ -56,7 +58,15 @@ type CourseStop = {
   recordingUrl: string | null;
   description: string | null;
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+  homeworkFiles?: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+  homeworkStatus?: HomeworkProgressStatus | null;
+  homeworkDeadlineAt?: string | null;
+  homeworkRemainingMs?: number | null;
+  homeworkOverdueAt?: string | null;
+  lessonProgressPercent?: number;
+  isTrialFree?: boolean;
 };
+
 
 const SANITY_PLACEHOLDER = 'ВВЕДИТЕ ТЕКСТ';
 
@@ -330,11 +340,15 @@ const ROAD_TONE_STYLE: Record<RoadTone, { glow: string; ribbon: string; rim: str
   },
 };
 
-function stopLabel(status: StopStatus): string {
-  if (status === 'watched') return 'Просмотрено';
-  if (status === 'done') return 'Пройдено';
+function stopLabel(status: StopStatus, homeworkStatus?: HomeworkProgressStatus | null): string {
+  if (status === 'done' || homeworkStatus === 'approved') return 'Пройдено';
+  if (status === 'watched') {
+    if (homeworkStatus === 'submitted') return 'ДЗ на проверке';
+    if (homeworkStatus === 'rejected') return 'ДЗ на доработке';
+    return 'Сдайте ДЗ';
+  }
   if (status === 'now') return 'Сейчас';
-  return 'Будет доступно';
+  return 'Закрыто';
 }
 
 function RoadRibbon({ d, tone }: { d: string; tone: RoadTone }) {
@@ -527,7 +541,7 @@ function CourseMap({
             const p = geometry.rmPts[i];
             if (!p) return null;
             const st: StopStatus = locked ? 'locked' : s.status;
-            const label = stopLabel(st);
+            const label = stopLabel(st, s.homeworkStatus);
             const modColor = moduleColorAt(modules, s.module);
             return (
               <div
@@ -565,6 +579,14 @@ function CourseMap({
                   </span>
                   <span className="cab-rm-title">{s.title}</span>
                   <span className="cab-rm-label">{label}</span>
+                  <HomeworkDeadlineBadge
+                    compact
+                    placement="inline"
+                    homeworkStatus={s.homeworkStatus}
+                    homeworkDeadlineAt={s.homeworkDeadlineAt}
+                    homeworkRemainingMs={s.homeworkRemainingMs}
+                    homeworkOverdueAt={s.homeworkOverdueAt}
+                  />
                 </button>
               </div>
             );
@@ -618,7 +640,7 @@ function LivesWidget({
   lives,
 }: {
   locked?: boolean;
-  lives?: { current: number; max: number; accessBlocked: boolean } | null;
+  lives?: { current: number; max: number; accessBlocked: boolean; fullyBlocked?: boolean } | null;
 }) {
   if (locked || !lives) {
     return (
@@ -638,7 +660,7 @@ function LivesWidget({
   const total = lives.max;
   const full = lives.current;
   return (
-    <div className="cab-lives" title="Твои жизни">
+    <div className={`cab-lives${lives.fullyBlocked ? ' is-locked' : ''}`} title="Твои жизни">
       <div className="cab-lives-head">
         <span className="cab-k">Жизни</span>
       </div>
@@ -647,10 +669,12 @@ function LivesWidget({
           <Heart key={i} filled={i < full} />
         ))}
       </span>
-      {lives.accessBlocked ? (
-        <span className="cab-lives-timer">Связаться с куратором для восстановления доступа</span>
-        ) : full < total ? (
-        <span className="cab-lives-timer">Восстановление через куратора</span>
+      {lives.fullyBlocked ? (
+        <span className="cab-lives-timer">Курс заблокирован администратором</span>
+      ) : lives.accessBlocked ? (
+        <span className="cab-lives-timer">Курс заморожен — напишите куратору</span>
+      ) : full < total ? (
+        <span className="cab-lives-timer">Восстановление 1-го числа или через куратора</span>
       ) : null}
     </div>
   );
@@ -678,9 +702,13 @@ function formatCabinetLessonDate(date: string | null | undefined): string {
 }
 
 function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
-  const lessonLocked = !hasCourse ? stop.status === 'locked' : stop.status === 'locked';
+  const lessonLocked = stop.status === 'locked';
   if (lessonLocked) {
-    return { tone: 'locked' as const, label: 'ДЗ не выполнено', action: 'locked' as const };
+    return {
+      tone: 'locked' as const,
+      label: hasCourse ? 'Откроется после ДЗ предыдущего' : 'ДЗ недоступно',
+      action: 'locked' as const,
+    };
   }
 
   const hwNotReady =
@@ -694,15 +722,27 @@ function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
     return { tone: 'locked' as const, label: 'Доступно после эфира', action: 'locked' as const };
   }
   if (status === 'approved') {
-    return { tone: 'done' as const, label: 'ДЗ выполнено', action: 'view' as const };
+    return { tone: 'done' as const, label: 'Одобрено', action: 'view' as const };
   }
   if (status === 'submitted') {
-    return { tone: 'pending' as const, label: 'На проверке', action: 'none' as const };
+    return { tone: 'pending' as const, label: 'Ожидает проверки', action: 'none' as const };
   }
   if (status === 'rejected') {
-    return { tone: 'pending' as const, label: 'На доработке', action: 'view' as const };
+    return {
+      tone: 'pending' as const,
+      label: 'Отправлено на доработку',
+      action: hasCourse || !stop.isTrialFree ? ('submit' as const) : ('view' as const),
+    };
   }
-  return { tone: 'todo' as const, label: 'ДЗ не выполнено', action: 'none' as const };
+  // Пробное занятие видно всем, сдача ДЗ — только после покупки курса.
+  if (stop.isTrialFree && !hasCourse) {
+    return {
+      tone: 'locked' as const,
+      label: 'Сдача после покупки курса',
+      action: 'locked' as const,
+    };
+  }
+  return { tone: 'todo' as const, label: 'Ожидает сдачи', action: 'submit' as const };
 }
 
 function moduleLegendStatus(
@@ -1236,6 +1276,13 @@ export default function CabinetShell({
     recordingUrl: s.recordingUrl,
     description: s.description,
     materials: s.materials,
+    homeworkFiles: s.homeworkFiles,
+    homeworkStatus: s.homeworkStatus,
+    homeworkDeadlineAt: s.homeworkDeadlineAt,
+    homeworkRemainingMs: s.homeworkRemainingMs,
+    homeworkOverdueAt: s.homeworkOverdueAt,
+    lessonProgressPercent: s.lessonProgressPercent,
+    isTrialFree: s.isTrialFree,
   }));
   const courseModulesFromCatalog = buildModulesFromCatalogPreviews(data.courseCatalog).map((m) => ({
     name: m.name,
@@ -1275,6 +1322,9 @@ export default function CabinetShell({
         recordingUrl: s.recordingUrl,
         description: s.description,
         materials: s.materials,
+        homeworkFiles: s.homeworkFiles,
+        lessonProgressPercent: s.lessonProgressPercent,
+        isTrialFree: s.isTrialFree,
       }))
     : [];
   const courseStopsFromCatalog: CourseStop[] = buildStopsFromCatalogPreviews(data.courseCatalog).map((s) => ({
@@ -1291,6 +1341,9 @@ export default function CabinetShell({
     recordingUrl: s.recordingUrl,
     description: s.description,
     materials: s.materials,
+    homeworkFiles: s.homeworkFiles,
+    lessonProgressPercent: s.lessonProgressPercent,
+    isTrialFree: s.isTrialFree,
   }));
   const baseCourseStops =
     courseStopsFromDb.length > 0
@@ -1461,6 +1514,13 @@ export default function CabinetShell({
         recordingUrl: s.recordingUrl,
         description: s.description,
         materials: s.materials,
+        homeworkFiles: s.homeworkFiles,
+        homeworkStatus: s.homeworkStatus,
+        homeworkDeadlineAt: s.homeworkDeadlineAt,
+        homeworkRemainingMs: s.homeworkRemainingMs,
+        homeworkOverdueAt: s.homeworkOverdueAt,
+        lessonProgressPercent: s.lessonProgressPercent,
+        isTrialFree: s.isTrialFree,
       }))
     : data.courseCatalog?.id === activeCourseId
       ? baseCourseStops
@@ -1489,8 +1549,13 @@ export default function CabinetShell({
       return { start, end };
     });
   })();
-  const courseDoneCount = courseStops.filter((s) => s.status === 'done' || s.status === 'watched').length;
-  const courseProgressPct = courseStops.length > 0 ? Math.round((courseDoneCount / courseStops.length) * 100) : 0;
+  const courseProgressAgg = aggregateCourseProgress(
+    (cabinetCourseStops.length > 0 ? cabinetCourseStops : courseStops).map(
+      (s) => ('lessonProgressPercent' in s ? (s.lessonProgressPercent ?? 0) : 0),
+    ),
+  );
+  const courseDoneCount = courseProgressAgg.completedCount;
+  const courseProgressPct = courseProgressAgg.coursePercent;
 
   const syncCourseUrl = useCallback((slug: string) => {
     if (typeof window === 'undefined') return;
@@ -1620,7 +1685,6 @@ export default function CabinetShell({
     ? (courseModules[stop.module] ?? courseModules[0] ?? emptyStopModule)
     : emptyStopModule;
   const selectedCabinetStop = cabinetCourseStops.find((s) => s.id === stopId) ?? cabinetCourseStops[0];
-  const trialStopId = courseStops.find((s) => s.status !== 'locked')?.id ?? courseStops[0]?.id ?? 1;
   const hasCourse = courseState === 'full';
 
   /* ——— Настройки профиля ——— */
@@ -1687,22 +1751,13 @@ export default function CabinetShell({
     router.push('/');
   }
 
-  /** Отметить просмотр — вызывается при старте плеера внутри карточки занятия. */
-  async function markLessonWatched(phase: 'upcoming' | 'live' | 'recording') {
-    const detail = cabinetCourseStops.find((s) => s.id === stopId);
-    if (!detail?.sanityLessonId) return;
-    const endpoint = phase === 'live' ? 'watch-live' : 'watch-recording';
-    await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(detail.sanityLessonId)}/${endpoint}`, {
-      method: 'POST',
-    });
-    router.refresh();
-  }
-
   /** «Открыть занятие» — полноценная страница урока. */
   function openCourseLesson() {
-    const detail = cabinetCourseStops.find((s) => s.id === stopId);
+    const detail = cabinetCourseStops.find((s) => s.id === stopId) ?? selectedCabinetStop;
     if (!detail) return;
-    router.push(lessonPathForStop(detail));
+    const path = lessonPathForStop(detail);
+    router.prefetch(path);
+    router.push(path);
   }
 
   useEffect(() => {
@@ -1710,6 +1765,25 @@ export default function CabinetShell({
     if (!detail) return;
     router.prefetch(lessonPathForStop(detail));
   }, [cabinetCourseStops, router, stopId]);
+
+  // Prefetch текущего и соседних открытых — быстрее вход в плеер.
+  useEffect(() => {
+    const open = cabinetCourseStops.filter((s) => s.status !== 'locked' && s.sanityLessonId);
+    const idx = open.findIndex((s) => s.id === stopId);
+    const targets = [open[idx], open[idx - 1], open[idx + 1]].filter(Boolean);
+    for (const s of targets) {
+      if (s) router.prefetch(lessonPathForStop(s));
+    }
+  }, [cabinetCourseStops, router, stopId]);
+
+  // Возврат с урока из bfcache — обновить % прогресса.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) router.refresh();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [router]);
 
   async function confirmEnroll() {
     setEnrolling(true);
@@ -1933,14 +2007,12 @@ export default function CabinetShell({
                             <div className="cab-path-head cab-path-head--map">
                               <div className="cab-path-progress">
                                 <span className="cab-k">Твой прогресс</span>
-                                <strong>{hasCourse ? `${courseProgressPct}%` : '0%'}</strong>
+                                <strong>{`${courseProgressPct}%`}</strong>
                                 <span className="cab-path-sub">
-                                  {hasCourse
-                                    ? `${courseDoneCount} из ${courseStops.length} занятий`
-                                    : `0 из ${courseStops.length} занятий`}
+                                  {`${courseDoneCount} из ${courseProgressAgg.totalLessons || courseStops.length} завершено`}
                                 </span>
                                 <span className="cab-path-bar" aria-hidden="true">
-                                  <i style={{ width: `${hasCourse ? courseProgressPct : 0}%` }} />
+                                  <i style={{ width: `${courseProgressPct}%` }} />
                                 </span>
                               </div>
                               <div className="cab-path-topic">
@@ -1962,7 +2034,7 @@ export default function CabinetShell({
                         <CourseMap
                           selected={stopId}
                           onSelect={setStopId}
-                          allowLockedSelect={courseState === 'enrolled_locked'}
+                          allowLockedSelect={hasCourse || courseState === 'enrolled_locked'}
                           stops={mapCourseStops}
                           modules={courseModules}
                         />
@@ -2022,6 +2094,14 @@ export default function CabinetShell({
                                 <span className="cab-hw-dot" aria-hidden="true">•</span>
                                 <span>{formatCabinetLessonDate(s.date)}</span>
                               </p>
+                              <HomeworkDeadlineBadge
+                                homeworkStatus={s.homeworkStatus}
+                                homeworkDeadlineAt={s.homeworkDeadlineAt}
+                                homeworkRemainingMs={s.homeworkRemainingMs}
+                                homeworkOverdueAt={s.homeworkOverdueAt}
+                                placement="corner"
+                                compact
+                              />
                             </div>
                             <span className={`cab-hw-status is-${hw.tone}`}>
                               {hw.tone === 'done' ? <Icon d={ICONS.check} /> : <Icon d={ICONS.clock} />}
@@ -2040,9 +2120,9 @@ export default function CabinetShell({
                             ) : hw.action === 'locked' ? (
                               <span className="cab-hw-action is-locked">
                                 <Icon d={ICONS.file} />
-                                Доступно после вебинара
+                                {hw.label.includes('покупки') ? 'Сдача после покупки курса' : 'Доступно после вебинара'}
                               </span>
-                            ) : hw.tone === 'todo' && s.sanityLessonId ? (
+                            ) : hw.action === 'submit' && s.sanityLessonId ? (
                               <a
                                 className="cab-hw-action is-active"
                                 href={tgBotUrl(`hw_${s.sanityLessonId}`)}
@@ -2050,7 +2130,7 @@ export default function CabinetShell({
                                 rel="noopener noreferrer"
                               >
                                 <Icon d={ICONS.homework} />
-                                Сдать в Telegram
+                                Сдать ДЗ
                                 <Icon d={ICONS.chevron} />
                               </a>
                             ) : (
@@ -2068,7 +2148,7 @@ export default function CabinetShell({
                 </section>
 
                 {courseTab === 'program' && stop && (
-                  hasCourse || stop.status !== 'locked' ? (
+                  stop.status === 'locked' ? (
                     <section className="cab-panel cab-lesson-panel cab-lesson-panel--v2 cab-lesson-panel--standalone">
                       <header className="cab-lesson-v2-head">
                         <div className="cab-lesson-v2-module">
@@ -2078,14 +2158,68 @@ export default function CabinetShell({
                         <span className="cab-lesson-v2-sub">
                           Занятие {stop.numInModule} из {stopModule.count}
                         </span>
-                        {!hasCourse && stop.id === trialStopId && (
+                        <span className="cab-lesson-v2-badge is-locked">Закрыто</span>
+                      </header>
+                      <div className="cab-lesson-v2-about" style={{ padding: '1.25rem 1.5rem 1.5rem' }}>
+                        <h4>{stop.title}</h4>
+                        <p>
+                          {hasCourse
+                            ? 'Занятие откроется после того, как куратор одобрит домашнее задание по предыдущему уроку.'
+                            : 'Купите курс или откройте пробное занятие, чтобы начать обучение.'}
+                        </p>
+                      </div>
+                    </section>
+                  ) : (
+                    <section className="cab-panel cab-lesson-panel cab-lesson-panel--v2 cab-lesson-panel--standalone">
+                      <header className="cab-lesson-v2-head">
+                        <div className="cab-lesson-v2-module">
+                          <i style={{ background: stopModule.color }} aria-hidden="true" />
+                          <span>{`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()}`}</span>
+                        </div>
+                        <span className="cab-lesson-v2-sub">
+                          Занятие {stop.numInModule} из {stopModule.count}
+                        </span>
+                        {(stop.isTrialFree || selectedCabinetStop?.isTrialFree) && (
                           <span className="cab-lesson-v2-badge is-trial">Пробное</span>
                         )}
                         {selectedCabinetStop?.isCurrent && hasCourse && (
                           <span className="cab-lesson-v2-badge is-now">Сейчас</span>
                         )}
-                        <span className="cab-lesson-v2-badge is-open">Доступно</span>
+                        {stop.status === 'watched' && selectedCabinetStop?.homeworkStatus === 'submitted' && (
+                          <span className="cab-lesson-v2-badge is-pending">ДЗ на проверке</span>
+                        )}
+                        {stop.status === 'watched' &&
+                          selectedCabinetStop?.homeworkStatus !== 'submitted' &&
+                          selectedCabinetStop?.homeworkStatus !== 'approved' && (
+                            <span className="cab-lesson-v2-badge is-pending">Сдайте ДЗ</span>
+                          )}
+                        {(stop.status === 'done' || selectedCabinetStop?.homeworkStatus === 'approved') && (
+                          <span className="cab-lesson-v2-badge is-done">ДЗ одобрено</span>
+                        )}
+                        {stop.status === 'now' && (
+                          <span className="cab-lesson-v2-badge is-open">Доступно</span>
+                        )}
+                        <HomeworkDeadlineBadge
+                          homeworkStatus={selectedCabinetStop?.homeworkStatus}
+                          homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
+                          homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
+                          homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
+                          placement="inline"
+                          compact
+                        />
                       </header>
+                      {displayLives?.accessBlocked && selectedCabinetStop?.isCurrent ? (
+                        <p className="cab-note">
+                          Курс заморожен.{' '}
+                          <a
+                            href={tgBotUrl('support')}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Связаться с куратором
+                          </a>
+                        </p>
+                      ) : null}
                       <div key={stop.id} className="cab-lesson-v2-grid cab-anim-pop">
                         <div className="cab-lesson-v2-media">
                           <LessonPlayer
@@ -2101,21 +2235,28 @@ export default function CabinetShell({
                               <span className="cab-lesson-v2-bar" aria-hidden="true">
                                 <i
                                   style={{
-                                    width:
-                                      stop.status === 'done'
-                                        ? '100%'
-                                        : stop.status === 'watched'
-                                          ? '100%'
-                                          : stop.status === 'now'
-                                            ? '35%'
-                                            : '0%',
+                                    width: `${Math.max(
+                                      0,
+                                      Math.min(
+                                        100,
+                                        selectedCabinetStop?.lessonProgressPercent ??
+                                          stop.lessonProgressPercent ??
+                                          0,
+                                      ),
+                                    )}%`,
                                   }}
                                 />
                               </span>
                               <span className="cab-lesson-v2-time">
-                                {stop.status === 'watched' || stop.status === 'done'
-                                  ? 'Просмотрено полностью'
-                                  : 'Просмотр не начат'}
+                                {(() => {
+                                  const pct =
+                                    selectedCabinetStop?.lessonProgressPercent ??
+                                    stop.lessonProgressPercent ??
+                                    0;
+                                  if (pct >= 100) return 'Занятие завершено';
+                                  if (pct > 0) return `Прогресс ${pct}%`;
+                                  return 'Просмотр не начат';
+                                })()}
                               </span>
                               <span className="cab-lesson-v2-watch">
                                 {selectedCabinetStop?.recordingUrl
@@ -2148,7 +2289,9 @@ export default function CabinetShell({
                             })}
                           </ul>
                           <button type="button" className="cab-lesson-v2-cta" onClick={openCourseLesson}>
-                            {!hasCourse && stop.id === trialStopId ? 'Открыть пробное занятие' : 'Открыть занятие'}
+                            {stop.isTrialFree || selectedCabinetStop?.isTrialFree
+                              ? 'Открыть пробное занятие'
+                              : 'Открыть занятие'}
                             <Icon d={ICONS.chevron} />
                           </button>
                         </div>
@@ -2191,21 +2334,6 @@ export default function CabinetShell({
                           )}
                         </div>
                       </div>
-                    </section>
-                  ) : (
-                    <section className="cab-panel cab-course-locked-lesson cab-lesson-panel--standalone">
-                      <Icon d={ICONS.lock} className="cab-course-locked-ico" strokeWidth={1.5} />
-                      <span className="cab-k">
-                        {`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()} — МОДУЛЬ ${stop.module + 1}`}
-                      </span>
-                      <h3>{stop.title}</h3>
-                      <p>
-                        Это занятие откроется после покупки курса. Оформи доступ, чтобы смотреть вебинары,
-                        скачивать материалы и сдавать домашние задания.
-                      </p>
-                      <a className="cab-btn cab-btn--join" href={packagesHref()}>
-                        <Icon d={ICONS.cart} /> Купить курс
-                      </a>
                     </section>
                   )
                 )}
@@ -2319,7 +2447,9 @@ export default function CabinetShell({
                         </b>{' '}
                         {pluralLessons(coursePackage.total)}
                       </p>
-                      {coursePackage.active ? (
+                      {displayLives?.accessBlocked ? (
+                        <span className="cab-pkg-status is-frozen">Курс заморожен</span>
+                      ) : coursePackage.active ? (
                         <span className="cab-pkg-status is-active">
                           <i aria-hidden="true" />
                           Активен

@@ -53,6 +53,54 @@ export async function loadStaffCapabilities(
     };
   }
 
+  // /as teacher|curator — чистый UI этой роли (не combined и не «чужое» меню).
+  if (viewRole === 'teacher') {
+    return {
+      telegramId,
+      roles,
+      primaryRole,
+      viewRole,
+      effectiveRole,
+      canTeacherBot: true,
+      canCuratorBot: false,
+    };
+  }
+  if (viewRole === 'curator') {
+    return {
+      telegramId,
+      roles,
+      primaryRole,
+      viewRole,
+      effectiveRole,
+      canTeacherBot: false,
+      canCuratorBot: true,
+    };
+  }
+
+  // Реальная роль teacher/curator в БД (в т.ч. /role me … у creator).
+  if (effectiveRole === 'teacher') {
+    return {
+      telegramId,
+      roles,
+      primaryRole,
+      viewRole,
+      effectiveRole,
+      canTeacherBot: true,
+      canCuratorBot: memberHasRole(roles, 'curator'),
+    };
+  }
+  if (effectiveRole === 'curator') {
+    return {
+      telegramId,
+      roles,
+      primaryRole,
+      viewRole,
+      effectiveRole,
+      canTeacherBot: memberHasRole(roles, 'teacher'),
+      canCuratorBot: true,
+    };
+  }
+
   const canTeacherBot = canManageTeacherCabinet(roles, telegramId);
   const canCuratorBot =
     memberHasRole(roles, 'curator') || memberHasRole(roles, 'admin');

@@ -11,6 +11,17 @@ export async function GET() {
 
   try {
     const data = await getCuratorCabinetData(auth.admin, auth.telegramId, auth.fullName);
+    // Ленивая проверка дедлайнов учеников куратора (без отдельного cron).
+    const studentIds = data.students?.map((s) => s.telegramId).filter(Boolean) ?? [];
+    if (studentIds.length > 0) {
+      const { runHomeworkDeadlineReminders } = await import(
+        '@/lib/bot/education/homework-deadline-notify'
+      );
+      void runHomeworkDeadlineReminders(auth.admin, new Date(), {
+        telegramIds: studentIds,
+        limit: 120,
+      }).catch((err) => console.error('[curator/data] hw-deadline sweep failed:', err));
+    }
     return NextResponse.json(data);
   } catch (error) {
     return curatorJsonError(error, 'Failed to load curator data');

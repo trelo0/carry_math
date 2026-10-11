@@ -378,6 +378,7 @@ async function renderUserProfile(
     keyboard.push(
       [{ text: '👤 Назначить наставника', callback_data: `ae:mentor:${member.telegram_id}` }],
       [{ text: '📦 Пакеты', callback_data: `apk:stu:${member.telegram_id}` }],
+      [{ text: '❤️ Жизни и блокировка', callback_data: `al:m:${member.telegram_id}` }],
     );
   }
   keyboard.push(

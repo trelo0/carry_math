@@ -1,4 +1,5 @@
 import type { ClientStateSnapshot, ClientUiPhase } from './client-state';
+import { getClientProductMode } from './client-state';
 import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
 
 export const CLIENT_LABELS = {
@@ -9,6 +10,13 @@ export const CLIENT_LABELS = {
   buy: '👨‍🏫 Занятия с преподавателем',
   leaveRequest: '📝 Оставить заявку на занятия',
   myLessons: '📚 Мои занятия',
+  myCourse: '🎓 Мой курс',
+  homework: '📝 Домашние задания',
+  contactTeacher: '💬 Связаться с преподавателем',
+  contactCurator: '💬 Связаться с куратором',
+  contact: '💬 Связь',
+  payments: '💳 Оплаты',
+  misc: '⋯ Прочее',
   buyEducation: '🎓 Купить обучение',
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
@@ -60,24 +68,30 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
         [{ text: CLIENT_LABELS.contactAdmin }],
       );
       break;
-    case 'client_active':
-      if (state.hasActiveLessonProduct || state.hasLessonHistory) {
-        rows.push([{ text: CLIENT_LABELS.myLessons }]);
+    case 'client_active': {
+      const mode = getClientProductMode(state);
+      if (mode === 'both') {
+        rows.push(
+          [{ text: CLIENT_LABELS.schedule }, { text: CLIENT_LABELS.myCourse }],
+          [{ text: CLIENT_LABELS.contact }, { text: CLIENT_LABELS.payments }],
+          [{ text: CLIENT_LABELS.misc }],
+        );
+      } else if (mode === 'course') {
+        rows.push(
+          [{ text: CLIENT_LABELS.myCourse }, { text: CLIENT_LABELS.homework }],
+          [{ text: CLIENT_LABELS.contactCurator }, { text: CLIENT_LABELS.payments }],
+          [{ text: CLIENT_LABELS.misc }],
+        );
+      } else {
+        // lessons
+        rows.push(
+          [{ text: CLIENT_LABELS.myLessons }, { text: CLIENT_LABELS.homework }],
+          [{ text: CLIENT_LABELS.contactTeacher }, { text: CLIENT_LABELS.payments }],
+          [{ text: CLIENT_LABELS.misc }],
+        );
       }
-      if (state.hasUpcomingLessons) {
-        rows.push([{ text: CLIENT_LABELS.schedule }]);
-      }
-      if (state.hasActiveLessonProduct) {
-        rows.push([{ text: CLIENT_LABELS.myPackage }]);
-      }
-      if (state.hasActiveCourse) {
-        rows.push([{ text: CLIENT_LABELS.onlineCourse }]);
-      }
-      rows.push(
-        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
-        [{ text: CLIENT_LABELS.contactAdmin }],
-      );
       break;
+    }
   }
 
   return { keyboard: rows, resize_keyboard: true };

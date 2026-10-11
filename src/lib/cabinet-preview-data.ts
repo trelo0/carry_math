@@ -132,7 +132,10 @@ export function buildCabinetPreviewData(
     courseProgress: [],
     courseModules: [],
     courseStops: [],
-    lives: variant === 'enrolled_locked' || variant === 'full' ? { current: 2, max: 3, accessBlocked: false } : null,
+    lives:
+      variant === 'enrolled_locked' || variant === 'full'
+        ? { current: 2, max: 3, accessBlocked: false, fullyBlocked: false }
+        : null,
     cabinetPricing: DEFAULT_CABINET_PRICING,
     courseMapViewed: variant !== 'preview',
     memberRoles: ['student'],

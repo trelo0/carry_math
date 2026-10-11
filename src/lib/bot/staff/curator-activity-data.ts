@@ -32,9 +32,14 @@ export type CuratorActivitySnapshot = {
   courseStudentCount: number;
   liveLine: string;
   nextLine: string;
+  lastLine: string;
+  /** Sanity id следующего урока курса (для назначения даты). */
+  nextSanityId: string | null;
   lowLives: CuratorLowLivesEntry[];
   lowActivityStudents: CuratorStudentRecord[];
   attentionItems: CuratorAttentionItem[];
+  frozenCount: number;
+  overdueCount: number;
 };
 
 async function listLowLivesStudents(
@@ -139,9 +144,15 @@ function formatLiveLine(liveCount: number, titles: string[]): string {
 }
 
 function formatNextLine(nextTitle: string | null, nextAt: string | null): string {
-  if (!nextTitle) return '📅 Ближайший урок: не запланирован';
+  if (!nextTitle) return '⏭ Следующее занятие: не запланировано';
   const when = nextAt ? formatLessonDateTimeRu(nextAt) : 'дата уточняется';
-  return `📅 Ближайший урок: ${nextTitle} · ${when}`;
+  return `⏭ Следующее: ${nextTitle} · ${when}`;
+}
+
+function formatLastLine(lastTitle: string | null, lastAt: string | null): string {
+  if (!lastTitle) return '⏮ Прошлое занятие: нет';
+  const when = lastAt ? formatLessonDateTimeRu(lastAt) : 'дата уточняется';
+  return `⏮ Прошлое: ${lastTitle} · ${when}`;
 }
 
 async function listPaymentWarnings(
@@ -186,17 +197,39 @@ export async function loadCuratorActivitySnapshot(
   const newQuestions = threads.filter((t) => t.unreadCount > 0).length;
   const lowLives = await listLowLivesStudents(admin, students);
   const lowActivityStudents = await listLowActivityStudents(admin, students);
-  const accessBlockedStudents = courseViews.filter((s) => s.accessBlocked);
+  const accessBlockedStudents = courseViews.filter((s) => s.accessBlocked && !s.fullyBlocked);
+  const frozenStudents = courseViews.filter(
+    (s) => s.accessBlocked && (s.livesCurrent ?? 0) <= 0 && !s.fullyBlocked,
+  );
+  const fullyBlockedStudents = courseViews.filter((s) => s.fullyBlocked);
+  const overdueStudents = courseViews
+    .filter((s) => s.overdueHomeworkCount > 0)
+    .map((s) => ({ student: s, count: s.overdueHomeworkCount }));
+  const staleReviewStudents = courseViews
+    .filter((s) => s.staleReviewDays >= 2)
+    .map((s) => ({ student: s, days: s.staleReviewDays }));
+  const stuckStudents = courseViews
+    .filter((s) => s.stuckLessonLabel)
+    .map((s) => ({ student: s, lessonLabel: s.stuckLessonLabel as string }));
+  const revisionIdleStudents = courseViews.filter((s) => s.revisionIdle);
   const paymentWarnings = await listPaymentWarnings(admin, students);
   const attentionItems = buildCuratorAttentionItems({
     lowLives,
+    frozenStudents,
+    fullyBlockedStudents,
+    overdueStudents,
     lowActivityStudents,
     accessBlockedStudents,
     paymentWarnings,
+    staleReviewStudents,
+    stuckStudents,
+    revisionIdleStudents,
   });
 
   const liveTitles = cabinet.dashboard.liveLessons.map((l) => `Урок ${l.lessonNumber}`);
   const next = cabinet.dashboard.nextLesson;
+  const last = cabinet.dashboard.lastLesson;
+  const lastAt = last?.endedAt ?? last?.scheduledAt ?? null;
 
   return {
     awaitingReview: hw.awaitingReview,
@@ -205,8 +238,12 @@ export async function loadCuratorActivitySnapshot(
     courseStudentCount: courseViews.length,
     liveLine: formatLiveLine(cabinet.dashboard.liveNow, liveTitles),
     nextLine: formatNextLine(next?.title ?? null, next?.scheduledAt ?? null),
+    lastLine: formatLastLine(last?.title ?? null, lastAt),
+    nextSanityId: next?.sanityId ?? null,
     lowLives,
     lowActivityStudents,
     attentionItems,
+    frozenCount: frozenStudents.length,
+    overdueCount: overdueStudents.length,
   };
 }

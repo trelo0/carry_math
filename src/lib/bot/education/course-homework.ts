@@ -16,13 +16,21 @@ import {
   type CourseLessonStudentProgress,
   type HomeworkProgressStatus,
 } from './course-progress';
+import { unlockNextCourseLessonAfterCleared } from './course-access';
+import { collectLessonMaterialKeys, lessonHasHomework } from './lesson-progress-calc';
 import { resolveCourseIdForContent } from './course-record';
 import {
   deductLifeForHomeworkFailure,
   formatLifeDeductionNote,
+  getEnrollmentLives,
   isLivesTableError,
   type HomeworkLifeFailureKind,
 } from './lives';
+import {
+  finalizeDeadlineOnApprove,
+  pauseDeadlineOnSubmit,
+  resumeDeadlineOnReject,
+} from './homework-deadline';
 
 export type CourseHomeworkSubmitInput = {
   note?: string;
@@ -152,8 +160,18 @@ export async function resolveSubmitTargetLesson(
   const content = await getDistrictCourseContent();
   if (!content) return null;
 
+  const { data: accessProduct } = await admin
+    .from('user_accesses')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .maybeSingle();
+  const hasCourseProduct = Boolean(accessProduct);
+
   const lessons = flattenCourseLessons(content)
     .filter((l) => l.publicationStatus === 'published')
+    .filter((l) => !(l.isTrialFree && !hasCourseProduct))
     .sort((a, b) => a.lessonNumber - b.lessonNumber);
 
   const sanityIds = lessons.map((l) => l.sanityId);
@@ -214,6 +232,22 @@ export async function markHomeworkSubmitted(
   const lesson = findLessonBySanityId(content, sanityLessonId);
   if (!lesson) throw new CourseHomeworkError('Занятие не найдено.', 'LESSON_NOT_FOUND');
 
+  try {
+    const courseId = await resolveCourseIdForContent(admin, content);
+    if (courseId) {
+      const lives = await getEnrollmentLives(admin, telegramId, courseId);
+      if (lives?.fully_blocked) {
+        throw new CourseHomeworkError(
+          'Курс полностью заблокирован администратором. Материалы недоступны.',
+          'NO_ACCESS',
+        );
+      }
+    }
+  } catch (error) {
+    if (error instanceof CourseHomeworkError) throw error;
+    if (!isLivesTableError(error)) throw error;
+  }
+
   await assertLessonAccess(admin, telegramId, sanityLessonId);
   const progress = await loadProgress(admin, telegramId, sanityLessonId);
   const sessionRow = await getSanityLessonSession(admin, sanityLessonId);
@@ -233,16 +267,27 @@ export async function markHomeworkSubmitted(
     throw new CourseHomeworkError('Отправьте текст или файл.', 'NOT_READY');
   }
 
-  const now = new Date().toISOString();
-  const row = {
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  // Сначала пауза дедлайна (остаток), затем статус — upsert не затирает remaining
+  const { remainingMs, wasOverdue } = await pauseDeadlineOnSubmit(
+    admin,
+    telegramId,
+    sanityLessonId,
+    nowDate,
+  );
+
+  const row: Record<string, unknown> = {
     telegram_id: telegramId,
     sanity_lesson_id: sanityLessonId,
-    homework_status: 'submitted' as const,
+    homework_status: 'submitted',
     homework_submitted_at: now,
     submission_note: input.note?.trim() || null,
     submission_file_url: input.fileUrl?.trim() || null,
+    homework_remaining_ms: remainingMs,
     updated_at: now,
   };
+  if (wasOverdue) row.homework_overdue_at = now;
 
   const { data, error } = await admin
     .from('course_lesson_student_progress')
@@ -264,7 +309,8 @@ export async function markHomeworkRejected(
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   const { data, error } = await admin
     .from('course_lesson_student_progress')
     .update({
@@ -277,7 +323,16 @@ export async function markHomeworkRejected(
     .select('*')
     .single();
   if (error) throw error;
-  return data as CourseLessonStudentProgress;
+
+  const resumed = await resumeDeadlineOnReject(admin, telegramId, sanityLessonId, nowDate);
+  if (resumed.immediatelyOverdue) {
+    const { notifyCuratorOverdueOnce } = await import('./homework-deadline-notify');
+    void notifyCuratorOverdueOnce(admin, telegramId, sanityLessonId).catch((err) =>
+      console.error('[courseHomework] overdue notify on reject failed:', err),
+    );
+  }
+
+  return (resumed.progress as CourseLessonStudentProgress | null) ?? (data as CourseLessonStudentProgress);
 }
 
 export async function approveCourseHomeworkByCurator(
@@ -297,7 +352,27 @@ export async function approveCourseHomeworkByCurator(
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
 
-  const updated = await markHomeworkApproved(admin, studentTelegramId, { sanityLessonId: lesson.sanityId });
+  const updated = await markHomeworkApproved(
+    admin,
+    studentTelegramId,
+    { sanityLessonId: lesson.sanityId },
+    undefined,
+    {
+      materialKeys: collectLessonMaterialKeys(lesson),
+      hasHomework: lessonHasHomework(lesson),
+    },
+  );
+  await finalizeDeadlineOnApprove(admin, studentTelegramId, lesson.sanityId);
+
+  try {
+    const courseId = await resolveCourseIdForContent(admin, content);
+    if (courseId) {
+      await unlockNextCourseLessonAfterCleared(admin, studentTelegramId, courseId, content);
+    }
+  } catch (error) {
+    console.error('[courseHomework] unlock next after approve failed:', error);
+  }
+
   return { lesson, progress: updated };
 }
 
@@ -325,15 +400,9 @@ export async function rejectCourseHomeworkByCurator(
   if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
 
   await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId);
+  // Reject только возобновляет таймер; жизнь за просрочку — вручную.
   const updated = await markHomeworkRejected(admin, studentTelegramId, lesson.sanityId, note);
-  const lifeDeduction = await tryDeductLifeForHomework(
-    admin,
-    curatorTelegramId,
-    studentTelegramId,
-    lesson.sanityId,
-    'rejected',
-  );
-  return { lesson, progress: updated, lifeDeduction };
+  return { lesson, progress: updated, lifeDeduction: null };
 }
 
 export async function deductLifeForHomeworkDebtByCurator(
@@ -341,7 +410,7 @@ export async function deductLifeForHomeworkDebtByCurator(
   curatorTelegramId: number,
   studentTelegramId: number,
   sanityLessonId: string,
-  failureKind: Extract<HomeworkLifeFailureKind, 'notSubmitted' | 'notCompleted'> = 'notSubmitted',
+  failureKind: Extract<HomeworkLifeFailureKind, 'notSubmitted' | 'notCompleted' | 'overdue'> = 'overdue',
 ): Promise<{ lifeDeduction: HomeworkLifeDeductionResult | null }> {
   await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId);
   const lifeDeduction = await tryDeductLifeForHomework(

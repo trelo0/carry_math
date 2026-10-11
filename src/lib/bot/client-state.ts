@@ -21,6 +21,16 @@ export type ClientStateSnapshot = {
   hasActiveCourse: boolean;
 };
 
+/** Режим активного меню по купленным продуктам. */
+export type ClientProductMode = 'none' | 'lessons' | 'course' | 'both';
+
+export function getClientProductMode(state: ClientStateSnapshot): ClientProductMode {
+  if (state.hasActiveCourse && state.hasActiveLessonProduct) return 'both';
+  if (state.hasActiveCourse) return 'course';
+  if (state.hasActiveLessonProduct) return 'lessons';
+  return 'none';
+}
+
 function isCabinetTableError(error: unknown): boolean {
   const details = error as { message?: unknown; code?: unknown } | null;
   const code = String(details?.code ?? '');

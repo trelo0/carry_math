@@ -1,11 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CuratorStudentView } from '@/lib/curator/students';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { runWithKeyedFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import { hwStatusLabel } from './curator-utils';
+
+type LifeEventRow = {
+  id: number;
+  delta: number;
+  reason: string;
+  livesBefore: number | null;
+  livesAfter: number | null;
+  createdAt: string;
+};
 
 export default function CuratorStudentsPanel({
   students,
@@ -20,6 +29,27 @@ export default function CuratorStudentsPanel({
   const [messageDraft, setMessageDraft] = useState('');
   const [messageTarget, setMessageTarget] = useState<number | null>(null);
   const [feedbacks, setFeedbacks] = useState<Record<string, ActionFeedback>>({});
+  const [lifeEvents, setLifeEvents] = useState<Record<string, LifeEventRow[]>>({});
+  const [lifeEventsTick, setLifeEventsTick] = useState(0);
+
+  useEffect(() => {
+    if (!expandedId) return;
+    const student = students.find((s) => s.id === expandedId);
+    if (!student) return;
+    let cancelled = false;
+    void fetch(`/api/cabinet/curator/students/${student.telegramId}/life-events`)
+      .then(async (res) => {
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as { events?: LifeEventRow[] };
+        setLifeEvents((prev) => ({ ...prev, [expandedId]: body.events ?? [] }));
+      })
+      .catch(() => {
+        if (!cancelled) setLifeEvents((prev) => ({ ...prev, [expandedId]: [] }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedId, students, lifeEventsTick]);
 
   if (students.length === 0) {
     return (
@@ -59,7 +89,11 @@ export default function CuratorStudentsPanel({
                   <strong>{student.name}</strong>
                   <p className="curator-muted">
                     {student.phone ?? `ID ${student.telegramId}`}
-                    {student.accessBlocked ? ' · доступ заблокирован' : ''}
+                    {student.fullyBlocked
+                      ? ' · полная блокировка'
+                      : student.accessBlocked
+                        ? ' · новые занятия закрыты'
+                        : ''}
                   </p>
                 </div>
                 <div className="curator-student-metrics">
@@ -105,6 +139,7 @@ export default function CuratorStudentsPanel({
                               const body = (await res.json()) as { error?: string };
                               throw new Error(body.error ?? 'Не удалось восстановить');
                             }
+                            setLifeEventsTick((n) => n + 1);
                           },
                           'Жизнь восстановлена',
                         )
@@ -112,8 +147,61 @@ export default function CuratorStudentsPanel({
                     >
                       +1 жизнь
                     </button>
+                    {student.accessBlocked ? (
+                      <button
+                        type="button"
+                        className="curator-btn curator-btn-ghost"
+                        disabled={busy}
+                        onClick={() =>
+                          void runWithKeyedFeedback(
+                            runAction,
+                            setFeedbacks,
+                            `${student.id}-unfreeze`,
+                            async () => {
+                              const res = await fetch(
+                                `/api/cabinet/curator/students/${student.telegramId}/unfreeze`,
+                                { method: 'POST' },
+                              );
+                              if (!res.ok) {
+                                const body = (await res.json()) as { error?: string };
+                                throw new Error(body.error ?? 'Не удалось разморозить');
+                              }
+                            },
+                            'Курс разморожен',
+                          )
+                        }
+                      >
+                        Разморозить курс
+                      </button>
+                    ) : null}
                   </div>
                   <CabinetFeedback feedback={feedbacks[lifeKey]} />
+
+                  {lifeEvents[student.id]?.length ? (
+                    <div className="curator-life-history">
+                      <h3>История жизней</h3>
+                      <ul>
+                        {lifeEvents[student.id]!.slice(0, 8).map((ev) => (
+                          <li key={ev.id}>
+                            <span>
+                              {ev.delta > 0 ? `+${ev.delta}` : ev.delta} · {ev.reason}
+                            </span>
+                            <span className="curator-muted">
+                              {ev.livesBefore != null && ev.livesAfter != null
+                                ? `${ev.livesBefore}→${ev.livesAfter}`
+                                : ''}{' '}
+                              {new Date(ev.createdAt).toLocaleString('ru-RU', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
 
                   {messageTarget === student.telegramId ? (
                     <div className="curator-message-box">
@@ -210,6 +298,7 @@ export default function CuratorStudentsPanel({
                                         const body = (await res.json()) as { error?: string };
                                         throw new Error(body.error ?? 'Не удалось снять жизнь');
                                       }
+                                      setLifeEventsTick((n) => n + 1);
                                     },
                                     'Жизнь снята',
                                   )

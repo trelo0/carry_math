@@ -7,7 +7,7 @@ import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { extractYoutubeVideoId } from '@/lib/youtube';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
 import YoutubeLiveChat from '@/components/cabinet/YoutubeLiveChat';
-
+import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
 
 type LessonFile = {
   title: string;
@@ -106,42 +106,20 @@ function LessonStream({
           disableNativeFullscreen={hasLiveChat}
           onPlay={onPlay}
         />
-        <div className="cab-lespage-video-meta">
-          <span>
-            {stop.status === 'watched' || stop.status === 'done'
-              ? 'Просмотрено полностью'
-              : 'Просмотр не начат'}
-          </span>
-          <span className="cab-lespage-video-meta-right">
-            <span>
-              {stop.webinarSessionStatus === 'live'
-                ? 'Трансляция'
-                : stop.webinarSessionStatus === 'completed'
-                  ? stop.recordingUrl
-                    ? 'Запись'
-                    : 'Завершено'
-                  : stop.webinarSessionStatus === 'waiting'
-                    ? 'Ожидание эфира'
-                    : stop.recordingUrl
-                      ? 'Запись'
-                      : stop.liveUrl
-                        ? 'Запланировано'
-                        : 'Скоро'}
-            </span>
-            {hasLiveChat && (
-              <button
-                type="button"
-                className="cab-lespage-fullscreen-btn"
-                aria-label={isFullscreen ? 'Выйти из полноэкранного режима' : 'На весь экран с чатом'}
-                aria-pressed={isFullscreen}
-                onClick={onToggleFullscreen}
-              >
-                <Icon d={isFullscreen ? ICONS.collapse : ICONS.expand} />
-                {isFullscreen ? 'Свернуть' : 'На весь экран'}
-              </button>
-            )}
-          </span>
-        </div>
+        {hasLiveChat ? (
+          <div className="cab-lespage-video-meta cab-lespage-video-meta--chat-only">
+            <button
+              type="button"
+              className="cab-lespage-fullscreen-btn"
+              aria-label={isFullscreen ? 'Выйти из полноэкранного режима' : 'На весь экран с чатом'}
+              aria-pressed={isFullscreen}
+              onClick={onToggleFullscreen}
+            >
+              <Icon d={isFullscreen ? ICONS.collapse : ICONS.expand} />
+              {isFullscreen ? 'Свернуть' : 'На весь экран'}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -151,6 +129,11 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
   const router = useRouter();
   const theaterRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const watchedRef = useRef(false);
+
+  useEffect(() => {
+    router.prefetch('/cabinet?section=course');
+  }, [router]);
 
   const chips =
     stop.contentChips?.filter(Boolean).length ? stop.contentChips.filter(Boolean) : DEFAULT_LESSON_CONTENT_CHIPS;
@@ -198,12 +181,18 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
   }, []);
 
   async function markLessonWatched(watchPhase: 'upcoming' | 'live' | 'recording' | 'waiting') {
-    if (!stop.sanityLessonId) return;
+    if (!stop.sanityLessonId || watchedRef.current) return;
+    watchedRef.current = true;
     const endpoint = watchPhase === 'live' ? 'watch-live' : 'watch-recording';
-    await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}`, {
-      method: 'POST',
-    });
-    router.refresh();
+    try {
+      const res = await fetch(
+        `/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}`,
+        { method: 'POST' },
+      );
+      if (!res.ok) watchedRef.current = false;
+    } catch {
+      watchedRef.current = false;
+    }
   }
 
   const stream = (
@@ -247,7 +236,16 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
       </section>
 
       <section className="cab-lespage-homework">
-        <h2>Домашнее задание</h2>
+        <div className="cab-lespage-homework-head">
+          <h2>Домашнее задание</h2>
+          <HomeworkDeadlineBadge
+            homeworkStatus={stop.homeworkStatus}
+            homeworkDeadlineAt={stop.homeworkDeadlineAt}
+            homeworkRemainingMs={stop.homeworkRemainingMs}
+            homeworkOverdueAt={stop.homeworkOverdueAt}
+            placement="inline"
+          />
+        </div>
         <LessonFileList files={stop.homeworkFiles} />
       </section>
     </div>

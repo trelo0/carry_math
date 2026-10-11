@@ -25,6 +25,8 @@ export type PurchaseFulfillInput = {
   teacherId?: string;
   /** Slug курса в Sanity (product=course). */
   courseSlug?: string;
+  /** Сценарий покупки курса (product=course). */
+  scenario?: 'start_from_beginning' | 'join_current';
   /** Idempotency key (будет у платёжки). */
   externalId?: string;
   courseId?: number;
@@ -219,6 +221,9 @@ export async function fulfillPurchase(
   let resolvedCourseId = input.courseId;
   let courseSlug = input.courseSlug;
   let curatorTelegramId = input.curatorTelegramId;
+  let startModuleId: number | null = null;
+  let startLessonId: number | null = null;
+
   if (input.product === 'course') {
     const courseContent = await getDistrictCourseContent(courseSlug || undefined).catch(() => null);
     if (courseContent) {
@@ -229,6 +234,57 @@ export async function fulfillPurchase(
       }
       if (curatorTelegramId == null && courseContent.curatorTelegramId != null) {
         curatorTelegramId = courseContent.curatorTelegramId;
+      }
+
+      // Обработка сценария покупки
+      if (input.scenario === 'join_current' && resolvedCourseId) {
+        const { determineActiveModule, findFirstLessonInModule } = await import('@/lib/bot/education/active-module');
+        const activeModuleResult = await determineActiveModule(admin, courseContent);
+
+        if (activeModuleResult.module) {
+          // Находим Supabase ID модуля
+          const { data: moduleRow } = await admin
+            .from('course_modules')
+            .select('id')
+            .eq('course_id', resolvedCourseId)
+            .eq('sort_order', activeModuleResult.module.sortOrder)
+            .maybeSingle();
+
+          if (moduleRow?.id) {
+            startModuleId = moduleRow.id as number;
+
+            // Находим первое занятие модуля
+            const firstLessonSanityId = findFirstLessonInModule(activeModuleResult.module);
+            if (firstLessonSanityId) {
+              const { data: lessonRow } = await admin
+                .from('course_lessons')
+                .select('id')
+                .eq('course_id', resolvedCourseId)
+                .eq('sanity_lesson_id', firstLessonSanityId)
+                .maybeSingle();
+
+              if (lessonRow?.id) {
+                startLessonId = lessonRow.id as number;
+              }
+            }
+          }
+        }
+      } else if (input.scenario === 'start_from_beginning' && resolvedCourseId) {
+        // Первое занятие после пробного
+        const { findFirstPaidLesson } = await import('@/lib/bot/education/active-module');
+        const firstPaidSanityId = findFirstPaidLesson(courseContent);
+        if (firstPaidSanityId) {
+          const { data: lessonRow } = await admin
+            .from('course_lessons')
+            .select('id')
+            .eq('course_id', resolvedCourseId)
+            .eq('sanity_lesson_id', firstPaidSanityId)
+            .maybeSingle();
+
+          if (lessonRow?.id) {
+            startLessonId = lessonRow.id as number;
+          }
+        }
       }
     }
   }
@@ -244,6 +300,33 @@ export async function fulfillPurchase(
     curatorTelegramId,
     teacherSanityId: input.teacherId,
   });
+
+  // Сохраняем сценарий и стартовое состояние в course_enrollments
+  if (input.product === 'course' && resolvedCourseId && input.scenario) {
+    try {
+      const { error: enrollmentError } = await admin
+        .from('course_enrollments')
+        .upsert(
+          {
+            telegram_id: telegramId,
+            course_id: resolvedCourseId,
+            status: 'active',
+            purchase_scenario: input.scenario,
+            start_module_id: startModuleId,
+            start_lesson_id: startLessonId,
+            started_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'telegram_id,course_id' },
+        );
+
+      if (enrollmentError) {
+        console.error('[purchase-fulfillment] Failed to save enrollment scenario:', enrollmentError);
+      }
+    } catch (error) {
+      console.error('[purchase-fulfillment] Failed to save enrollment scenario:', error);
+    }
+  }
 
   const snapshot = await loadPurchaseFulfillmentSnapshot(
     admin,

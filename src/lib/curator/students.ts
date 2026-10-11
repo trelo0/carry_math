@@ -83,12 +83,22 @@ export type CuratorStudentView = CuratorStudentRecord & {
   livesCurrent: number | null;
   livesMax: number | null;
   accessBlocked: boolean;
+  fullyBlocked: boolean;
   phone: string | null;
   chatId: number | null;
   progressPercent: number;
   completedLessons: number;
   totalLessons: number;
   enrolledAt: string | null;
+  /** ISO последней активности по прогрессу. */
+  lastActivityAt: string | null;
+  overdueHomeworkCount: number;
+  /** Дней с submitted без ревью (макс.). */
+  staleReviewDays: number;
+  /** Есть reject/revision без новой сдачи. */
+  revisionIdle: boolean;
+  /** Текущий открытый урок без прогресса (название). */
+  stuckLessonLabel: string | null;
 };
 
 export async function loadCuratorCourseStudents(
@@ -182,11 +192,13 @@ export async function loadCuratorCourseStudents(
     let livesCurrent: number | null = null;
     let livesMax: number | null = null;
     let accessBlocked = false;
+    let fullyBlocked = false;
     try {
       const lives = await getEnrollmentLives(admin, telegramId, courseId);
       livesCurrent = lives?.lives_current ?? null;
       livesMax = lives?.lives_max ?? null;
       accessBlocked = Boolean(lives?.access_blocked);
+      fullyBlocked = Boolean(lives?.fully_blocked);
     } catch (error) {
       if (!isLivesTableError(error)) throw error;
     }
@@ -200,6 +212,59 @@ export async function loadCuratorCourseStudents(
       totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
     const member = memberMap.get(telegramId);
+    const nowMs = Date.now();
+    let lastActivityMs = 0;
+    let overdueHomeworkCount = 0;
+    let staleReviewDays = 0;
+    let revisionIdle = false;
+    let stuckLessonLabel: string | null = null;
+
+    for (const lesson of publishedLessons) {
+      const p = progressMap.get(`${telegramId}:${lesson.sanityId}`);
+      if (!p) continue;
+      for (const field of [
+        p.updated_at,
+        p.completed_at,
+        p.homework_submitted_at,
+        p.recording_watched_at,
+        p.live_attended_at,
+      ]) {
+        const ts = Date.parse(String(field ?? ''));
+        if (Number.isFinite(ts)) lastActivityMs = Math.max(lastActivityMs, ts);
+      }
+      const overdueAt = (p as { homework_overdue_at?: string | null }).homework_overdue_at;
+      const deadlineAt = (p as { homework_deadline_at?: string | null }).homework_deadline_at;
+      const hwStatus = p.homework_status;
+      if (
+        (hwStatus === 'pending' || hwStatus === 'rejected') &&
+        (overdueAt ||
+          (deadlineAt && Number.isFinite(Date.parse(deadlineAt)) && Date.parse(deadlineAt) <= nowMs))
+      ) {
+        overdueHomeworkCount += 1;
+      }
+      if (hwStatus === 'submitted') {
+        const submittedTs = Date.parse(String(p.homework_submitted_at ?? p.updated_at ?? ''));
+        if (Number.isFinite(submittedTs)) {
+          const days = Math.floor((nowMs - submittedTs) / 86400000);
+          if (days > staleReviewDays) staleReviewDays = days;
+        }
+      }
+      if (hwStatus === 'rejected') revisionIdle = true;
+    }
+
+    // Застрял: есть available доступ, нет completed, прошло >10 дней с granted/updated
+    for (const lesson of publishedLessons) {
+      const key = `${telegramId}:${lesson.sanityId}`;
+      const access = accessMap.get(key);
+      const p = progressMap.get(key);
+      if (access !== 'available' && access !== 'blocked_lives') continue;
+      if (p?.completed_at) continue;
+      const touch = Date.parse(String(p?.updated_at ?? p?.lesson_first_opened_at ?? ''));
+      if (Number.isFinite(touch) && nowMs - touch > 10 * 86400000) {
+        stuckLessonLabel = `№${lesson.lessonNumber} ${lesson.title}`;
+        break;
+      }
+    }
 
     students.push({
       id: String(telegramId),
@@ -209,12 +274,18 @@ export async function loadCuratorCourseStudents(
       livesCurrent,
       livesMax,
       accessBlocked,
+      fullyBlocked,
       phone: member?.phone ?? null,
       chatId: member?.chat_id ?? null,
       progressPercent,
       completedLessons,
       totalLessons,
       enrolledAt: enrolledAtMap.get(telegramId) ?? null,
+      lastActivityAt: lastActivityMs > 0 ? new Date(lastActivityMs).toISOString() : null,
+      overdueHomeworkCount,
+      staleReviewDays,
+      revisionIdle,
+      stuckLessonLabel,
     });
   }
 

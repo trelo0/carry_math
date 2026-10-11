@@ -3,6 +3,7 @@ import { homeButton } from './core';
 
 export async function renderMoreMenu(deliver: Deliver): Promise<void> {
   const keyboard: InlineButton[][] = [
+    [{ text: '❤️ Восстановить жизни всем (месяц)', callback_data: 'al:rm' }],
     [{ text: '📢 Рассылки', callback_data: 'admin:broadcasts' }],
     [{ text: '🚨 Проблемы и контроль', callback_data: 'ah:more:problems-control' }],
     [{ text: '📝 Журнал событий', callback_data: 'ah:audit:all:0:all' }],
@@ -13,6 +14,7 @@ export async function renderMoreMenu(deliver: Deliver): Promise<void> {
     [
       '⚙️ Прочее',
       '',
+      '❤️ Жизни — восстановить всем до 3 за текущий месяц (МСК)',
       '📢 Рассылки — сообщения ученикам и клиентам',
       '🚨 Проблемы и контроль — внимание и переписка',
       '📝 Журнал событий — что произошло в системе',

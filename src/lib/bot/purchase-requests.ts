@@ -15,10 +15,12 @@ export type PurchaseRequestRow = {
   amount_byn: number;
   status: PurchaseRequestStatus;
   resolved_by: number | null;
+  course_slug: string | null;
+  scenario: 'start_from_beginning' | 'join_current' | null;
 };
 
 const REQUEST_COLUMNS =
-  'id, created_at, resolved_at, telegram_id, product, package_index, teacher_id, title, amount_byn, status, resolved_by';
+  'id, created_at, resolved_at, telegram_id, product, package_index, teacher_id, title, amount_byn, status, resolved_by, course_slug, scenario';
 
 export function isPurchaseRequestTableError(error: unknown): boolean {
   const details = error as { message?: unknown; code?: unknown } | null;
@@ -87,6 +89,8 @@ export async function createPurchaseRequest(
     teacherId?: string | null;
     title: string;
     amountByn: number;
+    courseSlug?: string | null;
+    scenario?: 'start_from_beginning' | 'join_current' | null;
   },
 ): Promise<PurchaseRequestRow> {
   const { data, error } = await admin
@@ -99,6 +103,8 @@ export async function createPurchaseRequest(
       title: input.title,
       amount_byn: input.amountByn,
       status: 'pending',
+      course_slug: input.courseSlug ?? null,
+      scenario: input.scenario ?? null,
     })
     .select(REQUEST_COLUMNS)
     .single();

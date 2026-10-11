@@ -5,10 +5,10 @@ import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-log
 import { getCabinetData } from '@/lib/cabinet';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
-import CheckoutPayButton from '@/components/cabinet/CheckoutPayButton';
-import { buildPayStartPayload } from '@/lib/bot/studentPurchaseFlow';
+import CheckoutContentComponent from '@/components/cabinet/CheckoutContent';
 import {
   getCoursePaymentOfferBySlug,
+  getDistrictCourseContent,
   listCoursePaymentOffers,
   type CoursePaymentOffer,
 } from '@/lib/studio/courseContent';
@@ -16,14 +16,6 @@ import {
 export const metadata = {
   title: 'Оплата — District',
 };
-
-function payUrl(courseSlug: string): string {
-  const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  if (!username) return 'mailto:district.school.210@gmail.com';
-
-  const payload = buildPayStartPayload('course', undefined, undefined, courseSlug);
-  return `https://t.me/${username}?start=${payload}`;
-}
 
 function checkoutReturnTo(courseSlug?: string): string {
   if (courseSlug) return `/cabinet/checkout?product=course&course=${encodeURIComponent(courseSlug)}`;
@@ -73,8 +65,12 @@ export default async function CheckoutPage({
   }
 
   let offer: CoursePaymentOffer | null = null;
+  let purchaseScenarios = null;
   if (courseSlug) {
     offer = await getCoursePaymentOfferBySlug(courseSlug);
+    // Загружаем сценарии для District course
+    const courseContent = await getDistrictCourseContent(courseSlug);
+    purchaseScenarios = courseContent?.purchaseScenarios ?? null;
   } else {
     const offers = cabinet.coursePaymentOffers.length
       ? cabinet.coursePaymentOffers
@@ -124,28 +120,5 @@ export default async function CheckoutPage({
     );
   }
 
-  return (
-    <div className="cab-checkout">
-      <main className="cab-checkout-card">
-        <Link href="/cabinet?section=payments" className="cab-checkout-back">
-          ← Вернуться в кабинет
-        </Link>
-        <span className="cab-checkout-k">Оформление заказа</span>
-        <h1>{offer.title}</h1>
-        {offer.cardText && <p className="cab-checkout-desc">{offer.cardText}</p>}
-        {!offer.cardText && offer.description && <p className="cab-checkout-desc">{offer.description}</p>}
-        <p className="cab-checkout-price">
-          <strong>{offer.priceByn} BYN</strong>
-          <span>
-            {offer.grantedLessons} {pluralLessons(offer.grantedLessons)} после оплаты
-          </span>
-        </p>
-        <CheckoutPayButton href={payUrl(offer.slug)} />
-        <p className="cab-checkout-note">
-          Оформление заявки проходит через Telegram-бот школы. Администратор свяжется с вами для
-          подтверждения оплаты.
-        </p>
-      </main>
-    </div>
-  );
+  return <CheckoutContentComponent offer={offer} courseSlug={courseSlug || offer.slug} purchaseScenarios={purchaseScenarios} />;
 }

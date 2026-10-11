@@ -68,6 +68,10 @@ export type AdminPayload = {
   groupCuratorId?: number;
   targetGroupId?: number;
   sanityLessonId?: string;
+  draftFileUrl?: string;
+  draftNote?: string;
+  lessonTitle?: string;
+  lessonNumber?: number;
   mentorTelegramId?: number;
   /** Кому пишет ученик: teacher | curator (student:mentor). */
   staffRole?: 'teacher' | 'curator';
@@ -162,6 +166,8 @@ export type ConversationStep =
   | 'student:support-thread'
   | 'student:mentor'
   | 'student:course-hw-submit'
+  | 'student:course-hw-comment'
+  | 'student:course-hw-confirm'
   | 'course-apply:link-phone'
   | 'course-apply:form'
   | 'client:hub'

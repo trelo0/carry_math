@@ -8,12 +8,25 @@ import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
 export default function CheckoutPayButton({
   href,
   label = 'Перейти к оплате',
+  onClick,
 }: {
   href: string;
   label?: string;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const [consent, setConsent] = useState(false);
   const locked = !consent;
+
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (locked) {
+      e.preventDefault();
+      return;
+    }
+    if (onClick) {
+      e.preventDefault();
+      onClick(e);
+    }
+  };
 
   return (
     <div className="cab-checkout-consent">
@@ -26,9 +39,7 @@ export default function CheckoutPayButton({
         rel="noopener noreferrer"
         aria-disabled={locked}
         tabIndex={locked ? -1 : undefined}
-        onClick={(e) => {
-          if (locked) e.preventDefault();
-        }}
+        onClick={handleClick}
       >
         {label}
       </a>

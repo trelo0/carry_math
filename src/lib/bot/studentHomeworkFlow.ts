@@ -14,11 +14,54 @@ import {
   resolveSubmitTargetLesson,
 } from '@/lib/bot/education/course-homework';
 import { notifyCuratorHomeworkSubmitted } from '@/lib/curator/homework-events';
+import { formatRemainingMs } from './client-format';
+import { getUserContext } from './accesses';
 
-type SubmitPayload = AdminPayload & { sanityLessonId?: string };
+export const COURSE_HW_FILE_STEP = 'student:course-hw-submit' as const;
+export const COURSE_HW_COMMENT_STEP = 'student:course-hw-comment' as const;
+export const COURSE_HW_CONFIRM_STEP = 'student:course-hw-confirm' as const;
+
+type SubmitPayload = AdminPayload & {
+  sanityLessonId?: string;
+  draftFileUrl?: string;
+  draftNote?: string;
+  lessonTitle?: string;
+  lessonNumber?: number;
+};
 
 export function formatTelegramFileRef(fileId: string): string {
   return `tg:${fileId}`;
+}
+
+function cancelKeyboard() {
+  return {
+    inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'chw:cancel' }]],
+  };
+}
+
+async function assertCanSubmitCourseHw(
+  admin: SupabaseClient,
+  telegramId: number,
+  preferredSanityLessonId?: string,
+): Promise<{ ok: true; target: NonNullable<Awaited<ReturnType<typeof resolveSubmitTargetLesson>>> } | { ok: false; message: string }> {
+  const ctx = await getUserContext(admin, telegramId);
+  const hasCourse = Boolean(ctx?.accesses.course);
+  const target = await resolveSubmitTargetLesson(admin, telegramId, preferredSanityLessonId);
+  if (!target) {
+    return {
+      ok: false,
+      message:
+        'Сейчас нет домашних заданий, которые можно сдать.\n\nПосмотрите запись занятия в личном кабинете — после этого здесь появится возможность отправить работу.',
+    };
+  }
+  if (target.lesson.isTrialFree && !hasCourse) {
+    return {
+      ok: false,
+      message:
+        'Пробное занятие доступно для просмотра всем.\n\nСдать ДЗ по нему можно после покупки курса.',
+    };
+  }
+  return { ok: true, target };
 }
 
 export async function beginCourseHomeworkSubmit(
@@ -27,31 +70,44 @@ export async function beginCourseHomeworkSubmit(
   chatId: number,
   preferredSanityLessonId?: string,
 ): Promise<boolean> {
-  const target = await resolveSubmitTargetLesson(admin, telegramId, preferredSanityLessonId);
-  if (!target) {
-    await sendAdminMessage(
-      chatId,
-      'Сейчас нет домашних заданий, которые можно сдать.\n\nПосмотрите запись занятия в личном кабинете — после этого здесь появится возможность отправить работу.',
-    );
+  const gate = await assertCanSubmitCourseHw(admin, telegramId, preferredSanityLessonId);
+  if (!gate.ok) {
+    await sendAdminMessage(chatId, gate.message);
     return true;
   }
 
-  const { lesson } = target;
-  const text =
-    `📝 Сдать домашку\n\n` +
-    `Занятие №${lesson.lessonNumber}: ${lesson.title}\n\n` +
-    `Отправьте фото, PDF или текст ответа одним сообщением.\n\n` +
-    `⬅️ Отмена — напишите «Отмена».`;
+  const { lesson, progress } = gate.target;
+  const remaining =
+    typeof progress?.homework_remaining_ms === 'number'
+      ? progress.homework_remaining_ms
+      : progress?.homework_deadline_at
+        ? Math.max(0, Date.parse(progress.homework_deadline_at) - Date.now())
+        : null;
+
+  const text = [
+    '📝 Сдать домашнее задание',
+    '',
+    `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
+    remaining != null ? `⏱ Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
+    '',
+    'Отправьте файл с заданием (фото или документ).',
+    '',
+    'После файла можно добавить комментарий — затем подтвердите отправку.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   try {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:course-hw-submit', {
+    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_FILE_STEP, {
       sanityLessonId: lesson.sanityId,
+      lessonTitle: lesson.title,
+      lessonNumber: lesson.lessonNumber,
     });
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
 
-  await sendAdminMessage(chatId, text);
+  await sendAdminMessage(chatId, text, cancelKeyboard());
   return true;
 }
 
@@ -67,8 +123,17 @@ async function finishSubmit(
   await clearStateIfAvailable(admin, telegramId);
   await sendAdminMessage(
     chatId,
-    '✅ Домашка отправлена на проверку.\n\nСтатус можно посмотреть в личном кабинете в разделе «Курс».',
+    '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.\nПосмотреть можно в личном кабинете в разделе «Домашние задания».',
   );
+}
+
+async function loadHwState(admin: SupabaseClient, telegramId: number) {
+  try {
+    return await getState(admin, telegramId);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    return null;
+  }
 }
 
 export async function handleStudentHomeworkMessage(
@@ -77,18 +142,21 @@ export async function handleStudentHomeworkMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
-  let state = null;
-  try {
-    state = await getState(admin, telegramId);
-  } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
-    return false;
-  }
+  const state = await loadHwState(admin, telegramId);
+  if (!state) return false;
 
-  if (!state || state.step !== 'student:course-hw-submit') return false;
+  const step = state.step as string;
   const payload = state.payload as SubmitPayload;
   const sanityLessonId = payload.sanityLessonId;
   if (!sanityLessonId) return false;
+
+  if (
+    step !== COURSE_HW_FILE_STEP &&
+    step !== COURSE_HW_COMMENT_STEP &&
+    step !== COURSE_HW_CONFIRM_STEP
+  ) {
+    return false;
+  }
 
   if (text.trim().toLowerCase() === 'отмена') {
     await clearStateIfAvailable(admin, telegramId);
@@ -96,13 +164,78 @@ export async function handleStudentHomeworkMessage(
     return true;
   }
 
-  try {
-    await finishSubmit(admin, telegramId, chatId, sanityLessonId, { note: text.trim() });
-  } catch (error) {
-    const message = error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
-    await sendAdminMessage(chatId, message);
+  if (step === COURSE_HW_FILE_STEP) {
+    // Текст на первом шаге — как файл-замена (заметка без вложения).
+    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_COMMENT_STEP, {
+      ...payload,
+      draftNote: text.trim(),
+    });
+    await sendAdminMessage(
+      chatId,
+      'Текст сохранён.\n\nМожете приложить файл или сразу написать комментарий / нажать «Пропустить комментарий».',
+      {
+        inline_keyboard: [
+          [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
+          [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+        ],
+      },
+    );
+    return true;
   }
-  return true;
+
+  if (step === COURSE_HW_COMMENT_STEP) {
+    const note = text.trim();
+    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_CONFIRM_STEP, {
+      ...payload,
+      draftNote: note || payload.draftNote,
+    });
+    await sendConfirmPrompt(chatId, {
+      ...payload,
+      draftNote: note || payload.draftNote,
+    });
+    return true;
+  }
+
+  if (step === COURSE_HW_CONFIRM_STEP) {
+    if (/^(отправить|да|confirm)$/i.test(text.trim())) {
+      try {
+        await finishSubmit(admin, telegramId, chatId, sanityLessonId, {
+          note: payload.draftNote,
+          fileUrl: payload.draftFileUrl,
+        });
+      } catch (error) {
+        const message =
+          error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
+        await sendAdminMessage(chatId, message);
+      }
+      return true;
+    }
+    await sendAdminMessage(chatId, 'Нажмите «Отправить на проверку» или «Отмена».');
+    return true;
+  }
+
+  return false;
+}
+
+async function sendConfirmPrompt(chatId: number, payload: SubmitPayload): Promise<void> {
+  const lines = [
+    '✅ Подтверждение отправки',
+    '',
+    payload.lessonNumber != null
+      ? `Вебинар №${payload.lessonNumber}: ${payload.lessonTitle ?? ''}`
+      : null,
+    payload.draftFileUrl ? '📎 Файл приложен' : '📎 Файла нет',
+    payload.draftNote?.trim() ? `💬 Комментарий: ${payload.draftNote.trim()}` : '💬 Комментарий: —',
+    '',
+    'Отправить работу куратору?',
+  ].filter(Boolean);
+
+  await sendAdminMessage(chatId, lines.join('\n'), {
+    inline_keyboard: [
+      [{ text: '✅ Отправить на проверку', callback_data: 'chw:confirm' }],
+      [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+    ],
+  });
 }
 
 export async function handleStudentHomeworkAttachment(
@@ -111,42 +244,101 @@ export async function handleStudentHomeworkAttachment(
   chatId: number,
   attachment: { fileId: string; kind: 'document' | 'photo'; fileName?: string },
 ): Promise<boolean> {
-  let state = null;
-  try {
-    state = await getState(admin, telegramId);
-  } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
-    return false;
-  }
+  const state = await loadHwState(admin, telegramId);
+  if (!state) return false;
 
-  if (!state || state.step !== 'student:course-hw-submit') return false;
+  const step = state.step as string;
+  if (step !== COURSE_HW_FILE_STEP && step !== COURSE_HW_COMMENT_STEP) return false;
+
   const payload = state.payload as SubmitPayload;
   const sanityLessonId = payload.sanityLessonId;
   if (!sanityLessonId) return false;
 
-  const note =
-    attachment.kind === 'document' && attachment.fileName
-      ? `Файл: ${attachment.fileName}`
-      : attachment.kind === 'photo'
-        ? 'Фото домашки'
-        : undefined;
+  const fileUrl = formatTelegramFileRef(attachment.fileId);
+  await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_COMMENT_STEP, {
+    ...payload,
+    draftFileUrl: fileUrl,
+  });
 
-  try {
-    await finishSubmit(admin, telegramId, chatId, sanityLessonId, {
-      note,
-      fileUrl: formatTelegramFileRef(attachment.fileId),
-    });
-  } catch (error) {
-    const message = error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
-    await sendAdminMessage(chatId, message);
-  }
+  await sendAdminMessage(
+    chatId,
+    '📎 Файл получен.\n\nМожете написать комментарий к ДЗ (необязательно) или нажать «Пропустить комментарий».',
+    {
+      inline_keyboard: [
+        [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
+        [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+      ],
+    },
+  );
   return true;
+}
+
+export async function handleCourseHomeworkCallback(
+  admin: SupabaseClient,
+  data: string,
+  chatId: number,
+  telegramId: number,
+  callbackQueryId?: string,
+): Promise<boolean> {
+  if (!data.startsWith('chw:')) return false;
+  if (callbackQueryId) {
+    await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+  }
+
+  if (data === 'chw:cancel') {
+    await clearStateIfAvailable(admin, telegramId);
+    await sendAdminMessage(chatId, 'Сдача домашки отменена.');
+    return true;
+  }
+
+  const state = await loadHwState(admin, telegramId);
+  if (!state) {
+    await sendAdminMessage(chatId, 'Сессия сдачи устарела. Откройте «Сдать ДЗ» снова.');
+    return true;
+  }
+  const payload = state.payload as SubmitPayload;
+  const sanityLessonId = payload.sanityLessonId;
+  if (!sanityLessonId) return true;
+
+  if (data === 'chw:skip') {
+    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_CONFIRM_STEP, payload);
+    await sendConfirmPrompt(chatId, payload);
+    return true;
+  }
+
+  if (data === 'chw:confirm') {
+    if (!payload.draftFileUrl && !payload.draftNote?.trim()) {
+      await sendAdminMessage(chatId, 'Сначала отправьте файл или текст задания.');
+      return true;
+    }
+    try {
+      await finishSubmit(admin, telegramId, chatId, sanityLessonId, {
+        note: payload.draftNote,
+        fileUrl: payload.draftFileUrl,
+      });
+    } catch (error) {
+      const message =
+        error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
+      await sendAdminMessage(chatId, message);
+    }
+    return true;
+  }
+
+  return false;
 }
 
 export async function notifyStudentHomeworkReviewed(
   admin: SupabaseClient,
   studentTelegramId: number,
-  params: { lessonNumber: number; title: string; approved: boolean; note?: string },
+  params: {
+    lessonNumber: number;
+    title: string;
+    approved: boolean;
+    note?: string;
+    /** tg:fileId или http(s) — файл с правками от куратора */
+    reviewFileRef?: string | null;
+    reviewFileKind?: 'photo' | 'document' | 'voice' | null;
+  },
 ): Promise<void> {
   const { data } = await admin
     .from('bot_members')
@@ -157,16 +349,38 @@ export async function notifyStudentHomeworkReviewed(
   if (!chatId) return;
 
   const base = params.approved
-    ? `✅ Домашка по занятию №${params.lessonNumber} «${params.title}» принята.`
+    ? `✅ Домашка по занятию №${params.lessonNumber} «${params.title}» одобрена.`
     : `❌ Домашка по занятию №${params.lessonNumber} «${params.title}» отправлена на доработку.`;
   const text = params.note?.trim() ? `${base}\n\nКомментарий:\n${params.note.trim()}` : base;
   await telegramSend('sendMessage', { chat_id: chatId, text });
+
+  const ref = params.reviewFileRef?.trim();
+  if (!ref) return;
+  if (ref.startsWith('tg:')) {
+    const fileId = ref.slice(3);
+    const kind = params.reviewFileKind ?? 'document';
+    if (kind === 'voice') {
+      await telegramSend('sendVoice', { chat_id: chatId, voice: fileId });
+    } else if (kind === 'photo') {
+      await telegramSend('sendPhoto', { chat_id: chatId, photo: fileId });
+    } else {
+      await telegramSend('sendDocument', { chat_id: chatId, document: fileId });
+    }
+  } else if (ref.startsWith('http')) {
+    await telegramSend('sendMessage', { chat_id: chatId, text: `🔗 Файл с правками: ${ref}` });
+  }
 }
 
 export async function sendSubmissionToCurator(
   admin: SupabaseClient,
   curatorTelegramId: number,
-  submission: { fileUrl: string | null; note: string | null; lessonNumber: number; title: string; studentName: string },
+  submission: {
+    fileUrl: string | null;
+    note: string | null;
+    lessonNumber: number;
+    title: string;
+    studentName: string;
+  },
 ): Promise<void> {
   const { data } = await admin
     .from('bot_members')

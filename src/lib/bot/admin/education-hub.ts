@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getStudentTeacher } from '@/lib/bot/education/assignments';
 import { getActiveCourses, getCourse, type Course } from '@/lib/bot/education/courses';
+import { listCoursesPresentInSanity } from '@/lib/bot/education/course-record';
 import { ACCESS_PRODUCT_LABELS } from '../accesses';
 import {
   type AdminMessage,
@@ -12,6 +13,7 @@ import {
 } from './core';
 import { memberDisplayName } from './users';
 import { getMember } from '@/lib/bot/roles';
+import { handleLivesHubAction, isLivesHubAction } from './lives-hub';
 
 const COURSES_PER_PAGE = 6;
 const INDIVIDUAL_PER_PAGE = 8;
@@ -22,6 +24,7 @@ export async function renderEducationMenu(deliver: Deliver): Promise<void> {
     {
       inline_keyboard: [
         [{ text: '🎓 Курсы', callback_data: 'ae:courses:0' }],
+        [{ text: '❤️ Жизни', callback_data: 'ae:lives' }],
         [{ text: '👥 Группы', callback_data: 'ae:groups:0' }],
         [{ text: '👤 Индивидуальные', callback_data: 'ae:ind:0' }],
         [{ text: '📝 Домашние задания', callback_data: 'ae:hw:hub' }],
@@ -51,29 +54,30 @@ export async function renderCoursesList(
   message: AdminMessage,
   page: number,
 ): Promise<void> {
-  const courses = await getActiveCourses(admin);
-  let inactiveRows: Course[] = [];
+  // Только курсы из актуального Sanity — без «призраков» из Supabase.
+  let all: Course[] = [];
   try {
-    const inactive = await admin
-      .from('courses')
-      .select('id, title, slug, description, is_active, created_at, updated_at')
-      .eq('is_active', false)
-      .order('created_at', { ascending: true });
-    inactiveRows = (inactive.data ?? []) as Course[];
-  } catch {
-    inactiveRows = [];
+    all = (await listCoursesPresentInSanity(admin)) as Course[];
+  } catch (error) {
+    console.error('[admin courses] Sanity filter failed, fallback active:', error);
+    all = await getActiveCourses(admin);
   }
-  const all = [...courses, ...inactiveRows];
   const pageCount = Math.max(1, Math.ceil(all.length / COURSES_PER_PAGE));
   const safePage = Math.min(Math.max(0, page), pageCount - 1);
   const slice = all.slice(safePage * COURSES_PER_PAGE, safePage * COURSES_PER_PAGE + COURSES_PER_PAGE);
 
-  const lines = ['🎓 Курсы', '', 'Структура модулей и уроков — в кабинете на сайте.', ''];
+  const lines = [
+    '🎓 Курсы',
+    '',
+    'Показываются только курсы из Sanity.',
+    'Структура модулей и уроков — в кабинете на сайте.',
+    '',
+  ];
   for (const c of slice) {
     const n = await countCourseStudents(admin, c.id);
     lines.push(`🎓 ${c.title}`, `👨‍🎓 Учеников: ${n}`, courseStatusLine(c), '');
   }
-  if (slice.length === 0) lines.push('Курсов пока нет.');
+  if (slice.length === 0) lines.push('Нет курсов в Sanity (или не удалось связать с Supabase).');
 
   const keyboard: InlineButton[][] = slice.map((c) => [
     { text: shorten(c.title, 40), callback_data: `ae:course:${c.id}` },
@@ -117,6 +121,7 @@ export async function renderCourseDetail(
 
   const keyboard: InlineButton[][] = [
     [{ text: '👨‍🎓 Ученики курса', callback_data: `ae:ls:course:0` }],
+    [{ text: '❤️ Жизни курса', callback_data: 'ae:lives' }],
     [{ text: '⬅️ К списку курсов', callback_data: 'ae:courses:0' }],
     [homeButton()],
   ];
@@ -190,25 +195,31 @@ export async function renderIndividualList(
   await editAdminMessage(message, lines.join('\n').slice(0, 3900), { inline_keyboard: keyboard });
 }
 
-export function handleEducationHubAction(
+export async function handleEducationHubAction(
   admin: SupabaseClient,
   data: string,
   message: AdminMessage,
-): Promise<boolean> | boolean {
+): Promise<boolean> {
   if (data === 'ae:menu') {
     return false;
   }
+  if (isLivesHubAction(data)) {
+    return handleLivesHubAction(admin, data, message);
+  }
   if (data.startsWith('ae:courses:')) {
     const page = Number(data.slice('ae:courses:'.length)) || 0;
-    return renderCoursesList(admin, message, page).then(() => true);
+    await renderCoursesList(admin, message, page);
+    return true;
   }
   const courseMatch = data.match(/^ae:course:(\d+)$/);
   if (courseMatch) {
-    return renderCourseDetail(admin, message, Number(courseMatch[1])).then(() => true);
+    await renderCourseDetail(admin, message, Number(courseMatch[1]));
+    return true;
   }
   if (data.startsWith('ae:ind:')) {
     const page = Number(data.slice('ae:ind:'.length)) || 0;
-    return renderIndividualList(admin, message, page).then(() => true);
+    await renderIndividualList(admin, message, page);
+    return true;
   }
   return false;
 }

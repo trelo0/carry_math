@@ -7,6 +7,7 @@ import {
   homeworkReviewStatusLabel,
   resolveHomeworkAssignmentUrl,
   submitLessonHomework,
+  type LessonHomeworkReviewStatus,
   type LessonHomeworkSubmissionFile,
 } from '@/lib/lesson-homework';
 import {
@@ -15,8 +16,16 @@ import {
   sendAdminMessage,
   type AdminPayload,
 } from './admin/core';
-import { resetClientDialogToHub, saveClientDialogState } from './client-nav';
+import {
+  clientHomeButton,
+  deliverClientHubScreen,
+  resetClientDialogToHub,
+  saveClientDialogState,
+  type ClientHubDeliverOptions,
+} from './client-nav';
 import { formatTelegramFileRef } from './studentHomeworkFlow';
+import { resolveClientState } from './client-state';
+import { buildClientReplyKeyboard } from './client-menu';
 
 export const CLIENT_LESSON_HW_SUBMIT_STEP = 'client:lesson-hw-submit' as const;
 
@@ -28,6 +37,207 @@ type HwSubmitPayload = AdminPayload & {
 
 export function isClientLessonHomeworkCallback(data: string): boolean {
   return data.startsWith('cl:hw:');
+}
+
+type StudentHwListItem = {
+  lessonId: number;
+  topic: string;
+  startsAt: string;
+  reviewStatus: LessonHomeworkReviewStatus;
+  teacherComment: string | null;
+  submittedAt: string | null;
+};
+
+async function listStudentLessonHomeworks(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<StudentHwListItem[]> {
+  const { data: lessons, error: lessonError } = await admin
+    .from('scheduled_lessons')
+    .select('id, topic, starts_at')
+    .eq('telegram_id', telegramId)
+    .neq('status', 'cancelled')
+    .order('starts_at', { ascending: false })
+    .limit(80);
+  if (lessonError) throw lessonError;
+  const ids = (lessons ?? []).map((l) => l.id as number);
+  if (ids.length === 0) return [];
+
+  const { data: hwRows, error: hwError } = await admin
+    .from('homework_assignments')
+    .select('lesson_id, review_status, teacher_comment, submitted_at')
+    .in('lesson_id', ids);
+  if (hwError) throw hwError;
+
+  const hwMap = new Map(
+    (hwRows ?? []).map((r) => [
+      r.lesson_id as number,
+      {
+        reviewStatus: r.review_status as LessonHomeworkReviewStatus,
+        teacherComment: (r.teacher_comment as string | null) ?? null,
+        submittedAt: (r.submitted_at as string | null) ?? null,
+      },
+    ]),
+  );
+
+  return (lessons ?? [])
+    .filter((l) => hwMap.has(l.id as number))
+    .map((l) => {
+      const hw = hwMap.get(l.id as number)!;
+      return {
+        lessonId: l.id as number,
+        topic: l.topic as string,
+        startsAt: l.starts_at as string,
+        reviewStatus: hw.reviewStatus,
+        teacherComment: hw.teacherComment,
+        submittedAt: hw.submittedAt,
+      };
+    });
+}
+
+export async function showClientLessonHomeworkHub(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  deliver?: ClientHubDeliverOptions,
+): Promise<void> {
+  const state = await resolveClientState(admin, telegramId);
+  if (!state.hasActiveLessonProduct && !state.hasLessonHistory) {
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: 'Раздел ДЗ занятий доступен при активных занятиях.',
+      reply_markup: buildClientReplyKeyboard(state),
+    });
+    return;
+  }
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'lesson-hw-hub',
+    [
+      '📝 Домашние задания занятий',
+      '',
+      'История отправленных работ и отправка нового решения.',
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [{ text: '📋 История отправленных ДЗ', callback_data: 'cl:hw:hist' }],
+        [{ text: '📤 Отправить ДЗ', callback_data: 'cl:hw:pick' }],
+        [clientHomeButton()],
+      ],
+    },
+    deliver,
+  );
+}
+
+export async function showClientLessonHomeworkHistory(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  deliver?: ClientHubDeliverOptions,
+): Promise<void> {
+  const items = (await listStudentLessonHomeworks(admin, telegramId)).filter(
+    (i) => i.submittedAt || i.reviewStatus === 'done' || i.reviewStatus === 'revision' || i.reviewStatus === 'submitted',
+  );
+
+  if (items.length === 0) {
+    await deliverClientHubScreen(
+      admin,
+      telegramId,
+      chatId,
+      'lesson-hw-hist-empty',
+      '📋 История ДЗ\n\nПока нет отправленных работ.',
+      {
+        inline_keyboard: [
+          [{ text: '◀️ К ДЗ', callback_data: 'cl:hw:hub' }],
+          [clientHomeButton()],
+        ],
+      },
+      deliver,
+    );
+    return;
+  }
+
+  const lines = ['📋 История ДЗ занятий', ''];
+  const rows: Array<Array<Record<string, string>>> = [];
+  for (const item of items.slice(0, 12)) {
+    lines.push(`• ${item.topic}`);
+    lines.push(`  ${formatLessonDateTimeRu(item.startsAt)}`);
+    lines.push(`  Статус: ${homeworkReviewStatusLabel(item.reviewStatus)}`);
+    if (item.reviewStatus === 'revision' && item.teacherComment?.trim()) {
+      lines.push(`  Комментарий: ${item.teacherComment.trim()}`);
+    }
+    lines.push('');
+    rows.push([
+      {
+        text: `${homeworkReviewStatusLabel(item.reviewStatus)} · ${item.topic}`.slice(0, 60),
+        callback_data: `cl:hw:open:${item.lessonId}`,
+      },
+    ]);
+  }
+  rows.push([{ text: '◀️ К ДЗ', callback_data: 'cl:hw:hub' }], [clientHomeButton()]);
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'lesson-hw-hist',
+    lines.join('\n').trim().slice(0, 3500),
+    { inline_keyboard: rows },
+    deliver,
+  );
+}
+
+export async function showClientLessonHomeworkSubmitPicker(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  deliver?: ClientHubDeliverOptions,
+): Promise<void> {
+  const items = (await listStudentLessonHomeworks(admin, telegramId)).filter((i) =>
+    canStudentSubmitHomework(i.reviewStatus),
+  );
+
+  if (items.length === 0) {
+    await deliverClientHubScreen(
+      admin,
+      telegramId,
+      chatId,
+      'lesson-hw-pick-empty',
+      '📤 Отправить ДЗ\n\nСейчас нет заданий, которые можно сдать.\n(Ожидаются статусы «Не сдано» или «Нужна доработка».)',
+      {
+        inline_keyboard: [
+          [{ text: '◀️ К ДЗ', callback_data: 'cl:hw:hub' }],
+          [clientHomeButton()],
+        ],
+      },
+      deliver,
+    );
+    return;
+  }
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'lesson-hw-pick',
+    '📤 Отправить ДЗ\n\nВыберите занятие:',
+    {
+      inline_keyboard: [
+        ...items.slice(0, 15).map((item) => [
+          {
+            text: `${item.topic}`.slice(0, 60),
+            callback_data: `cl:hw:submit:${item.lessonId}`,
+          },
+        ]),
+        [{ text: '◀️ К ДЗ', callback_data: 'cl:hw:hub' }],
+        [clientHomeButton()],
+      ],
+    },
+    deliver,
+  );
 }
 
 export async function showClientLessonHomeworkCard(
@@ -256,7 +466,7 @@ export async function handleClientLessonHomeworkCallback(
   admin: SupabaseClient,
   data: string,
   chatId: number,
-  _messageId: number,
+  messageId: number,
   telegramId: number,
   callbackQueryId?: string,
 ): Promise<boolean> {
@@ -264,6 +474,21 @@ export async function handleClientLessonHomeworkCallback(
 
   if (callbackQueryId) {
     await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+  }
+
+  const editAt = { chatId, messageId };
+
+  if (data === 'cl:hw:hub') {
+    await showClientLessonHomeworkHub(admin, telegramId, chatId, { editAt });
+    return true;
+  }
+  if (data === 'cl:hw:hist') {
+    await showClientLessonHomeworkHistory(admin, telegramId, chatId, { editAt });
+    return true;
+  }
+  if (data === 'cl:hw:pick') {
+    await showClientLessonHomeworkSubmitPicker(admin, telegramId, chatId, { editAt });
+    return true;
   }
 
   if (data.startsWith('cl:hw:open:')) {

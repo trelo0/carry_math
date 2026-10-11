@@ -21,10 +21,15 @@ function notFoundKeyboard(backText: string, backCallback: string): InlineKeyboar
   return { inline_keyboard: [[backButton(`⬅️ ${backText}`, backCallback)]] };
 }
 
-export function renderTeacherScheduleHome(snapshot: TeacherBotSnapshot): { text: string; keyboard: InlineKeyboard } {
+export function renderTeacherScheduleHome(
+  snapshot: TeacherBotSnapshot,
+  nav?: StaffScreenNav,
+): { text: string; keyboard: InlineKeyboard } {
   const today = lessonsToday(snapshot.allLessons.filter((l) => l.status !== 'cancelled'));
   const upcoming = lessonsUpcoming(snapshot.allLessons);
-  const parts = ['📅 РАСПИСАНИЕ', ''];
+  const parts = ['📅 РАСПИСАНИЕ ЗАНЯТИЙ', ''];
+  const menuBack = nav?.mainMenuBack ?? 't:menu';
+  const menuLabel = menuBack.startsWith('s:sch') ? '⬅️ К расписанию' : '⬅️ Главное меню';
 
   if (snapshot.currentLesson) {
     parts.push('🟢 Сейчас:', lessonTitleLine(snapshot.currentLesson), '');
@@ -48,7 +53,7 @@ export function renderTeacherScheduleHome(snapshot: TeacherBotSnapshot): { text:
           : []),
         [{ text: '📆 Занятия на сегодня', callback_data: 't:sch:today' }],
         [{ text: '📋 Предстоящие', callback_data: 't:sch:up' }],
-        [backButton('⬅️ Главное меню', 't:menu')],
+        [backButton(menuLabel, menuBack)],
       ],
     },
   };
@@ -66,7 +71,12 @@ export function renderTeacherScheduleToday(snapshot: TeacherBotSnapshot): { text
     text: parts.join('\n'),
     keyboard: {
       inline_keyboard: [
-        ...today.map((l) => [{ text: l.topic.slice(0, 40), callback_data: `t:les:${l.id}` }]),
+        ...today.map((l) => [
+          {
+            text: `${l.time} · ${l.topic}`.slice(0, 60),
+            callback_data: `t:les:${l.id}`,
+          },
+        ]),
         [backButton('⬅️ Расписание', 't:sch')],
       ],
     },
@@ -121,13 +131,46 @@ export function renderTeacherLessonCard(
   return { text: parts.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
 
-export function renderTeacherStudentsHub(): { text: string; keyboard: InlineKeyboard } {
+function countIndividualStudents(snapshot: TeacherBotSnapshot): number {
+  return snapshot.students.filter(
+    (s) => s.individualCount > 0 || s.lessons.some((l) => l.kind === 'individual'),
+  ).length;
+}
+
+export function renderTeacherStudentsHub(
+  snapshot?: TeacherBotSnapshot,
+): { text: string; keyboard: InlineKeyboard } {
+  const ind = snapshot ? countIndividualStudents(snapshot) : null;
+  const groups = snapshot ? snapshot.groups.length : null;
+  const lines = ['👥 МОИ УЧЕНИКИ', ''];
+  if (ind != null && groups != null) {
+    lines.push(`👤 Индивидуальные: ${ind}`, `👥 Мини-группы: ${groups}`, '');
+    if (ind === 0 && groups === 0) {
+      lines.push(
+        'Пока нет учеников.',
+        'Они появятся после назначения вам ученика или создания занятия/группы.',
+        '',
+      );
+    }
+  }
+  lines.push('Выберите раздел:');
+
   return {
-    text: '👥 МОИ УЧЕНИКИ\n\nВыберите раздел:',
+    text: lines.join('\n'),
     keyboard: {
       inline_keyboard: [
-        [{ text: '👤 Индивидуальные', callback_data: 't:stu:i' }],
-        [{ text: '👥 Мини-группы', callback_data: 't:stu:g' }],
+        [
+          {
+            text: ind != null ? `👤 Индивидуальные (${ind})` : '👤 Индивидуальные',
+            callback_data: 't:stu:i',
+          },
+        ],
+        [
+          {
+            text: groups != null ? `👥 Мини-группы (${groups})` : '👥 Мини-группы',
+            callback_data: 't:stu:g',
+          },
+        ],
         [backButton('⬅️ Главное меню', 't:menu')],
       ],
     },
@@ -145,7 +188,10 @@ export function renderTeacherIndividualList(
 
   if (students.length === 0) {
     return {
-      text: '👤 ИНДИВИДУАЛЬНЫЕ\n\nПока нет индивидуальных учеников.',
+      text:
+        '👤 ИНДИВИДУАЛЬНЫЕ\n\n' +
+        'Пока нет индивидуальных учеников.\n' +
+        'Нужно активное назначение вам как преподавателю или индивидуальное занятие в расписании.',
       keyboard: { inline_keyboard: [[backButton('⬅️ Назад', back)]] },
     };
   }
@@ -192,24 +238,55 @@ export function renderTeacherStudentCard(
   const pkg = formatPackageLine(student);
   const next =
     student.nextLessonAt != null ? formatLessonDateTimeRu(student.nextLessonAt) : '—';
+  const nowMs = Date.now();
+  const upcomingWithStudent = student.lessons
+    .filter(
+      (l) =>
+        l.status === 'scheduled' &&
+        new Date(l.startsAt).getTime() >= nowMs - 60_000,
+    )
+    .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+    .slice(0, 5);
 
   const parts = [
     `👤 ${studentDisplayName(student)}`,
     '',
+    `Осталось занятий: ${pkg ?? 'нет активного пакета'}`,
     `Ближайшее занятие: ${next}`,
+    `Домашних на проверке: ${pending}`,
   ];
-  if (pkg) parts.push(`Пакет: ${pkg}`);
-  parts.push(`Домашних на проверке: ${pending}`);
+  if (student.phone?.trim()) {
+    parts.push(`☎️ ${student.phone.trim()}`);
+  }
+  if (upcomingWithStudent.length > 0) {
+    parts.push('', 'Занятия с учеником:');
+    for (const l of upcomingWithStudent) {
+      parts.push(`• ${formatLessonDateTimeRu(l.startsAt)} — ${l.topic}`);
+    }
+  } else {
+    parts.push('', 'Ближайших занятий с учеником нет.');
+  }
+
+  const keyboard: InlineKeyboard['inline_keyboard'] = [
+    [{ text: '💬 Написать в боте', callback_data: `t:msg:w:${student.telegramId}` }],
+    [{ text: '📲 Открыть в Telegram', url: `tg://user?id=${student.telegramId}` }],
+  ];
+  if (pending > 0) {
+    keyboard.push([{ text: '📝 ДЗ на проверке', callback_data: 't:hw:q:pending' }]);
+  }
+  if (upcomingWithStudent[0]) {
+    keyboard.push([
+      {
+        text: '⏭ Ближайшее занятие',
+        callback_data: `t:les:${upcomingWithStudent[0].id}`,
+      },
+    ]);
+  }
+  keyboard.push([backButton('⬅️ Назад', 't:stu:i')]);
 
   return {
     text: parts.join('\n'),
-    keyboard: {
-      inline_keyboard: [
-        [{ text: '💬 Написать ученику', callback_data: `t:msg:w:${student.telegramId}` }],
-        [{ text: '📅 Расписание', callback_data: 't:sch' }],
-        [backButton('⬅️ Назад', 't:stu:i')],
-      ],
-    },
+    keyboard: { inline_keyboard: keyboard },
   };
 }
 
@@ -259,11 +336,16 @@ export function renderTeacherGroupMemberCard(
     student?.name ??
     `Ученик ${memberTelegramId}`;
   const pending = snapshot.pendingHomeworkByStudent.get(memberTelegramId) ?? 0;
+  const pkg = student ? formatPackageLine(student) : null;
+  const next =
+    student?.nextLessonAt != null ? formatLessonDateTimeRu(student.nextLessonAt) : '—';
 
   const text = [
     `👤 ${name}`,
     '',
     `Группа: ${group.title}`,
+    `Осталось занятий: ${pkg ?? 'нет активного пакета'}`,
+    `Ближайшее занятие: ${next}`,
     `Домашних на проверке: ${pending}`,
   ].join('\n');
 
@@ -271,7 +353,8 @@ export function renderTeacherGroupMemberCard(
     text,
     keyboard: {
       inline_keyboard: [
-        [{ text: '💬 Написать ученику', callback_data: `t:msg:w:${memberTelegramId}` }],
+        [{ text: '💬 Написать в боте', callback_data: `t:msg:w:${memberTelegramId}` }],
+        [{ text: '📲 Открыть в Telegram', url: `tg://user?id=${memberTelegramId}` }],
         [backButton('⬅️ Назад', `t:gm:${group.id}`)],
       ],
     },

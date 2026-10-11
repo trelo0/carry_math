@@ -11,6 +11,7 @@ type WebhookBody = {
   packageIndex?: number;
   teacherId?: string;
   courseSlug?: string;
+  scenario?: 'start_from_beginning' | 'join_current';
   externalId?: string;
   /** Оплата пробного по lead_payments.external_id */
   trialExternalId?: string;
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
       packageIndex: body.packageIndex,
       teacherId: body.teacherId,
       courseSlug: body.courseSlug,
+      scenario: body.scenario,
       externalId: body.externalId.trim(),
     });
     return NextResponse.json({

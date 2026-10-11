@@ -12,7 +12,9 @@ create table if not exists public.purchase_requests (
   title text not null,
   amount_byn numeric(10, 2) not null,
   status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
-  resolved_by bigint references public.bot_members(telegram_id) on delete set null
+  resolved_by bigint references public.bot_members(telegram_id) on delete set null,
+  course_slug text,
+  scenario text check (scenario in ('start_from_beginning', 'join_current'))
 );
 
 create index if not exists purchase_requests_status_created_idx

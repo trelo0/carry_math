@@ -18,6 +18,7 @@ import { getLessonHomework } from '@/lib/lesson-homework';
 import { loadStaffCapabilities } from '../staff/capabilities';
 import { COMBINED_HOME_TEXT } from '../staff/staff-combined-flow';
 import {
+  COMBINED_SCHEDULE_NAV,
   COMBINED_TEACHER_HW_NAV,
   COMBINED_TEACHER_MSG_NAV,
   type StaffScreenNav,
@@ -90,9 +91,9 @@ export const TEACHER_MENU_LABELS = TEACHER_BOT_MENU_LABELS;
 export const TEACHER_MENU_LABEL_SET = new Set<string>(Object.values(TEACHER_MENU_LABELS));
 
 const TEACHER_HOME_TEXT =
-  '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
-  'Здесь вы можете посмотреть своих учеников, расписание, домашние задания и сообщения.\n\n' +
-  'Выберите нужный раздел:';
+  '👋 Кабинет преподавателя\n\n' +
+  '📅 Расписание · 👥 Ученики · 💬 Сообщения · 📝 Домашние задания · 🌐 Панель\n\n' +
+  'Выберите раздел на кнопках меню ниже.';
 
 const TEACHER_UNKNOWN_TEXT =
   'Я не понял это сообщение.\n\nРазделы кабинета — на кнопках меню под полем ввода.';
@@ -121,10 +122,12 @@ export async function sendTeacherStart(
   testFooter = '',
 ): Promise<void> {
   const caps = await loadStaffCapabilities(admin, telegramId);
+  const mode = resolveStaffBotMode(caps);
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: TEACHER_HOME_TEXT + testFooter,
-    reply_markup: staffReplyKeyboard(caps),
+    // teacher_only — явное меню преподавателя; иначе staffReplyKeyboard (combined и т.п.)
+    reply_markup: mode === 'teacher_only' ? teacherReplyKeyboard() : staffReplyKeyboard(caps),
   });
 }
 
@@ -261,7 +264,17 @@ export async function handleTeacherMessage(
     try {
       await revisionTeacherHomework(admin, telegramId, lessonId, text.trim());
       await clearStateIfAvailable(admin, telegramId);
-      await sendAdminMessage(chatId, '✅ Работа возвращена на доработку. Ученик получит уведомление.');
+      const cabinetUrl = await teacherCabinetUrl(admin, telegramId);
+      const items = filterHomeworkByQueue(
+        await loadTeacherHomeworkItems(admin, telegramId),
+        'pending',
+      );
+      const screen = renderTeacherHomeworkList('pending', items, cabinetUrl);
+      await sendAdminMessage(
+        chatId,
+        '✅ Работа возвращена на доработку. Ученик получит уведомление.\n\n' + screen.text,
+        screen.keyboard,
+      );
     } catch (error) {
       await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось сохранить.');
     }
@@ -307,7 +320,8 @@ export async function handleTeacherMessage(
     return true;
   }
 
-  const screen = renderTeacherStudentsHub();
+  // students (и любой оставшийся лейбл меню)
+  const screen = renderTeacherStudentsHub(snapshot);
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
   return true;
 }
@@ -384,6 +398,7 @@ async function routeTeacherCallback(
   const combined = resolveStaffBotMode(caps) === 'combined';
   const hwNav: StaffScreenNav | undefined = combined ? COMBINED_TEACHER_HW_NAV : undefined;
   const msgNav: StaffScreenNav | undefined = combined ? COMBINED_TEACHER_MSG_NAV : undefined;
+  const schNav: StaffScreenNav | undefined = combined ? COMBINED_SCHEDULE_NAV : undefined;
 
   switch (action) {
     case 'menu': {
@@ -407,7 +422,7 @@ async function routeTeacherCallback(
         await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const screen = renderTeacherScheduleHome(snapshot);
+      const screen = renderTeacherScheduleHome(snapshot, schNav);
       await editTeacherScreen(message, screen.text, screen.keyboard);
       return true;
     }
@@ -438,7 +453,8 @@ async function routeTeacherCallback(
         await editTeacherScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const hub = renderTeacherStudentsHub();
+      const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+      const hub = renderTeacherStudentsHub(snapshot);
       await editTeacherScreen(message, hub.text, hub.keyboard);
       return true;
     }
@@ -586,7 +602,16 @@ async function routeTeacherCallback(
         const lessonId = Number(subId);
         try {
           await approveTeacherHomework(admin, telegramId, lessonId);
-          await sendAdminMessage(message.chatId, '✅ Домашнее задание принято.');
+          const items = filterHomeworkByQueue(
+            await loadTeacherHomeworkItems(admin, telegramId),
+            'pending',
+          );
+          const screen = renderTeacherHomeworkList('pending', items, cabinetUrl, hwNav);
+          await editTeacherScreen(
+            message,
+            `✅ Домашнее задание принято.\n\n${screen.text}`,
+            screen.keyboard,
+          );
         } catch (error) {
           await sendAdminMessage(message.chatId, error instanceof Error ? error.message : 'Ошибка.');
         }
@@ -595,6 +620,7 @@ async function routeTeacherCallback(
       if (id === 'rev' && subId) {
         const lessonId = Number(subId);
         try {
+          await clearConflictingStaffStates(admin, telegramId, 'teacher_hw');
           await saveState(
             admin,
             telegramId,

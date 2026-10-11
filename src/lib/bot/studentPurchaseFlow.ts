@@ -26,6 +26,7 @@ export type PurchaseStartOptions = {
   packageIndex?: number;
   teacherIndex?: number;
   courseSlug?: string;
+  scenario?: 'start_from_beginning' | 'join_current';
 };
 
 const PRODUCT_CODES: Record<AccessProduct, string> = {
@@ -46,9 +47,17 @@ export function parsePayStartPayload(source: string): PurchaseStartOptions {
   const productRaw = parts[0];
   if (!isAccessProduct(productRaw)) return {};
   const options: PurchaseStartOptions = { product: productRaw };
-  // pay_course_s_<slug>
+  // pay_course_s_<slug>_<scenario>
   if (productRaw === 'course' && parts[1] === 's' && parts[2]) {
-    options.courseSlug = parts.slice(2).join('_');
+    const slugAndScenario = parts.slice(2).join('_');
+    // Check if the last part is a scenario
+    const lastPart = parts[parts.length - 1];
+    if (lastPart === 'start_from_beginning' || lastPart === 'join_current') {
+      options.scenario = lastPart as 'start_from_beginning' | 'join_current';
+      options.courseSlug = parts.slice(2, parts.length - 1).join('_');
+    } else {
+      options.courseSlug = slugAndScenario;
+    }
     return options;
   }
   if (parts[1] !== undefined && parts[1] !== '') {
@@ -67,8 +76,12 @@ export function buildPayStartPayload(
   packageIndex?: number,
   teacherIndex?: number,
   courseSlug?: string,
+  scenario?: 'start_from_beginning' | 'join_current',
 ): string {
   if (product === 'course' && courseSlug) {
+    if (scenario) {
+      return `pay_course_s_${courseSlug}_${scenario}`;
+    }
     return `pay_course_s_${courseSlug}`;
   }
   let payload = `pay_${product}`;
@@ -212,13 +225,14 @@ async function renderConfirmStep(
   chatId: number,
   message?: AdminMessage,
   courseSlug?: string,
+  scenario?: 'start_from_beginning' | 'join_current',
 ): Promise<void> {
   const offer = await resolveOffer(pricing, product, packageIndex, teacherId, courseSlug);
   const teacherIdx = teacherId ? pricing.teachers.findIndex((t) => t.teacherId === teacherId) : 0;
   const safeTeacherIdx = teacherIdx >= 0 ? teacherIdx : 0;
   const confirmData =
     product === 'course' && courseSlug
-      ? `sp:y:c:0:${safeTeacherIdx}:s:${courseSlug}`
+      ? `sp:y:c:0:${safeTeacherIdx}:s:${courseSlug}${scenario ? `:${scenario}` : ''}`
       : `sp:y:${productCode(product)}:${packageIndex}:${safeTeacherIdx}`;
   const text =
     `💳 Подтверждение заявки\n\n` +
@@ -254,6 +268,7 @@ async function submitPurchaseRequest(
   teacherIndex: number,
   message?: AdminMessage,
   courseSlug?: string,
+  scenario?: 'start_from_beginning' | 'join_current',
 ): Promise<void> {
   const pricing = await getCabinetPricing();
   const teacher = pricing.teachers[teacherIndex] ?? pricing.teachers[0];
@@ -281,6 +296,8 @@ async function submitPurchaseRequest(
       teacherId,
       title: offer.title,
       amountByn: offer.amountByn,
+      courseSlug,
+      scenario,
     });
   } catch (error) {
     if (isPurchaseRequestTableError(error)) {
@@ -336,7 +353,7 @@ export async function beginStudentPurchase(
 
   if (product === 'course') {
     const teacherId = pricing.teachers[0]?.teacherId;
-    await renderConfirmStep(pricing, product, 0, teacherId, chatId, undefined, courseSlug);
+    await renderConfirmStep(pricing, product, 0, teacherId, chatId, undefined, courseSlug, options.scenario);
     return;
   }
 
@@ -428,7 +445,7 @@ export async function handleStudentPurchaseCallback(
       return true;
     }
 
-    // sp:y:<code>:<pkg>:<teacherIdx> или sp:y:c:0:<teacherIdx>:s:<courseSlug>
+    // sp:y:<code>:<pkg>:<teacherIdx> или sp:y:c:0:<teacherIdx>:s:<courseSlug>[:<scenario>]
     if (data.startsWith('sp:y:')) {
       const parts = data.split(':');
       const code = parts[2];
@@ -436,7 +453,18 @@ export async function handleStudentPurchaseCallback(
       if (!product) return true;
       const packageIndex = Math.max(0, Number(parts[3]) || 0);
       const teacherIndex = Math.max(0, Number(parts[4]) || 0);
-      const courseSlug = parts[5] === 's' && parts[6] ? parts.slice(6).join(':') : undefined;
+      let courseSlug = parts[5] === 's' && parts[6] ? parts.slice(6).join(':') : undefined;
+      // Extract scenario if present (after courseSlug)
+      let scenario: 'start_from_beginning' | 'join_current' | undefined;
+      if (courseSlug) {
+        const slugParts = courseSlug.split(':');
+        const lastPart = slugParts[slugParts.length - 1];
+        if (lastPart === 'start_from_beginning' || lastPart === 'join_current') {
+          scenario = lastPart as 'start_from_beginning' | 'join_current';
+          // Remove scenario from courseSlug
+          courseSlug = slugParts.slice(0, -1).join(':');
+        }
+      }
       await submitPurchaseRequest(
         admin,
         telegramId,
@@ -446,6 +474,7 @@ export async function handleStudentPurchaseCallback(
         teacherIndex,
         message,
         courseSlug,
+        scenario,
       );
       return true;
     }

@@ -30,6 +30,7 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "@vercel/analytics": "^2.0.1",
+    "date-fns": "^4.4.0",
     "next": "^16.1.7",
     "next-sanity": "^11.6.12",
     "react": "19.2.3",

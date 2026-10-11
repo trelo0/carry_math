@@ -5,3 +5,4 @@ export const STAFF_CURATOR_REPLY_STEP = 'staff:curator:reply';
 export const CURATOR_REJECT_TEXT_STEP = 'curator:reject-text';
 export const CURATOR_REJECT_VOICE_STEP = 'curator:reject-voice';
 export const CURATOR_REJECT_PHOTO_STEP = 'curator:reject-photo';
+export const CURATOR_SCHEDULE_DATETIME_STEP = 'curator:schedule:datetime';

@@ -15,8 +15,11 @@ import {
   staffReplyKeyboard,
 } from './staff-menu';
 import {
+  renderCombinedCourseSchedule,
   renderCombinedHomeworkHub,
+  renderCombinedLessonStudentsHub,
   renderCombinedMessagesHub,
+  renderCombinedScheduleHub,
   renderCombinedStudentsHub,
 } from './staff-combined-screens';
 import { loadTeacherBotSnapshot } from './teacher-data';
@@ -28,25 +31,29 @@ import {
 import { renderTeacherHomeworkHub, renderTeacherMessagesInbox } from './teacher-messages-screens';
 import { listTeacherThreads, listCuratorThreads } from './messaging';
 import { loadCuratorActivitySnapshot } from './curator-activity-data';
-import { renderCuratorActivityHome } from './curator-activity-screens';
+import { renderCuratorActivityHome, renderCuratorCourseStudentsBotList } from './curator-activity-screens';
 import { renderCuratorHomeworkHub } from './curator-homework-screens';
 import { renderCuratorMessagesInbox } from './curator-messages-screens';
 import {
   COMBINED_CURATOR_COURSE_NAV,
   COMBINED_CURATOR_HW_NAV,
   COMBINED_CURATOR_MSG_NAV,
+  COMBINED_LESSON_STUDENTS_NAV,
+  COMBINED_SCHEDULE_NAV,
   COMBINED_STUDENTS_NAV,
   COMBINED_TEACHER_HW_NAV,
   COMBINED_TEACHER_MSG_NAV,
 } from './staff-screen-nav';
-import { loadCuratorStudents } from '@/lib/bot/curator/curatorData';
-import { renderCuratorStudentsList } from '@/lib/bot/curator/curatorFlow';
+import { loadCuratorCourseStudents } from '@/lib/curator/students';
 import { teacherCabinetScreen } from '@/lib/bot/teacher/teacherFlow';
 
 export const COMBINED_HOME_TEXT =
   '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
-  'Здесь вы можете посмотреть своих учеников, расписание, домашние задания и сообщения.\n\n' +
-  'Выберите нужный раздел:';
+  '🎓 Курс — онлайн-курс (куратор)\n' +
+  '🏫 Занятия — индивидуальные и мини-группы (преподаватель)\n\n' +
+  'Расписание, ученики, ДЗ и сообщения разделены на эти два контекста.\n' +
+  '«Курс и прогресс» — отдельный обзор курса.\n\n' +
+  'Выберите раздел:';
 
 async function combinedCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {
@@ -101,8 +108,7 @@ export async function handleCombinedStaffMessage(
     return true;
   }
   if (text === COMBINED_STAFF_MENU_LABELS.schedule) {
-    const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
-    const screen = renderTeacherScheduleHome(snapshot);
+    const screen = renderCombinedScheduleHub(cabinetUrl);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
@@ -158,24 +164,55 @@ export async function handleCombinedStaffCallback(
       handled = true;
       break;
     }
+    case 'sch': {
+      if (sub === 'c') {
+        const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
+        const screen = renderCombinedCourseSchedule(
+          snapshot.lastLine,
+          snapshot.nextLine,
+          snapshot.nextSanityId,
+          cabinetUrl,
+        );
+        await editCombinedScreen(message, screen.text, screen.keyboard);
+        handled = true;
+        break;
+      }
+      if (sub === 't') {
+        const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+        const screen = renderTeacherScheduleHome(snapshot, COMBINED_SCHEDULE_NAV);
+        await editCombinedScreen(message, screen.text, screen.keyboard);
+        handled = true;
+        break;
+      }
+      const hub = renderCombinedScheduleHub(cabinetUrl);
+      await editCombinedScreen(message, hub.text, hub.keyboard);
+      handled = true;
+      break;
+    }
     case 'stu': {
       if (sub === 'c') {
-        const students = await loadCuratorStudents(admin, telegramId);
-        const screen = renderCuratorStudentsList(students, COMBINED_STUDENTS_NAV);
+        const { students } = await loadCuratorCourseStudents(admin, telegramId);
+        const screen = renderCuratorCourseStudentsBotList(students, COMBINED_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
+        handled = true;
+        break;
+      }
+      if (sub === 'les') {
+        const hub = renderCombinedLessonStudentsHub(cabinetUrl);
+        await editCombinedScreen(message, hub.text, hub.keyboard);
         handled = true;
         break;
       }
       if (sub === 'i') {
         const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
-        const screen = renderTeacherIndividualList(snapshot, COMBINED_STUDENTS_NAV);
+        const screen = renderTeacherIndividualList(snapshot, COMBINED_LESSON_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
       if (sub === 'g') {
         const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
-        const screen = renderTeacherGroupList(snapshot, COMBINED_STUDENTS_NAV);
+        const screen = renderTeacherGroupList(snapshot, COMBINED_LESSON_STUDENTS_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;

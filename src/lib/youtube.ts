@@ -15,6 +15,7 @@ export function buildYoutubeEmbedUrl(
     modestbranding: '1',
     iv_load_policy: '3',
     disablekb: '1',
+    playsinline: '1',
   });
   if (autoplay) params.set('autoplay', '1');
   if (options?.disableNativeFullscreen) params.set('fs', '0');

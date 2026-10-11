@@ -55,6 +55,11 @@ function CourseStudentSection({
           <dt>Жизни</dt>
           <dd>
             {student.livesCurrent ?? '—'}/{student.livesMax ?? '—'}
+            {student.fullyBlocked
+              ? ' · полная блокировка'
+              : student.accessBlocked
+                ? ' · новые занятия закрыты'
+                : ''}
           </dd>
         </div>
         <div>

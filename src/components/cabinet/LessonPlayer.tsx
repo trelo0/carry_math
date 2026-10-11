@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { SanityWebinarSessionStatus } from '@/lib/curator/lesson-session';
 import { buildYoutubeEmbedUrl, extractYoutubeVideoId } from '@/lib/youtube';
 
@@ -26,7 +26,7 @@ function useNow(): number | null {
 
 function PlayIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d={PLAY_PATH} />
     </svg>
   );
@@ -58,7 +58,9 @@ function vimeoId(url: string): string | null {
   return match?.[1] ?? null;
 }
 
-type Media = { kind: 'iframe' | 'video'; src: string };
+type Media =
+  | { kind: 'iframe'; src: string }
+  | { kind: 'video'; src: string };
 
 /** Ссылка на видео → встраиваемый источник (YouTube / Vimeo / прямой файл). */
 export function toEmbedMedia(url: string | null, disableNativeFullscreen = false): Media | null {
@@ -120,6 +122,12 @@ export default function LessonPlayer({
 }) {
   const now = useNow();
   const [manualPlay, setManualPlay] = useState(false);
+  const [pipOk, setPipOk] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    setPipOk(typeof document !== 'undefined' && document.pictureInPictureEnabled);
+  }, []);
 
   const phase = resolveLessonPhase(
     now,
@@ -138,8 +146,21 @@ export default function LessonPlayer({
     () => toEmbedMedia(sourceUrl, disableNativeFullscreen),
     [sourceUrl, disableNativeFullscreen],
   );
-  // эфир стартует сам, запись — по кнопке
   const playing = (manualPlay || (phase === 'live' && !!liveUrl)) && !!media;
+
+  // Native video: PiP при уходе со вкладки (YouTube iframe браузер режет сам).
+  useEffect(() => {
+    if (!playing || media?.kind !== 'video') return;
+    const onVis = () => {
+      const el = videoRef.current;
+      if (!el || el.paused) return;
+      if (document.hidden && document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+        void el.requestPictureInPicture().catch(() => undefined);
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [playing, media?.kind]);
 
   function start() {
     if (onNavigate) {
@@ -151,28 +172,62 @@ export default function LessonPlayer({
     onPlay?.(phase);
   }
 
+  async function enterPip() {
+    const el = videoRef.current;
+    if (!el || !document.pictureInPictureEnabled) return;
+    try {
+      if (document.pictureInPictureElement === el) {
+        await document.exitPictureInPicture();
+      } else {
+        await el.requestPictureInPicture();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   const posterStyle = posterUrl
     ? {
         backgroundImage: `linear-gradient(180deg, rgba(4, 8, 16, 0.06) 0%, rgba(4, 8, 16, 0.62) 100%), url('${posterUrl}')`,
       }
     : undefined;
 
+  const iframeAllow = disableNativeFullscreen
+    ? 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share'
+    : 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share; fullscreen';
+
   return (
     <div className="cab-lesson-v2-player">
       <div className={`cab-lesson-v2-poster${playing ? ' is-playing' : ''}`} style={posterStyle}>
         {playing && media ? (
           media.kind === 'video' ? (
-            <video className="cab-lesson-v2-frame" src={media.src} controls autoPlay playsInline />
+            <>
+              <video
+                ref={videoRef}
+                className="cab-lesson-v2-frame"
+                src={media.src}
+                controls
+                autoPlay
+                playsInline
+              />
+              {pipOk ? (
+                <button
+                  type="button"
+                  className="cab-lesson-v2-pip"
+                  onClick={() => void enterPip()}
+                  aria-label="Картинка в картинке"
+                >
+                  Мини-окно
+                </button>
+              ) : null}
+            </>
           ) : (
             <iframe
               className="cab-lesson-v2-frame"
               src={media.src}
               title={title}
-              allow={
-                disableNativeFullscreen
-                  ? 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture'
-                  : 'accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture; fullscreen'
-              }
+              allow={iframeAllow}
+              referrerPolicy="strict-origin-when-cross-origin"
               {...(disableNativeFullscreen ? {} : { allowFullScreen: true })}
             />
           )

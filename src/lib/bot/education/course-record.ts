@@ -91,3 +91,35 @@ export async function lookupCourseIdsBySlugs(
   }
   return map;
 }
+
+/**
+ * Курсы для админ-списка: только те, что есть в Sanity (не «призраки» из Supabase).
+ * Сейчас — district course; при отсутствии Sanity — пустой список (не показываем stale DB).
+ */
+export async function listCoursesPresentInSanity(
+  admin: SupabaseClient,
+): Promise<Array<{ id: number; title: string; slug: string; description: string | null; is_active: boolean; created_at: string; updated_at: string }>> {
+  const { getDistrictCourseContent } = await import('@/lib/studio/courseContent');
+  const content = await getDistrictCourseContent().catch(() => null);
+  if (!content) return [];
+
+  const id = await resolveCourseIdForContent(admin, content);
+  if (!id) return [];
+
+  const { data, error } = await admin
+    .from('courses')
+    .select('id, title, slug, description, is_active, created_at, updated_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return [];
+  return [data as {
+    id: number;
+    title: string;
+    slug: string;
+    description: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+  }];
+}

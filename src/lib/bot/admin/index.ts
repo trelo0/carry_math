@@ -48,6 +48,7 @@ import { handleLeadFollowupTextStep } from './lead-followups';
 import { handleAdminLeadReplyMedia } from './lead-reply-media';
 import { renderPurchasesMenu, handlePurchasesAction, isPurchasesAction } from './purchases';
 import { handlePackagesAction, isPackagesAction } from './packages-menu';
+import { handleLivesOpsAction, isLivesOpsAction } from './lives-ops';
 import { handleAdminComposeMessageStep } from './comms-ops';
 import {
   handleEducationAction,
@@ -178,7 +179,19 @@ export async function handleAdminCallback(
   const isFinance = isFinanceAction(data);
   const isEducation = isEducationAction(data);
   const isHub = isHubAction(data);
-  if (!isReminder && !isTemplate && !isWebinar && !isLeads && !isFinance && !isPurchases && !isPackages && !isEducation && !isHub) {
+  const isLives = isLivesOpsAction(data);
+  if (
+    !isReminder &&
+    !isTemplate &&
+    !isWebinar &&
+    !isLeads &&
+    !isFinance &&
+    !isPurchases &&
+    !isPackages &&
+    !isEducation &&
+    !isHub &&
+    !isLives
+  ) {
     return false;
   }
 
@@ -207,6 +220,7 @@ export async function handleAdminCallback(
     if (isPurchases) return await handlePurchasesAction(admin, data, message, telegramId);
     if (isPackages) return await handlePackagesAction(admin, data, message, telegramId);
     if (isEducation) return await handleEducationAction(admin, data, message, telegramId);
+    if (isLives) return await handleLivesOpsAction(admin, data, message, telegramId);
     if (data === 'admin:broadcasts' || data.startsWith('admin:bc:')) {
       return await handleBroadcastAction(admin, data, message, telegramId);
     }
@@ -224,6 +238,26 @@ export async function handleAdminCallback(
   }
 }
 
+async function loadEffectiveBotRole(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<MemberInfo['role']> {
+  const { data: memberRow } = await admin
+    .from('bot_members')
+    .select('role, view_role')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  const primary =
+    memberRow?.role && isBotRole(String(memberRow.role))
+      ? (memberRow.role as MemberInfo['role'])
+      : 'guest';
+  const viewRole =
+    memberRow?.view_role && isBotRole(String(memberRow.view_role))
+      ? (memberRow.view_role as MemberInfo['role'])
+      : null;
+  return resolveEffectiveRole({ role: primary, viewRole }, telegramId);
+}
+
 // Текстовые ответы админа: шаги мастера вебинаров и настройка шаблонов.
 export async function handleAdminMessage(
   admin: SupabaseClient,
@@ -231,6 +265,10 @@ export async function handleAdminMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
+  // Teacher/curator UI (в т.ч. creator с role=/as teacher|curator) — не перехватывать.
+  const effectiveRole = await loadEffectiveBotRole(admin, telegramId);
+  if (effectiveRole === 'teacher' || effectiveRole === 'curator') return false;
+
   if (!(await isAdmin(admin, telegramId))) return false;
 
   // Кнопки Reply Keyboard приходят точным текстом: раздел открывается новым
@@ -238,21 +276,7 @@ export async function handleAdminMessage(
   if (ADMIN_REPLY_LABEL_SET.has(text)) {
     if (isClientReplyLabel(text)) {
       if (await shouldAdminDeferTextToMaskedUi(admin, telegramId)) return false;
-      const { data: memberRow } = await admin
-        .from('bot_members')
-        .select('role, view_role')
-        .eq('telegram_id', telegramId)
-        .maybeSingle();
-      const primary =
-        memberRow?.role && isBotRole(String(memberRow.role))
-          ? (memberRow.role as MemberInfo['role'])
-          : 'guest';
-      const viewRole =
-        memberRow?.view_role && isBotRole(String(memberRow.view_role))
-          ? (memberRow.view_role as MemberInfo['role'])
-          : null;
-      const effective = resolveEffectiveRole({ role: primary, viewRole }, telegramId);
-      if (usesClientBotUi(effective)) return false;
+      if (usesClientBotUi(effectiveRole)) return false;
     }
 
     await clearStateIfAvailable(admin, telegramId);
@@ -287,21 +311,7 @@ export async function handleAdminMessage(
     throw error;
   }
   if (!state || state.chat_id !== chatId) {
-    const { data: memberRow } = await admin
-      .from('bot_members')
-      .select('role, view_role')
-      .eq('telegram_id', telegramId)
-      .maybeSingle();
-    const primary =
-      memberRow?.role && isBotRole(String(memberRow.role))
-        ? (memberRow.role as MemberInfo['role'])
-        : 'guest';
-    const viewRole =
-      memberRow?.view_role && isBotRole(String(memberRow.view_role))
-        ? (memberRow.view_role as MemberInfo['role'])
-        : null;
-    const effective = resolveEffectiveRole({ role: primary, viewRole }, telegramId);
-    if (usesClientBotUi(effective)) return false;
+    if (usesClientBotUi(effectiveRole)) return false;
 
     await sendAdminMessage(chatId, ADMIN_UNKNOWN_TEXT);
     return true;

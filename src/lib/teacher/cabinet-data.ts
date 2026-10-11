@@ -311,6 +311,47 @@ export async function getTeacherCabinetData(
     }
   }
 
+  // Персональные назначения teacher↔ученик — даже если занятий ещё нет.
+  const { data: assignedRows, error: assignedError } = await admin
+    .from('mentor_assignments')
+    .select('telegram_id')
+    .eq('mentor_telegram_id', teacherTelegramId)
+    .eq('kind', 'teacher')
+    .eq('status', 'active');
+  if (assignedError && !String(assignedError.message ?? '').includes('mentor_assignments')) {
+    throw assignedError;
+  }
+  const assignedIds = (assignedRows ?? [])
+    .map((r) => r.telegram_id as number)
+    .filter((id) => Number.isFinite(id));
+  if (assignedIds.length > 0) {
+    const missing = assignedIds.filter((id) => !names.has(id));
+    if (missing.length > 0) {
+      const extraNames = await loadStudentNames(admin, missing);
+      for (const [id, profile] of extraNames) names.set(id, profile);
+    }
+    for (const sid of assignedIds) {
+      const existing = studentsMap.get(sid);
+      if (existing) {
+        // Чтобы попадал в список «Индивидуальные», даже без занятий в календаре.
+        if (existing.individualCount === 0) existing.individualCount = 1;
+        continue;
+      }
+      const profile = names.get(sid);
+      studentsMap.set(sid, {
+        telegramId: sid,
+        name: profile?.name ?? null,
+        phone: profile?.phone ?? null,
+        notes: studentNotes.get(sid) ?? '',
+        individualCount: 1,
+        groupCount: 0,
+        nextLessonAt: null,
+        lessons: [],
+        packageCredits: { individual: null, group: null },
+      });
+    }
+  }
+
   const packageCreditsMap = await loadStudentPackageCredits(admin, [...studentsMap.keys()]);
   for (const student of studentsMap.values()) {
     student.packageCredits =

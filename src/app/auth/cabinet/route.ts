@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     }
 
     const redirectUrl = new URL(safeNext, request.url);
-    let response = NextResponse.redirect(redirectUrl);
+    const response = NextResponse.redirect(redirectUrl);
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,

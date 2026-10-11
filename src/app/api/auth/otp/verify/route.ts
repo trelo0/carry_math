@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     const redirectTo = await resolveCabinetEntryPathForPhone(admin, phone, nextPath);
 
     // Сессия через официальный API, куки пишет @supabase/ssr.
-    let response = NextResponse.json({ status: 'ok', redirectTo });
+    const response = NextResponse.json({ status: 'ok', redirectTo });
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,

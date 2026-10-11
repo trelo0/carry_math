@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
-import { beginCourseHomeworkSubmit } from './studentHomeworkFlow';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
 import { beginStudentSupport } from './studentSupportFlow';
 import {
@@ -17,9 +16,10 @@ import {
 import { resolveClientState } from './client-state';
 import { handleClientMessage, refreshClientMenu } from './client-flow';
 import { CLIENT_LABELS } from './client-menu';
-import {
-  showClientLessonsMenu,
-} from './client-lessons-flow';
+import { showClientLessonsMenu } from './client-lessons-flow';
+import { showClientMyCourseHub } from './client-course-hub';
+import { showClientCourseHomeworkHub } from './client-course-homework-hub';
+import { showClientLessonHomeworkHub } from './client-lesson-homework-flow';
 import { fetchNextClientLesson } from './client-lessons-data';
 import { formatLessonDateTime } from '@/lib/teacher/format';
 import type { BotRole } from './roles';
@@ -59,7 +59,7 @@ export async function handleClientLegacyReply(
   const state = await resolveClientState(admin, telegramId, { memberRole });
 
   if (text === STUDENT_BUY_LABEL) {
-    await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.lessonsWithTeacher, memberRole);
+    await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.payments, memberRole);
     return true;
   }
 
@@ -84,7 +84,7 @@ export async function handleClientLegacyReply(
       await refreshClientMenu(admin, telegramId, chatId, memberRole);
       return true;
     }
-    await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.onlineCourse, memberRole);
+    await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true });
     return true;
   }
 
@@ -105,7 +105,7 @@ export async function handleClientLegacyReply(
         await refreshClientMenu(admin, telegramId, chatId, memberRole);
         return true;
       }
-      await beginCourseHomeworkSubmit(admin, telegramId, chatId);
+      await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true });
       return true;
     }
     if (text === '🆘 Получить помощь') {
@@ -113,7 +113,7 @@ export async function handleClientLegacyReply(
       return true;
     }
     if (text === '📅 Ближайшее занятие') {
-      await showClientLessonsMenu(admin, telegramId, chatId);
+      await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.schedule, memberRole);
       return true;
     }
   }
@@ -136,22 +136,17 @@ export async function handleClientLegacyReply(
         return true;
       }
       const { date, time } = formatLessonDateTime(next.startsAt);
-      const lines = [
-        '📅 Ближайшее занятие',
-        '',
-        next.topic,
-        `${date} ${time}`,
-      ];
+      const lines = ['📅 Ближайшее занятие', '', next.topic, `${date} ${time}`];
       if (next.meetUrl) lines.push(`🔗 ${next.meetUrl}`);
       await telegramSend('sendMessage', { chat_id: chatId, text: lines.join('\n') });
       return true;
     }
     if (text === '💬 Задать вопрос наставнику') {
-      await beginStudentMentorQuestion(admin, telegramId, chatId);
+      await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
       return true;
     }
     if (text === '📝 Сдать домашку') {
-      await showClientLessonsMenu(admin, telegramId, chatId);
+      await showClientLessonHomeworkHub(admin, telegramId, chatId, { forcePush: true });
       return true;
     }
   }
