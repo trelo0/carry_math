@@ -71,6 +71,7 @@ export default async function CabinetLessonPage({
           <CabinetLessonDetail
             stop={stop}
             coverUrl={courseCatalog?.coverImageUrl ?? courseCatalog?.previewImageUrl ?? null}
+            coursePurchased={pageData.courseState === 'full'}
           />
         )}
       </div>

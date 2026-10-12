@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AccessProduct } from './accesses';
 
-export type PurchaseRequestStatus = 'pending' | 'approved' | 'rejected';
+export type PurchaseRequestStatus = 'pending' | 'processing' | 'approved' | 'rejected';
 
 export type PurchaseRequestRow = {
   id: string;
@@ -17,10 +17,14 @@ export type PurchaseRequestRow = {
   resolved_by: number | null;
   course_slug: string | null;
   scenario: 'start_from_beginning' | 'join_current' | null;
+  bepaid_transaction_uid: string | null;
+  processing_version: number;
+  processing_updated_at: string | null;
+  lessons_count: number | null;
 };
 
 const REQUEST_COLUMNS =
-  'id, created_at, resolved_at, telegram_id, product, package_index, teacher_id, title, amount_byn, status, resolved_by, course_slug, scenario';
+  'id, created_at, resolved_at, telegram_id, product, package_index, teacher_id, title, amount_byn, status, resolved_by, course_slug, scenario, bepaid_transaction_uid, processing_version, processing_updated_at, lessons_count';
 
 export function isPurchaseRequestTableError(error: unknown): boolean {
   const details = error as { message?: unknown; code?: unknown } | null;
@@ -91,6 +95,7 @@ export async function createPurchaseRequest(
     amountByn: number;
     courseSlug?: string | null;
     scenario?: 'start_from_beginning' | 'join_current' | null;
+    lessonsCount?: number | null;
   },
 ): Promise<PurchaseRequestRow> {
   const { data, error } = await admin
@@ -105,6 +110,7 @@ export async function createPurchaseRequest(
       status: 'pending',
       course_slug: input.courseSlug ?? null,
       scenario: input.scenario ?? null,
+      lessons_count: input.lessonsCount ?? null,
     })
     .select(REQUEST_COLUMNS)
     .single();
@@ -136,19 +142,32 @@ export async function markPurchaseRequestResolved(
   status: Exclude<PurchaseRequestStatus, 'pending'>,
   resolvedBy?: number,
 ): Promise<boolean> {
-  const { data, error } = await admin
-    .from('purchase_requests')
-    .update({
-      status,
-      resolved_at: new Date().toISOString(),
-      resolved_by: resolvedBy ?? null,
-    })
-    .eq('id', id)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
-  if (error) throw error;
-  return !!data;
+  // Сначала пробуем использовать SQL-функцию для атомарности
+  try {
+    const { data, error } = await admin.rpc('mark_purchase_request_resolved', {
+      p_id: id,
+      p_status: status,
+      p_resolved_by: resolvedBy ?? null,
+    });
+    if (error) throw error;
+    return data as boolean;
+  } catch (error) {
+    // Fallback на обычный update, если функция ещё не создана
+    console.warn('[markPurchaseRequestResolved] RPC not available, using fallback:', error);
+    const { data, error: updateError } = await admin
+      .from('purchase_requests')
+      .update({
+        status,
+        resolved_at: new Date().toISOString(),
+        resolved_by: resolvedBy ?? null,
+      })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
+    if (updateError) throw updateError;
+    return !!data;
+  }
 }
 
 export async function listPendingPurchaseRequests(

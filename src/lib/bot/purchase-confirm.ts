@@ -112,7 +112,10 @@ export async function confirmPurchaseRequest(
     product: request.product,
     packageIndex: request.package_index,
     teacherId: request.teacher_id ?? undefined,
+    courseSlug: request.course_slug ?? undefined,
+    scenario: request.scenario ?? undefined,
     externalId: purchaseRequestExternalId(request.id),
+    purchaseRequestId: request.id,
   });
 
   const marked = await markPurchaseRequestResolved(admin, request.id, 'approved', adminTelegramId);

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CourseLessonContent, DistrictCourseContent } from '@/lib/studio/courseContent';
 import { flattenCourseLessons } from '@/lib/studio/courseContent';
 import type { CourseLessonStudentProgress } from './course-progress';
-import { isLessonProgressCompleted, lessonHasHomework } from './lesson-progress-calc';
+import { homeworkRequiredForLesson, isLessonProgressCompleted } from './lesson-progress-calc';
 import { getEnrollmentLives, resetEnrollmentStateForRepurchase } from './lives';
 
 export type LessonAccessSource = 'enrollment' | 'package' | 'bonus';
@@ -38,17 +38,19 @@ export function isCourseAccessTableError(error: unknown): boolean {
 export function isCourseLessonCleared(
   lesson: Pick<
     CourseLessonContent,
-    'mandatoryHomework' | 'homework' | 'materials' | 'homeworkFiles'
+    'isTrialFree' | 'mandatoryHomework' | 'homework' | 'materials' | 'homeworkFiles'
   >,
   progress: CourseLessonStudentProgress | undefined | null,
+  options?: { hasCourseProduct?: boolean },
 ): boolean {
+  const hasCourseProduct = options?.hasCourseProduct ?? true;
   if (!progress) return false;
   if (progress.completed_at) return true;
   return isLessonProgressCompleted({
     recordingWatchedAt: progress.recording_watched_at,
     liveAttendedAt: progress.live_attended_at,
     homeworkStatus: progress.homework_status,
-    hasHomework: lessonHasHomework(lesson),
+    hasHomework: homeworkRequiredForLesson(lesson, hasCourseProduct),
   });
 }
 
@@ -56,13 +58,42 @@ export function previousCourseLessonsCleared(
   lessons: CourseLessonContent[],
   index: number,
   progressMap: Map<string, CourseLessonStudentProgress | undefined>,
+  options?: { hasCourseProduct?: boolean },
 ): boolean {
+  const hasCourseProduct = options?.hasCourseProduct ?? true;
   for (let i = 0; i < index; i += 1) {
     const prev = lessons[i];
     if (!prev) continue;
-    if (!isCourseLessonCleared(prev, progressMap.get(prev.sanityId))) return false;
+    if (!isCourseLessonCleared(prev, progressMap.get(prev.sanityId), { hasCourseProduct })) {
+      return false;
+    }
   }
   return true;
+}
+
+/** Оплачен курс: доступ product=course или активный пакет занятий курса. */
+export async function studentHasCourseProductAccess(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<boolean> {
+  const { data: accessRow, error: accessError } = await admin
+    .from('user_accesses')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .maybeSingle();
+  if (accessError) throw accessError;
+  if (accessRow) return true;
+
+  const { data: packageRows, error: packageError } = await admin
+    .from('lesson_packages')
+    .select('product, total_lessons, status')
+    .eq('telegram_id', telegramId)
+    .eq('status', 'active')
+    .eq('product', 'course');
+  if (packageError) throw packageError;
+  return (packageRows ?? []).some((row) => (row.total_lessons as number) > 0);
 }
 
 /**
@@ -209,52 +240,74 @@ async function consumeCoursePackageCredit(
   telegramId: number,
   preferredPackageId?: number | null,
 ): Promise<number | null> {
-  if (preferredPackageId) {
-    const { data: preferred } = await admin
+  // Сначала пробуем использовать SQL-функцию для атомарности
+  try {
+    const { data, error } = await admin.rpc('deduct_course_package_credit', {
+      p_telegram_id: telegramId,
+      p_package_id: preferredPackageId ?? null,
+    });
+    if (error) throw error;
+    return data as number | null;
+  } catch (rpcError) {
+    // Fallback на обычный метод, если функция ещё не создана
+    console.warn('[consumeCoursePackageCredit] RPC not available, using fallback:', rpcError);
+    const now = new Date().toISOString();
+
+    if (preferredPackageId) {
+      const { data: pkg, error: selectError } = await admin
+        .from('lesson_packages')
+        .select('id, remaining_lessons, used_lessons')
+        .eq('id', preferredPackageId)
+        .eq('telegram_id', telegramId)
+        .eq('product', 'course')
+        .eq('status', 'active')
+        .maybeSingle();
+      if (selectError) throw selectError;
+      if (pkg && (pkg.remaining_lessons as number) > 0) {
+        const { data: updated, error: updateError } = await admin
+          .from('lesson_packages')
+          .update({
+            remaining_lessons: (pkg.remaining_lessons as number) - 1,
+            used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
+            updated_at: now,
+          })
+          .eq('id', pkg.id)
+          .gt('remaining_lessons', 0)
+          .select('id')
+          .maybeSingle();
+        if (updateError) throw updateError;
+        if (updated) return updated.id as number;
+      }
+    }
+
+    const { data: pkg, error: selectError2 } = await admin
       .from('lesson_packages')
       .select('id, remaining_lessons, used_lessons')
-      .eq('id', preferredPackageId)
       .eq('telegram_id', telegramId)
       .eq('product', 'course')
       .eq('status', 'active')
+      .gt('remaining_lessons', 0)
+      .order('purchased_at', { ascending: true })
+      .limit(1)
       .maybeSingle();
-    if (preferred && (preferred.remaining_lessons as number) > 0) {
-      const { error } = await admin
-        .from('lesson_packages')
-        .update({
-          remaining_lessons: (preferred.remaining_lessons as number) - 1,
-          used_lessons: ((preferred.used_lessons as number) ?? 0) + 1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', preferred.id);
-      if (error) throw error;
-      return preferred.id as number;
-    }
+    if (selectError2) throw selectError2;
+    if (!pkg) return null;
+
+    const { data: updated, error: updError } = await admin
+      .from('lesson_packages')
+      .update({
+        remaining_lessons: (pkg.remaining_lessons as number) - 1,
+        used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
+        updated_at: now,
+      })
+      .eq('id', pkg.id)
+      .gt('remaining_lessons', 0)
+      .select('id')
+      .maybeSingle();
+    if (updError) throw updError;
+    if (!updated) return null;
+    return updated.id as number;
   }
-
-  const { data: pkg, error } = await admin
-    .from('lesson_packages')
-    .select('id, remaining_lessons, used_lessons')
-    .eq('telegram_id', telegramId)
-    .eq('product', 'course')
-    .eq('status', 'active')
-    .gt('remaining_lessons', 0)
-    .order('purchased_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  if (!pkg) return null;
-
-  const { error: updError } = await admin
-    .from('lesson_packages')
-    .update({
-      remaining_lessons: (pkg.remaining_lessons as number) - 1,
-      used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', pkg.id);
-  if (updError) throw updError;
-  return pkg.id as number;
 }
 
 async function loadProgressMap(
@@ -683,10 +736,13 @@ export async function canStudentWatchSanityLesson(
   );
   let status = accessMap.get(lesson.sanityId) ?? null;
 
-  if (!previousCourseLessonsCleared(published, index, progressMap)) {
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  if (!previousCourseLessonsCleared(published, index, progressMap, { hasCourseProduct })) {
     return {
       ok: false,
-      reason: 'Сначала выполните ДЗ по предыдущему занятию и дождитесь одобрения куратора.',
+      reason: hasCourseProduct
+        ? 'Сначала выполните ДЗ по предыдущему занятию и дождитесь одобрения куратора.'
+        : 'Сначала завершите пробное занятие или купите пакет курса.',
     };
   }
 

@@ -22,6 +22,7 @@ import {
 import {
   computeLessonProgressPercent,
   isLessonProgressCompleted,
+  homeworkRequiredForLesson,
   lessonHasHomework,
 } from '@/lib/bot/education/lesson-progress-calc';
 
@@ -406,12 +407,16 @@ export async function buildCourseMapStopsFromContent(
             hasCourseProductAccess: options.hasCourseProductAccess,
             accessStatus: accessMap.get(lesson.sanityId) ?? null,
             isTrialFree: lesson.isTrialFree,
-            previousCleared: previousCourseLessonsCleared(orderedLessons, index, progressForGate),
+            previousCleared: previousCourseLessonsCleared(orderedLessons, index, progressForGate, {
+              hasCourseProduct: options.hasCourseProductAccess,
+            }),
           });
           if (!access.hasAccess) return false;
           const accessStatus = access.accessStatus;
           if (accessBlocked && accessStatus === 'blocked_lives') return false;
-          return !isCourseLessonCleared(lesson, progressForGate.get(lesson.sanityId));
+          return !isCourseLessonCleared(lesson, progressForGate.get(lesson.sanityId), {
+            hasCourseProduct: options.hasCourseProductAccess,
+          });
         })
         .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
   const currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
@@ -422,7 +427,9 @@ export async function buildCourseMapStopsFromContent(
     // Для архивных уроков не требуем выполнения предыдущих уроков
     const effectivePreviousCleared = isArchive 
       ? true 
-      : previousCourseLessonsCleared(orderedLessons, lessonIndex, progressForGate);
+      : previousCourseLessonsCleared(orderedLessons, lessonIndex, progressForGate, {
+          hasCourseProduct: options.hasCourseProductAccess,
+        });
     
     const access = resolveLessonAccess({
       courseState: options.courseState,
@@ -463,19 +470,37 @@ export async function buildCourseMapStopsFromContent(
       liveUrl: lesson.liveUrl,
       recordingUrl: lesson.recordingUrl,
       sessionStatus,
-      mandatoryHomework: isArchive ? false : lesson.mandatoryHomework, // Архивные уроки без обязательного ДЗ
-      homeworkStatus: isArchive ? null : (progress?.homework_status ?? null),
+      mandatoryHomework: isArchive
+        ? false
+        : homeworkRequiredForLesson(lesson, options.hasCourseProductAccess),
+      homeworkStatus:
+        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+          ? null
+          : (progress?.homework_status ?? null),
       homeworkTitle: lesson.homework?.title ?? null,
       homeworkReviewNote: progress?.review_note ?? null,
       homeworkCompletedAt: progress?.homework_completed_at ?? null,
-      homeworkDeadlineAt: isArchive ? null : (progress?.homework_deadline_at ?? null),
-      homeworkRemainingMs: isArchive ? null : (typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null),
-      homeworkOverdueAt: isArchive ? null : (progress?.homework_overdue_at ?? null),
+      homeworkDeadlineAt:
+        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+          ? null
+          : (progress?.homework_deadline_at ?? null),
+      homeworkRemainingMs:
+        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+          ? null
+          : typeof progress?.homework_remaining_ms === 'number'
+            ? progress.homework_remaining_ms
+            : null,
+      homeworkOverdueAt:
+        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+          ? null
+          : (progress?.homework_overdue_at ?? null),
       lessonProgressPercent: computeLessonProgressPercent({
         recordingWatchedAt: progress?.recording_watched_at,
         liveAttendedAt: progress?.live_attended_at,
         homeworkStatus: isArchive ? null : progress?.homework_status,
-        hasHomework: isArchive ? false : lessonHasHomework(lesson),
+        hasHomework: isArchive
+          ? false
+          : homeworkRequiredForLesson(lesson, options.hasCourseProductAccess),
       }),
       isTrialFree: lesson.isTrialFree,
       contentChips:

@@ -12,6 +12,8 @@
     "import:course:dry": "node scripts/import-district-course.mjs --dry-run",
     "import:cabinet-settings": "node scripts/import-cabinet-settings.mjs",
     "import:cabinet-settings:dry": "node scripts/import-cabinet-settings.mjs --dry-run",
+    "seed:cabinet-achievements": "node scripts/seed-cabinet-achievements.mjs",
+    "seed:cabinet-achievements:dry": "node scripts/seed-cabinet-achievements.mjs --dry-run",
     "fulfill:purchase": "npx tsx scripts/fulfill-purchase.ts",
     "schedule:lesson": "npx tsx scripts/schedule-lesson.ts",
     "submit:homework": "npx tsx scripts/submit-homework.ts",

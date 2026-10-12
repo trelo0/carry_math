@@ -32,6 +32,8 @@ export type PurchaseFulfillInput = {
   courseId?: number;
   curatorTelegramId?: number;
   expiresAt?: string | null;
+  /** Идентификатор заявки на покупку (для связи с пакетом). */
+  purchaseRequestId?: string;
 };
 
 export type ResolvedPurchaseOffer = {
@@ -299,6 +301,7 @@ export async function fulfillPurchase(
     courseSlug,
     curatorTelegramId,
     teacherSanityId: input.teacherId,
+    purchaseRequestId: input.purchaseRequestId,
   });
 
   // Сохраняем сценарий и стартовое состояние в course_enrollments

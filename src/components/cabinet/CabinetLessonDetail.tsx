@@ -19,6 +19,7 @@ type LessonFile = {
 type Props = {
   stop: CabinetCourseStop;
   coverUrl: string | null;
+  coursePurchased: boolean;
 };
 
 function Icon({ d, className }: { d: string; className?: string }) {
@@ -125,7 +126,8 @@ function LessonStream({
   );
 }
 
-export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
+export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }: Props) {
+  const showHomework = coursePurchased && !(stop.isTrialFree && !coursePurchased);
   const router = useRouter();
   const theaterRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -235,19 +237,28 @@ export default function CabinetLessonDetail({ stop, coverUrl }: Props) {
         <LessonFileList files={stop.materials} />
       </section>
 
-      <section className="cab-lespage-homework">
-        <div className="cab-lespage-homework-head">
+      {showHomework ? (
+        <section className="cab-lespage-homework">
+          <div className="cab-lespage-homework-head">
+            <h2>Домашнее задание</h2>
+            <HomeworkDeadlineBadge
+              homeworkStatus={stop.homeworkStatus}
+              homeworkDeadlineAt={stop.homeworkDeadlineAt}
+              homeworkRemainingMs={stop.homeworkRemainingMs}
+              homeworkOverdueAt={stop.homeworkOverdueAt}
+              placement="inline"
+            />
+          </div>
+          <LessonFileList files={stop.homeworkFiles} />
+        </section>
+      ) : stop.isTrialFree ? (
+        <section className="cab-lespage-homework cab-lespage-homework--trial">
           <h2>Домашнее задание</h2>
-          <HomeworkDeadlineBadge
-            homeworkStatus={stop.homeworkStatus}
-            homeworkDeadlineAt={stop.homeworkDeadlineAt}
-            homeworkRemainingMs={stop.homeworkRemainingMs}
-            homeworkOverdueAt={stop.homeworkOverdueAt}
-            placement="inline"
-          />
-        </div>
-        <LessonFileList files={stop.homeworkFiles} />
-      </section>
+          <p className="cab-lespage-homework-note">
+            Сдача и проверка ДЗ откроются после покупки пакета курса. Сейчас доступны вебинар и материалы.
+          </p>
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -16,7 +16,7 @@ import {
   type CourseLessonStudentProgress,
   type HomeworkProgressStatus,
 } from './course-progress';
-import { unlockNextCourseLessonAfterCleared } from './course-access';
+import { studentHasCourseProductAccess, unlockNextCourseLessonAfterCleared } from './course-access';
 import { collectLessonMaterialKeys, lessonHasHomework } from './lesson-progress-calc';
 import { resolveCourseIdForContent } from './course-record';
 import {
@@ -231,6 +231,11 @@ export async function markHomeworkSubmitted(
   if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
   const lesson = findLessonBySanityId(content, sanityLessonId);
   if (!lesson) throw new CourseHomeworkError('Занятие не найдено.', 'LESSON_NOT_FOUND');
+
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  if (lesson.isTrialFree && !hasCourseProduct) {
+    throw new CourseHomeworkError('Сдача ДЗ доступна после покупки пакета курса.', 'NO_ACCESS');
+  }
 
   try {
     const courseId = await resolveCourseIdForContent(admin, content);

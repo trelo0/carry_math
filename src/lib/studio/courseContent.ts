@@ -3,8 +3,11 @@ import { cache } from 'react';
 import { groq } from 'next-sanity';
 import { getSanityClient } from './sanityClient';
 
-export const DISTRICT_COURSE_SLUG = 'district-course';
-export const DISTRICT_COURSE_DOC_ID = 'districtCourse.district-course';
+const DEFAULT_DISTRICT_COURSE_SLUG = 'district-course';
+/** Slug основного курса District в Sanity (например kurs-district). */
+export const DISTRICT_COURSE_SLUG =
+  process.env.DISTRICT_COURSE_SLUG?.trim() || DEFAULT_DISTRICT_COURSE_SLUG;
+export const DISTRICT_COURSE_DOC_ID = `districtCourse.${DISTRICT_COURSE_SLUG}`;
 export const DEFAULT_LESSON_CONTENT_CHIPS = [
   'Теория',
   'Разбор задач',
@@ -147,6 +150,8 @@ export type CoursePaymentOffer = {
   cardText: string | null;
   priceByn: number;
   grantedLessons: number;
+  /** Две карточки сценария — только для текущего District-курса. */
+  purchaseScenarios?: PurchaseScenarios | null;
 };
 
 type FetchOptions = { preview?: boolean; includeDrafts?: boolean };
@@ -283,7 +288,8 @@ const COURSE_OFFERS_QUERY = groq`*[_type == "districtCourse" && defined(slug.cur
   description,
   pricing,
   priceByn,
-  grantedLessons
+  grantedLessons,
+  purchaseScenarios
 }`;
 
 function resolveCoursePricing(raw: {
@@ -594,6 +600,30 @@ export const getDistrictCourseContent = cache(async function getDistrictCourseCo
   return normalizeCourse(raw);
 });
 
+/** Курс с двумя сценариями покупки (не распространяется на будущие курсы). */
+export function isDistrictCoursePurchaseOffer(offer: { sanityId: string; slug: string }): boolean {
+  if (offer.slug === DISTRICT_COURSE_SLUG) return true;
+  if (offer.sanityId === DISTRICT_COURSE_DOC_ID) return true;
+  if (offer.sanityId === `districtCourse.${offer.slug}` && offer.slug === DISTRICT_COURSE_SLUG) {
+    return true;
+  }
+  return false;
+}
+
+export async function attachPurchaseScenariosToOffers(
+  offers: CoursePaymentOffer[],
+  options: FetchOptions = {},
+): Promise<CoursePaymentOffer[]> {
+  return Promise.all(
+    offers.map(async (offer) => {
+      const content = await getDistrictCourseContent(offer.slug, options);
+      const purchaseScenarios = content?.purchaseScenarios ?? null;
+      if (!purchaseScenarios) return offer;
+      return { ...offer, purchaseScenarios };
+    }),
+  );
+}
+
 export type DistrictCourseSummary = {
   sanityId: string;
   title: string;
@@ -684,6 +714,7 @@ export const listCoursePaymentOffers = cache(async function listCoursePaymentOff
       pricing?: { priceByn?: number; grantedLessons?: number; cardText?: string | null } | null;
       priceByn?: number;
       grantedLessons?: number;
+      purchaseScenarios?: PurchaseScenarios | null;
     }[]
   >(COURSE_OFFERS_QUERY, {}, getSanityFetchOptions(options));
 
@@ -701,6 +732,7 @@ export const listCoursePaymentOffers = cache(async function listCoursePaymentOff
       cardText: pricing.cardText,
       priceByn: pricing.priceByn,
       grantedLessons: pricing.grantedLessons,
+      purchaseScenarios: row.purchaseScenarios ?? null,
     });
   }
   return out;

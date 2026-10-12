@@ -46,9 +46,33 @@ export async function grantLessonPackage(
     title: string;
     lessons: number;
     expiresAt?: string | null;
+    purchaseRequestId?: string;
   },
 ): Promise<LessonPackageRow> {
   const now = new Date().toISOString();
+  
+  // Если указан purchase_request_id — создаём отдельный пакет (не accumulate)
+  if (options.purchaseRequestId) {
+    const { data, error } = await admin
+      .from('lesson_packages')
+      .insert({
+        telegram_id: telegramId,
+        product,
+        title: options.title,
+        total_lessons: options.lessons,
+        remaining_lessons: options.lessons,
+        used_lessons: 0,
+        status: 'active',
+        expires_at: options.expiresAt ?? null,
+        purchase_request_id: options.purchaseRequestId,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return data as LessonPackageRow;
+  }
+  
+  // Legacy поведение: accumulate в существующий активный пакет
   const { data: existing } = await admin
     .from('lesson_packages')
     .select('id, total_lessons, remaining_lessons, status')
@@ -86,6 +110,7 @@ export async function grantLessonPackage(
       used_lessons: 0,
       status: 'active',
       expires_at: options.expiresAt ?? null,
+      purchase_request_id: null,
     })
     .select('*')
     .single();
@@ -194,6 +219,55 @@ async function ensureCuratorOnCoursePurchase(
   }
 }
 
+/**
+ * После fulfill_purchase_full (bePaid): жизни, куратор, открытие текущего урока.
+ * user_accesses / lesson_packages / enrollment уже созданы в RPC.
+ */
+export async function completeCoursePurchaseSideEffects(
+  admin: SupabaseClient,
+  telegramId: number,
+  options: {
+    courseId: number;
+    courseSlug?: string;
+    packageId: number;
+    lessons: number;
+    curatorTelegramId?: number;
+  },
+): Promise<void> {
+  await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId);
+
+  let courseSlug = options.courseSlug;
+  if (!courseSlug) {
+    const { data: courseRow } = await admin
+      .from('courses')
+      .select('slug')
+      .eq('id', options.courseId)
+      .maybeSingle();
+    courseSlug = (courseRow?.slug as string | undefined) ?? undefined;
+  }
+
+  await ensureCuratorOnCoursePurchase(admin, telegramId, {
+    curatorTelegramId: options.curatorTelegramId,
+    courseSlug,
+  });
+
+  try {
+    const courseContent = courseSlug
+      ? await getDistrictCourseContent(courseSlug).catch(() => null)
+      : await getDistrictCourseContent().catch(() => null);
+    await grantPackageLessonAccess(
+      admin,
+      telegramId,
+      options.courseId,
+      options.packageId,
+      options.lessons,
+      courseContent,
+    );
+  } catch (error) {
+    if (!isCourseAccessTableError(error)) throw error;
+  }
+}
+
 /** Оплата из бота: доступ + пакет + запись платежа. */
 export async function completeProductPurchase(
   admin: SupabaseClient,
@@ -209,6 +283,7 @@ export async function completeProductPurchase(
     courseSlug?: string;
     curatorTelegramId?: number;
     teacherSanityId?: string;
+    purchaseRequestId?: string;
   },
 ): Promise<{ packageId: number; lessonsGranted: number; curatorAssigned: boolean; teacherAssigned: boolean }> {
   await grantAccess(admin, telegramId, product, { expiresAt: options.expiresAt ?? null });
@@ -249,6 +324,7 @@ export async function completeProductPurchase(
     title: options.title,
     lessons: options.lessons,
     expiresAt: options.expiresAt,
+    purchaseRequestId: options.purchaseRequestId,
   });
 
   let lessonsGranted = 0;

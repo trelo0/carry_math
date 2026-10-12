@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
+import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
 
 type Scenario = 'start_from_beginning' | 'join_current';
 
@@ -32,28 +32,73 @@ export default function PurchaseScenarioModal({
   onClose,
 }: PurchaseScenarioModalProps) {
   const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!scenarios) return null;
 
-  const buildPayUrl = (scenario: Scenario): string => {
-    const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-    if (!username) return 'mailto:district.school.210@gmail.com';
-    return `https://t.me/${username}?start=pay_course_s_${courseSlug}:${scenario}`;
+  const handlePayClick = async () => {
+    if (!selectedScenario || !consent) return;
+
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/payments/create-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          courseSlug,
+          scenario: selectedScenario,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || 'Ошибка создания платежа');
+        return;
+      }
+
+      // Редирект на страницу оплаты bePaid
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url;
+      } else {
+        setError('Не получен URL для оплаты');
+      }
+    } catch (err) {
+      console.error('[create payment token]', err);
+      setError('Ошибка соединения с платёжным шлюзом');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleScenarioSelect = (scenario: Scenario) => {
     setSelectedScenario(scenario);
+    setError(null);
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>
+    <div
+      className="pscenario-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pscenario-title"
+      onClick={onClose}
+    >
+      <div className="pscenario-dialog" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="pscenario-close" onClick={onClose} aria-label="Закрыть">
           ×
         </button>
 
-        <h2 className="modal-title">Выберите формат обучения</h2>
-        <p className="modal-subtitle">
+        <h2 id="pscenario-title" className="pscenario-title">
+          Выберите формат обучения
+        </h2>
+        <p className="pscenario-subtitle">
           Два варианта прохождения курса. Выберите подходящий для вас.
         </p>
 
@@ -99,29 +144,41 @@ export default function PurchaseScenarioModal({
           </div>
         </div>
 
-        <div className="modal-price">
+        <div className="pscenario-price">
           <strong>{priceByn} BYN</strong>
           <span>одинаковая цена для обоих форматов</span>
         </div>
 
-        <div className="modal-actions">
-          {selectedScenario ? (
-            <a
-              href={buildPayUrl(selectedScenario)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="modal-button primary"
+        <div className="pscenario-consent">
+          <ConsentCheckbox id="purchase-scenario-consent" checked={consent} onChange={setConsent} />
+        </div>
+
+        {error && (
+          <div className="pscenario-error">
+            {error}
+          </div>
+        )}
+
+        <div className="pscenario-actions">
+          {selectedScenario && consent ? (
+            <button
+              type="button"
+              className="pscenario-button primary"
+              onClick={handlePayClick}
+              disabled={isProcessing}
             >
-              {selectedScenario === 'start_from_beginning'
-                ? scenarios.startFromBeginning.buttonLabel
-                : scenarios.joinCurrent.buttonLabel}
-            </a>
+              {isProcessing ? 'Создание платежа...' : (
+                selectedScenario === 'start_from_beginning'
+                  ? scenarios.startFromBeginning.buttonLabel
+                  : scenarios.joinCurrent.buttonLabel
+              )}
+            </button>
           ) : (
-            <button className="modal-button primary" disabled>
-              Выберите формат обучения
+            <button type="button" className="pscenario-button primary" disabled>
+              {!selectedScenario ? 'Выберите формат обучения' : 'Примите политику конфиденциальности'}
             </button>
           )}
-          <button className="modal-button secondary" onClick={onClose}>
+          <button type="button" className="pscenario-button secondary" onClick={onClose}>
             Отмена
           </button>
         </div>

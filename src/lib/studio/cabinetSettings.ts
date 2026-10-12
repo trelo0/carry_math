@@ -1,5 +1,11 @@
 import { groq } from 'next-sanity';
+import {
+  isCabinetAchievementRuleKey,
+  type CabinetAchievementRuleKey,
+} from '@/lib/cabinet-achievement-rules';
 import { getSanityClient } from './sanityClient';
+
+export type { CabinetAchievementRuleKey };
 
 export type CabinetTeacher = {
   teacherId: string;
@@ -18,8 +24,6 @@ export type CabinetLessonPackage = {
   prices: Record<string, number>;
   savingsChip?: string | null;
 };
-
-export type CabinetAchievementRuleKey = 'lesson_1' | 'webinar_3' | 'score_100' | 'hw_approved_1';
 
 export type CabinetAchievementDef = {
   title: string;
@@ -80,10 +84,25 @@ export const DEFAULT_CABINET_QUOTES: CabinetQuote[] = [
 ];
 
 export const DEFAULT_CABINET_ACHIEVEMENTS: CabinetAchievementDef[] = [
-  { title: 'Первый шаг', subtitle: 'Пройди диагностику', ruleKey: 'lesson_1' },
-  { title: 'Алгебра старт', subtitle: 'Посети 1 вебинар', ruleKey: 'lesson_1' },
-  { title: 'Геометр мастер', subtitle: 'Пройди 3 вебинара', ruleKey: 'webinar_3' },
-  { title: 'На пути к 100', subtitle: 'Набери 100 баллов', ruleKey: 'score_100' },
+  { title: 'Старт курса', subtitle: 'Купи первый пакет занятий', ruleKey: 'course_package_purchased' },
+  { title: 'На борту', subtitle: 'Запишись на программу', ruleKey: 'course_enrolled' },
+  { title: 'Картограф', subtitle: 'Открой карту курса', ruleKey: 'course_map_viewed' },
+  { title: 'Первый шаг', subtitle: 'Пройди первый урок', ruleKey: 'lesson_complete_1' },
+  { title: 'Ритм', subtitle: 'Пройди 5 уроков', ruleKey: 'lesson_complete_5' },
+  { title: 'Марафонец', subtitle: 'Пройди 10 уроков', ruleKey: 'lesson_complete_10' },
+  { title: 'В эфире', subtitle: 'Посмотри первый вебинар', ruleKey: 'webinar_complete_1' },
+  { title: 'Три вебинара', subtitle: 'Посмотри 3 вебинара', ruleKey: 'webinar_complete_3' },
+  { title: 'ДЗ отправлено', subtitle: 'Сдай первое домашнее', ruleKey: 'hw_submitted_1' },
+  { title: 'Зачёт', subtitle: 'Получи первое принятое ДЗ', ruleKey: 'hw_approved_1' },
+  { title: 'Пять зачётов', subtitle: 'Пять принятых домашек', ruleKey: 'hw_approved_5' },
+  { title: 'Live', subtitle: 'Попади на прямой эфир', ruleKey: 'webinar_live_1' },
+  { title: 'Запись', subtitle: 'Посмотри запись урока', ruleKey: 'recording_watched_1' },
+  { title: 'На связи', subtitle: 'Напиши куратору в боте', ruleKey: 'curator_message_1' },
+  { title: 'Профиль', subtitle: 'Заполни класс и цель', ruleKey: 'profile_complete' },
+  { title: '100+ РТ', subtitle: 'Укажи 100+ баллов в профиле', ruleKey: 'score_100' },
+  { title: 'С репетитором', subtitle: 'Купи пакет индив/группы', ruleKey: 'individual_package_purchased' },
+  { title: 'В расписании', subtitle: 'Запишись на занятие', ruleKey: 'group_lesson_scheduled' },
+  { title: 'Оплата', subtitle: 'Первая успешная оплата', ruleKey: 'payment_success_1' },
 ];
 
 export const DEFAULT_CABINET_PRICING: CabinetPricing = {
@@ -202,13 +221,27 @@ function mapAchievements(
   raw: { title?: string; subtitle?: string; ruleKey?: string }[] | null | undefined,
 ): CabinetAchievementDef[] {
   const achievements = (raw ?? [])
-    .filter((item) => item?.title && item?.subtitle && item?.ruleKey)
+    .filter(
+      (item) =>
+        item?.title &&
+        item?.subtitle &&
+        item?.ruleKey &&
+        isCabinetAchievementRuleKey(item.ruleKey),
+    )
     .map((item) => ({
       title: item.title as string,
       subtitle: item.subtitle as string,
       ruleKey: item.ruleKey as CabinetAchievementRuleKey,
     }));
-  return achievements.length > 0 ? achievements : DEFAULT_CABINET_ACHIEVEMENTS;
+
+  const seenRuleKeys = new Set<CabinetAchievementRuleKey>();
+  const unique = achievements.filter((item) => {
+    if (seenRuleKeys.has(item.ruleKey)) return false;
+    seenRuleKeys.add(item.ruleKey);
+    return true;
+  });
+
+  return unique.length > 0 ? unique : DEFAULT_CABINET_ACHIEVEMENTS;
 }
 
 function mapExam(aside: Record<string, unknown> | null): CabinetExamCountdown | null {

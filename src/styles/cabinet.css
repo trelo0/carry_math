@@ -8858,6 +8858,314 @@ body.cab-app.cab-drawer-open {
   color: #ffb4b4;
 }
 
+.cab-aside .cab-achieve-panel {
+  position: relative;
+  overflow: visible;
+}
+
+.cab-achieve-head {
+  position: relative;
+  align-items: center;
+  gap: 6px;
+  padding-right: 44px;
+  min-height: 0;
+  margin-bottom: 8px;
+}
+
+.cab-achieve-head-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.cab-aside .cab-achieve-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.cab-aside .cab-achieve-head-meta {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(130, 158, 198, 0.72);
+  white-space: nowrap;
+}
+
+.cab-achieve-nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.cab-achieve-nav-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 163, 255, 0.2);
+  background: rgba(8, 16, 32, 0.72);
+  color: rgba(200, 220, 255, 0.88);
+  cursor: pointer;
+}
+
+.cab-achieve-nav-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.cab-achieve-nav-btn.is-prev svg {
+  transform: rotate(180deg);
+}
+
+.cab-achieve-nav-btn:hover {
+  border-color: rgba(0, 200, 255, 0.45);
+  color: #eef4ff;
+}
+
+.cab-aside .cab-achieve-slider-wrap {
+  margin: 0;
+  padding: 4px 0 6px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.cab-aside .cab-achieve-track {
+  display: flex;
+  width: 100%;
+  transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.cab-aside .cab-achieve-page {
+  flex: 0 0 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.cab-aside .cab-achieve-page .cab-achieve {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cab-aside .cab-ach.is-dormant {
+  opacity: 0.72;
+}
+
+.cab-achieve-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cab-aside .cab-achieve-page .cab-achieve--ref .cab-ach {
+  min-height: 58px;
+  box-sizing: border-box;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 12px;
+  transition:
+    box-shadow 0.22s ease,
+    filter 0.22s ease;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach:hover,
+.cab-aside .cab-achieve--ref .cab-ach:focus-within {
+  z-index: 30;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(56, 198, 255, 0.28);
+  filter: brightness(1.05);
+}
+
+.cab-aside .cab-achieve--ref .cab-ach-popover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: 4px 8px 4px 34px;
+  border-radius: inherit;
+  border: 1px solid rgba(56, 198, 255, 0.32);
+  background: rgba(6, 14, 28, 0.92);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach-popover p {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: rgba(220, 232, 252, 0.96);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach:hover .cab-ach-popover,
+.cab-aside .cab-achieve--ref .cab-ach:focus-within .cab-ach-popover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach:hover .cab-ach-text,
+.cab-aside .cab-achieve--ref .cab-ach:focus-within .cab-ach-text {
+  opacity: 0;
+}
+
+.cab-achievement-toasts {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
+  z-index: 12000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 24px));
+}
+
+.cab-achievement-toast {
+  position: relative;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(10, 18, 36, 0.92);
+  border: 1px solid rgba(100, 180, 255, 0.35);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  backdrop-filter: blur(12px);
+  animation: cab-achievement-toast-in 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cab-achievement-toast-glow {
+  position: absolute;
+  inset: -40% -20% auto auto;
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, rgba(56, 198, 255, 0.35), transparent 70%);
+  pointer-events: none;
+}
+
+.cab-achievement-toast-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgba(56, 198, 255, 0.95), rgba(0, 130, 220, 0.85));
+  color: #041018;
+  box-shadow: 0 0 16px rgba(56, 198, 255, 0.35);
+}
+
+.cab-achievement-toast-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cab-achievement-toast-body {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.cab-achievement-toast-kicker {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(56, 198, 255, 0.9);
+  margin-bottom: 3px;
+}
+
+.cab-achievement-toast-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f4f8ff;
+  line-height: 1.25;
+}
+
+.cab-achievement-toast-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: rgba(190, 210, 240, 0.82);
+  line-height: 1.35;
+}
+
+.cab-achievement-toast-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(56, 198, 255, 0.15);
+  transform-origin: left;
+  animation: cab-achievement-toast-bar 5.2s linear forwards;
+}
+
+@keyframes cab-achievement-toast-bar {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes cab-achievement-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.cab-lespage-homework--trial .cab-lespage-homework-note {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: rgba(180, 200, 230, 0.85);
+}
+
+.cab-aside .cab-achieve--ref .cab-ach.is-unlocked {
+  transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+}
+
 /* legacy вЂ” global toast removed, kept for old shells if any */
 .curator-toast {
   margin-bottom: 12px;
@@ -12853,4 +13161,176 @@ button.sched-slot:hover { filter: brightness(1.06); }
 }
 .cab-lesson-v2-head .cab-hw-deadline.is-place-inline {
   margin-left: 0;
+}
+
+/* Модалка выбора сценария покупки (не пересекается с .modal-overlay из forms.css) */
+.pscenario-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(5, 10, 18, 0.88);
+  backdrop-filter: blur(8px);
+}
+.pscenario-dialog {
+  position: relative;
+  width: min(800px, 100%);
+  max-height: min(90vh, 900px);
+  overflow-y: auto;
+  padding: 28px 32px 32px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 163, 255, 0.28);
+  background: linear-gradient(168deg, rgba(16, 24, 40, 0.98) 0%, rgba(8, 12, 22, 0.99) 100%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  color: var(--cab-text, #eef4ff);
+}
+.pscenario-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(110, 190, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(16, 48, 92, 0.6);
+  color: #e8f4ff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pscenario-title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.pscenario-subtitle {
+  margin: 0 0 20px;
+  font-size: 15px;
+  color: var(--cab-muted, #6d8199);
+  line-height: 1.5;
+}
+.pscenario-dialog .scenario-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.pscenario-dialog .scenario-card {
+  background: rgba(12, 28, 52, 0.65);
+  border: 2px solid rgba(88, 118, 158, 0.35);
+  border-radius: 12px;
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.pscenario-dialog .scenario-card.selected,
+.pscenario-dialog .scenario-card:hover {
+  border-color: rgba(0, 210, 255, 0.75);
+  box-shadow: 0 0 20px rgba(0, 168, 255, 0.2);
+}
+.pscenario-dialog .scenario-card-title {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.pscenario-dialog .scenario-card-description {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--cab-muted, #6d8199);
+  line-height: 1.45;
+}
+.pscenario-dialog .scenario-card-benefits {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+.pscenario-dialog .scenario-card-benefits li {
+  position: relative;
+  padding: 4px 0 4px 20px;
+  font-size: 13px;
+  color: #c8d8ec;
+  line-height: 1.4;
+}
+.pscenario-dialog .scenario-card-benefits li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  color: var(--cab-cyan, #00d2ff);
+  font-weight: 700;
+}
+.pscenario-dialog .scenario-card-subtitle {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--cab-muted, #6d8199);
+}
+.pscenario-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(88, 118, 158, 0.25);
+  background: rgba(8, 18, 36, 0.7);
+}
+.pscenario-price strong {
+  font-size: 22px;
+}
+.pscenario-price span {
+  font-size: 13px;
+  color: var(--cab-muted, #6d8199);
+}
+.pscenario-consent {
+  margin-bottom: 16px;
+}
+.pscenario-error {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  color: #ff8f84;
+  font-size: 14px;
+  text-align: center;
+}
+.pscenario-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.pscenario-button {
+  flex: 1;
+  min-width: 180px;
+  padding: 13px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.pscenario-button.primary {
+  background: linear-gradient(90deg, #1a8fff 0%, #4ad0ff 100%);
+  color: #041018;
+}
+.pscenario-button.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pscenario-button.secondary {
+  background: transparent;
+  border: 1px solid rgba(110, 190, 255, 0.35);
+  color: #e8f4ff;
+}
+button.cab-course-pick-cta {
+  cursor: pointer;
+  font-family: inherit;
 }

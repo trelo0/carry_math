@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { studentHasCourseProductAccess } from './course-access';
 import {
   flattenCourseLessons,
   getDistrictCourseContent,
@@ -126,6 +127,9 @@ export async function ensureHomeworkDeadlineStarted(
   const lesson = await resolveLesson(sanityLessonId);
   if (!lesson || !lessonHasHomework(lesson)) return null;
   if (options?.hasAccess === false) return null;
+
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  if (lesson.isTrialFree && !hasCourseProduct) return null;
 
   const existing = await loadDeadlineRow(admin, telegramId, sanityLessonId);
   if (existing?.homework_deadline_at || existing?.lesson_first_opened_at) {

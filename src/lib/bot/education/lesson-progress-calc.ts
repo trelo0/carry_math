@@ -37,6 +37,18 @@ export function lessonHasHomework(
   return (lesson.homeworkFiles?.length ?? 0) > 0;
 }
 
+/** Пробное без оплаты курса: только просмотр, без ДЗ и таймера. */
+export function homeworkRequiredForLesson(
+  lesson: Pick<
+    CourseLessonContent,
+    'isTrialFree' | 'mandatoryHomework' | 'homework' | 'homeworkFiles'
+  >,
+  hasCourseProduct: boolean,
+): boolean {
+  if (lesson.isTrialFree && !hasCourseProduct) return false;
+  return lessonHasHomework(lesson);
+}
+
 /** Вариант A: Play (recording/live) → 60%, иначе 0. */
 export function computeMaterialPercent(input: LessonProgressInput): number {
   if (input.recordingWatchedAt || input.liveAttendedAt) return 60;

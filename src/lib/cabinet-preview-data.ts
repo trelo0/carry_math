@@ -1,4 +1,9 @@
-import type { CabinetData, CourseCabinetState, CabinetCourseCatalog } from '@/lib/cabinet';
+import {
+  EMPTY_CABINET_ACHIEVEMENT_STATS,
+  type CabinetData,
+  type CourseCabinetState,
+  type CabinetCourseCatalog,
+} from '@/lib/cabinet';
 import { formatModulePeriodFromLessons, mapContentToCourseModules, mapContentToStructureStops } from '@/lib/cabinet';
 import {
   DEFAULT_CABINET_PRICING,
@@ -139,6 +144,7 @@ export function buildCabinetPreviewData(
     cabinetPricing: DEFAULT_CABINET_PRICING,
     courseMapViewed: variant !== 'preview',
     memberRoles: ['student'],
+    achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
   };
 }
 

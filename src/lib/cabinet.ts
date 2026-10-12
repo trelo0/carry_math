@@ -27,6 +27,7 @@ import {
   countCourseLessons,
   DEFAULT_LESSON_CONTENT_CHIPS,
   flattenCourseLessons,
+  attachPurchaseScenariosToOffers,
   getDistrictCourseContent,
   listCoursePaymentOffers,
   listDistrictCourseSummaries,
@@ -42,6 +43,7 @@ import {
 } from '@/lib/bot/education/course-progress';
 import {
   computeLessonProgressPercent,
+  homeworkRequiredForLesson,
   lessonHasHomework,
 } from '@/lib/bot/education/lesson-progress-calc';
 import {
@@ -167,6 +169,20 @@ export type CabinetProfile = {
   resultValue: number | null;
 };
 
+export type CabinetAchievementStats = {
+  liveAttendedCount: number;
+  recordingWatchedCount: number;
+  homeworkSubmittedCount: number;
+  curatorMessagesSent: number;
+};
+
+export const EMPTY_CABINET_ACHIEVEMENT_STATS: CabinetAchievementStats = {
+  liveAttendedCount: 0,
+  recordingWatchedCount: 0,
+  homeworkSubmittedCount: 0,
+  curatorMessagesSent: 0,
+};
+
 export type CourseLessonStatus = CourseMapStopStatus;
 
 export type CabinetCourseModule = {
@@ -266,6 +282,8 @@ export type CabinetData = {
   courseMapViewed: boolean;
   /** Р’СЃРµ СЂРѕР»Рё СѓС‡Р°СЃС‚РЅРёРєР°: РѕСЃРЅРѕРІРЅР°СЏ + extra_roles. */
   memberRoles: BotRole[];
+  /** Агрегаты для достижений (эфир, запись, ДЗ, сообщения куратору). */
+  achievementStats: CabinetAchievementStats;
 };
 
 export function hasActiveAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
@@ -360,6 +378,51 @@ const ACTIVE = 'active';
 function isNotExpired(expiresAt: string | null): boolean {
   if (!expiresAt) return true;
   return new Date(expiresAt).getTime() > Date.now();
+}
+
+function isStaffMessagesTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('staff_student_messages');
+}
+
+async function loadAchievementStats(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+): Promise<CabinetAchievementStats> {
+  const stats: CabinetAchievementStats = { ...EMPTY_CABINET_ACHIEVEMENT_STATS };
+
+  try {
+    const { data, error } = await admin
+      .from('course_lesson_student_progress')
+      .select('live_attended_at, recording_watched_at, homework_status')
+      .eq('telegram_id', telegramId);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (row.live_attended_at) stats.liveAttendedCount += 1;
+      if (row.recording_watched_at) stats.recordingWatchedCount += 1;
+      const hs = row.homework_status as string | null;
+      if (hs === 'submitted' || hs === 'approved' || hs === 'rejected') {
+        stats.homeworkSubmittedCount += 1;
+      }
+    }
+  } catch (error) {
+    if (!isCourseProgressTableError(error) && !isCabinetTableError(error)) throw error;
+  }
+
+  try {
+    const { count, error } = await admin
+      .from('staff_student_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('student_telegram_id', telegramId)
+      .eq('staff_role', 'curator')
+      .eq('direction', 'student_to_staff');
+    if (error) throw error;
+    stats.curatorMessagesSent = count ?? 0;
+  } catch (error) {
+    if (!isStaffMessagesTableError(error) && !isCabinetTableError(error)) throw error;
+  }
+
+  return stats;
 }
 
 function isCabinetTableError(error: unknown): boolean {
@@ -837,6 +900,7 @@ export async function getCabinetData(
     coursePaymentOffers: [],
     courseMapViewed: false,
     memberRoles: ['guest'],
+    achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
   };
 
   let admin: ReturnType<typeof createAdminClient>;
@@ -924,6 +988,12 @@ export async function getCabinetData(
     } catch {
       courseSummaries = [];
     }
+  }
+
+  try {
+    coursePaymentOffers = await attachPurchaseScenariosToOffers(coursePaymentOffers);
+  } catch (error) {
+    console.error('[cabinet] purchase scenarios attach failed:', error);
   }
 
   const dailyQuote = pickDailyCabinetQuote(cabinetPricing.quotes);
@@ -1243,6 +1313,13 @@ export async function getCabinetData(
     catalogsSynced.unshift(courseCatalog);
   }
 
+  let achievementStats = EMPTY_CABINET_ACHIEVEMENT_STATS;
+  try {
+    achievementStats = await loadAchievementStats(admin, telegramId);
+  } catch (error) {
+    if (!isCabinetTableError(error)) throw error;
+  }
+
   return {
     phone,
     createdAt,
@@ -1269,6 +1346,7 @@ export async function getCabinetData(
     coursePaymentOffers,
     courseMapViewed,
     memberRoles,
+    achievementStats,
   };
 }
 
@@ -1562,10 +1640,15 @@ export async function getCabinetLessonPageData(
     redirect('/cabinet?section=course');
   }
 
+  const hasCourseProduct = hasCoursePayment(cabinetSlice);
+  const trialPreviewOnly = located.lesson.isTrialFree && !hasCourseProduct;
+
   const previousCleared =
     publishedIndex <= 0
       ? true
-      : previousCourseLessonsCleared(orderedPublished, publishedIndex, progressMap);
+      : previousCourseLessonsCleared(orderedPublished, publishedIndex, progressMap, {
+          hasCourseProduct,
+        });
 
   const rawAccess = accessMap.get(located.lesson.sanityId) ?? null;
   let hasAccess = false;
@@ -1583,7 +1666,7 @@ export async function getCabinetLessonPageData(
 
   const progress = progressMap.get(located.lesson.sanityId);
   // Таймер ДЗ стартует только по Play на /cabinet/lesson (watch-*), не при открытии страницы.
-  if (hasAccess) {
+  if (hasAccess && hasCourseProduct) {
     void processHomeworkDeadlinesForStudent(admin, telegramId);
   }
 
@@ -1597,7 +1680,7 @@ export async function getCabinetLessonPageData(
 
   const isCurrent =
     hasAccess &&
-    !isCourseLessonCleared(located.lesson, progress) &&
+    !isCourseLessonCleared(located.lesson, progress, { hasCourseProduct }) &&
     previousCleared;
 
   const status = computeMapStopStatus({
@@ -1625,20 +1708,23 @@ export async function getCabinetLessonPageData(
     liveUrl: located.lesson.liveUrl,
     recordingUrl: located.lesson.recordingUrl,
     webinarSessionStatus: sessionStatus,
-    mandatoryHomework: located.lesson.mandatoryHomework,
-    homeworkStatus: progress?.homework_status ?? null,
+    mandatoryHomework: homeworkRequiredForLesson(located.lesson, hasCourseProduct),
+    homeworkStatus: trialPreviewOnly ? null : (progress?.homework_status ?? null),
     homeworkTitle: located.lesson.homework?.title ?? null,
     homeworkReviewNote: progress?.review_note ?? null,
     homeworkCompletedAt: progress?.homework_completed_at ?? null,
-    homeworkDeadlineAt: progress?.homework_deadline_at ?? null,
-    homeworkRemainingMs:
-      typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null,
-    homeworkOverdueAt: progress?.homework_overdue_at ?? null,
+    homeworkDeadlineAt: trialPreviewOnly ? null : (progress?.homework_deadline_at ?? null),
+    homeworkRemainingMs: trialPreviewOnly
+      ? null
+      : typeof progress?.homework_remaining_ms === 'number'
+        ? progress.homework_remaining_ms
+        : null,
+    homeworkOverdueAt: trialPreviewOnly ? null : (progress?.homework_overdue_at ?? null),
     lessonProgressPercent: computeLessonProgressPercent({
       recordingWatchedAt: progress?.recording_watched_at,
       liveAttendedAt: progress?.live_attended_at,
       homeworkStatus: progress?.homework_status,
-      hasHomework: lessonHasHomework(located.lesson),
+      hasHomework: homeworkRequiredForLesson(located.lesson, hasCourseProduct),
     }),
     isTrialFree: located.lesson.isTrialFree,
     contentChips:

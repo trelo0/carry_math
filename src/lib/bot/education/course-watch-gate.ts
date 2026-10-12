@@ -11,9 +11,11 @@ import {
   reportWatchPercent,
   type CourseLessonStudentProgress,
 } from '@/lib/bot/education/course-progress';
-import { isLessonProgressCompleted, lessonHasHomework } from '@/lib/bot/education/lesson-progress-calc';
+import { isLessonProgressCompleted } from '@/lib/bot/education/lesson-progress-calc';
 import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
+import { studentHasCourseProductAccess } from '@/lib/bot/education/course-access';
 import { ensureHomeworkDeadlineStarted } from '@/lib/bot/education/homework-deadline';
+import { homeworkRequiredForLesson } from '@/lib/bot/education/lesson-progress-calc';
 
 export class CourseWatchDeniedError extends Error {
   constructor(message: string) {
@@ -33,11 +35,12 @@ async function afterProgressMaybeCompleteAndUnlock(
   const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
   if (!lesson) return;
 
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
   const done = isLessonProgressCompleted({
     recordingWatchedAt: progress.recording_watched_at,
     liveAttendedAt: progress.live_attended_at,
     homeworkStatus: progress.homework_status,
-    hasHomework: lessonHasHomework(lesson),
+    hasHomework: homeworkRequiredForLesson(lesson, hasCourseProduct),
   });
 
   if (done && !progress.completed_at) {
@@ -49,6 +52,8 @@ async function afterProgressMaybeCompleteAndUnlock(
   }
 
   if (!done) return;
+
+  if (lesson.isTrialFree && !hasCourseProduct) return;
 
   try {
     const courseId = await resolveCourseIdForContent(admin, content);
@@ -64,7 +69,10 @@ async function startDeadlineIfNeeded(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  lesson: { isTrialFree: boolean },
+  hasCourseProduct: boolean,
 ): Promise<void> {
+  if (lesson.isTrialFree && !hasCourseProduct) return;
   try {
     await ensureHomeworkDeadlineStarted(admin, telegramId, sanityLessonId, { hasAccess: true });
   } catch (error) {
@@ -84,7 +92,9 @@ export async function watchRecordingWithAccessGate(
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  await startDeadlineIfNeeded(admin, telegramId, sanityLessonId);
+  const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct);
   const progress = await markRecordingWatched(admin, telegramId, { sanityLessonId }, watchPercent);
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
   return progress;
@@ -102,7 +112,9 @@ export async function watchLiveWithAccessGate(
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  await startDeadlineIfNeeded(admin, telegramId, sanityLessonId);
+  const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct);
   const progress = await markLiveAttended(admin, telegramId, { sanityLessonId }, watchPercent);
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
   return progress;

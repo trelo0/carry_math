@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PurchaseScenarioModal from './PurchaseScenarioModal';
 import CheckoutPayButton from './CheckoutPayButton';
 import type { CoursePaymentOffer } from '@/lib/studio/courseContent';
@@ -28,16 +29,30 @@ interface CheckoutContentProps {
 }
 
 export default function CheckoutContent({ offer, courseSlug, purchaseScenarios }: CheckoutContentProps) {
-  const [showModal, setShowModal] = useState(false);
+  const router = useRouter();
+  const [showModal, setShowModal] = useState(Boolean(purchaseScenarios));
 
   const handlePayClick = () => {
     if (purchaseScenarios) {
       setShowModal(true);
     } else {
-      // Fallback: direct pay if no scenarios configured
       window.location.href = payUrl(courseSlug);
     }
   };
+
+  if (purchaseScenarios && showModal) {
+    return (
+      <PurchaseScenarioModal
+        scenarios={purchaseScenarios}
+        priceByn={offer.priceByn}
+        courseSlug={courseSlug}
+        onClose={() => {
+          setShowModal(false);
+          router.push('/cabinet?section=payments');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="cab-checkout">

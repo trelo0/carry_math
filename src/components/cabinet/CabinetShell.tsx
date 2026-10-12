@@ -14,6 +14,7 @@ import type {
   CourseCabinetState,
 } from '@/lib/cabinet';
 import CourseCabinetGate from '@/components/cabinet/CourseCabinetGate';
+import CoursePurchaseCta from '@/components/cabinet/CoursePurchaseCta';
 import {
   buildModulesFromCatalogPreviews,
   buildStopsFromCatalogPreviews,
@@ -27,6 +28,8 @@ import {
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { aggregateCourseProgress } from '@/lib/bot/education/lesson-progress-calc';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
+import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSlider';
+import CabinetAchievementToasts from '@/components/cabinet/CabinetAchievementToasts';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
 import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
 import {
@@ -434,6 +437,7 @@ function CourseMap({
   onSelect,
   locked,
   allowLockedSelect,
+  showHomeworkTimers = false,
   stops = [],
   modules = [],
 }: {
@@ -442,6 +446,7 @@ function CourseMap({
   locked?: boolean;
   /** Разрешить выбор закрытых остановок (просмотр структуры без доступа к контенту). */
   allowLockedSelect?: boolean;
+  showHomeworkTimers?: boolean;
   stops?: CourseStop[];
   modules?: { name: string; color: string; count: number; about?: string }[];
 }) {
@@ -579,14 +584,16 @@ function CourseMap({
                   </span>
                   <span className="cab-rm-title">{s.title}</span>
                   <span className="cab-rm-label">{label}</span>
-                  <HomeworkDeadlineBadge
-                    compact
-                    placement="inline"
-                    homeworkStatus={s.homeworkStatus}
-                    homeworkDeadlineAt={s.homeworkDeadlineAt}
-                    homeworkRemainingMs={s.homeworkRemainingMs}
-                    homeworkOverdueAt={s.homeworkOverdueAt}
-                  />
+                  {showHomeworkTimers ? (
+                    <HomeworkDeadlineBadge
+                      compact
+                      placement="inline"
+                      homeworkStatus={s.homeworkStatus}
+                      homeworkDeadlineAt={s.homeworkDeadlineAt}
+                      homeworkRemainingMs={s.homeworkRemainingMs}
+                      homeworkOverdueAt={s.homeworkOverdueAt}
+                    />
+                  ) : null}
                 </button>
               </div>
             );
@@ -1709,7 +1716,7 @@ export default function CabinetShell({
     examDate && !Number.isNaN(examDate.getTime())
       ? examDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
       : null;
-  const achievementViews = buildAchievementViews(data);
+  const achievementViews = useMemo(() => buildAchievementViews(data), [data]);
   const achievementsUnlocked = achievementViews.filter((item) => item.unlocked).length;
 
   async function saveProfile() {
@@ -1810,6 +1817,11 @@ export default function CabinetShell({
 
   return (
     <div className={`cabinet${menuOpen || asideOpen ? ' is-drawer-open' : ''}`}>
+      <CabinetAchievementToasts
+        storageKey={data.phone}
+        achievements={achievementViews}
+        enabled={hasCourse}
+      />
       <div className={`cab-backdrop${menuOpen || asideOpen ? ' is-open' : ''}`} onClick={() => { setMenuOpen(false); setAsideOpen(false); }} />
 
       <aside className={`cab-sidebar${menuOpen ? ' is-open' : ''}`}>
@@ -2035,6 +2047,7 @@ export default function CabinetShell({
                           selected={stopId}
                           onSelect={setStopId}
                           allowLockedSelect={hasCourse || courseState === 'enrolled_locked'}
+                          showHomeworkTimers={hasCourse}
                           stops={mapCourseStops}
                           modules={courseModules}
                         />
@@ -2094,14 +2107,16 @@ export default function CabinetShell({
                                 <span className="cab-hw-dot" aria-hidden="true">•</span>
                                 <span>{formatCabinetLessonDate(s.date)}</span>
                               </p>
-                              <HomeworkDeadlineBadge
-                                homeworkStatus={s.homeworkStatus}
-                                homeworkDeadlineAt={s.homeworkDeadlineAt}
-                                homeworkRemainingMs={s.homeworkRemainingMs}
-                                homeworkOverdueAt={s.homeworkOverdueAt}
-                                placement="corner"
-                                compact
-                              />
+                              {hasCourse && !(s.isTrialFree && !hasCourse) ? (
+                                <HomeworkDeadlineBadge
+                                  homeworkStatus={s.homeworkStatus}
+                                  homeworkDeadlineAt={s.homeworkDeadlineAt}
+                                  homeworkRemainingMs={s.homeworkRemainingMs}
+                                  homeworkOverdueAt={s.homeworkOverdueAt}
+                                  placement="corner"
+                                  compact
+                                />
+                              ) : null}
                             </div>
                             <span className={`cab-hw-status is-${hw.tone}`}>
                               {hw.tone === 'done' ? <Icon d={ICONS.check} /> : <Icon d={ICONS.clock} />}
@@ -2185,28 +2200,33 @@ export default function CabinetShell({
                         {selectedCabinetStop?.isCurrent && hasCourse && (
                           <span className="cab-lesson-v2-badge is-now">Сейчас</span>
                         )}
-                        {stop.status === 'watched' && selectedCabinetStop?.homeworkStatus === 'submitted' && (
+                        {hasCourse && stop.status === 'watched' && selectedCabinetStop?.homeworkStatus === 'submitted' && (
                           <span className="cab-lesson-v2-badge is-pending">ДЗ на проверке</span>
                         )}
-                        {stop.status === 'watched' &&
+                        {hasCourse &&
+                          stop.status === 'watched' &&
                           selectedCabinetStop?.homeworkStatus !== 'submitted' &&
-                          selectedCabinetStop?.homeworkStatus !== 'approved' && (
+                          selectedCabinetStop?.homeworkStatus !== 'approved' &&
+                          !(stop.isTrialFree && !hasCourse) && (
                             <span className="cab-lesson-v2-badge is-pending">Сдайте ДЗ</span>
                           )}
-                        {(stop.status === 'done' || selectedCabinetStop?.homeworkStatus === 'approved') && (
+                        {hasCourse &&
+                          (stop.status === 'done' || selectedCabinetStop?.homeworkStatus === 'approved') && (
                           <span className="cab-lesson-v2-badge is-done">ДЗ одобрено</span>
                         )}
                         {stop.status === 'now' && (
                           <span className="cab-lesson-v2-badge is-open">Доступно</span>
                         )}
-                        <HomeworkDeadlineBadge
-                          homeworkStatus={selectedCabinetStop?.homeworkStatus}
-                          homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
-                          homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
-                          homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
-                          placement="inline"
-                          compact
-                        />
+                        {hasCourse && !(stop.isTrialFree && !hasCourse) ? (
+                          <HomeworkDeadlineBadge
+                            homeworkStatus={selectedCabinetStop?.homeworkStatus}
+                            homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
+                            homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
+                            homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
+                            placement="inline"
+                            compact
+                          />
+                        ) : null}
                       </header>
                       {displayLives?.accessBlocked && selectedCabinetStop?.isCurrent ? (
                         <p className="cab-note">
@@ -2422,11 +2442,11 @@ export default function CabinetShell({
                               </small>
                             </span>
                           </div>
-                          <a className="cab-course-pick-cta" href={checkoutHref(offer.slug)}>
+                          <CoursePurchaseCta offer={offer} className="cab-course-pick-cta">
                             <Icon d={ICONS.cart} />
                             Купить пакет
                             <Icon d={ICONS.chevron} />
-                          </a>
+                          </CoursePurchaseCta>
                         </article>
                       );
                     })
@@ -2725,30 +2745,11 @@ export default function CabinetShell({
             </section>
 
             {achievementViews.length > 0 && (
-              <section className="cab-panel cab-achieve-panel">
-                <header className="cab-panel-head">
-                  <h3>Достижения</h3>
-                  <span className="cab-panel-hint">
-                    {achievementsUnlocked} из {achievementViews.length}
-                  </span>
-                </header>
-                <div className="cab-achieve cab-achieve--ref">
-                  {achievementViews.map((item) => (
-                    <div
-                      key={item.title}
-                      className={`cab-ach${item.unlocked ? ' is-unlocked' : ''}`}
-                    >
-                      <span className="cab-badge-hex">
-                        <Icon d={item.unlocked ? ICONS.trophy : ICONS.lock} strokeWidth={1.4} />
-                      </span>
-                      <span className="cab-ach-text">
-                        <strong>{item.title}</strong>
-                        <em>{item.subtitle}</em>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <CabinetAchievementSlider
+                achievements={achievementViews}
+                unlockedCount={achievementsUnlocked}
+                trackingEnabled={hasCourse}
+              />
             )}
 
             <section className="cab-panel cab-help">
