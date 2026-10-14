@@ -44,7 +44,9 @@ export function homeworkRequiredForLesson(
     'isTrialFree' | 'mandatoryHomework' | 'homework' | 'homeworkFiles'
   >,
   hasCourseProduct: boolean,
+  options?: { isJoinArchive?: boolean },
 ): boolean {
+  if (options?.isJoinArchive) return false;
   if (lesson.isTrialFree && !hasCourseProduct) return false;
   return lessonHasHomework(lesson);
 }

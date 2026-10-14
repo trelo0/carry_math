@@ -116,6 +116,7 @@ export default function CabinetAchievementSlider({
                       <em>{item.subtitle}</em>
                     </span>
                     <div className="cab-ach-popover" role="tooltip">
+                      <span className="cab-ach-popover-title">{item.title}</span>
                       <p>{item.subtitle}</p>
                     </div>
                   </div>

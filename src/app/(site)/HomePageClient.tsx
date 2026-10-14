@@ -1,8 +1,11 @@
 "use client";
 
 import { Fragment, useState, type ReactNode } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
-import DiagnosticSection from '@/components/ui/DiagnosticSection';
+import dynamic from 'next/dynamic';
+
+const DiagnosticSection = dynamic(() => import('@/components/ui/DiagnosticSection'));
 import IndProcessCardFrame from '@/components/ui/IndProcessCardFrame';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 import IndTeacherPhotoFrame from '@/components/ui/IndTeacherPhotoFrame';
@@ -512,9 +515,13 @@ export default function HomePageClient({
                         {num}
                       </span>
                       {teacher.photoUrl ? (
-                        <img
+                        <Image
                           src={teacher.photoUrl}
                           alt={`${teacher.name} — наставник по математике`}
+                          fill
+                          sizes="(max-width: 768px) 45vw, 240px"
+                          priority={index < 4}
+                          className="teacher-hud-photo-img"
                         />
                       ) : null}
                     </div>

@@ -1398,6 +1398,27 @@ button:focus-visible {
   pointer-events: auto;
 }
 
+.ind-teacher .teacher-hud-photo .teacher-hud-photo-img {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  object-position: bottom center;
+  transform: none;
+  pointer-events: auto;
+}
+
+.ind-teacher .teacher-hud-photo > span:has(.teacher-hud-photo-img) {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .ind-teacher .teacher-hud-desc {
   max-width: 96%;
   font-size: 15px;

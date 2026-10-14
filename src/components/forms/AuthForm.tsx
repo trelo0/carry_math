@@ -169,8 +169,7 @@ export default function AuthForm() {
           : loginNext && loginNext.startsWith('/') && !loginNext.startsWith('//')
             ? loginNext
             : '/cabinet';
-      router.push(destination);
-      router.refresh();
+      window.location.assign(destination);
     } catch {
       setMessage({ type: 'error', text: 'Не удалось связаться с сервером. Попробуй ещё раз.' });
     } finally {

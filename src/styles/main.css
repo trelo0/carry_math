@@ -2240,6 +2240,28 @@ section[data-reveal] {
   opacity: 1;
 }
 
+/* Ниже первого экрана — откладываем layout/paint до прокрутки */
+.main-page .main-teacher,
+.main-page .main-program,
+.main-page .main-reviews,
+.main-page .main-init,
+.main-page .main-faq,
+.main-page .main-paths,
+.main-page.sub-page .ind-teacher,
+.main-page.sub-page .ind-principles,
+.main-page.sub-page .ind-formats-vs,
+.main-page.sub-page .ind-process,
+.main-page.sub-page .ind-signup {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 720px;
+}
+
+.main-page .mission-map,
+.main-page.sub-page .teacher-hud-grid,
+.main-page.sub-page .process-timeline-alt {
+  contain: layout style paint;
+}
+
 .hero-signup-wrap {
   position: relative;
   flex: none;

@@ -1680,7 +1680,7 @@
 
 .cab-path-head--map {
   display: grid;
-  grid-template-columns: 118px minmax(160px, 1fr) 200px;
+  grid-template-columns: 118px minmax(160px, 1fr) auto;
   align-items: start;
   gap: 16px;
   padding: 10px 12px;
@@ -1725,11 +1725,11 @@
 .cab-path-head--map .cab-lives {
   grid-column: 3;
   justify-self: end;
-  width: 100%;
-  max-width: 200px;
+  width: auto;
+  max-width: none;
   min-width: 0;
   margin-left: 0;
-  padding: 10px 12px 12px;
+  padding: 8px 12px 10px;
   box-sizing: border-box;
   border-color: rgba(0, 210, 255, 0.2);
   background: rgba(10, 20, 40, 0.62);
@@ -2405,6 +2405,49 @@
 }
 
 .cab-rm-stop.is-now .cab-rm-label { color: var(--cab-orange); }
+
+.cab-rm-stop.is-schedule-active .cab-rm-node::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 120, 60, 0.85);
+  animation: cab-rm-schedule-pulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cab-rm-schedule-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.cab-rm-stop.access-locked_unpaid_past .cab-rm-label,
+.cab-rm-stop.access-locked_prerequisite_past .cab-rm-label {
+  color: #c9a227;
+}
+
+.cab-rm-stop.access-locked_unpaid .cab-rm-label {
+  color: #8fa3bf;
+}
+
+.cab-rm-stop.access-locked_prerequisite .cab-rm-label {
+  color: #7eb8ff;
+}
+
+.cab-course-pkg-scenario b {
+  color: var(--cab-cyan);
+}
+
+.pscenario-dialog--compact {
+  max-width: 28rem;
+}
 
 .cab-rm-stop.is-locked .cab-rm-plate {
   opacity: 0.52;
@@ -3801,6 +3844,39 @@
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+.cab-app--loading {
+  min-height: 100dvh;
+  padding: 16px clamp(12px, 3vw, 28px) 32px;
+}
+
+.cab-top--placeholder {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.cab-loading-pill,
+.cab-loading-block {
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04));
+  background-size: 200% 100%;
+  animation: cab-shimmer 1.2s ease-in-out infinite;
+}
+
+.cab-loading-pill--logo { width: 140px; height: 36px; }
+.cab-loading-pill--nav { width: 88px; height: 28px; opacity: 0.7; }
+.cab-loading-pill--user { width: 120px; height: 32px; margin-left: auto; }
+
+.cab-loading-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cab-loading-block--hero { width: min(100%, 720px); height: 120px; }
+.cab-loading-block--map { width: 100%; min-height: min(62vh, 520px); flex: 1; }
 
 @media (max-width: 900px) {
   .cab-lespage {
@@ -7973,9 +8049,27 @@ body.cab-app.cab-drawer-open {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  justify-content: space-between;
+  gap: 10px 12px;
   padding: 10px 12px;
   border-bottom: 1px solid rgba(0, 210, 255, 0.1);
+}
+
+.cab-lesson-v2-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.cab-lesson-v2-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 8px;
+  margin-left: auto;
 }
 
 .cab-lesson-v2-module {
@@ -8005,7 +8099,7 @@ body.cab-app.cab-drawer-open {
 }
 
 .cab-lesson-v2-badge {
-  margin-left: auto;
+  margin-left: 0;
   padding: 3px 9px;
   border-radius: 999px;
   font-size: 10px;
@@ -8030,12 +8124,6 @@ body.cab-app.cab-drawer-open {
   border: 1px solid rgba(61, 220, 151, 0.45);
   color: #8ef0c0;
   background: rgba(61, 220, 151, 0.08);
-}
-
-.cab-lesson-v2-head .cab-lesson-v2-badge.is-open { margin-left: 0; }
-.cab-lesson-v2-head .cab-lesson-v2-badge.is-trial + .cab-lesson-v2-badge.is-open,
-.cab-lesson-v2-head .cab-lesson-v2-badge.is-now + .cab-lesson-v2-badge.is-open {
-  margin-left: 0;
 }
 
 .cab-lesson-v2-grid {
@@ -8475,17 +8563,17 @@ body.cab-app.cab-drawer-open {
 
 .cab-hw-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .cab-hw-head-main h3 {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 6px;
+  margin: 0;
   font-family: var(--font-heading, 'Oswald', sans-serif);
   font-size: 18px;
   font-weight: 600;
@@ -8501,7 +8589,7 @@ body.cab-app.cab-drawer-open {
 }
 
 .cab-hw-head-main p {
-  margin: 0;
+  margin: 6px 0 0;
   max-width: 520px;
   font-size: 13px;
   line-height: 1.45;
@@ -8513,13 +8601,14 @@ body.cab-app.cab-drawer-open {
   align-items: center;
   gap: 7px;
   flex: none;
-  max-width: 240px;
-  padding: 8px 12px;
+  max-width: none;
+  padding: 8px 16px;
   border-radius: 999px;
   border: 1px solid rgba(0, 210, 255, 0.28);
   background: rgba(0, 140, 255, 0.1);
-  font-size: 10.5px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
   color: rgba(190, 214, 244, 0.92);
 }
 
@@ -8712,7 +8801,12 @@ body.cab-app.cab-drawer-open {
     align-items: stretch;
   }
 
-  .cab-hw-info { max-width: none; }
+  .cab-hw-info {
+    max-width: none;
+    white-space: normal;
+    text-align: center;
+    justify-content: center;
+  }
 
   .cab-hw-row {
     grid-template-columns: 48px 72px minmax(0, 1fr);
@@ -8994,19 +9088,34 @@ body.cab-app.cab-drawer-open {
   inset: 0;
   z-index: 2;
   box-sizing: border-box;
-  display: grid;
-  place-items: center;
-  padding: 4px 8px 4px 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 8px 7px;
   border-radius: inherit;
-  border: 1px solid rgba(56, 198, 255, 0.32);
-  background: rgba(6, 14, 28, 0.92);
+  border: 1px solid rgba(56, 198, 255, 0.38);
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(0, 180, 255, 0.14), transparent 55%),
+    rgba(6, 14, 28, 0.94);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   overflow: hidden;
+  text-align: center;
   transition:
     opacity 0.18s ease,
     visibility 0.18s;
+}
+
+.cab-aside .cab-achieve--ref .cab-ach-popover-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  line-height: 1.25;
+  color: #eef4ff;
+  text-shadow: 0 0 12px rgba(0, 180, 255, 0.35);
 }
 
 .cab-aside .cab-achieve--ref .cab-ach-popover p {
@@ -9014,15 +9123,66 @@ body.cab-app.cab-drawer-open {
   width: 100%;
   min-width: 0;
   text-align: center;
-  font-size: 10.5px;
+  font-size: 10px;
   line-height: 1.35;
-  color: rgba(220, 232, 252, 0.96);
+  color: rgba(176, 196, 226, 0.92);
   overflow-wrap: anywhere;
   word-break: break-word;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
+  padding-bottom: 1px;
+}
+
+.cab-hw-submit-modal .cab-hw-submit-lesson {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: #eef4ff;
+}
+
+.cab-hw-submit-modal .cab-hw-submit-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(176, 196, 226, 0.88);
+}
+
+.cab-hw-submit-file {
+  display: block;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.cab-hw-submit-file input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+.cab-hw-submit-file span {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px dashed rgba(0, 210, 255, 0.35);
+  background: rgba(8, 16, 32, 0.5);
+  text-align: center;
+  color: #b9c7e4;
+  font-size: 13px;
+}
+
+.cab-hw-submit-comment {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 210, 255, 0.22);
+  background: rgba(6, 12, 24, 0.85);
+  color: #eef4ff;
+  font: inherit;
+  resize: vertical;
 }
 
 .cab-aside .cab-achieve--ref .cab-ach:hover .cab-ach-popover,
@@ -9032,7 +9192,9 @@ body.cab-app.cab-drawer-open {
 }
 
 .cab-aside .cab-achieve--ref .cab-ach:hover .cab-ach-text,
-.cab-aside .cab-achieve--ref .cab-ach:focus-within .cab-ach-text {
+.cab-aside .cab-achieve--ref .cab-ach:focus-within .cab-ach-text,
+.cab-aside .cab-achieve--ref .cab-ach:hover .cab-badge-hex,
+.cab-aside .cab-achieve--ref .cab-ach:focus-within .cab-badge-hex {
   opacity: 0;
 }
 

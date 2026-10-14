@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 
 /** Ждёт сессию и открывает модалку входа (без отдельной «страницы логина»). */
@@ -12,12 +12,19 @@ export default function CabinetLoginGate({
   title?: string;
 }) {
   const { openAuth, phone, loading, authOpen } = useAuth();
+  const reloadedForSession = useRef(false);
 
   useLayoutEffect(() => {
     if (!loading && !phone) openAuth(returnTo);
   }, [loading, openAuth, phone, returnTo]);
 
-  if (loading || authOpen) {
+  useLayoutEffect(() => {
+    if (loading || !phone || reloadedForSession.current) return;
+    reloadedForSession.current = true;
+    window.location.assign(returnTo);
+  }, [loading, phone, returnTo]);
+
+  if (loading || authOpen || phone) {
     return <div className="cabinet cab-auth-backdrop" aria-busy="true" aria-label="Вход в кабинет" />;
   }
 

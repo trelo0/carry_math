@@ -12,6 +12,24 @@ export type ActiveModuleResult = {
   source: 'manual' | 'auto_webinar' | 'auto_last_completed' | 'not_found';
 };
 
+function normalizeSanityDocId(id: string): string {
+  return id.replace(/^drafts\./, '');
+}
+
+export function findModuleBySanityRef(
+  modules: CourseModuleContent[],
+  refId: string | null | undefined,
+): CourseModuleContent | undefined {
+  if (!refId) return undefined;
+  const normalized = normalizeSanityDocId(refId);
+  return modules.find(
+    (m) =>
+      m.sanityId === refId ||
+      m.sanityId === normalized ||
+      normalizeSanityDocId(m.sanityId) === normalized,
+  );
+}
+
 /**
  * Определяет активный модуль курса для сценария "Подключиться к курсу".
  *
@@ -31,7 +49,10 @@ export async function determineActiveModule(
 ): Promise<ActiveModuleResult> {
   // 1. Проверяем ручной override
   if (content.activeModuleOverride) {
-    const overrideModule = content.modules.find((m) => m.sanityId === content.activeModuleOverride);
+    const overrideModule = findModuleBySanityRef(
+      content.modules,
+      content.activeModuleOverride,
+    );
     if (overrideModule) {
       return {
         module: overrideModule,

@@ -23,6 +23,9 @@ interface PurchaseScenarioModalProps {
   priceByn: number;
   courseSlug: string;
   onClose: () => void;
+  mode?: 'first' | 'extend';
+  grantedLessons?: number;
+  savedScenarioLabel?: string | null;
 }
 
 export default function PurchaseScenarioModal({
@@ -30,16 +33,22 @@ export default function PurchaseScenarioModal({
   priceByn,
   courseSlug,
   onClose,
+  mode = 'first',
+  grantedLessons = 8,
+  savedScenarioLabel = null,
 }: PurchaseScenarioModalProps) {
   const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
   const [consent, setConsent] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!scenarios) return null;
+  const isExtend = mode === 'extend';
+  if (!isExtend && !scenarios) return null;
 
   const handlePayClick = async () => {
-    if (!selectedScenario || !consent) return;
+    const scenarioToSend = isExtend ? undefined : selectedScenario;
+    if (!isExtend && !selectedScenario) return;
+    if (!consent) return;
 
     setIsProcessing(true);
     setError(null);
@@ -47,31 +56,38 @@ export default function PurchaseScenarioModal({
     try {
       const response = await fetch('/api/payments/create-token', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           courseSlug,
-          scenario: selectedScenario,
+          ...(scenarioToSend ? { scenario: scenarioToSend } : {}),
         }),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error || 'Ошибка создания платежа');
+      const raw = await response.text();
+      let data: { error?: string; redirect_url?: string } | null = null;
+      try {
+        data = raw ? (JSON.parse(raw) as { error?: string; redirect_url?: string }) : null;
+      } catch {
+        setError('Сервер вернул некорректный ответ. Смотрите лог терминала `next dev`.');
         return;
       }
 
-      // Редирект на страницу оплаты bePaid
-      if (data.redirect_url) {
+      if (!response.ok) {
+        setError(data?.error || 'Ошибка создания платежа');
+        return;
+      }
+
+      if (data?.redirect_url) {
         window.location.href = data.redirect_url;
       } else {
         setError('Не получен URL для оплаты');
       }
     } catch (err) {
       console.error('[create payment token]', err);
-      setError('Ошибка соединения с платёжным шлюзом');
+      setError('Не удалось связаться с сервером сайта. Проверьте, что dev-сервер запущен.');
     } finally {
       setIsProcessing(false);
     }
@@ -96,12 +112,17 @@ export default function PurchaseScenarioModal({
         </button>
 
         <h2 id="pscenario-title" className="pscenario-title">
-          Выберите формат обучения
+          {isExtend ? 'Купить пакет занятий' : 'Выберите формат обучения'}
         </h2>
         <p className="pscenario-subtitle">
-          Два варианта прохождения курса. Выберите подходящий для вас.
+          {isExtend
+            ? `Пакет из ${grantedLessons} занятий по вашему сохранённому формату обучения${
+                savedScenarioLabel ? `: ${savedScenarioLabel}` : ''
+              }.`
+            : 'Два варианта прохождения курса. Выберите подходящий для вас.'}
         </p>
 
+        {!isExtend && scenarios ? (
         <div className="scenario-cards">
           {/* Card 1: Start from beginning */}
           <div
@@ -143,6 +164,7 @@ export default function PurchaseScenarioModal({
             )}
           </div>
         </div>
+        ) : null}
 
         <div className="pscenario-price">
           <strong>{priceByn} BYN</strong>
@@ -160,22 +182,26 @@ export default function PurchaseScenarioModal({
         )}
 
         <div className="pscenario-actions">
-          {selectedScenario && consent ? (
+          {(isExtend || selectedScenario) && consent ? (
             <button
               type="button"
               className="pscenario-button primary"
               onClick={handlePayClick}
               disabled={isProcessing}
             >
-              {isProcessing ? 'Создание платежа...' : (
-                selectedScenario === 'start_from_beginning'
-                  ? scenarios.startFromBeginning.buttonLabel
-                  : scenarios.joinCurrent.buttonLabel
-              )}
+              {isProcessing
+                ? 'Создание платежа...'
+                : isExtend
+                  ? `Оплатить пакет · ${grantedLessons} занятий`
+                  : selectedScenario === 'start_from_beginning'
+                    ? scenarios!.startFromBeginning.buttonLabel
+                    : scenarios!.joinCurrent.buttonLabel}
             </button>
           ) : (
             <button type="button" className="pscenario-button primary" disabled>
-              {!selectedScenario ? 'Выберите формат обучения' : 'Примите политику конфиденциальности'}
+              {!isExtend && !selectedScenario
+                ? 'Выберите формат обучения'
+                : 'Примите политику конфиденциальности'}
             </button>
           )}
           <button type="button" className="pscenario-button secondary" onClick={onClose}>

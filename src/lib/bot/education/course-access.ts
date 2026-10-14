@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CourseLessonContent, DistrictCourseContent } from '@/lib/studio/courseContent';
 import { flattenCourseLessons } from '@/lib/studio/courseContent';
+import { revokeAccess } from '@/lib/bot/accesses';
 import type { CourseLessonStudentProgress } from './course-progress';
 import { homeworkRequiredForLesson, isLessonProgressCompleted } from './lesson-progress-calc';
 import { getEnrollmentLives, resetEnrollmentStateForRepurchase } from './lives';
@@ -58,10 +59,11 @@ export function previousCourseLessonsCleared(
   lessons: CourseLessonContent[],
   index: number,
   progressMap: Map<string, CourseLessonStudentProgress | undefined>,
-  options?: { hasCourseProduct?: boolean },
+  options?: { hasCourseProduct?: boolean; gateStartIndex?: number },
 ): boolean {
   const hasCourseProduct = options?.hasCourseProduct ?? true;
-  for (let i = 0; i < index; i += 1) {
+  const from = Math.max(0, options?.gateStartIndex ?? 0);
+  for (let i = from; i < index; i += 1) {
     const prev = lessons[i];
     if (!prev) continue;
     if (!isCourseLessonCleared(prev, progressMap.get(prev.sanityId), { hasCourseProduct })) {
@@ -76,24 +78,71 @@ export async function studentHasCourseProductAccess(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<boolean> {
-  const { data: accessRow, error: accessError } = await admin
-    .from('user_accesses')
-    .select('id')
-    .eq('telegram_id', telegramId)
-    .eq('product', 'course')
-    .eq('status', 'active')
-    .maybeSingle();
-  if (accessError) throw accessError;
-  if (accessRow) return true;
-
   const { data: packageRows, error: packageError } = await admin
     .from('lesson_packages')
     .select('product, total_lessons, status')
     .eq('telegram_id', telegramId)
-    .eq('status', 'active')
-    .eq('product', 'course');
+    .eq('product', 'course')
+    .neq('status', 'cancelled');
   if (packageError) throw packageError;
   return (packageRows ?? []).some((row) => (row.total_lessons as number) > 0);
+}
+
+/**
+ * Только если в БД **нет ни одной** строки lesson_packages (product=course) — например админ удалил пакеты.
+ * Нулевой remaining / status=completed **не** триггерит сброс: прогресс и доступ к пройденным занятиям сохраняются.
+ */
+export async function resetCourseWhenNoPaidPackages(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  content?: DistrictCourseContent | null,
+): Promise<boolean> {
+  const { count, error: countError } = await admin
+    .from('lesson_packages')
+    .select('id', { count: 'exact', head: true })
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course');
+  if (countError) throw countError;
+  if ((count ?? 0) > 0) return false;
+
+  try {
+    await revokeAccess(admin, telegramId, 'course');
+  } catch (error) {
+    if (!String((error as Error)?.message ?? '').includes('user_accesses')) throw error;
+  }
+
+  const { error: enrollmentError } = await admin
+    .from('course_enrollments')
+    .update({
+      purchase_scenario: null,
+      start_module_id: null,
+      start_lesson_id: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('telegram_id', telegramId)
+    .eq('course_id', courseId);
+  if (enrollmentError && !String(enrollmentError.message ?? '').includes('does not exist')) {
+    throw enrollmentError;
+  }
+
+  await resetCourseLearningForRepurchase(admin, telegramId, courseId, content);
+  return true;
+}
+
+/** Сколько занятий курса оплачено (сумма total по активным и завершённым пакетам). */
+export async function sumCoursePackageLessonEntitlement(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<number> {
+  const { data, error } = await admin
+    .from('lesson_packages')
+    .select('total_lessons, status')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .neq('status', 'cancelled');
+  if (error) throw error;
+  return (data ?? []).reduce((sum, row) => sum + Math.max(0, row.total_lessons as number), 0);
 }
 
 /**
@@ -398,9 +447,18 @@ export async function ensureCurrentLessonUnlocked(
     }
   }
 
+  const gateStartIndex =
+    scenario === 'join_current' && startIndex > 0 ? startIndex : 0;
+
   const current = published.find((lesson, index) => {
     if (index < startIndex) return false; // Пропускаем уроки до стартового
-    if (!previousCourseLessonsCleared(published, index, progressMap)) return false;
+    if (
+      !previousCourseLessonsCleared(published, index, progressMap, {
+        gateStartIndex,
+      })
+    ) {
+      return false;
+    }
     return !isCourseLessonCleared(lesson, progressMap.get(lesson.sanityId));
   });
   if (!current) return 0;
@@ -449,7 +507,7 @@ export async function ensureCurrentLessonUnlocked(
  * Выдаёт свободный доступ к урокам до стартового (для join_current).
  * Эти уроки доступны для просмотра без требования ДЗ и без запуска таймера.
  */
-async function grantArchiveAccessBeforeStart(
+export async function grantArchiveAccessBeforeStart(
   admin: SupabaseClient,
   telegramId: number,
   courseId: number,
@@ -504,6 +562,33 @@ async function grantArchiveAccessBeforeStart(
       }
     }
   }
+}
+
+/** После оплаты join_current: архив + первое полноценное занятие (идемпотентно). */
+export async function syncJoinCurrentEnrollmentAccess(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  content: DistrictCourseContent | null | undefined,
+  packageId?: number | null,
+): Promise<void> {
+  if (!content) return;
+
+  const { data: enrollment } = await admin
+    .from('course_enrollments')
+    .select('purchase_scenario, start_lesson_id')
+    .eq('telegram_id', telegramId)
+    .eq('course_id', courseId)
+    .maybeSingle();
+
+  if (enrollment?.purchase_scenario !== 'join_current') return;
+
+  const startLessonId = enrollment.start_lesson_id as number | null;
+  if (startLessonId) {
+    await grantArchiveAccessBeforeStart(admin, telegramId, courseId, content, startLessonId);
+  }
+
+  await ensureCurrentLessonUnlocked(admin, telegramId, courseId, content, packageId ?? null);
 }
 
 /** После одобрения ДЗ / прохождения урока без ДЗ — открыть следующее. */
@@ -737,13 +822,38 @@ export async function canStudentWatchSanityLesson(
   let status = accessMap.get(lesson.sanityId) ?? null;
 
   const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (!previousCourseLessonsCleared(published, index, progressMap, { hasCourseProduct })) {
+
+  const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+    './course-enrollment-start'
+  );
+  const joinGate =
+    courseId != null
+      ? await loadJoinCurrentGateContext(admin, telegramId, courseId, content)
+      : null;
+  const isArchive = isJoinArchiveSanityId(joinGate, sanityLessonId);
+
+  if (
+    !isArchive &&
+    !previousCourseLessonsCleared(published, index, progressMap, {
+      hasCourseProduct,
+      gateStartIndex: joinGate?.gateStartIndex,
+    })
+  ) {
     return {
       ok: false,
       reason: hasCourseProduct
         ? 'Сначала выполните ДЗ по предыдущему занятию и дождитесь одобрения куратора.'
         : 'Сначала завершите пробное занятие или купите пакет курса.',
     };
+  }
+
+  if (isArchive) {
+    if (status === 'available' || status === 'blocked_lives') return { ok: true };
+    if (hasCourseProduct) {
+      await upsertSanityLessonAccess(admin, telegramId, lesson.sanityId, 'enrollment');
+      return { ok: true };
+    }
+    return { ok: false, reason: 'Архивное занятие доступно после оплаты курса.' };
   }
 
   // Уже открытое занятие (в т.ч. legacy blocked_lives) — доступно при обычной заморозке.

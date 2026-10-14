@@ -26,6 +26,10 @@ export type PurchaseRequestRow = {
 const REQUEST_COLUMNS =
   'id, created_at, resolved_at, telegram_id, product, package_index, teacher_id, title, amount_byn, status, resolved_by, course_slug, scenario, bepaid_transaction_uid, processing_version, processing_updated_at, lessons_count';
 
+export function isPostgresUniqueViolation(error: unknown): boolean {
+  return String((error as { code?: unknown })?.code ?? '') === '23505';
+}
+
 export function isPurchaseRequestTableError(error: unknown): boolean {
   const details = error as { message?: unknown; code?: unknown } | null;
   const message = String(details?.message ?? error);
@@ -116,6 +120,93 @@ export async function createPurchaseRequest(
     .single();
   if (error) throw error;
   return data as PurchaseRequestRow;
+}
+
+/** Обновляет поля pending-заявки (цена, курс, сценарий) перед повторным checkout. */
+export async function updatePendingPurchaseRequestDetails(
+  admin: SupabaseClient,
+  id: string,
+  input: {
+    title: string;
+    amountByn: number;
+    courseSlug?: string | null;
+    scenario?: 'start_from_beginning' | 'join_current' | null;
+    lessonsCount?: number | null;
+  },
+): Promise<PurchaseRequestRow | null> {
+  const { data, error } = await admin
+    .from('purchase_requests')
+    .update({
+      title: input.title,
+      amount_byn: input.amountByn,
+      course_slug: input.courseSlug ?? null,
+      scenario: input.scenario ?? null,
+      lessons_count: input.lessonsCount ?? null,
+    })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select(REQUEST_COLUMNS)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as PurchaseRequestRow | null) ?? null;
+}
+
+/**
+ * Одна pending course-заявка на (telegram, product, package, teacher) — см. purchase_requests_pending_unique_idx.
+ * Переиспользует или обновляет существующую вместо второго insert.
+ */
+export async function ensurePendingCoursePurchaseRequest(
+  admin: SupabaseClient,
+  input: {
+    telegramId: number;
+    packageIndex: number;
+    title: string;
+    amountByn: number;
+    courseSlug?: string | null;
+    scenario?: 'start_from_beginning' | 'join_current' | null;
+    lessonsCount?: number | null;
+  },
+): Promise<PurchaseRequestRow> {
+  const teacherId = null;
+  const existing = await findPendingPurchaseRequest(
+    admin,
+    input.telegramId,
+    'course',
+    input.packageIndex,
+    teacherId,
+  );
+  if (existing) {
+    const updated = await updatePendingPurchaseRequestDetails(admin, existing.id, input);
+    if (updated) return updated;
+    throw new Error('Purchase request is no longer pending');
+  }
+
+  try {
+    return await createPurchaseRequest(admin, {
+      telegramId: input.telegramId,
+      product: 'course',
+      packageIndex: input.packageIndex,
+      teacherId,
+      title: input.title,
+      amountByn: input.amountByn,
+      courseSlug: input.courseSlug,
+      scenario: input.scenario,
+      lessonsCount: input.lessonsCount,
+    });
+  } catch (error) {
+    if (!isPostgresUniqueViolation(error)) throw error;
+    const retry = await findPendingPurchaseRequest(
+      admin,
+      input.telegramId,
+      'course',
+      input.packageIndex,
+      teacherId,
+    );
+    if (!retry) throw error;
+    const updated = await updatePendingPurchaseRequestDetails(admin, retry.id, input);
+    if (updated) return updated;
+    throw error;
+  }
 }
 
 export async function setPurchaseRequestStatus(

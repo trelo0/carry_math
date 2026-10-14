@@ -328,17 +328,21 @@ export async function POST(request: Request) {
       update.message?.chat &&
       update.message.from
     ) {
-      await ensureMember(
+      const member = await ensureMember(
         admin,
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
+      const hwRole = resolveEffectiveRoleWithFooter(member, update.message.from.id).role;
       await beginCourseHomeworkSubmit(
         admin,
         update.message.from.id,
         update.message.chat.id,
         startSource.slice('hw_'.length),
       );
+      if (usesClientBotUi(hwRole)) {
+        await refreshClientMenu(admin, update.message.from.id, update.message.chat.id, member.role);
+      }
       return NextResponse.json({ ok: true });
     }
 
@@ -539,6 +543,18 @@ export async function POST(request: Request) {
 
     // Вложения админа (документ или фото): шаблон уведомления или рассылка.
     if (update.message?.document?.file_id && update.message.chat && update.message.from) {
+      const studentDocHandled = await handleStudentHomeworkAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        {
+          fileId: update.message.document.file_id,
+          kind: 'document',
+          fileName: update.message.document.file_name,
+        },
+      );
+      if (studentDocHandled) return NextResponse.json({ ok: true });
+
       const clientLessonHwDoc = await handleClientLessonHomeworkAttachment(
         admin,
         update.message.from.id,
@@ -570,18 +586,6 @@ export async function POST(request: Request) {
         update.message.document.file_id,
       );
       if (curatorDocHandled) return NextResponse.json({ ok: true });
-
-      const studentDocHandled = await handleStudentHomeworkAttachment(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        {
-          fileId: update.message.document.file_id,
-          kind: 'document',
-          fileName: update.message.document.file_name,
-        },
-      );
-      if (studentDocHandled) return NextResponse.json({ ok: true });
 
       const mentorDocHandled = await handleStudentMentorAttachment(
         admin,
@@ -630,6 +634,14 @@ export async function POST(request: Request) {
     if (update.message?.photo?.length && update.message.chat && update.message.from) {
       const largest = update.message.photo[update.message.photo.length - 1];
       if (largest?.file_id) {
+        const studentPhotoHandled = await handleStudentHomeworkAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (studentPhotoHandled) return NextResponse.json({ ok: true });
+
         const clientLessonHwPhoto = await handleClientLessonHomeworkAttachment(
           admin,
           update.message.from.id,
@@ -645,14 +657,6 @@ export async function POST(request: Request) {
           { fileId: largest.file_id, kind: 'photo' },
         );
         if (teacherPhotoHandled) return NextResponse.json({ ok: true });
-
-        const studentPhotoHandled = await handleStudentHomeworkAttachment(
-          admin,
-          update.message.from.id,
-          update.message.chat.id,
-          { fileId: largest.file_id, kind: 'photo' },
-        );
-        if (studentPhotoHandled) return NextResponse.json({ ok: true });
 
         const mentorPhotoHandled = await handleStudentMentorAttachment(
           admin,

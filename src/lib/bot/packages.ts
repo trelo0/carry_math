@@ -263,6 +263,14 @@ export async function completeCoursePurchaseSideEffects(
       options.lessons,
       courseContent,
     );
+    const { syncJoinCurrentEnrollmentAccess } = await import('./education/course-access');
+    await syncJoinCurrentEnrollmentAccess(
+      admin,
+      telegramId,
+      options.courseId,
+      courseContent,
+      options.packageId,
+    );
   } catch (error) {
     if (!isCourseAccessTableError(error)) throw error;
   }

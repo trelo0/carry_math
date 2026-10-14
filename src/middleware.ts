@@ -23,5 +23,7 @@ export const config = {
     "/auth/:path*",
     "/login",
     "/account",
+    "/api/payments/:path*",
+    "/api/cabinet/:path*",
   ],
 };

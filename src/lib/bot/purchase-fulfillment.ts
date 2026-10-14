@@ -6,6 +6,7 @@ import {
   loadPurchaseFulfillmentSnapshot,
   type PurchaseFulfillmentSnapshot,
 } from './purchase-verification';
+import { resetTrialHomeworkDeadlineOnCoursePurchase } from '@/lib/bot/education/homework-deadline';
 import {
   getCoursePaymentOfferBySlug,
   getDistrictCourseContent,
@@ -291,6 +292,33 @@ export async function fulfillPurchase(
     }
   }
 
+  if (input.product === 'course' && resolvedCourseId && input.scenario) {
+    const { data: existingScenarioRow } = await admin
+      .from('course_enrollments')
+      .select('purchase_scenario')
+      .eq('telegram_id', telegramId)
+      .eq('course_id', resolvedCourseId)
+      .maybeSingle();
+    if (!existingScenarioRow?.purchase_scenario) {
+      const { error: earlyEnrollmentError } = await admin.from('course_enrollments').upsert(
+        {
+          telegram_id: telegramId,
+          course_id: resolvedCourseId,
+          status: 'active',
+          purchase_scenario: input.scenario,
+          start_module_id: startModuleId,
+          start_lesson_id: startLessonId,
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'telegram_id,course_id' },
+      );
+      if (earlyEnrollmentError) {
+        console.error('[purchase-fulfillment] Early enrollment scenario save failed:', earlyEnrollmentError);
+      }
+    }
+  }
+
   const { packageId } = await completeProductPurchase(admin, telegramId, input.product, {
     title: offer.title,
     lessons: offer.lessons,
@@ -304,30 +332,39 @@ export async function fulfillPurchase(
     purchaseRequestId: input.purchaseRequestId,
   });
 
-  // Сохраняем сценарий и стартовое состояние в course_enrollments
-  if (input.product === 'course' && resolvedCourseId && input.scenario) {
+  if (input.product === 'course' && resolvedCourseId) {
     try {
-      const { error: enrollmentError } = await admin
-        .from('course_enrollments')
-        .upsert(
-          {
-            telegram_id: telegramId,
-            course_id: resolvedCourseId,
-            status: 'active',
-            purchase_scenario: input.scenario,
-            start_module_id: startModuleId,
-            start_lesson_id: startLessonId,
-            started_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'telegram_id,course_id' },
-        );
+      if (input.scenario) {
+        const { data: existingEnrollment } = await admin
+          .from('course_enrollments')
+          .select('purchase_scenario')
+          .eq('telegram_id', telegramId)
+          .eq('course_id', resolvedCourseId)
+          .maybeSingle();
 
-      if (enrollmentError) {
-        console.error('[purchase-fulfillment] Failed to save enrollment scenario:', enrollmentError);
+        if (!existingEnrollment?.purchase_scenario) {
+          const { error: enrollmentError } = await admin.from('course_enrollments').upsert(
+            {
+              telegram_id: telegramId,
+              course_id: resolvedCourseId,
+              status: 'active',
+              purchase_scenario: input.scenario,
+              start_module_id: startModuleId,
+              start_lesson_id: startLessonId,
+              started_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'telegram_id,course_id' },
+          );
+          if (enrollmentError) {
+            console.error('[purchase-fulfillment] Failed to save enrollment scenario:', enrollmentError);
+          }
+        }
       }
+
+      await resetTrialHomeworkDeadlineOnCoursePurchase(admin, telegramId, courseSlug);
     } catch (error) {
-      console.error('[purchase-fulfillment] Failed to save enrollment scenario:', error);
+      console.error('[purchase-fulfillment] Course post-purchase hooks failed:', error);
     }
   }
 

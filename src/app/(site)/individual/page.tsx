@@ -1,6 +1,7 @@
 import HomePageClient from '../HomePageClient';
 
 import { draftMode } from 'next/headers';
+import { preload } from 'react-dom';
 
 import { getIndividualPageBundle, getSiteSettings } from '@/lib/studio/sanityData';
 import { withTeacherPhotoUrls } from '@/lib/studio/teacherPhotos';
@@ -39,6 +40,9 @@ export default async function IndividualPage() {
   for (const teacher of teachersWithPhotos) {
     const id = matchCabinetTeacherId(teacher.name, cabinetTeachers);
     if (id) teacherLeadIds[teacher._id] = id;
+    if (teacher.photoUrl) {
+      preload(teacher.photoUrl, { as: 'image', fetchPriority: 'high' });
+    }
   }
 
   return (

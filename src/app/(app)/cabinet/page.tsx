@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { isCreatorTelegramId, isStaffOnlyMember, loadMemberRoles } from '@/lib/bot/roles';
+import { isCreatorTelegramId } from '@/lib/bot/roles';
 import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
+import { resolveCabinetEntryPathForPhone } from '@/lib/cabinet-auth';
 import { getCabinetData } from '@/lib/cabinet';
 import CabinetShell from '@/components/cabinet/CabinetShell';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
@@ -72,31 +73,27 @@ export default async function CabinetPage({
 
   const phone =
     (data.user.user_metadata?.phone as string) ?? data.user.phone ?? '';
-  const cabinet = await getCabinetData(phone, data.user.created_at, sp.course);
+
+  try {
+    const admin = createAdminClient();
+    const entryPath = await resolveCabinetEntryPathForPhone(admin, phone, returnTo);
+    if (entryPath !== returnTo) {
+      redirect(entryPath);
+    }
+  } catch {
+    // service role недоступен — грузим ученический кабинет как раньше
+  }
+
+  const cabinet = await getCabinetData(phone, data.user.created_at, sp.course, {
+    loadMapProgress: false,
+  });
 
   if (!cabinet.telegramLinked) {
     return <CabinetTelegramGate returnTo={returnTo} />;
   }
 
-  let showCabinetPick = false;
-  try {
-    const admin = createAdminClient();
-    const { data: link } = await admin
-      .from('telegram_links')
-      .select('telegram_id')
-      .eq('phone', phone)
-      .maybeSingle();
-    if (link?.telegram_id) {
-      const telegramId = link.telegram_id as number;
-      showCabinetPick = isCreatorTelegramId(telegramId);
-      const roles = await loadMemberRoles(admin, telegramId);
-      if (isStaffOnlyMember(roles) && !isCreatorTelegramId(telegramId)) {
-        redirect('/cabinet/staff');
-      }
-    }
-  } catch {
-    // service role недоступен — показываем ученический кабинет
-  }
+  const showCabinetPick =
+    cabinet.telegramId != null && isCreatorTelegramId(cabinet.telegramId);
 
   return (
     <CabinetShell

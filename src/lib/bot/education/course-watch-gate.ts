@@ -35,6 +35,13 @@ async function afterProgressMaybeCompleteAndUnlock(
   const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
   if (!lesson) return;
 
+  const courseId = await resolveCourseIdForContent(admin, content);
+  const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+    './course-enrollment-start'
+  );
+  const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
+  if (isJoinArchiveSanityId(joinGate, sanityLessonId)) return;
+
   const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
   const done = isLessonProgressCompleted({
     recordingWatchedAt: progress.recording_watched_at,
@@ -56,7 +63,6 @@ async function afterProgressMaybeCompleteAndUnlock(
   if (lesson.isTrialFree && !hasCourseProduct) return;
 
   try {
-    const courseId = await resolveCourseIdForContent(admin, content);
     if (courseId) {
       await unlockNextCourseLessonAfterCleared(admin, telegramId, courseId, content);
     }
@@ -71,8 +77,17 @@ async function startDeadlineIfNeeded(
   sanityLessonId: string,
   lesson: { isTrialFree: boolean },
   hasCourseProduct: boolean,
+  content: Awaited<ReturnType<typeof getDistrictCourseContent>>,
 ): Promise<void> {
   if (lesson.isTrialFree && !hasCourseProduct) return;
+  const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
+  const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+    './course-enrollment-start'
+  );
+  if (content && courseId) {
+    const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
+    if (isJoinArchiveSanityId(joinGate, sanityLessonId)) return;
+  }
   try {
     await ensureHomeworkDeadlineStarted(admin, telegramId, sanityLessonId, { hasAccess: true });
   } catch (error) {
@@ -94,7 +109,7 @@ export async function watchRecordingWithAccessGate(
 
   const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
   const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct);
+  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct, content);
   const progress = await markRecordingWatched(admin, telegramId, { sanityLessonId }, watchPercent);
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
   return progress;
@@ -114,7 +129,7 @@ export async function watchLiveWithAccessGate(
 
   const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
   const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct);
+  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct, content);
   const progress = await markLiveAttended(admin, telegramId, { sanityLessonId }, watchPercent);
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
   return progress;

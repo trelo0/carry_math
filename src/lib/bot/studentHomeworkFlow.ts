@@ -85,14 +85,16 @@ export async function beginCourseHomeworkSubmit(
         : null;
 
   const text = [
-    '📝 Сдать домашнее задание',
+    '📝 Сдача домашнего задания',
     '',
-    `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
+    `Занятие №${lesson.lessonNumber}: ${lesson.title}`,
     remaining != null ? `⏱ Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
     '',
-    'Отправьте файл с заданием (фото или документ).',
+    '1️⃣ Отправьте файл с решением (фото или документ).',
+    '2️⃣ При необходимости добавьте комментарий.',
+    '3️⃣ Нажмите «Отправить на проверку».',
     '',
-    'После файла можно добавить комментарий — затем подтвердите отправку.',
+    'Можно отменить в любой момент.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -176,7 +178,7 @@ export async function handleStudentHomeworkMessage(
       {
         inline_keyboard: [
           [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
-          [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+          [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
         ],
       },
     );
@@ -233,7 +235,7 @@ async function sendConfirmPrompt(chatId: number, payload: SubmitPayload): Promis
   await sendAdminMessage(chatId, lines.join('\n'), {
     inline_keyboard: [
       [{ text: '✅ Отправить на проверку', callback_data: 'chw:confirm' }],
-      [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+      [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
     ],
   });
 }
@@ -262,11 +264,11 @@ export async function handleStudentHomeworkAttachment(
 
   await sendAdminMessage(
     chatId,
-    '📎 Файл получен.\n\nМожете написать комментарий к ДЗ (необязательно) или нажать «Пропустить комментарий».',
+    '📎 Файл получен.\n\nНапишите комментарий к ДЗ (необязательно) или нажмите «Пропустить комментарий».',
     {
       inline_keyboard: [
         [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
-        [{ text: '❌ Отмена', callback_data: 'chw:cancel' }],
+        [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
       ],
     },
   );
@@ -299,6 +301,20 @@ export async function handleCourseHomeworkCallback(
   const payload = state.payload as SubmitPayload;
   const sanityLessonId = payload.sanityLessonId;
   if (!sanityLessonId) return true;
+
+  if (data === 'chw:back') {
+    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_FILE_STEP, {
+      ...payload,
+      draftNote: undefined,
+      draftFileUrl: undefined,
+    });
+    await sendAdminMessage(
+      chatId,
+      'Отправьте файл с решением (фото или документ) или текст задания одним сообщением.',
+      cancelKeyboard(),
+    );
+    return true;
+  }
 
   if (data === 'chw:skip') {
     await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_CONFIRM_STEP, payload);

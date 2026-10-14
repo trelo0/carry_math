@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PurchaseRequestRow } from '@/lib/bot/purchase-requests';
 import { completeCoursePurchaseSideEffects } from '@/lib/bot/packages';
+import { resetTrialHomeworkDeadlineOnCoursePurchase } from '@/lib/bot/education/homework-deadline';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 export type CourseFulfillContext = {
@@ -92,4 +93,10 @@ export async function runCourseSideEffectsAfterFulfill(
     lessons,
     curatorTelegramId: courseContext.curatorTelegramId ?? undefined,
   });
+
+  await resetTrialHomeworkDeadlineOnCoursePurchase(
+    admin,
+    purchaseRequest.telegram_id,
+    purchaseRequest.course_slug,
+  );
 }

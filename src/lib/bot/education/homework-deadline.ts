@@ -399,3 +399,54 @@ export async function ensureOverdueMarked(
   }
   return Boolean(data) || Boolean(row.homework_overdue_at);
 }
+
+/**
+ * После первой оплаты курса: на пробном занятии таймер ДЗ снова 72 ч (если ДЗ ещё не принято).
+ */
+export async function resetTrialHomeworkDeadlineOnCoursePurchase(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseSlug?: string | null,
+): Promise<void> {
+  const content = await getDistrictCourseContent(courseSlug || undefined).catch(() => null);
+  if (!content) return;
+  const trial = flattenCourseLessons(content).find((l) => l.isTrialFree);
+  if (!trial?.sanityId) return;
+
+  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId);
+  if (row?.homework_status === 'approved') return;
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const deadlineIso = new Date(now.getTime() + HOMEWORK_DEADLINE_MS).toISOString();
+  const patch = {
+    lesson_first_opened_at: row?.lesson_first_opened_at ?? nowIso,
+    homework_deadline_at: deadlineIso,
+    homework_remaining_ms: HOMEWORK_DEADLINE_MS,
+    homework_overdue_at: null,
+    hw_remind_12h_at: null,
+    hw_remind_6h_at: null,
+    hw_remind_2h_at: null,
+    hw_overdue_student_at: null,
+    hw_overdue_curator_at: null,
+    updated_at: nowIso,
+  };
+
+  if (row) {
+    const { error } = await admin
+      .from('course_lesson_student_progress')
+      .update(patch)
+      .eq('telegram_id', telegramId)
+      .eq('sanity_lesson_id', trial.sanityId);
+    if (error && !isMissingColumnError(error)) throw error;
+    return;
+  }
+
+  const { error: insertError } = await admin.from('course_lesson_student_progress').insert({
+    telegram_id: telegramId,
+    sanity_lesson_id: trial.sanityId,
+    homework_status: 'pending',
+    ...patch,
+  });
+  if (insertError && !isMissingColumnError(insertError)) throw insertError;
+}

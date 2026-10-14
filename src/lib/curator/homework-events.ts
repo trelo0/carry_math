@@ -31,11 +31,16 @@ export async function notifyCuratorHomeworkSubmitted(
   const lesson = findLessonBySanityId(content, sanityLessonId);
   if (!lesson) return;
 
-  const curator = await getStudentCurator(admin, studentTelegramId);
-  if (!curator) return;
+  // TODO(spec): когда появится роль spec — слать сначала назначенному spec; пока куратор курса / персональный куратор.
+  let recipientTelegramId: number | null = content.curatorTelegramId ?? null;
+  if (recipientTelegramId == null) {
+    const curator = await getStudentCurator(admin, studentTelegramId);
+    recipientTelegramId = curator?.telegramId ?? null;
+  }
+  if (!recipientTelegramId) return;
 
   const studentName = await studentDisplayName(admin, studentTelegramId);
-  await sendSubmissionToCurator(admin, curator.telegramId, {
+  await sendSubmissionToCurator(admin, recipientTelegramId, {
     studentName,
     lessonNumber: lesson.lessonNumber,
     title: lesson.title,

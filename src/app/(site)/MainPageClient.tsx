@@ -1,8 +1,10 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
-import MainFaq from '@/components/ui/MainFaq';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
+
+const MainFaq = dynamic(() => import('@/components/ui/MainFaq'));
 import { useForm } from '@/contexts/FormContext';
 import type { MainPageContent } from '@/data/mainPageContent';
 import {
@@ -331,9 +333,17 @@ export default function MainPageClient({
       });
     };
 
-    sync();
-    const raf = requestAnimationFrame(sync);
-    const ro = new ResizeObserver(sync);
+    let rafId = 0;
+    const scheduleSync = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        sync();
+      });
+    };
+
+    scheduleSync();
+    const ro = new ResizeObserver(scheduleSync);
     ro.observe(notes);
     const plate = document.querySelector('.mentor-plate');
     const quote = notes.querySelector('.teacher-quote');
@@ -343,11 +353,11 @@ export default function MainPageClient({
     if (quote) ro.observe(quote);
     if (verify) ro.observe(verify);
     if (badges) ro.observe(badges);
-    window.addEventListener('resize', sync);
+    window.addEventListener('resize', scheduleSync, { passive: true });
     return () => {
-      cancelAnimationFrame(raf);
+      if (rafId) cancelAnimationFrame(rafId);
       ro.disconnect();
-      window.removeEventListener('resize', sync);
+      window.removeEventListener('resize', scheduleSync);
     };
   }, []);
 
@@ -465,7 +475,8 @@ export default function MainPageClient({
                   width={900}
                   height={1449}
                   decoding="async"
-                  loading="lazy"
+                  loading="eager"
+                  fetchPriority="high"
                 />
                 <div className="mentor-plate">
                   <span className="mentor-class">{mentorClass}</span>

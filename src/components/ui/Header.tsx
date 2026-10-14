@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -205,10 +206,10 @@ export function Header({
 
       {isDesktop && !authLoading ? (
         phone ? (
-          <a href="/cabinet" className="header-account" title={phone}>
+          <Link href="/cabinet" className="header-account" title={phone} prefetch>
             <span className="header-account-dot" aria-hidden="true" />
             Кабинет курса
-          </a>
+          </Link>
         ) : (
           <button type="button" className="header-cta btn btn-gold" onClick={() => openAuth()}>
             Войти на курс
@@ -264,14 +265,15 @@ export function Header({
         </nav>
         {!authLoading ? (
           phone ? (
-            <a
+            <Link
               href="/cabinet"
               className="mobile-menu-account"
+              prefetch
               onClick={() => setMenuOpen(false)}
             >
               <span className="header-account-dot" aria-hidden="true" />
               Кабинет курса
-            </a>
+            </Link>
           ) : (
             <button
               type="button"

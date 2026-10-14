@@ -48,7 +48,8 @@ export class CourseHomeworkError extends Error {
       | 'ALREADY_SUBMITTED'
       | 'NOT_SUBMITTED'
       | 'NOT_ASSIGNED'
-      | 'INVALID_STATUS',
+      | 'INVALID_STATUS'
+      | 'NOT_REQUIRED',
   ) {
     super(message);
     this.name = 'CourseHomeworkError';
@@ -160,14 +161,7 @@ export async function resolveSubmitTargetLesson(
   const content = await getDistrictCourseContent();
   if (!content) return null;
 
-  const { data: accessProduct } = await admin
-    .from('user_accesses')
-    .select('id')
-    .eq('telegram_id', telegramId)
-    .eq('product', 'course')
-    .eq('status', 'active')
-    .maybeSingle();
-  const hasCourseProduct = Boolean(accessProduct);
+  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
 
   const lessons = flattenCourseLessons(content)
     .filter((l) => l.publicationStatus === 'published')
@@ -214,11 +208,70 @@ export async function resolveSubmitTargetLesson(
     if (preferred) {
       return { lesson: preferred, progress: progressMap.get(preferred.sanityId) ?? null };
     }
+    const direct = await resolveSubmitLessonForSanityId(
+      admin,
+      telegramId,
+      preferredSanityLessonId,
+      { content, hasCourseProduct, accessMap, progressMap, sessionMap },
+    );
+    if (direct) return direct;
   }
 
   const first = candidates[0];
   if (!first) return null;
   return { lesson: first, progress: progressMap.get(first.sanityId) ?? null };
+}
+
+/** Сдача по deep-link из кабинета: конкретное занятие, если оно готово к отправке. */
+export async function resolveSubmitLessonForSanityId(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+  cached?: {
+    content: DistrictCourseContent;
+    hasCourseProduct: boolean;
+    accessMap: Map<string, string>;
+    progressMap: Map<string, CourseLessonStudentProgress>;
+    sessionMap: Map<string, import('@/lib/curator/lesson-session').SanityLessonSessionRow>;
+  },
+): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null } | null> {
+  const content = cached?.content ?? (await getDistrictCourseContent());
+  if (!content) return null;
+  const hasCourseProduct =
+    cached?.hasCourseProduct ?? (await studentHasCourseProductAccess(admin, telegramId));
+
+  const lesson = findLessonBySanityId(content, sanityLessonId);
+  if (!lesson || lesson.publicationStatus !== 'published') return null;
+  if (lesson.isTrialFree && !hasCourseProduct) return null;
+
+  const accessMap =
+    cached?.accessMap ??
+    new Map(
+      (
+        await admin
+          .from('course_lesson_access')
+          .select('sanity_lesson_id, access_status')
+          .eq('telegram_id', telegramId)
+          .eq('sanity_lesson_id', sanityLessonId)
+      ).data?.map((r) => [r.sanity_lesson_id as string, r.access_status as string]) ?? [],
+    );
+  const access = accessMap.get(sanityLessonId);
+  if (!access || access === 'revoked') return null;
+
+  const progress =
+    cached?.progressMap.get(sanityLessonId) ??
+    ((await loadProgress(admin, telegramId, sanityLessonId)) as CourseLessonStudentProgress | null);
+  const sessionMap =
+    cached?.sessionMap ?? (await loadSanityLessonSessionMap(admin, [sanityLessonId]));
+  const sessionStatus = resolveWebinarSessionStatus(
+    lesson.scheduledAt,
+    sessionMap.get(sanityLessonId),
+  );
+  if (!lessonReadyForSubmit(lesson, progress ?? undefined, sessionStatus)) return null;
+  const status = progress?.homework_status ?? 'pending';
+  if (status !== 'pending' && status !== 'rejected') return null;
+
+  return { lesson, progress };
 }
 
 export async function markHomeworkSubmitted(
@@ -237,8 +290,27 @@ export async function markHomeworkSubmitted(
     throw new CourseHomeworkError('Сдача ДЗ доступна после покупки пакета курса.', 'NO_ACCESS');
   }
 
+  const courseIdForGate = await resolveCourseIdForContent(admin, content);
+  if (courseIdForGate) {
+    const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+      './course-enrollment-start'
+    );
+    const joinGate = await loadJoinCurrentGateContext(
+      admin,
+      telegramId,
+      courseIdForGate,
+      content,
+    );
+    if (isJoinArchiveSanityId(joinGate, sanityLessonId)) {
+      throw new CourseHomeworkError(
+        'Для архивного занятия домашнее задание не требуется.',
+        'NOT_REQUIRED',
+      );
+    }
+  }
+
   try {
-    const courseId = await resolveCourseIdForContent(admin, content);
+    const courseId = courseIdForGate;
     if (courseId) {
       const lives = await getEnrollmentLives(admin, telegramId, courseId);
       if (lives?.fully_blocked) {

@@ -125,7 +125,16 @@ export function buildCabinetPreviewData(
         : [],
     payments:
       variant === 'full'
-        ? [{ id: '1', date: '24.09.2026', title: 'Курс District', price: '120', status: 'paid' }]
+        ? [
+            {
+              id: '1',
+              date: '24.09.2026',
+              title: 'Курс District',
+              price: '120',
+              status: 'paid' as const,
+              product: 'course' as const,
+            },
+          ]
         : [],
     profile: {
       name: 'Иван Петров',
@@ -145,6 +154,8 @@ export function buildCabinetPreviewData(
     courseMapViewed: variant !== 'preview',
     memberRoles: ['student'],
     achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
+    telegramId: null,
+    courseMapProgressLoaded: true,
   };
 }
 

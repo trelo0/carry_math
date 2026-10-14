@@ -1,7 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
+import type {
+  CourseMapAccessState,
+  HomeworkProgressStatus,
+} from '@/lib/bot/education/course-progress';
+import { purchaseScenarioLabel, sumActiveCoursePackages } from '@/lib/course-purchase-scenario';
+import { lessonGateMessage, lessonMapChipLabel } from '@/lib/cabinet-lesson-labels';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type {
@@ -20,6 +25,7 @@ import {
   buildStopsFromCatalogPreviews,
   getCourseCabinetState,
   hasCourseCatalogOffer,
+  hasViewedCourseMap,
   lessonPathForStop,
   mapContentToCourseModules,
   mapContentToStructureStops,
@@ -68,8 +74,46 @@ type CourseStop = {
   homeworkOverdueAt?: string | null;
   lessonProgressPercent?: number;
   isTrialFree?: boolean;
+  mapAccessState?: CourseMapAccessState;
+  isScheduleActive?: boolean;
+  isFirstChainGate?: boolean;
+  isJoinArchive?: boolean;
+  isStreamActiveModule?: boolean;
+  isCurrent?: boolean;
+  webinarSessionStatus?: CabinetCourseStop['webinarSessionStatus'];
 };
 
+function mapCabinetStopToCourseStop(s: CabinetCourseStop): CourseStop {
+  return {
+    id: s.id,
+    sanityLessonId: s.sanityLessonId,
+    lessonId: s.lessonId,
+    module: s.module,
+    numInModule: s.numInModule,
+    status: s.status,
+    kind: s.kind,
+    title: s.title,
+    date: s.date,
+    liveUrl: s.liveUrl,
+    recordingUrl: s.recordingUrl,
+    description: s.description,
+    materials: s.materials,
+    homeworkFiles: s.homeworkFiles,
+    homeworkStatus: s.homeworkStatus,
+    homeworkDeadlineAt: s.homeworkDeadlineAt,
+    homeworkRemainingMs: s.homeworkRemainingMs,
+    homeworkOverdueAt: s.homeworkOverdueAt,
+    lessonProgressPercent: s.lessonProgressPercent,
+    isTrialFree: s.isTrialFree,
+    mapAccessState: s.mapAccessState,
+    isScheduleActive: s.isScheduleActive,
+    isCurrent: s.isCurrent,
+    webinarSessionStatus: s.webinarSessionStatus,
+    isFirstChainGate: s.isFirstChainGate,
+    isJoinArchive: s.isJoinArchive,
+    isStreamActiveModule: s.isStreamActiveModule,
+  };
+}
 
 const SANITY_PLACEHOLDER = 'ВВЕДИТЕ ТЕКСТ';
 
@@ -343,15 +387,31 @@ const ROAD_TONE_STYLE: Record<RoadTone, { glow: string; ribbon: string; rim: str
   },
 };
 
-function stopLabel(status: StopStatus, homeworkStatus?: HomeworkProgressStatus | null): string {
-  if (status === 'done' || homeworkStatus === 'approved') return 'Пройдено';
-  if (status === 'watched') {
-    if (homeworkStatus === 'submitted') return 'ДЗ на проверке';
-    if (homeworkStatus === 'rejected') return 'ДЗ на доработке';
-    return 'Сдайте ДЗ';
-  }
-  if (status === 'now') return 'Сейчас';
-  return 'Закрыто';
+function stopLabel(
+  stop: Pick<
+    CourseStop,
+    | 'status'
+    | 'mapAccessState'
+    | 'homeworkStatus'
+    | 'kind'
+    | 'webinarSessionStatus'
+    | 'isFirstChainGate'
+    | 'isTrialFree'
+    | 'isJoinArchive'
+  >,
+  hasCourse: boolean,
+): string {
+  return lessonMapChipLabel({
+    hasCourse,
+    isTrialFree: stop.isTrialFree,
+    mapAccessState: stop.mapAccessState,
+    webinarSessionStatus: stop.webinarSessionStatus,
+    lessonKind: stop.kind,
+    stopStatus: stop.status,
+    homeworkStatus: stop.homeworkStatus,
+    isFirstChainGate: stop.isFirstChainGate,
+    isJoinArchive: stop.isJoinArchive,
+  });
 }
 
 function RoadRibbon({ d, tone }: { d: string; tone: RoadTone }) {
@@ -438,6 +498,7 @@ function CourseMap({
   locked,
   allowLockedSelect,
   showHomeworkTimers = false,
+  hasCourse = false,
   stops = [],
   modules = [],
 }: {
@@ -447,6 +508,7 @@ function CourseMap({
   /** Разрешить выбор закрытых остановок (просмотр структуры без доступа к контенту). */
   allowLockedSelect?: boolean;
   showHomeworkTimers?: boolean;
+  hasCourse?: boolean;
   stops?: CourseStop[];
   modules?: { name: string; color: string; count: number; about?: string }[];
 }) {
@@ -546,13 +608,14 @@ function CourseMap({
             const p = geometry.rmPts[i];
             if (!p) return null;
             const st: StopStatus = locked ? 'locked' : s.status;
-            const label = stopLabel(st, s.homeworkStatus);
+            const label = stopLabel({ ...s, status: st }, hasCourse);
             const modColor = moduleColorAt(modules, s.module);
+            const accessClass = s.mapAccessState ? ` access-${s.mapAccessState}` : '';
             return (
               <div
                 key={s.id}
                 data-stop={s.id}
-                className={`cab-rm-stop is-${st} kind-${s.kind}${!locked && selected === s.id ? ' is-selected' : ''}${i % 2 === 0 ? ' plate-top' : ' plate-bottom'}`}
+                className={`cab-rm-stop is-${st} kind-${s.kind}${accessClass}${s.isScheduleActive ? ' is-schedule-active' : ''}${!locked && selected === s.id ? ' is-selected' : ''}${i % 2 === 0 ? ' plate-top' : ' plate-bottom'}`}
                 style={{
                   left: p.x,
                   top: p.y,
@@ -709,6 +772,9 @@ function formatCabinetLessonDate(date: string | null | undefined): string {
 }
 
 function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
+  if (stop.isJoinArchive) {
+    return { tone: 'done' as const, label: 'Не требуется', action: 'none' as const };
+  }
   const lessonLocked = stop.status === 'locked';
   if (lessonLocked) {
     return {
@@ -729,19 +795,18 @@ function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
     return { tone: 'locked' as const, label: 'Доступно после эфира', action: 'locked' as const };
   }
   if (status === 'approved') {
-    return { tone: 'done' as const, label: 'Одобрено', action: 'view' as const };
+    return { tone: 'done' as const, label: 'Одобрено', action: 'none' as const };
   }
   if (status === 'submitted') {
-    return { tone: 'pending' as const, label: 'Ожидает проверки', action: 'none' as const };
+    return { tone: 'pending' as const, label: 'Ожидает проверки', action: 'check_status' as const };
   }
   if (status === 'rejected') {
     return {
       tone: 'pending' as const,
-      label: 'Отправлено на доработку',
-      action: hasCourse || !stop.isTrialFree ? ('submit' as const) : ('view' as const),
+      label: 'На доработке',
+      action: 'view' as const,
     };
   }
-  // Пробное занятие видно всем, сдача ДЗ — только после покупки курса.
   if (stop.isTrialFree && !hasCourse) {
     return {
       tone: 'locked' as const,
@@ -761,15 +826,29 @@ function moduleLegendStatus(
   const range = moduleRanges[moduleIndex];
   if (!range || range.start < 0) return 'empty';
   const stops = courseStops.slice(range.start, range.end + 1);
-  if (stops.some((s) => s.status === 'now')) return 'current';
-  if (stops.every((s) => s.status === 'done' || s.status === 'watched')) return 'done';
+  const streamModuleIndex = courseStops.find((s) => s.isStreamActiveModule)?.module;
+  if (streamModuleIndex != null) {
+    if (moduleIndex === streamModuleIndex) return 'current';
+    const allCompleted = stops.every(
+      (s) => s.status === 'done' || (s.status === 'watched' && s.homeworkStatus === 'approved'),
+    );
+    if (allCompleted && stops.length > 0) return 'done';
+    if (moduleIndex < streamModuleIndex && stops.some((s) => s.status !== 'locked')) return 'done';
+    return 'locked';
+  }
+  if (stops.some((s) => s.isStreamActiveModule)) return 'current';
+  if (stops.some((s) => s.isCurrent || s.status === 'now')) return 'current';
+  const allCompleted = stops.every(
+    (s) => s.status === 'done' || (s.status === 'watched' && s.homeworkStatus === 'approved'),
+  );
+  if (allCompleted && stops.length > 0) return 'done';
   if (!hasCourse && stops.every((s) => s.status === 'locked')) return 'locked';
-  if (stops.some((s) => s.status === 'done' || s.status === 'watched' || s.status === 'now')) return 'done';
+  if (stops.some((s) => s.status !== 'locked')) return 'current';
   return 'locked';
 }
 
 const MODULE_STATUS_LABELS: Record<'current' | 'done' | 'locked' | 'empty', string> = {
-  current: 'Текущий',
+  current: 'Активный',
   done: 'Пройден',
   locked: 'Заблокирован',
   empty: '—',
@@ -1269,28 +1348,7 @@ export default function CabinetShell({
     clearPaymentQuery();
   }, [initialPaymentResult, clearPaymentQuery]);
   const [signingOut, setSigningOut] = useState(false);
-  const courseStopsFromDb: CourseStop[] = data.courseStops.map((s) => ({
-    id: s.id,
-    sanityLessonId: s.sanityLessonId,
-    lessonId: s.lessonId,
-    module: s.module,
-    numInModule: s.numInModule,
-    status: s.status,
-    kind: s.kind,
-    title: s.title,
-    date: s.date,
-    liveUrl: s.liveUrl,
-    recordingUrl: s.recordingUrl,
-    description: s.description,
-    materials: s.materials,
-    homeworkFiles: s.homeworkFiles,
-    homeworkStatus: s.homeworkStatus,
-    homeworkDeadlineAt: s.homeworkDeadlineAt,
-    homeworkRemainingMs: s.homeworkRemainingMs,
-    homeworkOverdueAt: s.homeworkOverdueAt,
-    lessonProgressPercent: s.lessonProgressPercent,
-    isTrialFree: s.isTrialFree,
-  }));
+  const courseStopsFromDb: CourseStop[] = data.courseStops.map(mapCabinetStopToCourseStop);
   const courseModulesFromCatalog = buildModulesFromCatalogPreviews(data.courseCatalog).map((m) => ({
     name: m.name,
     color: m.color,
@@ -1332,6 +1390,10 @@ export default function CabinetShell({
         homeworkFiles: s.homeworkFiles,
         lessonProgressPercent: s.lessonProgressPercent,
         isTrialFree: s.isTrialFree,
+        mapAccessState: s.mapAccessState,
+        isScheduleActive: s.isScheduleActive,
+        isCurrent: s.isCurrent,
+        webinarSessionStatus: s.webinarSessionStatus,
       }))
     : [];
   const courseStopsFromCatalog: CourseStop[] = buildStopsFromCatalogPreviews(data.courseCatalog).map((s) => ({
@@ -1351,6 +1413,10 @@ export default function CabinetShell({
     homeworkFiles: s.homeworkFiles,
     lessonProgressPercent: s.lessonProgressPercent,
     isTrialFree: s.isTrialFree,
+    mapAccessState: s.mapAccessState,
+    isScheduleActive: s.isScheduleActive,
+    isCurrent: s.isCurrent,
+    webinarSessionStatus: s.webinarSessionStatus,
   }));
   const baseCourseStops =
     courseStopsFromDb.length > 0
@@ -1507,28 +1573,7 @@ export default function CabinetShell({
       : catalogModulesFallback;
 
   const courseStops: CourseStop[] = sliceMatchesActive
-    ? courseSlice!.courseStops.map((s) => ({
-        id: s.id,
-        sanityLessonId: s.sanityLessonId,
-        lessonId: s.lessonId,
-        module: s.module,
-        numInModule: s.numInModule,
-        status: s.status,
-        kind: s.kind,
-        title: s.title,
-        date: s.date,
-        liveUrl: s.liveUrl,
-        recordingUrl: s.recordingUrl,
-        description: s.description,
-        materials: s.materials,
-        homeworkFiles: s.homeworkFiles,
-        homeworkStatus: s.homeworkStatus,
-        homeworkDeadlineAt: s.homeworkDeadlineAt,
-        homeworkRemainingMs: s.homeworkRemainingMs,
-        homeworkOverdueAt: s.homeworkOverdueAt,
-        lessonProgressPercent: s.lessonProgressPercent,
-        isTrialFree: s.isTrialFree,
-      }))
+    ? courseSlice!.courseStops.map(mapCabinetStopToCourseStop)
     : data.courseCatalog?.id === activeCourseId
       ? baseCourseStops
       : [];
@@ -1583,6 +1628,47 @@ export default function CabinetShell({
     courseCacheRef.current.set(slug, slice);
     return slice;
   }, []);
+
+  useEffect(() => {
+    if (data.courseMapProgressLoaded) return;
+    const slug = data.courseCatalog?.slug;
+    if (!slug) return;
+
+    const gateSlice = {
+      courseMapViewed: data.courseMapViewed,
+      accesses: data.accesses,
+      packages: data.packages,
+    };
+    const state = getCourseCabinetState(gateSlice);
+    if (!hasViewedCourseMap(gateSlice) && state === 'preview') return;
+
+    let cancelled = false;
+    setCourseSwitching(true);
+    void (async () => {
+      try {
+        const slice = await fetchCourseSlice(slug);
+        if (cancelled) return;
+        setCourseSlice(slice);
+        setStopId(
+          slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0,
+        );
+      } catch (error) {
+        console.error('[cabinet] map hydrate failed:', error);
+      } finally {
+        if (!cancelled) setCourseSwitching(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    data.courseMapProgressLoaded,
+    data.courseCatalog?.slug,
+    data.courseMapViewed,
+    data.accesses,
+    data.packages,
+    fetchCourseSlice,
+  ]);
 
   const selectCourse = useCallback(
     async (course: SwitcherCourse | { id: number; slug: string; title: string }) => {
@@ -1680,10 +1766,11 @@ export default function CabinetShell({
   const myPackages = data.packages;
   const pkgHistory = data.payments;
   const coursePackage = myPackages.find((p) => p.product === 'course');
+  const coursePkgAgg = useMemo(() => sumActiveCoursePackages(myPackages), [myPackages]);
+  const activeCourseEnrollment = data.courseEnrollments.find((e) => e.courseId === activeCourseId);
+  const activeScenarioLabel = purchaseScenarioLabel(activeCourseEnrollment?.purchaseScenario ?? null);
   const coursePaymentHistory = pkgHistory.filter(
-    (h) =>
-      h.title.toLowerCase().includes('курс') ||
-      (coursePackage?.title && h.title.includes(coursePackage.title)),
+    (h) => h.status === 'paid' && h.product === 'course',
   );
 
   const emptyStopModule = { name: '—', color: '#ccc', count: 0, about: '' };
@@ -2048,6 +2135,7 @@ export default function CabinetShell({
                           onSelect={setStopId}
                           allowLockedSelect={hasCourse || courseState === 'enrolled_locked'}
                           showHomeworkTimers={hasCourse}
+                          hasCourse={hasCourse}
                           stops={mapCourseStops}
                           modules={courseModules}
                         />
@@ -2080,7 +2168,9 @@ export default function CabinetShell({
                           <Icon d={ICONS.homework} />
                           Домашние задания
                         </h3>
-                        <p>{sanityText(homeworkIntro)}</p>
+                        {homeworkIntro?.trim() ? (
+                          <p>{sanityText(homeworkIntro)}</p>
+                        ) : null}
                       </div>
                       <span className="cab-hw-info">
                         <Icon d={ICONS.info} strokeWidth={1.6} />
@@ -2137,6 +2227,17 @@ export default function CabinetShell({
                                 <Icon d={ICONS.file} />
                                 {hw.label.includes('покупки') ? 'Сдача после покупки курса' : 'Доступно после вебинара'}
                               </span>
+                            ) : hw.action === 'check_status' && s.sanityLessonId ? (
+                              <a
+                                className="cab-hw-action is-active"
+                                href={tgBotUrl(`hw_${s.sanityLessonId}`)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Icon d={ICONS.homework} />
+                                Проверить статус
+                                <Icon d={ICONS.chevron} />
+                              </a>
                             ) : hw.action === 'submit' && s.sanityLessonId ? (
                               <a
                                 className="cab-hw-action is-active"
@@ -2145,7 +2246,7 @@ export default function CabinetShell({
                                 rel="noopener noreferrer"
                               >
                                 <Icon d={ICONS.homework} />
-                                Сдать ДЗ
+                                Сдать ДЗ в Telegram
                                 <Icon d={ICONS.chevron} />
                               </a>
                             ) : (
@@ -2163,70 +2264,96 @@ export default function CabinetShell({
                 </section>
 
                 {courseTab === 'program' && stop && (
-                  stop.status === 'locked' ? (
+                  stop.status === 'locked' && !stop.isTrialFree ? (
                     <section className="cab-panel cab-lesson-panel cab-lesson-panel--v2 cab-lesson-panel--standalone">
                       <header className="cab-lesson-v2-head">
-                        <div className="cab-lesson-v2-module">
-                          <i style={{ background: stopModule.color }} aria-hidden="true" />
-                          <span>{`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()}`}</span>
+                        <div className="cab-lesson-v2-head-main">
+                          <div className="cab-lesson-v2-module">
+                            <i style={{ background: stopModule.color }} aria-hidden="true" />
+                            <span>{`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()}`}</span>
+                          </div>
+                          <span className="cab-lesson-v2-sub">
+                            Занятие {stop.numInModule} из {stopModule.count}
+                          </span>
                         </div>
-                        <span className="cab-lesson-v2-sub">
-                          Занятие {stop.numInModule} из {stopModule.count}
-                        </span>
-                        <span className="cab-lesson-v2-badge is-locked">Закрыто</span>
+                        <div className="cab-lesson-v2-badges">
+                          <span className="cab-lesson-v2-badge is-locked">Закрыто</span>
+                        </div>
                       </header>
                       <div className="cab-lesson-v2-about" style={{ padding: '1.25rem 1.5rem 1.5rem' }}>
                         <h4>{stop.title}</h4>
                         <p>
-                          {hasCourse
-                            ? 'Занятие откроется после того, как куратор одобрит домашнее задание по предыдущему уроку.'
-                            : 'Купите курс или откройте пробное занятие, чтобы начать обучение.'}
+                          {lessonGateMessage({
+                            hasCourse,
+                            mapAccessState: selectedCabinetStop?.mapAccessState ?? stop.mapAccessState,
+                            webinarSessionStatus:
+                              selectedCabinetStop?.webinarSessionStatus ?? stop.webinarSessionStatus,
+                            lessonKind: stop.kind,
+                            isFirstChainGate:
+                              selectedCabinetStop?.isFirstChainGate ?? stop.isFirstChainGate,
+                            isTrialFree:
+                              selectedCabinetStop?.isTrialFree ?? stop.isTrialFree,
+                            isJoinArchive:
+                              selectedCabinetStop?.isJoinArchive ?? stop.isJoinArchive,
+                          })}
                         </p>
                       </div>
                     </section>
                   ) : (
                     <section className="cab-panel cab-lesson-panel cab-lesson-panel--v2 cab-lesson-panel--standalone">
                       <header className="cab-lesson-v2-head">
-                        <div className="cab-lesson-v2-module">
-                          <i style={{ background: stopModule.color }} aria-hidden="true" />
-                          <span>{`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()}`}</span>
+                        <div className="cab-lesson-v2-head-main">
+                          <div className="cab-lesson-v2-module">
+                            <i style={{ background: stopModule.color }} aria-hidden="true" />
+                            <span>{`${String(stop.module + 1).padStart(2, '0')} · ${stopModule.name.toUpperCase()}`}</span>
+                          </div>
+                          <span className="cab-lesson-v2-sub">
+                            Занятие {stop.numInModule} из {stopModule.count}
+                          </span>
                         </div>
-                        <span className="cab-lesson-v2-sub">
-                          Занятие {stop.numInModule} из {stopModule.count}
-                        </span>
-                        {(stop.isTrialFree || selectedCabinetStop?.isTrialFree) && (
-                          <span className="cab-lesson-v2-badge is-trial">Пробное</span>
-                        )}
-                        {selectedCabinetStop?.isCurrent && hasCourse && (
-                          <span className="cab-lesson-v2-badge is-now">Сейчас</span>
-                        )}
-                        {hasCourse && stop.status === 'watched' && selectedCabinetStop?.homeworkStatus === 'submitted' && (
-                          <span className="cab-lesson-v2-badge is-pending">ДЗ на проверке</span>
-                        )}
-                        {hasCourse &&
-                          stop.status === 'watched' &&
-                          selectedCabinetStop?.homeworkStatus !== 'submitted' &&
-                          selectedCabinetStop?.homeworkStatus !== 'approved' &&
-                          !(stop.isTrialFree && !hasCourse) && (
-                            <span className="cab-lesson-v2-badge is-pending">Сдайте ДЗ</span>
+                        <div className="cab-lesson-v2-badges">
+                          {(stop.isTrialFree || selectedCabinetStop?.isTrialFree) && (
+                            <span className="cab-lesson-v2-badge is-trial">Пробное</span>
                           )}
-                        {hasCourse &&
-                          (stop.status === 'done' || selectedCabinetStop?.homeworkStatus === 'approved') && (
-                          <span className="cab-lesson-v2-badge is-done">ДЗ одобрено</span>
-                        )}
-                        {stop.status === 'now' && (
-                          <span className="cab-lesson-v2-badge is-open">Доступно</span>
-                        )}
-                        {hasCourse && !(stop.isTrialFree && !hasCourse) ? (
-                          <HomeworkDeadlineBadge
-                            homeworkStatus={selectedCabinetStop?.homeworkStatus}
-                            homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
-                            homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
-                            homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
-                            placement="inline"
-                            compact
-                          />
-                        ) : null}
+                          {(() => {
+                            const cs = selectedCabinetStop ?? (stop as unknown as CabinetCourseStop);
+                            const hw = homeworkRowState(cs, hasCourse);
+                            if (hw.tone !== 'locked') {
+                              const cls =
+                                hw.tone === 'done'
+                                  ? 'is-done'
+                                  : hw.tone === 'todo'
+                                    ? 'is-open'
+                                    : 'is-pending';
+                              return (
+                                <span className={`cab-lesson-v2-badge ${cls}`}>{hw.label}</span>
+                              );
+                            }
+                            return (
+                              <span className="cab-lesson-v2-badge is-open">
+                                {lessonMapChipLabel({
+                                  hasCourse,
+                                  mapAccessState: cs.mapAccessState,
+                                  webinarSessionStatus: cs.webinarSessionStatus,
+                                  lessonKind: cs.kind,
+                                  stopStatus: cs.status,
+                                  homeworkStatus: cs.homeworkStatus,
+                                  isFirstChainGate: cs.isFirstChainGate,
+                                })}
+                              </span>
+                            );
+                          })()}
+                          {hasCourse && !(stop.isTrialFree && !hasCourse) ? (
+                            <HomeworkDeadlineBadge
+                              homeworkStatus={selectedCabinetStop?.homeworkStatus}
+                              homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
+                              homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
+                              homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
+                              placement="inline"
+                              compact
+                            />
+                          ) : null}
+                        </div>
                       </header>
                       {displayLives?.accessBlocked && selectedCabinetStop?.isCurrent ? (
                         <p className="cab-note">
@@ -2394,6 +2521,13 @@ export default function CabinetShell({
                       const owned = courseChoices.some(
                         (c) => c.slug === offer.slug && c.purchased,
                       );
+                      const offerCatalog = data.courseCatalogs.find((c) => c.slug === offer.slug);
+                      const offerEnrollment = data.courseEnrollments.find(
+                        (e) => e.courseId === offerCatalog?.id,
+                      );
+                      const offerScenarioLabel = purchaseScenarioLabel(
+                        offerEnrollment?.purchaseScenario ?? null,
+                      );
                       const lessonsLabel = `${offer.grantedLessons} ${
                         offer.grantedLessons === 1
                           ? 'занятие'
@@ -2442,7 +2576,14 @@ export default function CabinetShell({
                               </small>
                             </span>
                           </div>
-                          <CoursePurchaseCta offer={offer} className="cab-course-pick-cta">
+                          <CoursePurchaseCta
+                            offer={offer}
+                            className="cab-course-pick-cta"
+                            savedPurchaseScenario={offerEnrollment?.purchaseScenario ?? null}
+                            savedScenarioLabel={offerScenarioLabel}
+                            packageRemaining={coursePkgAgg.remaining}
+                            packageTotal={coursePkgAgg.total}
+                          >
                             <Icon d={ICONS.cart} />
                             Купить пакет
                             <Icon d={ICONS.chevron} />
@@ -2457,19 +2598,24 @@ export default function CabinetShell({
                   <header className="cab-set-head">
                     <span className="cab-set-num">Ваш пакет курса</span>
                   </header>
-                  {coursePackage ? (
+                  {coursePackage || coursePkgAgg.total > 0 ? (
                     <div className="cab-course-pkg-summary">
-                      <strong>{coursePackage.title}</strong>
+                      <strong>{coursePackage?.title ?? 'Пакет курса'}</strong>
+                      {activeScenarioLabel ? (
+                        <p className="cab-note cab-course-pkg-scenario">
+                          Формат обучения: <b>{activeScenarioLabel}</b>
+                        </p>
+                      ) : null}
                       <p className="cab-note">
                         Осталось оплаченных занятий курса:{' '}
                         <b>
-                          {coursePackage.remaining} / {coursePackage.total}
+                          {coursePkgAgg.remaining} / {coursePkgAgg.total}
                         </b>{' '}
-                        {pluralLessons(coursePackage.total)}
+                        {pluralLessons(coursePkgAgg.total)}
                       </p>
                       {displayLives?.accessBlocked ? (
                         <span className="cab-pkg-status is-frozen">Курс заморожен</span>
-                      ) : coursePackage.active ? (
+                      ) : coursePkgAgg.hasActiveRemaining || coursePackage?.active ? (
                         <span className="cab-pkg-status is-active">
                           <i aria-hidden="true" />
                           Активен

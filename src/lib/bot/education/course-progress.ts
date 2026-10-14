@@ -18,6 +18,7 @@ import {
 import {
   isCourseLessonCleared,
   previousCourseLessonsCleared,
+  sumCoursePackageLessonEntitlement,
 } from '@/lib/bot/education/course-access';
 import {
   computeLessonProgressPercent,
@@ -42,6 +43,15 @@ function normalizeProgressRow(row: CourseLessonStudentProgress): CourseLessonStu
 type CourseCabinetState = 'preview' | 'enrolled_locked' | 'full';
 
 export type CourseMapStopStatus = 'locked' | 'now' | 'watched' | 'done';
+
+/** Причина недоступности точки на карте (для подписей и стилей). */
+export type CourseMapAccessState =
+  | 'available'
+  | 'completed'
+  | 'locked_unpaid'
+  | 'locked_unpaid_past'
+  | 'locked_prerequisite'
+  | 'locked_prerequisite_past';
 
 export type HomeworkProgressStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
 
@@ -136,6 +146,15 @@ export type CourseMapStop = {
   contentChips: string[];
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
   homeworkFiles: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+  mapAccessState: CourseMapAccessState;
+  /** Занятие идёт по расписанию (эфир / ожидание эфира), независимо от доступа ученика. */
+  isScheduleActive: boolean;
+  /** Первое в цепочке, где не пройдены предыдущие (для подписи «Доступно»). */
+  isFirstChainGate: boolean;
+  /** join_current: занятия до стартового модуля (без ДЗ и без кредитов). */
+  isJoinArchive: boolean;
+  /** Модуль, который сейчас идёт в потоке (Sanity override или авто по вебинарам). */
+  isStreamActiveModule: boolean;
 };
 
 export function isCourseProgressTableError(error: unknown): boolean {
@@ -183,6 +202,76 @@ export function computeMapStopStatus(params: {
   if (params.isCurrent) return 'now';
   if (params.hasAccess) return 'now';
   return 'locked';
+}
+
+export function computeMapAccessState(params: {
+  hasAccess: boolean;
+  previousCleared: boolean;
+  hasCourseProductAccess: boolean;
+  accessStatus: string | null;
+  isTrialFree: boolean;
+  courseState: CourseCabinetState;
+  sessionStatus: WebinarSessionStatus | null;
+  stopStatus: CourseMapStopStatus;
+  /** Занятие входит в оплаченную квоту пакета (не только строка access). */
+  inPackageQuota?: boolean;
+}): { mapAccessState: CourseMapAccessState; isScheduleActive: boolean } {
+  const sessionPast = params.sessionStatus === 'completed';
+  const isScheduleActive =
+    params.sessionStatus === 'live' || params.sessionStatus === 'waiting';
+
+  const trialPreviewOnly =
+    params.isTrialFree &&
+    params.courseState === 'enrolled_locked' &&
+    !params.hasCourseProductAccess;
+
+  /** Пробное не входит в пакет и не бывает «неоплаченным» на карте после записи. */
+  if (params.isTrialFree && params.courseState !== 'preview') {
+    if (params.stopStatus === 'done') {
+      return { mapAccessState: 'completed', isScheduleActive };
+    }
+    return { mapAccessState: 'available', isScheduleActive };
+  }
+
+  const paidInPackage =
+    Boolean(params.inPackageQuota) ||
+    params.accessStatus === 'available' ||
+    params.accessStatus === 'blocked_lives' ||
+    trialPreviewOnly;
+
+  if (params.stopStatus === 'done') {
+    return { mapAccessState: 'completed', isScheduleActive };
+  }
+
+  if (!params.hasCourseProductAccess && !trialPreviewOnly) {
+    return {
+      mapAccessState: sessionPast ? 'locked_unpaid_past' : 'locked_unpaid',
+      isScheduleActive,
+    };
+  }
+
+  if (params.hasCourseProductAccess && !paidInPackage) {
+    return {
+      mapAccessState: sessionPast ? 'locked_unpaid_past' : 'locked_unpaid',
+      isScheduleActive,
+    };
+  }
+
+  if (paidInPackage && params.hasAccess && params.previousCleared) {
+    return { mapAccessState: 'available', isScheduleActive };
+  }
+
+  if (paidInPackage && !params.previousCleared) {
+    return {
+      mapAccessState: sessionPast ? 'locked_prerequisite_past' : 'locked_prerequisite',
+      isScheduleActive,
+    };
+  }
+
+  return {
+    mapAccessState: sessionPast ? 'locked_unpaid_past' : 'locked_unpaid',
+    isScheduleActive,
+  };
 }
 
 function resolveLessonAccess(params: {
@@ -310,18 +399,15 @@ export async function buildCourseMapStopsFromContent(
 ): Promise<CourseMapStop[]> {
   const fullyBlocked = Boolean(options.fullyBlocked);
   const allLessons = flattenCourseLessons(content);
-  const [{ progressMap: initialProgress }, { data: allProgressRows }] = await Promise.all([
-    loadProgressAndAccessBySanity(
-      admin,
-      telegramId,
-      allLessons.map((l) => l.sanityId),
-      content,
-    ),
+  const allSanityIds = allLessons.map((l) => l.sanityId);
+  const [{ accessMap, progressMap }, { data: allProgressRows }, sessionMap] = await Promise.all([
+    loadProgressAndAccessBySanity(admin, telegramId, allSanityIds, content),
     admin
       .from('course_lesson_student_progress')
       .select('sanity_lesson_id')
       .eq('telegram_id', telegramId)
       .not('sanity_lesson_id', 'is', null),
+    loadSanityLessonSessionMap(admin, allSanityIds),
   ]);
 
   const progressSanityIds = new Set(
@@ -340,46 +426,55 @@ export async function buildCourseMapStopsFromContent(
     }
   });
 
-  const sanityIds = visibleLessons.map((v) => v.lesson.sanityId);
-  const [{ accessMap, progressMap }, sessionMap] = await Promise.all([
-    loadProgressAndAccessBySanity(admin, telegramId, sanityIds, content),
-    loadSanityLessonSessionMap(admin, sanityIds),
-  ]);
-
   // Проверяем сценарий в course_enrollments
   const { resolveCourseIdForContent } = await import('./course-record');
   const courseId = await resolveCourseIdForContent(admin, content);
   let scenario: 'start_from_beginning' | 'join_current' | null = null;
   let startLessonSanityId: string | null = null;
   
+  let enrollmentRow: {
+    purchase_scenario?: string | null;
+    start_lesson_id?: number | null;
+    start_module_id?: number | null;
+  } | null = null;
+
   if (courseId) {
     const { data: enrollment } = await admin
       .from('course_enrollments')
-      .select('purchase_scenario, start_lesson_id')
+      .select('purchase_scenario, start_lesson_id, start_module_id')
       .eq('telegram_id', telegramId)
       .eq('course_id', courseId)
       .maybeSingle();
-    
+    enrollmentRow = enrollment;
+
     scenario = enrollment?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
-    const startLessonId = enrollment?.start_lesson_id as number | null;
-    
-    if (startLessonId) {
-      const { data: startLessonRow } = await admin
-        .from('course_lessons')
-        .select('sanity_lesson_id')
-        .eq('id', startLessonId)
-        .maybeSingle();
-      startLessonSanityId = startLessonRow?.sanity_lesson_id as string | null;
-    }
+
+    const { resolveEnrollmentStartLessonSanityId } = await import('./course-enrollment-start');
+    startLessonSanityId = await resolveEnrollmentStartLessonSanityId(
+      admin,
+      courseId,
+      content,
+      enrollment,
+    );
   }
 
   const orderedLessons = visibleLessons.map((v) => v.lesson);
+
+  const { determineActiveModule } = await import('./active-module');
+  const streamModuleResult = await determineActiveModule(admin, content);
+  const streamActiveModuleIndex =
+    streamModuleResult.module != null
+      ? content.modules.findIndex((m) => m.sanityId === streamModuleResult.module!.sanityId)
+      : -1;
+
+  const joinStartIndex =
+    scenario === 'join_current' && startLessonSanityId
+      ? orderedLessons.findIndex((l) => l.sanityId === startLessonSanityId)
+      : 0;
+  const gateStartIndex = joinStartIndex > 0 ? joinStartIndex : 0;
   const progressForGate = new Map<string, CourseLessonStudentProgress | undefined>();
   for (const { lesson } of visibleLessons) {
-    progressForGate.set(
-      lesson.sanityId,
-      progressMap.get(lesson.sanityId) ?? initialProgress.get(lesson.sanityId),
-    );
+    progressForGate.set(lesson.sanityId, progressMap.get(lesson.sanityId));
   }
 
   // Для join_current: определяем startIndex и помечаем архивные уроки
@@ -395,50 +490,89 @@ export async function buildCourseMapStopsFromContent(
     }
   }
 
+  const packageEntitlement = await sumCoursePackageLessonEntitlement(admin, telegramId);
+  const effectiveHasCourseProduct =
+    options.hasCourseProductAccess && packageEntitlement > 0;
+  let paidLessonSlotIndex = 0;
+
+  let firstChainGateSanityId: string | null = null;
+  let scanPaidSlotIndex = 0;
+  for (let lessonIndex = 0; lessonIndex < visibleLessons.length; lessonIndex += 1) {
+    const { lesson } = visibleLessons[lessonIndex]!;
+    const isArchive = isArchiveLesson.has(lesson.sanityId);
+    const effectivePreviousCleared = isArchive
+      ? true
+      : previousCourseLessonsCleared(orderedLessons, lessonIndex, progressForGate, {
+          hasCourseProduct: effectiveHasCourseProduct,
+          gateStartIndex,
+        });
+    let inQuota = false;
+    if (isArchive) {
+      inQuota = effectiveHasCourseProduct;
+    } else if (lesson.isTrialFree) {
+      inQuota = effectiveHasCourseProduct || options.courseState === 'enrolled_locked';
+    } else if (effectiveHasCourseProduct && packageEntitlement > 0) {
+      if (lessonIndex >= gateStartIndex) {
+        inQuota = scanPaidSlotIndex < packageEntitlement;
+        scanPaidSlotIndex += 1;
+      }
+    }
+    if (
+      inQuota &&
+      !effectivePreviousCleared &&
+      !lesson.isTrialFree &&
+      !firstChainGateSanityId
+    ) {
+      firstChainGateSanityId = lesson.sanityId;
+    }
+  }
+
+  paidLessonSlotIndex = 0;
+
   const accessibleIncomplete = fullyBlocked
     ? []
     : visibleLessons
         .filter(({ lesson }, index) => {
-          // Архивные уроки всегда доступны
-          if (isArchiveLesson.has(lesson.sanityId)) return true;
-          
+          if (isArchiveLesson.has(lesson.sanityId)) return false;
+
           const access = resolveLessonAccess({
             courseState: options.courseState,
-            hasCourseProductAccess: options.hasCourseProductAccess,
+            hasCourseProductAccess: effectiveHasCourseProduct,
             accessStatus: accessMap.get(lesson.sanityId) ?? null,
             isTrialFree: lesson.isTrialFree,
             previousCleared: previousCourseLessonsCleared(orderedLessons, index, progressForGate, {
-              hasCourseProduct: options.hasCourseProductAccess,
+              hasCourseProduct: effectiveHasCourseProduct,
+              gateStartIndex,
             }),
           });
           if (!access.hasAccess) return false;
           const accessStatus = access.accessStatus;
           if (accessBlocked && accessStatus === 'blocked_lives') return false;
           return !isCourseLessonCleared(lesson, progressForGate.get(lesson.sanityId), {
-            hasCourseProduct: options.hasCourseProductAccess,
+            hasCourseProduct: effectiveHasCourseProduct,
           });
         })
         .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
   const currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
 
   return visibleLessons.map(({ lesson, moduleIndex, numInModule }, lessonIndex) => {
-    const isArchive = isArchiveLesson.has(lesson.sanityId);
-    
-    // Для архивных уроков не требуем выполнения предыдущих уроков
-    const effectivePreviousCleared = isArchive 
-      ? true 
+    const isJoinArchive = isArchiveLesson.has(lesson.sanityId);
+
+    const effectivePreviousCleared = isJoinArchive
+      ? true
       : previousCourseLessonsCleared(orderedLessons, lessonIndex, progressForGate, {
-          hasCourseProduct: options.hasCourseProductAccess,
+          hasCourseProduct: effectiveHasCourseProduct,
+          gateStartIndex,
         });
     
     const access = resolveLessonAccess({
       courseState: options.courseState,
-      hasCourseProductAccess: options.hasCourseProductAccess,
+      hasCourseProductAccess: effectiveHasCourseProduct,
       accessStatus: accessMap.get(lesson.sanityId) ?? null,
       isTrialFree: lesson.isTrialFree,
       previousCleared: effectivePreviousCleared,
     });
-    const progress = progressMap.get(lesson.sanityId) ?? initialProgress.get(lesson.sanityId);
+    const progress = progressMap.get(lesson.sanityId);
     const sessionStatus =
       lesson.lessonType === 'webinar'
         ? resolveWebinarSessionStatus(
@@ -453,6 +587,28 @@ export async function buildCourseMapStopsFromContent(
       sessionStatus,
       progress,
       isCurrent: !fullyBlocked && lesson.sanityId === currentSanityId,
+    });
+    const rawAccessStatus = accessMap.get(lesson.sanityId) ?? null;
+    let inPackageQuota = false;
+    if (isJoinArchive) {
+      inPackageQuota = effectiveHasCourseProduct;
+    } else if (lesson.isTrialFree) {
+      inPackageQuota =
+        effectiveHasCourseProduct || options.courseState === 'enrolled_locked';
+    } else if (effectiveHasCourseProduct && packageEntitlement > 0 && lessonIndex >= gateStartIndex) {
+      inPackageQuota = paidLessonSlotIndex < packageEntitlement;
+      paidLessonSlotIndex += 1;
+    }
+    const { mapAccessState, isScheduleActive } = computeMapAccessState({
+      hasAccess: fullyBlocked ? false : access.hasAccess,
+      previousCleared: effectivePreviousCleared,
+      hasCourseProductAccess: effectiveHasCourseProduct,
+      accessStatus: rawAccessStatus,
+      isTrialFree: lesson.isTrialFree,
+      courseState: options.courseState,
+      sessionStatus,
+      stopStatus: status,
+      inPackageQuota,
     });
 
     return {
@@ -470,38 +626,45 @@ export async function buildCourseMapStopsFromContent(
       liveUrl: lesson.liveUrl,
       recordingUrl: lesson.recordingUrl,
       sessionStatus,
-      mandatoryHomework: isArchive
+      mandatoryHomework: isJoinArchive
         ? false
-        : homeworkRequiredForLesson(lesson, options.hasCourseProductAccess),
+        : homeworkRequiredForLesson(lesson, effectiveHasCourseProduct, {
+            isJoinArchive: isJoinArchive,
+          }),
       homeworkStatus:
-        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
           ? null
           : (progress?.homework_status ?? null),
       homeworkTitle: lesson.homework?.title ?? null,
       homeworkReviewNote: progress?.review_note ?? null,
       homeworkCompletedAt: progress?.homework_completed_at ?? null,
       homeworkDeadlineAt:
-        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
           ? null
           : (progress?.homework_deadline_at ?? null),
       homeworkRemainingMs:
-        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
           ? null
           : typeof progress?.homework_remaining_ms === 'number'
             ? progress.homework_remaining_ms
             : null,
       homeworkOverdueAt:
-        isArchive || (lesson.isTrialFree && !options.hasCourseProductAccess)
+        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
           ? null
           : (progress?.homework_overdue_at ?? null),
-      lessonProgressPercent: computeLessonProgressPercent({
-        recordingWatchedAt: progress?.recording_watched_at,
-        liveAttendedAt: progress?.live_attended_at,
-        homeworkStatus: isArchive ? null : progress?.homework_status,
-        hasHomework: isArchive
-          ? false
-          : homeworkRequiredForLesson(lesson, options.hasCourseProductAccess),
-      }),
+      lessonProgressPercent:
+        isJoinArchive && effectiveHasCourseProduct
+          ? 100
+          : computeLessonProgressPercent({
+              recordingWatchedAt: progress?.recording_watched_at,
+              liveAttendedAt: progress?.live_attended_at,
+              homeworkStatus: isJoinArchive ? null : progress?.homework_status,
+              hasHomework: isJoinArchive
+                ? false
+                : homeworkRequiredForLesson(lesson, effectiveHasCourseProduct, {
+                    isJoinArchive,
+                  }),
+            }),
       isTrialFree: lesson.isTrialFree,
       contentChips:
         lesson.contentChips?.length > 0
@@ -520,6 +683,11 @@ export async function buildCourseMapStopsFromContent(
         fileSize: m.fileSize,
         url: m.url,
       })),
+      mapAccessState,
+      isScheduleActive,
+      isFirstChainGate: lesson.sanityId === firstChainGateSanityId,
+      isJoinArchive,
+      isStreamActiveModule: moduleIndex === streamActiveModuleIndex,
     };
   });
 }
@@ -534,6 +702,10 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
     for (const lesson of mod.lessons) {
       if (!isLessonVisible(lesson, emptyProgress)) continue;
       numInModule += 1;
+      const sessionStatus =
+        lesson.lessonType === 'webinar'
+          ? defaultWebinarSessionStatus(lesson.scheduledAt)
+          : null;
       out.push({
         sanityLessonId: lesson.sanityId,
         lessonId: null,
@@ -548,10 +720,7 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         sessionStartsAt: lesson.scheduledAt,
         liveUrl: lesson.liveUrl,
         recordingUrl: lesson.recordingUrl,
-        sessionStatus:
-          lesson.lessonType === 'webinar'
-            ? defaultWebinarSessionStatus(lesson.scheduledAt)
-            : null,
+        sessionStatus,
         mandatoryHomework: lesson.mandatoryHomework,
         homeworkStatus: null,
         homeworkTitle: lesson.homework?.title ?? null,
@@ -578,6 +747,11 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
           fileSize: m.fileSize,
           url: m.url,
         })),
+        mapAccessState: 'locked_unpaid',
+        isScheduleActive: sessionStatus === 'live' || sessionStatus === 'waiting',
+        isFirstChainGate: false,
+        isJoinArchive: false,
+        isStreamActiveModule: false,
       });
       lessonIndex += 1;
     }
@@ -673,6 +847,16 @@ export async function buildCourseMapStops(
       progress,
       isCurrent: lesson.id === currentLessonId,
     });
+    const { mapAccessState, isScheduleActive } = computeMapAccessState({
+      hasAccess,
+      previousCleared: hasAccess,
+      hasCourseProductAccess: true,
+      accessStatus: accessStatus,
+      isTrialFree: Boolean(lesson.is_trial_free),
+      courseState: 'full',
+      sessionStatus: session?.status ?? null,
+      stopStatus: status,
+    });
 
     return {
       sanityLessonId: null,
@@ -703,6 +887,11 @@ export async function buildCourseMapStops(
       contentChips: [...DEFAULT_LESSON_CONTENT_CHIPS],
       materials: [],
       homeworkFiles: [],
+      mapAccessState,
+      isScheduleActive,
+      isFirstChainGate: false,
+      isJoinArchive: false,
+      isStreamActiveModule: false,
     };
   });
 }

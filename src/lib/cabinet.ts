@@ -11,9 +11,11 @@ import {
   buildCourseStructureStopsFromContent,
   isCourseProgressTableError,
   loadCourseCatalog,
+  type CourseMapAccessState,
   type CourseMapStop,
   type CourseMapStopStatus,
 } from '@/lib/bot/education/course-progress';
+import { ACCESS_PRODUCT_LABELS } from '@/lib/bot/accesses';
 import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
 import { processHomeworkDeadlinesForStudent } from '@/lib/bot/education/homework-deadline-notify';
 import {
@@ -27,7 +29,6 @@ import {
   countCourseLessons,
   DEFAULT_LESSON_CONTENT_CHIPS,
   flattenCourseLessons,
-  attachPurchaseScenariosToOffers,
   getDistrictCourseContent,
   listCoursePaymentOffers,
   listDistrictCourseSummaries,
@@ -37,6 +38,7 @@ import {
   type DistrictCourseSummary,
 } from '@/lib/studio/courseContent';
 import {
+  computeMapAccessState,
   computeMapStopStatus,
   type CourseLessonStudentProgress,
   type HomeworkProgressStatus,
@@ -56,8 +58,6 @@ import {
 } from '@/lib/curator/lesson-session';
 import { HOMEWORK_STATUS_LABELS } from '@/lib/bot/education/course-homework';
 import {
-  isPurchaseRequestTableError,
-  listPurchaseRequestsForUser,
 } from '@/lib/bot/purchase-requests';
 import { loadMemberRoles, type BotRole } from '@/lib/bot/roles';
 
@@ -104,6 +104,7 @@ export type CabinetEnrollment = {
   courseTitle: string;
   status: string;
   startedAt: string;
+  purchaseScenario?: 'start_from_beginning' | 'join_current' | null;
 };
 
 export type CabinetCourseModulePreview = {
@@ -159,6 +160,7 @@ export type CabinetPayment = {
   title: string;
   price: string;
   status: CabinetPaymentStatus;
+  product: CabinetAccessProduct;
 };
 
 export type CabinetProfile = {
@@ -230,6 +232,11 @@ export type CabinetCourseStop = {
   contentChips: string[];
   materials: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
   homeworkFiles: { title: string; fileName: string | null; fileSize: string | null; url: string | null }[];
+  mapAccessState: CourseMapAccessState;
+  isScheduleActive: boolean;
+  isFirstChainGate: boolean;
+  isJoinArchive: boolean;
+  isStreamActiveModule: boolean;
 };
 
 export type CabinetLivesState = {
@@ -284,6 +291,15 @@ export type CabinetData = {
   memberRoles: BotRole[];
   /** Агрегаты для достижений (эфир, запись, ДЗ, сообщения куратору). */
   achievementStats: CabinetAchievementStats;
+  /** Telegram ID при успешной привязке (для UI без повторного запроса). */
+  telegramId: number | null;
+  /** false — прогресс карты догружается на клиенте (/api/cabinet/course-map). */
+  courseMapProgressLoaded: boolean;
+};
+
+export type GetCabinetDataOptions = {
+  /** Полная карта с прогрессом на сервере (checkout). Для /cabinet — false. */
+  loadMapProgress?: boolean;
 };
 
 export function hasActiveAccess(data: CabinetData, product: CabinetAccessProduct): boolean {
@@ -315,10 +331,9 @@ export function hadAnyLessonsProduct(data: CabinetData): boolean {
   return data.hasOrdinaryStudentTrack;
 }
 
-/** РћРїР»Р°С‚Р° РєСѓСЂСЃР°: РґРѕСЃС‚СѓРї product=course РёР»Рё Р°РєС‚РёРІРЅС‹Р№ РїР°РєРµС‚ Р·Р°РЅСЏС‚РёР№ РєСѓСЂСЃР°. */
+/** Оплата курса: есть пакет занятий course (строка в lesson_packages). */
 export function hasCoursePayment(data: Pick<CabinetData, 'accesses' | 'packages'>): boolean {
-  if (data.accesses.some((a) => a.product === 'course')) return true;
-  return data.packages.some((p) => p.product === 'course' && p.active && p.total > 0);
+  return data.packages.some((p) => p.product === 'course' && p.total > 0);
 }
 
 /** РџСЂРµРІСЊСЋ СЃРєСЂС‹РІР°РµС‚СЃСЏ РїРѕСЃР»Рµ РєР»РёРєР° В«РџРѕСЃРјРѕС‚СЂРµС‚СЊ РєР°СЂС‚СѓВ» РёР»Рё РµСЃР»Рё РєСѓСЂСЃ СѓР¶Рµ РѕРїР»Р°С‡РµРЅ. */
@@ -444,9 +459,9 @@ function formatPaymentDate(iso: string): string {
 }
 
 const PRODUCT_LABELS: Record<CabinetAccessProduct, string> = {
-  course: 'РљСѓСЂСЃ District',
-  individual: 'РРЅРґРёРІРёРґСѓР°Р»СЊРЅС‹Рµ Р·Р°РЅСЏС‚РёСЏ',
-  group: 'Р“СЂСѓРїРїРѕРІС‹Рµ Р·Р°РЅСЏС‚РёСЏ',
+  course: ACCESS_PRODUCT_LABELS.course,
+  individual: ACCESS_PRODUCT_LABELS.individual,
+  group: ACCESS_PRODUCT_LABELS.group,
 };
 
 function mergeAccessHistoryFromPurchases(
@@ -514,34 +529,10 @@ async function loadPayments(
     title: PRODUCT_LABELS[row.product as CabinetAccessProduct] ?? row.product,
     price: String(row.amount_byn),
     status: 'paid' as const,
+    product: row.product as CabinetAccessProduct,
   }));
 
-  let requests: CabinetPayment[] = [];
-  try {
-    const rows = await listPurchaseRequestsForUser(admin, telegramId, 20);
-    requests = rows
-      .filter((row) => row.status !== 'approved')
-      .map((row) => ({
-        id: row.id,
-        date: formatPaymentDate(row.created_at),
-        title: row.title,
-        price: String(row.amount_byn),
-        status: row.status === 'pending' ? ('pending' as const) : ('rejected' as const),
-      }));
-  } catch (error) {
-    if (!isPurchaseRequestTableError(error)) throw error;
-  }
-
-  return [...requests, ...paid]
-    .sort((a, b) => {
-      const parse = (value: string) => {
-        const parts = value.split('.');
-        if (parts.length !== 3) return 0;
-        return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).getTime();
-      };
-      return parse(b.date) - parse(a.date);
-    })
-    .slice(0, 20);
+  return paid;
 }
 
 type LoadedProfile = {
@@ -632,6 +623,11 @@ function mapStopToCabinet(stop: CourseMapStop): CabinetCourseStop {
     contentChips: stop.contentChips,
     materials: stop.materials,
     homeworkFiles: stop.homeworkFiles,
+    mapAccessState: stop.mapAccessState,
+    isScheduleActive: stop.isScheduleActive,
+    isFirstChainGate: stop.isFirstChainGate,
+    isJoinArchive: stop.isJoinArchive,
+    isStreamActiveModule: stop.isStreamActiveModule,
   };
 }
 
@@ -727,6 +723,11 @@ export function buildStopsFromCatalogPreviews(catalog: CabinetCourseCatalog | nu
         contentChips: [],
         materials: [],
         homeworkFiles: [],
+        mapAccessState: 'locked_unpaid',
+        isScheduleActive: false,
+        isFirstChainGate: false,
+        isJoinArchive: false,
+        isStreamActiveModule: false,
       });
       lessonIndex += 1;
     });
@@ -873,7 +874,9 @@ export async function getCabinetData(
   phone: string,
   createdAt: string,
   preferredCourseSlug?: string | null,
+  options?: GetCabinetDataOptions,
 ): Promise<CabinetData> {
+  const loadMapProgress = options?.loadMapProgress !== false;
   const empty: CabinetData = {
     phone,
     createdAt,
@@ -901,6 +904,8 @@ export async function getCabinetData(
     courseMapViewed: false,
     memberRoles: ['guest'],
     achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
+    telegramId: null,
+    courseMapProgressLoaded: true,
   };
 
   let admin: ReturnType<typeof createAdminClient>;
@@ -920,27 +925,93 @@ export async function getCabinetData(
   if (linkError || !link?.telegram_id) return empty;
   const telegramId = link.telegram_id as number;
 
-  // РРјСЏ Рё СЂРѕР»Рё СѓС‡Р°СЃС‚РЅРёРєР° РёР· РїСЂРѕС„РёР»СЏ Р±РѕС‚Р°.
-  let memberRoles: BotRole[] = ['guest'];
-  let studentName: string | null = null;
-  try {
-    memberRoles = await loadMemberRoles(admin, telegramId);
-    const { data: member } = await admin
-      .from('bot_members')
-      .select('full_name')
-      .eq('telegram_id', telegramId)
-      .maybeSingle();
-    studentName = member?.full_name ?? null;
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
-  }
+  type EnrollmentRow = {
+    status: string;
+    started_at: string;
+    course_id: number;
+    purchase_scenario?: 'start_from_beginning' | 'join_current' | null;
+    courses: { title?: string; slug?: string } | { title?: string; slug?: string }[] | null;
+  };
 
-  // РђРєС‚РёРІРЅС‹Рµ РїСЂРѕРґСѓРєС‚РѕРІС‹Рµ РґРѕСЃС‚СѓРїС‹.
-  const { data: accessRows, error: accessError } = await admin
-    .from('user_accesses')
-    .select('product, expires_at')
-    .eq('telegram_id', telegramId)
-    .eq('status', ACTIVE);
+  const loadMemberBlock = async (): Promise<{ memberRoles: BotRole[]; studentName: string | null }> => {
+    try {
+      const roles = await loadMemberRoles(admin, telegramId);
+      const { data: member } = await admin
+        .from('bot_members')
+        .select('full_name')
+        .eq('telegram_id', telegramId)
+        .maybeSingle();
+      return { memberRoles: roles, studentName: member?.full_name ?? null };
+    } catch (error) {
+      if (!isCabinetTableError(error)) throw error;
+      return { memberRoles: ['guest'] as BotRole[], studentName: null };
+    }
+  };
+
+  const loadSanityBlock = async (): Promise<{
+    cabinetPricing: CabinetPricing;
+    coursePaymentOffers: CoursePaymentOffer[];
+    courseSummaries: DistrictCourseSummary[];
+  }> => {
+    let cabinetPricing: CabinetPricing = DEFAULT_CABINET_PRICING;
+    let coursePaymentOffers: CoursePaymentOffer[] = [];
+    let courseSummaries: DistrictCourseSummary[] = [];
+    try {
+      [cabinetPricing, coursePaymentOffers, courseSummaries] = await Promise.all([
+        getCabinetPricing(),
+        listCoursePaymentOffers(),
+        listDistrictCourseSummaries(),
+      ]);
+    } catch (error) {
+      console.error('[cabinet] Sanity fetch failed:', error);
+      coursePaymentOffers = [];
+      courseSummaries = [];
+      try {
+        cabinetPricing = await getCabinetPricing();
+      } catch {
+        cabinetPricing = DEFAULT_CABINET_PRICING;
+      }
+      try {
+        coursePaymentOffers = await listCoursePaymentOffers();
+      } catch {
+        coursePaymentOffers = [];
+      }
+      try {
+        courseSummaries = await listDistrictCourseSummaries();
+      } catch {
+        courseSummaries = [];
+      }
+    }
+    return { cabinetPricing, coursePaymentOffers, courseSummaries };
+  };
+
+  const [
+    memberBlock,
+    accessQuery,
+    historyQuery,
+    sanityBlock,
+    enrollmentQuery,
+  ] = await Promise.all([
+    loadMemberBlock(),
+    admin
+      .from('user_accesses')
+      .select('product, expires_at')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE),
+    admin.from('user_accesses').select('product').eq('telegram_id', telegramId),
+    loadSanityBlock(),
+    admin
+      .from('course_enrollments')
+      .select('status, started_at, course_id, purchase_scenario, courses(title, slug)')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE)
+      .order('started_at', { ascending: true }),
+  ]);
+
+  const { memberRoles, studentName } = memberBlock;
+  const { cabinetPricing, courseSummaries } = sanityBlock;
+  let { coursePaymentOffers } = sanityBlock;
+  const { data: accessRows, error: accessError } = accessQuery;
   const accesses: CabinetAccess[] = accessError
     ? []
     : (accessRows ?? [])
@@ -950,55 +1021,17 @@ export async function getCabinetData(
           expiresAt: row.expires_at ?? null,
         }));
 
-  const { data: historyRows } = await admin
-    .from('user_accesses')
-    .select('product')
-    .eq('telegram_id', telegramId);
+  const { data: historyRows } = historyQuery;
   let accessHistory: CabinetAccessProduct[] = [
     ...new Set((historyRows ?? []).map((row) => row.product as CabinetAccessProduct)),
   ];
 
-  // РљРѕРЅС‚РµРЅС‚ РєСѓСЂСЃРѕРІ РёР· Sanity + lookup courses РІ Supabase (Р±РµР· UPDATE РЅР° РєР°Р¶РґС‹Р№ Р·Р°С…РѕРґ).
-  let courseContent: DistrictCourseContent | null = null;
-  let cabinetPricing: CabinetPricing = DEFAULT_CABINET_PRICING;
-  let coursePaymentOffers: CoursePaymentOffer[] = [];
-  let courseSummaries: DistrictCourseSummary[] = [];
-  try {
-    [cabinetPricing, coursePaymentOffers, courseSummaries] = await Promise.all([
-      getCabinetPricing(),
-      listCoursePaymentOffers(),
-      listDistrictCourseSummaries(),
-    ]);
-  } catch (error) {
-    console.error('[cabinet] Sanity fetch failed:', error);
-    coursePaymentOffers = [];
-    courseSummaries = [];
-    try {
-      cabinetPricing = await getCabinetPricing();
-    } catch {
-      cabinetPricing = DEFAULT_CABINET_PRICING;
-    }
-    try {
-      coursePaymentOffers = await listCoursePaymentOffers();
-    } catch {
-      coursePaymentOffers = [];
-    }
-    try {
-      courseSummaries = await listDistrictCourseSummaries();
-    } catch {
-      courseSummaries = [];
-    }
-  }
-
-  try {
-    coursePaymentOffers = await attachPurchaseScenariosToOffers(coursePaymentOffers);
-  } catch (error) {
-    console.error('[cabinet] purchase scenarios attach failed:', error);
-  }
-
   const dailyQuote = pickDailyCabinetQuote(cabinetPricing.quotes);
 
+  let courseContent: DistrictCourseContent | null = null;
   const courseCatalogs: CabinetCourseCatalog[] = [];
+  const preferredNormalizedEarly = preferredCourseSlug?.trim() || null;
+
   try {
     const idBySlug = await lookupCourseIdsBySlugs(
       admin,
@@ -1006,38 +1039,47 @@ export async function getCabinetData(
     );
     const missing = courseSummaries.filter((s) => !idBySlug.has(s.slug));
     if (missing.length > 0) {
-      await Promise.all(
-        missing.map(async (summary) => {
-          try {
-            const id = await ensureDistrictCourseRecord(admin, {
-              sanityId: summary.sanityId,
-              title: summary.title,
-              slug: summary.slug,
-              description: summary.description,
-              cabinetEyebrow: summary.cabinetEyebrow,
-              deliveryFormat: summary.deliveryFormat,
-              homeworkIntro: summary.homeworkIntro,
-              coverImageUrl: summary.coverImageUrl,
-              previewImageUrl: summary.previewImageUrl,
-              previewInsideItems: summary.previewInsideItems,
-              previewAfterEnrollment: summary.previewAfterEnrollment,
-              previewAudience: summary.previewAudience,
-              publicationStatus: summary.publicationStatus,
-              curatorName: summary.curatorName,
-              curatorTelegramId: summary.curatorTelegramId,
-              priceByn: null,
-              grantedLessons: null,
-              pricingCardText: null,
-              purchaseScenarios: null,
-              activeModuleOverride: null,
-              modules: [],
-            });
-            if (id) idBySlug.set(summary.slug, id);
-          } catch (error) {
-            console.error('[cabinet] course ensure failed:', summary.slug, error);
-          }
-        }),
+      const prioritySlugs = new Set(
+        [preferredNormalizedEarly, ...courseSummaries.map((s) => s.slug)].filter(Boolean) as string[],
       );
+      const ensureOne = async (summary: DistrictCourseSummary) => {
+        try {
+          const id = await ensureDistrictCourseRecord(admin, {
+            sanityId: summary.sanityId,
+            title: summary.title,
+            slug: summary.slug,
+            description: summary.description,
+            cabinetEyebrow: summary.cabinetEyebrow,
+            deliveryFormat: summary.deliveryFormat,
+            homeworkIntro: summary.homeworkIntro,
+            coverImageUrl: summary.coverImageUrl,
+            previewImageUrl: summary.previewImageUrl,
+            previewInsideItems: summary.previewInsideItems,
+            previewAfterEnrollment: summary.previewAfterEnrollment,
+            previewAudience: summary.previewAudience,
+            publicationStatus: summary.publicationStatus,
+            curatorName: summary.curatorName,
+            curatorTelegramId: summary.curatorTelegramId,
+            priceByn: null,
+            grantedLessons: null,
+            pricingCardText: null,
+            purchaseScenarios: null,
+            activeModuleOverride: null,
+            modules: [],
+          });
+          if (id) idBySlug.set(summary.slug, id);
+        } catch (error) {
+          console.error('[cabinet] course ensure failed:', summary.slug, error);
+        }
+      };
+      const ensureNow = missing.filter((s) => prioritySlugs.has(s.slug));
+      const ensureLater = missing.filter((s) => !prioritySlugs.has(s.slug));
+      if (ensureNow.length > 0) {
+        await Promise.all(ensureNow.map(ensureOne));
+      }
+      if (ensureLater.length > 0) {
+        void Promise.all(ensureLater.map(ensureOne));
+      }
     }
     for (const summary of courseSummaries) {
       const courseId = idBySlug.get(summary.slug);
@@ -1047,20 +1089,8 @@ export async function getCabinetData(
     console.error('[cabinet] course catalog lookup failed:', error);
   }
 
-  // РђРєС‚РёРІРЅС‹Рµ Р·Р°С‡РёСЃР»РµРЅРёСЏ (РІСЃРµ РєСѓСЂСЃС‹).
-  const { data: enrollmentRows, error: enrollmentError } = await admin
-    .from('course_enrollments')
-    .select('status, started_at, course_id, courses(title, slug)')
-    .eq('telegram_id', telegramId)
-    .eq('status', ACTIVE)
-    .order('started_at', { ascending: true });
+  const { data: enrollmentRows, error: enrollmentError } = enrollmentQuery;
 
-  type EnrollmentRow = {
-    status: string;
-    started_at: string;
-    course_id: number;
-    courses: { title?: string; slug?: string } | { title?: string; slug?: string }[] | null;
-  };
   const activeEnrollments = (!enrollmentError ? (enrollmentRows as EnrollmentRow[] | null) : null) ?? [];
 
   const courseEnrollments: CabinetEnrollment[] = activeEnrollments.map((row) => {
@@ -1074,6 +1104,7 @@ export async function getCabinetData(
         'РљСѓСЂСЃ District',
       status: row.status,
       startedAt: row.started_at,
+      purchaseScenario: (row.purchase_scenario as 'start_from_beginning' | 'join_current' | null) ?? null,
     };
   });
 
@@ -1101,6 +1132,9 @@ export async function getCabinetData(
           courseCatalogs.find((c) => c.id === enrolledCourseId)?.title ?? 'РљСѓСЂСЃ District',
         status: primaryEnrollment.status,
         startedAt: primaryEnrollment.started_at,
+        purchaseScenario:
+          (primaryEnrollment.purchase_scenario as 'start_from_beginning' | 'join_current' | null) ??
+          null,
       } satisfies CabinetEnrollment);
   }
 
@@ -1110,14 +1144,86 @@ export async function getCabinetData(
     courseCatalogs[0]?.slug ??
     null;
 
-  try {
-    courseContent = activeSlug
-      ? await getDistrictCourseContent(activeSlug)
-      : await getDistrictCourseContent();
-  } catch (error) {
-    console.error('[cabinet] course content fetch failed:', error);
-    courseContent = null;
-  }
+  const loadMentorsBlock = async (): Promise<CabinetMentor[]> => {
+    const { data: mentorRows, error: mentorError } = await admin
+      .from('mentor_assignments')
+      .select('kind, mentor_telegram_id')
+      .eq('telegram_id', telegramId)
+      .eq('status', ACTIVE);
+    const mentors: CabinetMentor[] = [];
+    if (!mentorError && mentorRows?.length) {
+      const mentorIds = mentorRows.map((row) => row.mentor_telegram_id);
+      const { data: memberNames } = await admin
+        .from('bot_members')
+        .select('telegram_id, full_name')
+        .in('telegram_id', mentorIds);
+      const names = new Map<number, string>(
+        (memberNames ?? [])
+          .filter((m) => m.full_name)
+          .map((m) => [m.telegram_id, m.full_name]),
+      );
+      for (const row of mentorRows) {
+        const name = names.get(row.mentor_telegram_id);
+        if (name) mentors.push({ kind: row.kind as CabinetMentor['kind'], name });
+      }
+    }
+    return mentors;
+  };
+
+  const [
+    courseContentFetched,
+    mentors,
+    packagesFetched,
+    paymentsFetched,
+    profileFetched,
+    achievementStatsFetched,
+  ] = await Promise.all([
+    (async () => {
+      try {
+        return activeSlug
+          ? await getDistrictCourseContent(activeSlug)
+          : await getDistrictCourseContent();
+      } catch (error) {
+        console.error('[cabinet] course content fetch failed:', error);
+        return null;
+      }
+    })(),
+    loadMentorsBlock(),
+    (async () => {
+      try {
+        return await loadPackages(admin, telegramId);
+      } catch (error) {
+        if (!isCabinetTableError(error)) throw error;
+        return [] as CabinetPackage[];
+      }
+    })(),
+    (async () => {
+      try {
+        return await loadPayments(admin, telegramId);
+      } catch (error) {
+        if (!isCabinetTableError(error)) throw error;
+        return [] as CabinetPayment[];
+      }
+    })(),
+    (async () => {
+      try {
+        return await loadProfile(admin, telegramId);
+      } catch (error) {
+        if (!isCabinetTableError(error)) throw error;
+        return { profile: null, courseMapViewed: false };
+      }
+    })(),
+    (async () => {
+      try {
+        return await loadAchievementStats(admin, telegramId);
+      } catch (error) {
+        if (!isCabinetTableError(error)) throw error;
+        return EMPTY_CABINET_ACHIEVEMENT_STATS;
+      }
+    })(),
+  ]);
+
+  courseContent = courseContentFetched;
 
   let courseCatalog: CabinetCourseCatalog | null =
     (activeSlug ? courseCatalogs.find((c) => c.slug === activeSlug) : null) ??
@@ -1183,35 +1289,11 @@ export async function getCabinetData(
     };
   }
 
-  // РђРєС‚РёРІРЅС‹Рµ РЅР°СЃС‚Р°РІРЅРёРєРё (РїСЂРµРїРѕРґР°РІР°С‚РµР»СЊ/РєСѓСЂР°С‚РѕСЂ).
-  const { data: mentorRows, error: mentorError } = await admin
-    .from('mentor_assignments')
-    .select('kind, mentor_telegram_id')
-    .eq('telegram_id', telegramId)
-    .eq('status', ACTIVE);
-  const mentors: CabinetMentor[] = [];
-  if (!mentorError && mentorRows?.length) {
-    const mentorIds = mentorRows.map((row) => row.mentor_telegram_id);
-    const { data: memberNames } = await admin
-      .from('bot_members')
-      .select('telegram_id, full_name')
-      .in('telegram_id', mentorIds);
-    const names = new Map<number, string>(
-      (memberNames ?? [])
-        .filter((m) => m.full_name)
-        .map((m) => [m.telegram_id, m.full_name]),
-    );
-    for (const row of mentorRows) {
-      const name = names.get(row.mentor_telegram_id);
-      if (name) mentors.push({ kind: row.kind as CabinetMentor['kind'], name });
-    }
-  }
-
-  let packages: CabinetPackage[] = [];
+  let packages = packagesFetched;
   let hasOrdinaryStudentTrack = false;
-  let payments: CabinetPayment[] = [];
-  let profile: CabinetProfile | null = null;
-  let courseMapViewed = false;
+  let payments = paymentsFetched;
+  let profile: CabinetProfile | null = profileFetched.profile;
+  let courseMapViewed = profileFetched.courseMapViewed;
   let courseProgress: CabinetCourseProgress[] = [];
   let courseModules: CabinetCourseModule[] = [];
   let courseStops: CabinetCourseStop[] = [];
@@ -1219,11 +1301,29 @@ export async function getCabinetData(
 
   const courseIdForMap = courseCatalog?.id ?? enrolledCourseId ?? resolvedCourseId ?? null;
 
-  try {
-    packages = await loadPackages(admin, telegramId);
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
+  let enrollmentForCabinet = enrollment;
+  let accessesForCabinet = accesses;
+  if (courseIdForMap && courseContent?.modules.length) {
+    try {
+      const { resetCourseWhenNoPaidPackages } = await import('@/lib/bot/education/course-access');
+      const didReset = await resetCourseWhenNoPaidPackages(
+        admin,
+        telegramId,
+        courseIdForMap,
+        courseContent,
+      );
+      if (didReset) {
+        packages = await loadPackages(admin, telegramId);
+        accessesForCabinet = accessesForCabinet.filter((a) => a.product !== 'course');
+        if (enrollmentForCabinet) {
+          enrollmentForCabinet = { ...enrollmentForCabinet, purchaseScenario: null };
+        }
+      }
+    } catch (error) {
+      if (!isCourseProgressTableError(error) && !isCabinetTableError(error)) throw error;
+    }
   }
+
   accessHistory = mergeAccessHistoryFromPurchases(accessHistory, packages);
   const lessonsTrackFromRecords =
     accessHistory.includes('individual') ||
@@ -1236,31 +1336,22 @@ export async function getCabinetData(
       if (!isCabinetTableError(error)) throw error;
     }
   }
-  try {
-    payments = await loadPayments(admin, telegramId);
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
-  }
-  try {
-    const loadedProfile = await loadProfile(admin, telegramId);
-    profile = loadedProfile.profile;
-    courseMapViewed = loadedProfile.courseMapViewed;
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
-  }
 
-  const cabinetSlice = { courseMapViewed, accesses, packages };
+  const cabinetSlice = { courseMapViewed, accesses: accessesForCabinet, packages };
   const courseState = getCourseCabinetState(cabinetSlice);
   const hasCourseProductAccess = hasCoursePayment(cabinetSlice);
   const viewedCourseMap = hasViewedCourseMap(cabinetSlice);
+
+  const mapWithProgress =
+    loadMapProgress &&
+    Boolean(courseIdForMap && (viewedCourseMap || courseState !== 'preview'));
 
   if (courseContent?.modules.length) {
     try {
       const mapData = await resolveCourseMapFromContent(admin, telegramId, courseIdForMap, courseContent, {
         courseState,
         hasCourseProductAccess,
-        // РџСЂРѕРіСЂРµСЃСЃ РЅСѓР¶РµРЅ Рё РЅР° РїСЂРѕР±РЅРѕРј (enrolled_locked), РЅРµ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ РѕРїР»Р°С‚С‹.
-        withProgress: Boolean(courseIdForMap && (viewedCourseMap || courseState !== 'preview')),
+        withProgress: mapWithProgress,
       });
       courseModules = mapData.modules;
       courseStops = mapData.stops;
@@ -1274,7 +1365,7 @@ export async function getCabinetData(
       courseModules = mapContentToCourseModules(courseContent);
       courseStops = mapContentToStructureStops(courseContent);
     }
-  } else if (viewedCourseMap && courseIdForMap) {
+  } else if (loadMapProgress && viewedCourseMap && courseIdForMap) {
     try {
       const mapData = await loadCourseMapData(admin, telegramId, courseIdForMap, courseContent, {
         courseState,
@@ -1313,11 +1404,14 @@ export async function getCabinetData(
     catalogsSynced.unshift(courseCatalog);
   }
 
-  let achievementStats = EMPTY_CABINET_ACHIEVEMENT_STATS;
-  try {
-    achievementStats = await loadAchievementStats(admin, telegramId);
-  } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
+  const achievementStats = achievementStatsFetched;
+
+  if (courseContent?.purchaseScenarios) {
+    coursePaymentOffers = coursePaymentOffers.map((offer) =>
+      offer.slug === courseContent.slug
+        ? { ...offer, purchaseScenarios: courseContent.purchaseScenarios }
+        : offer,
+    );
   }
 
   return {
@@ -1325,9 +1419,10 @@ export async function getCabinetData(
     createdAt,
     studentName,
     telegramLinked: true,
-    accesses,
+    telegramId,
+    accesses: accessesForCabinet,
     accessHistory,
-    enrollment,
+    enrollment: enrollmentForCabinet,
     courseEnrollments,
     courseCatalog,
     courseCatalogs: catalogsSynced,
@@ -1347,10 +1442,11 @@ export async function getCabinetData(
     courseMapViewed,
     memberRoles,
     achievementStats,
+    courseMapProgressLoaded: loadMapProgress,
   };
 }
 
-/** РЎСЂРµР· Р°РєС‚РёРІРЅРѕРіРѕ РєСѓСЂСЃР° РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РїРµСЂРµРєР»СЋС‡РµРЅРёСЏ Р±РµР· РїРѕР»РЅРѕР№ РїРµСЂРµР·Р°РіСЂСѓР·РєРё РєР°Р±РёРЅРµС‚Р°. */
+/** Срез активного курса для быстрого переключения без полной перезагрузки кабинета. */
 export type CabinetCourseViewSlice = {
   slug: string;
   courseCatalog: CabinetCourseCatalog;
@@ -1691,6 +1787,16 @@ export async function getCabinetLessonPageData(
     progress,
     isCurrent,
   });
+  const { mapAccessState, isScheduleActive } = computeMapAccessState({
+    hasAccess,
+    previousCleared,
+    hasCourseProductAccess: hasCourseProduct,
+    accessStatus: rawAccess,
+    isTrialFree: located.lesson.isTrialFree,
+    courseState,
+    sessionStatus,
+    stopStatus: status,
+  });
 
   const stop: CabinetCourseStop = {
     id: located.lessonIndex + 1,
@@ -1743,6 +1849,11 @@ export async function getCabinetLessonPageData(
       fileSize: m.fileSize,
       url: m.url,
     })),
+    mapAccessState,
+    isScheduleActive,
+    isFirstChainGate: false,
+    isJoinArchive: false,
+    isStreamActiveModule: false,
   };
 
   const courseModules = mapContentToCourseModules(courseContent);

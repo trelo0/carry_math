@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { normalizePhone } from '@/lib/phone';
 import {
   hasFullStaffPreview,
   isBotRole,
@@ -37,14 +38,15 @@ export function memberCanAccessCuratorCabinet(roles: BotRole[], telegramId: numb
   return memberHasRole(roles, 'curator') || hasFullStaffPreview(roles, telegramId);
 }
 
-/** Авторизация кабинета: phone → telegram_id. */
+/** Авторизация кабинета: сессия Supabase → phone → telegram_id (или user_id в telegram_links). */
 export async function getCabinetAuth(): Promise<CabinetAuthContext | null> {
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return null;
 
-  const phone = (auth.user.user_metadata?.phone as string) ?? auth.user.phone ?? '';
-  if (!phone) return null;
+  const rawPhone = (auth.user.user_metadata?.phone as string) ?? auth.user.phone ?? '';
+  const normalizedPhone = normalizePhone(rawPhone);
+  const phone = normalizedPhone ?? rawPhone.trim();
 
   let admin: ReturnType<typeof createAdminClient>;
   try {
@@ -53,14 +55,37 @@ export async function getCabinetAuth(): Promise<CabinetAuthContext | null> {
     return null;
   }
 
-  const { data: link } = await admin
-    .from('telegram_links')
-    .select('telegram_id')
-    .eq('phone', phone)
-    .maybeSingle();
+  type LinkRow = { telegram_id: number | null; phone?: string | null };
+  let link: LinkRow | null = null;
+
+  if (phone) {
+    const { data } = await admin
+      .from('telegram_links')
+      .select('telegram_id, phone')
+      .eq('phone', phone)
+      .maybeSingle();
+    link = data as LinkRow | null;
+  }
+
+  if (!link?.telegram_id && auth.user.id) {
+    const { data } = await admin
+      .from('telegram_links')
+      .select('telegram_id, phone')
+      .eq('user_id', auth.user.id)
+      .maybeSingle();
+    link = data as LinkRow | null;
+  }
+
   if (!link?.telegram_id) return null;
 
-  return { phone, telegramId: link.telegram_id as number, admin };
+  const resolvedPhone =
+    phone || (typeof link.phone === 'string' ? normalizePhone(link.phone) ?? link.phone : '');
+
+  return {
+    phone: resolvedPhone,
+    telegramId: link.telegram_id as number,
+    admin,
+  };
 }
 
 /** Куда отправить после OTP с учётом всех ролей участника. */
