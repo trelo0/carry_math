@@ -36,6 +36,7 @@ import {
   flattenCourseLessons,
   DISTRICT_COURSE_SLUG,
   getDistrictCourseContent,
+  filterCourseSummariesForCabinetAccess,
   listCoursePaymentOffers,
   listDistrictCourseSummaries,
   mapLessonKind,
@@ -1255,7 +1256,7 @@ export async function getCabinetData(
   const dailyQuote = pickDailyCabinetQuote(cabinetPricing.quotes);
 
   let courseContent: DistrictCourseContent | null = null;
-  const courseCatalogs: CabinetCourseCatalog[] = [];
+  let courseCatalogs: CabinetCourseCatalog[] = [];
   const preferredNormalizedEarly = preferredCourseSlug?.trim() || null;
 
   const { data: enrollmentRowsEarly, error: enrollmentErrorEarly } = enrollmentQuery;
@@ -1321,6 +1322,8 @@ export async function getCabinetData(
             previewAfterEnrollment: summary.previewAfterEnrollment,
             previewAudience: summary.previewAudience,
             publicationStatus: summary.publicationStatus,
+            showInCatalog: summary.showInCatalog,
+            courseClosed: summary.courseClosed,
             curatorName: summary.curatorName,
             curatorTelegramId: summary.curatorTelegramId,
             checkTelegramId: null,
@@ -1704,6 +1707,30 @@ export async function getCabinetData(
     }
   }
 
+  const courseIdBySlug = new Map(courseCatalogs.map((c) => [c.slug, c.id] as const));
+  const ownedCourseIds = new Set<number>();
+  for (const e of courseEnrollments) {
+    if (e.courseId != null) ownedCourseIds.add(e.courseId);
+  }
+  for (const c of courseCatalogs) {
+    if (hasCoursePaymentForCourse(packages, c.id, c.slug, c.title)) {
+      ownedCourseIds.add(c.id);
+    }
+  }
+  const visibleCatalogSlugs = new Set(
+    filterCourseSummariesForCabinetAccess(courseSummaries, courseIdBySlug, ownedCourseIds).map(
+      (s) => s.slug,
+    ),
+  );
+  if (visibleCatalogSlugs.size > 0) {
+    courseCatalogs = courseCatalogs.filter((c) => visibleCatalogSlugs.has(c.slug));
+  }
+  if (courseCatalog && !visibleCatalogSlugs.has(courseCatalog.slug)) {
+    if (!ownedCourseIds.has(courseCatalog.id)) {
+      courseCatalog = courseCatalogs[0] ?? null;
+    }
+  }
+
   const catalogsSynced =
     courseCatalog != null
       ? courseCatalogs.map((c) => (c.slug === courseCatalog.slug ? courseCatalog : c))
@@ -1772,7 +1799,7 @@ async function buildCourseMapSliceForSlug(
   options?: { skipMaintenance?: boolean },
 ): Promise<CabinetCourseViewSlice | null> {
   const courseContent = await getDistrictCourseContent(slug).catch(() => null);
-  if (!courseContent) return null;
+  if (!courseContent || courseContent.courseClosed) return null;
 
   let courseId = (await lookupCourseIdsBySlugs(admin, [slug]).catch(() => new Map<string, number>())).get(
     slug,
@@ -2113,7 +2140,8 @@ export async function getCabinetLessonPageData(
       resolvedCourse?.content ?? (await getDistrictCourseContent().catch(() => null));
     courseId = resolvedCourse?.courseId ?? null;
   }
-  if (!courseContent?.modules.length) notFound();
+  if (!courseContent || courseContent.courseClosed) return null;
+  if (!courseContent.modules.length) notFound();
 
   type Located = {
     lesson: (typeof courseContent.modules)[0]['lessons'][0];

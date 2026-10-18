@@ -6,6 +6,8 @@ export default defineType({
   type: 'document',
   groups: [
     { name: 'main', title: 'Курс', default: true },
+    { name: 'access', title: 'Доступ' },
+    { name: 'staff', title: 'Сотрудники' },
     { name: 'pricing', title: 'Карточка оплаты' },
     { name: 'preview', title: 'Превью в кабинете' },
   ],
@@ -46,7 +48,7 @@ export default defineType({
         'Только для отображения имени на сайте/в кабинете. Не влияет на назначение в боте.',
       type: 'reference',
       to: [{ type: 'teacher' }],
-      group: 'main',
+      group: 'staff',
     }),
     defineField({
       name: 'curatorTelegramId',
@@ -54,7 +56,7 @@ export default defineType({
       description:
         'Число из админ-бота → Пользователи → человек с ролью curator (поле telegram_id). При покупке курса этот куратор автоматически привязывается к ученику (домашки, жизни). Это не преподаватель: преподаватель — имя на экране, куратор — кто ведёт ученика в Telegram. Пусто — берётся defaultCuratorTelegramId из «Кабинет → Цены».',
       type: 'number',
-      group: 'main',
+      group: 'staff',
     }),
     defineField({
       name: 'checkTelegramId',
@@ -62,7 +64,7 @@ export default defineType({
       description:
         'Сотрудник с ролью check в боте. Проверяет домашние задания по этому курсу (не ведёт эфиры и не куратор). После сохранения документа назначение подтянется в базу при следующей синхронизации курса. Можно также назначить в админ-боте: Обучение → Курс → Сотрудники курса.',
       type: 'number',
-      group: 'main',
+      group: 'staff',
     }),
     defineField({
       name: 'deliveryFormat',
@@ -188,6 +190,24 @@ export default defineType({
       title: 'Картинка превью',
       type: 'image',
       hidden: true,
+    }),
+    defineField({
+      name: 'showInCatalog',
+      title: 'Доступен для новых учеников',
+      description:
+        'Если выключено — курс не показывается в каталоге и его нельзя купить. Ученики с уже оплаченным пакетом или зачислением по-прежнему видят курс в кабинете.',
+      type: 'boolean',
+      group: 'access',
+      initialValue: true,
+    }),
+    defineField({
+      name: 'courseClosed',
+      title: 'Закрыть курс',
+      description:
+        'Если включено — курс полностью скрывается из кабинета для всех, включая тех, кто покупал раньше. Остаётся только запись в истории оплат.',
+      type: 'boolean',
+      group: 'access',
+      initialValue: false,
     }),
     defineField({
       name: 'slug',
@@ -328,11 +348,15 @@ export default defineType({
       legacyPrice: 'priceByn',
       grantedLessons: 'pricing.grantedLessons',
       legacyLessons: 'grantedLessons',
+      showInCatalog: 'showInCatalog',
+      courseClosed: 'courseClosed',
     },
-    prepare({ title, headline, priceByn, legacyPrice, grantedLessons, legacyLessons }) {
+    prepare({ title, headline, priceByn, legacyPrice, grantedLessons, legacyLessons, showInCatalog, courseClosed }) {
       const price = typeof priceByn === 'number' ? priceByn : legacyPrice
       const lessons = typeof grantedLessons === 'number' ? grantedLessons : legacyLessons
       const bits = [
+        courseClosed ? 'курс закрыт' : null,
+        showInCatalog === false ? 'скрыт для новых' : null,
         headline,
         typeof price === 'number' ? `${price} BYN` : null,
         typeof lessons === 'number' ? `${lessons} зан.` : null,

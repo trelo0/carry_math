@@ -30,6 +30,7 @@ import {
   hasCourseCatalogOffer,
   hasCoursePayment,
   getCourseCabinetStateForCourse,
+  hasCoursePaymentForCourse,
   isCabinetLessonContentOpen,
   hasViewedCourseMap,
   lessonPathForStop,
@@ -1960,6 +1961,7 @@ export default function CabinetShell({
       scenarioLabel: string | null;
     }[] = [];
     for (const [courseId, pkgs] of groups) {
+      if (!catalogById.has(courseId)) continue;
       const agg = sumActiveCoursePackages(pkgs, courseId);
       if (agg.total <= 0) continue;
       const enrollment = data.courseEnrollments.find((e) => e.courseId === courseId);
@@ -1972,14 +1974,21 @@ export default function CabinetShell({
       });
     }
     if (legacy.length > 0) {
+      const legacyHost = data.courseCatalogs.find((c) =>
+        hasCoursePaymentForCourse(legacy, c.id, c.slug, c.title),
+      );
       const agg = sumActiveCoursePackages(legacy, null);
-      if (agg.total > 0) {
+      if (legacyHost && agg.total > 0) {
         rows.push({
           key: 'course-legacy',
-          courseId: null,
-          title: legacy[0]?.title ?? 'Курс',
+          courseId: legacyHost.id,
+          title: legacyHost.title,
           ...agg,
-          scenarioLabel: purchaseScenarioLabel(data.enrollment?.purchaseScenario ?? null),
+          scenarioLabel: purchaseScenarioLabel(
+            data.courseEnrollments.find((e) => e.courseId === legacyHost.id)?.purchaseScenario ??
+              data.enrollment?.purchaseScenario ??
+              null,
+          ),
         });
       }
     }

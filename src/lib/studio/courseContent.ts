@@ -124,6 +124,8 @@ export type DistrictCourseContent = {
   previewAfterEnrollment: string | null;
   previewAudience: string | null;
   publicationStatus: SanityPublicationStatus;
+  showInCatalog: boolean;
+  courseClosed: boolean;
   curatorName: string | null;
   /** Telegram ID куратора этого курса (Sanity). */
   curatorTelegramId: number | null;
@@ -243,6 +245,8 @@ const COURSE_CONTENT_QUERY = groq`*[_type == "districtCourse" && (slug.current =
   deliveryFormat,
   homeworkIntro,
   publicationStatus,
+  showInCatalog,
+  courseClosed,
   priceByn,
   grantedLessons,
   pricing,
@@ -270,6 +274,8 @@ const COURSE_SUMMARIES_QUERY = groq`*[_type == "districtCourse" && defined(slug.
   deliveryFormat,
   homeworkIntro,
   publicationStatus,
+  showInCatalog,
+  courseClosed,
   "coverImageUrl": coverImage.asset->url,
   "previewImageUrl": coalesce(cabinetPreviewImage.asset->url, coverImage.asset->url),
   cabinetPreviewInside,
@@ -287,7 +293,7 @@ const COURSE_SUMMARIES_QUERY = groq`*[_type == "districtCourse" && defined(slug.
   ])
 }`;
 
-const COURSE_OFFERS_QUERY = groq`*[_type == "districtCourse" && defined(slug.current) && (
+const COURSE_OFFERS_QUERY = groq`*[_type == "districtCourse" && defined(slug.current) && coalesce(courseClosed, false) == false && coalesce(showInCatalog, true) == true && (
   (defined(pricing.priceByn) && pricing.priceByn >= 0 && defined(pricing.grantedLessons) && pricing.grantedLessons > 0) ||
   (defined(priceByn) && priceByn >= 0 && defined(grantedLessons) && grantedLessons > 0)
 )] | order(title asc) {
@@ -548,6 +554,8 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     previewAfterEnrollment: (raw.cabinetPreviewAfterEnrollment as string | null) ?? null,
     previewAudience: (raw.cabinetPreviewAudience as string | null) ?? null,
     publicationStatus: (raw.publicationStatus as SanityPublicationStatus) ?? 'draft',
+    showInCatalog: raw.showInCatalog !== false,
+    courseClosed: raw.courseClosed === true,
     curatorName: (raw.curatorName as string | null) ?? null,
     curatorTelegramId:
       typeof raw.curatorTelegramId === 'number' && Number.isFinite(raw.curatorTelegramId)
@@ -649,6 +657,41 @@ export async function attachPurchaseScenariosToOffers(
   );
 }
 
+/** Курс полностью закрыт — не показываем в кабинете никому. */
+export function isDistrictCourseFullyClosed(
+  courseClosed: boolean | null | undefined,
+): boolean {
+  return courseClosed === true;
+}
+
+/** false = скрыт из витрины; купившие всё равно видят курс в кабинете. */
+export function isDistrictCoursePublicInCatalog(
+  showInCatalog: boolean | null | undefined,
+): boolean {
+  return showInCatalog !== false;
+}
+
+export function isDistrictCourseVisibleInCabinet(summary: {
+  showInCatalog?: boolean | null;
+  courseClosed?: boolean | null;
+}): boolean {
+  if (isDistrictCourseFullyClosed(summary.courseClosed)) return false;
+  return isDistrictCoursePublicInCatalog(summary.showInCatalog);
+}
+
+export function filterCourseSummariesForCabinetAccess(
+  summaries: DistrictCourseSummary[],
+  courseIdBySlug: ReadonlyMap<string, number>,
+  ownedCourseIds: ReadonlySet<number>,
+): DistrictCourseSummary[] {
+  return summaries.filter((s) => {
+    if (isDistrictCourseFullyClosed(s.courseClosed)) return false;
+    if (isDistrictCoursePublicInCatalog(s.showInCatalog)) return true;
+    const courseId = courseIdBySlug.get(s.slug);
+    return courseId != null && ownedCourseIds.has(courseId);
+  });
+}
+
 export type DistrictCourseSummary = {
   sanityId: string;
   title: string;
@@ -658,6 +701,8 @@ export type DistrictCourseSummary = {
   deliveryFormat: string | null;
   homeworkIntro: string | null;
   publicationStatus: SanityPublicationStatus;
+  showInCatalog: boolean;
+  courseClosed: boolean;
   coverImageUrl: string | null;
   previewImageUrl: string | null;
   previewInsideItems: CoursePreviewInsideItem[];
@@ -700,6 +745,8 @@ export const listDistrictCourseSummaries = cache(async function listDistrictCour
       deliveryFormat: (raw.deliveryFormat as string | null) ?? null,
       homeworkIntro: (raw.homeworkIntro as string | null) ?? null,
       publicationStatus: (raw.publicationStatus as SanityPublicationStatus) ?? 'draft',
+      showInCatalog: raw.showInCatalog !== false,
+      courseClosed: raw.courseClosed === true,
       coverImageUrl: (raw.coverImageUrl as string | null) ?? null,
       previewImageUrl: (raw.previewImageUrl as string | null) ?? null,
       previewInsideItems: normalizePreviewInsideItems(raw.cabinetPreviewInside),

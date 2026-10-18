@@ -10,7 +10,12 @@ import {
   getCabinetPricing,
   pickDailyCabinetQuote,
 } from '@/lib/studio/cabinetSettings';
-import { getDistrictCourseContent, listDistrictCourseSummaries } from '@/lib/studio/courseContent';
+import {
+  getDistrictCourseContent,
+  isDistrictCourseFullyClosed,
+  isDistrictCoursePublicInCatalog,
+  listDistrictCourseSummaries,
+} from '@/lib/studio/courseContent';
 
 const COURSE_CATALOG: CabinetCourseCatalog = {
   id: 1,
@@ -174,8 +179,11 @@ export async function enrichCabinetPreviewWithSanity(data: CabinetData): Promise
     dailyQuote: pickDailyCabinetQuote(cabinetPricing.quotes),
   };
 
-  if (summaries.length > 0) {
-    next.courseCatalogs = summaries.map((s, i) => ({
+  const publicSummaries = summaries.filter(
+    (s) => !isDistrictCourseFullyClosed(s.courseClosed) && isDistrictCoursePublicInCatalog(s.showInCatalog),
+  );
+  if (publicSummaries.length > 0) {
+    next.courseCatalogs = publicSummaries.map((s, i) => ({
       id: i + 1,
       title: s.title,
       slug: s.slug,
