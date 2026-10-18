@@ -134,7 +134,7 @@ const getIndividualPageContentCached = cache(async (preview: boolean): Promise<I
         trialGuideText,
         benefits[]{ _key, title, text }
       },
-      "diagnostic": *[_type == "diagnosticBlock"] | order(_updatedAt desc)[0]{
+      "diagnostic": *[_id == "diagnosticBlock"][0]{
         eyebrow,
         title,
         text,
@@ -207,7 +207,7 @@ const getIndividualPageBundleCached = cache(async (preview: boolean): Promise<In
           soloTabText, groupTabText, trialGuideTitle, trialGuideText,
           benefits[]{ _key, title, text }
         },
-        "diagnostic": *[_type == "diagnosticBlock"] | order(_updatedAt desc)[0]{
+        "diagnostic": *[_id == "diagnosticBlock"][0]{
           eyebrow, title, text, buttonText,
           steps[]{ _key, title, text }
         }

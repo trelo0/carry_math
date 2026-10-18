@@ -405,13 +405,29 @@ export async function getStaffCabinetData(
   telegramId: number,
   roles: BotRole[],
   staffName: string | null,
+  options?: {
+    courseId?: number | null;
+    courseSlug?: string | null;
+    courseRole?: 'curator' | 'check' | null;
+  },
 ): Promise<StaffCabinetData> {
   const fullStaffPreview = hasFullStaffPreview(roles, telegramId);
-  const loadCurator = fullStaffPreview || memberHasRole(roles, 'curator');
+  const { staffHasAnyCourseAssignment } = await import('@/lib/bot/education/course-staff');
+  const loadCurator =
+    fullStaffPreview ||
+    (await staffHasAnyCourseAssignment(admin, telegramId, 'curator')) ||
+    (await staffHasAnyCourseAssignment(admin, telegramId, 'check'));
   const loadTeacher = fullStaffPreview || memberHasRole(roles, 'teacher');
 
   const [curator, teacher] = await Promise.all([
-    loadCurator ? getCuratorCabinetData(admin, telegramId, staffName) : Promise.resolve(null),
+    loadCurator
+      ? getCuratorCabinetData(admin, telegramId, staffName, {
+          courseId: options?.courseId,
+          courseSlug: options?.courseSlug,
+          courseRole: options?.courseRole,
+          fullPreview: fullStaffPreview,
+        })
+      : Promise.resolve(null),
     loadTeacher ? getTeacherCabinetData(admin, telegramId, staffName) : Promise.resolve(null),
   ]);
 

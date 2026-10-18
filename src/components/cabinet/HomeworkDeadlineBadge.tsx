@@ -14,8 +14,8 @@ export type HomeworkDeadlineBadgeProps = {
   homeworkRemainingMs?: number | null;
   homeworkOverdueAt?: string | null;
   compact?: boolean;
-  /** inline — в ряд с текстом/бейджами; corner — правый верх карточки ДЗ; block — под заголовком */
-  placement?: 'inline' | 'corner' | 'block';
+  /** inline — в ряд с текстом/бейджами; corner — правый верх карточки ДЗ; chip — pill в колонке ДЗ; block — под заголовком */
+  placement?: 'inline' | 'corner' | 'chip' | 'block';
   className?: string;
 };
 
@@ -42,6 +42,26 @@ function resolveUrgency(phase: DeadlineUiPhase, remainingMs: number, totalMs: nu
   if (remainingMs < DAY) return 'day';
   if (remainingMs <= half) return 'half';
   return 'ok';
+}
+
+function DeadlineClockIcon() {
+  return (
+    <svg className="cab-hw-deadline-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M12 8v4.2l2.6 1.6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function DeadlineAlarmIcon() {
+  return (
+    <svg className="cab-hw-deadline-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5.5 9.5a6.5 6.5 0 0113 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M4 4.5 2.5 6M20 4.5 21.5 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M8.5 19h7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M12 15.5V18" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 function labelForPhase(phase: DeadlineUiPhase, remainingMs: number): string | null {
@@ -101,8 +121,13 @@ export default function HomeworkDeadlineBadge({
 
   const label = labelForPhase(phase, remainingMs);
   if (!label || phase === 'none') return null;
+  if (placement === 'chip' && (phase === 'waiting_review' || phase === 'approved')) return null;
 
   const urgency = resolveUrgency(phase, remainingMs, HOMEWORK_DEADLINE_MS);
+  const isChip = placement === 'chip';
+  const showCountdownChip =
+    isChip && (phase === 'ok' || phase === 'soon' || (phase === 'revision' && remainingMs > 0));
+  const showExpiredChip = isChip && phase === 'overdue';
 
   return (
     <span
@@ -111,6 +136,7 @@ export default function HomeworkDeadlineBadge({
         `is-${phase}`,
         `is-urgency-${urgency}`,
         `is-place-${placement}`,
+        isChip ? 'is-pill' : '',
         compact ? 'is-compact' : '',
         className ?? '',
       ]
@@ -122,7 +148,21 @@ export default function HomeworkDeadlineBadge({
           : undefined
       }
     >
-      <span className="cab-hw-deadline-label">{label}</span>
+      {showCountdownChip ? (
+        <>
+          <DeadlineClockIcon />
+          <span className="cab-hw-deadline-prefix">Срок сдачи</span>
+          <span className="cab-hw-deadline-sep" aria-hidden="true" />
+          <span className="cab-hw-deadline-value">{formatRemaining(remainingMs)}</span>
+        </>
+      ) : showExpiredChip ? (
+        <>
+          <DeadlineAlarmIcon />
+          <span className="cab-hw-deadline-label">Срок истёк</span>
+        </>
+      ) : (
+        <span className="cab-hw-deadline-label">{label}</span>
+      )}
     </span>
   );
 }

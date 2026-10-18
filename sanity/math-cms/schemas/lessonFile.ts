@@ -9,7 +9,6 @@ export default defineType({
       name: 'file',
       title: 'Файл',
       type: 'file',
-      validation: (Rule) => Rule.required(),
     }),
     defineField({
       name: 'published',

@@ -20,6 +20,16 @@ async function isBotMemberWithRole(
   return !!role && allowedRoles.has(role);
 }
 
+async function isRegisteredBotMember(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+  const { data, error } = await admin
+    .from('bot_members')
+    .select('telegram_id')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
+}
+
 /** teacherId из Sanity/checkout → telegram_id (источник: Sanity cabinetSettings.teachers). */
 export async function resolveTeacherTelegramId(
   admin: SupabaseClient,
@@ -48,7 +58,7 @@ export async function resolveDefaultCuratorTelegramId(
 
 /**
  * Куратор для конкретного курса: districtCourse.curatorTelegramId → fallback default.
- * Проверяет роль curator/mentor в bot_members.
+ * Достаточно участника бота; назначение на курс — в course_staff_assignments.
  */
 export async function resolveCuratorTelegramIdForCourse(
   admin: SupabaseClient,
@@ -56,18 +66,33 @@ export async function resolveCuratorTelegramIdForCourse(
   explicitTelegramId?: number | null,
 ): Promise<number | null> {
   if (explicitTelegramId != null && Number.isFinite(explicitTelegramId)) {
-    const ok = await isBotMemberWithRole(admin, explicitTelegramId, CURATOR_ROLES);
-    if (ok) return explicitTelegramId;
+    if (await isRegisteredBotMember(admin, explicitTelegramId)) return explicitTelegramId;
   }
 
   if (courseSlug) {
     const content = await getDistrictCourseContent(courseSlug).catch(() => null);
     const fromCourse = content?.curatorTelegramId;
-    if (fromCourse != null) {
-      const ok = await isBotMemberWithRole(admin, fromCourse, CURATOR_ROLES);
-      if (ok) return fromCourse;
-    }
+    if (fromCourse != null && (await isRegisteredBotMember(admin, fromCourse))) return fromCourse;
   }
 
   return resolveDefaultCuratorTelegramId(admin);
+}
+
+/** Проверяющий ДЗ для курса (Sanity checkTelegramId). Достаточно участника бота. */
+export async function resolveCheckTelegramIdForCourse(
+  admin: SupabaseClient,
+  courseSlug?: string | null,
+  explicitTelegramId?: number | null,
+): Promise<number | null> {
+  if (explicitTelegramId != null && Number.isFinite(explicitTelegramId)) {
+    if (await isRegisteredBotMember(admin, explicitTelegramId)) return explicitTelegramId;
+  }
+
+  if (courseSlug) {
+    const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+    const fromCourse = content?.checkTelegramId;
+    if (fromCourse != null && (await isRegisteredBotMember(admin, fromCourse))) return fromCourse;
+  }
+
+  return null;
 }

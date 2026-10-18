@@ -526,23 +526,26 @@ async function listCourseStudents(
   page: number,
 ): Promise<{ rows: Array<{ telegram_id: number; full_name: string | null }>; total: number }> {
   const { data, error } = await admin
-    .from('user_accesses')
+    .from('course_enrollments')
     .select('telegram_id, bot_members(full_name)')
-    .eq('product', 'course')
     .eq('status', 'active')
     .order('telegram_id', { ascending: true });
   if (error) throw error;
-  const rows = (data ?? []).map((row) => {
+  const seen = new Set<number>();
+  const rows: Array<{ telegram_id: number; full_name: string | null }> = [];
+  for (const row of data ?? []) {
     const raw = row as unknown as {
       telegram_id: number;
       bot_members: { full_name: string | null } | { full_name: string | null }[] | null;
     };
+    if (seen.has(raw.telegram_id)) continue;
+    seen.add(raw.telegram_id);
     const bm = Array.isArray(raw.bot_members) ? raw.bot_members[0] : raw.bot_members;
-    return {
+    rows.push({
       telegram_id: raw.telegram_id,
       full_name: bm?.full_name ?? null,
-    };
-  });
+    });
+  }
   const from = page * COURSE_STUDENTS_PER_PAGE;
   return { rows: rows.slice(from, from + COURSE_STUDENTS_PER_PAGE), total: rows.length };
 }

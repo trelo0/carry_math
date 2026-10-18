@@ -103,7 +103,14 @@ import {
   CURATOR_REJECT_VOICE_STEP,
   STAFF_CURATOR_REPLY_STEP,
 } from '../staff/staff-steps';
-import { buildCuratorHomeScreen } from '../staff/curator-home';
+import { buildCuratorBotWelcome } from '../staff/curator-home';
+import {
+  handleCuratorBotCallback,
+  handleCuratorBotReplyMenu,
+  verifySchedulePayloadCourse,
+  type CuratorSchedulePayloadExt,
+} from '../staff/curator-bot-handlers';
+import { CURATOR_BOT_WELCOME_TEXT } from '../staff/curator-bot-screens';
 import {
   applyCuratorLessonSchedule,
   CURATOR_SCHEDULE_DATETIME_STEP,
@@ -135,8 +142,7 @@ export const CURATOR_MENU_LABELS = CURATOR_BOT_MENU_LABELS;
 
 export const CURATOR_MENU_LABEL_SET = new Set<string>(Object.values(CURATOR_MENU_LABELS));
 
-const CURATOR_HOME_FALLBACK =
-  '👋 Кабинет куратора\n\n👥 Ученики · 📝 ДЗ · 💬 Сообщения · 🎓 Курс и прогресс · 🌐 Панель';
+const CURATOR_HOME_FALLBACK = CURATOR_BOT_WELCOME_TEXT;
 
 async function curatorCabinetScreen(
   admin: SupabaseClient,
@@ -171,14 +177,9 @@ type RejectPayload = AdminPayload & { studentId?: string; hwNumber?: number };
 export function curatorReplyKeyboard(): ReplyKeyboard {
   return {
     keyboard: [
-      [
-        { text: CURATOR_MENU_LABELS.students },
-        { text: CURATOR_MENU_LABELS.homework },
-      ],
-      [
-        { text: CURATOR_MENU_LABELS.messages },
-        { text: CURATOR_MENU_LABELS.course },
-      ],
+      [{ text: CURATOR_MENU_LABELS.schedule }],
+      [{ text: CURATOR_MENU_LABELS.lessons }],
+      [{ text: CURATOR_MENU_LABELS.students }],
       [{ text: CURATOR_MENU_LABELS.cabinet }],
     ],
     resize_keyboard: true,
@@ -234,27 +235,16 @@ export async function sendCuratorStart(
   testFooter = '',
 ): Promise<void> {
   const caps = await loadStaffCapabilities(admin, telegramId);
-  let homeText = CURATOR_HOME_FALLBACK;
-  let homeKeyboard: InlineKeyboard | undefined;
-  try {
-    const home = await buildCuratorHomeScreen(admin, telegramId);
-    homeText = home.text;
-    homeKeyboard = home.keyboard;
-  } catch (error) {
-    console.error('[curator] home screen failed:', error);
-  }
+  const { staffGlobalReplyKeyboard } = await import('../staff/staff-menu');
+  const { STAFF_COURSE_HOME_TEXT, tryAutoEnterSingleCourseWorkspace } = await import(
+    '../staff/staff-course-hub-flow'
+  );
   await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: homeText + testFooter,
-    reply_markup: staffReplyKeyboard(caps),
+    text: STAFF_COURSE_HOME_TEXT + testFooter,
+    reply_markup: staffGlobalReplyKeyboard(caps),
   });
-  if (homeKeyboard) {
-    await telegramSend('sendMessage', {
-      chat_id: chatId,
-      text: 'Быстрые действия по занятиям:',
-      reply_markup: homeKeyboard,
-    });
-  }
+  await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
 }
 
 // ---------------------------------------------------------------------------
@@ -695,9 +685,14 @@ export async function handleCuratorMessage(
 
   // Дата следующего / выбранного занятия → Sanity.
   if (state && step === CURATOR_SCHEDULE_DATETIME_STEP) {
-    const payload = state.payload as CuratorSchedulePayload;
+    const payload = state.payload as CuratorSchedulePayloadExt;
     const sanityLessonId = payload.sanityLessonId;
     if (!sanityLessonId) return false;
+    if (!(await verifySchedulePayloadCourse(admin, telegramId, payload))) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Нет доступа к занятию или курс изменился.');
+      return true;
+    }
     if (isStaffMenuLabel(text, caps)) {
       await clearStateIfAvailable(admin, telegramId);
       return false;
@@ -724,14 +719,18 @@ export async function handleCuratorMessage(
       );
       await clearStateIfAvailable(admin, telegramId);
       const when = formatLessonDateTimeRu(parsed.scheduledAtIso);
+      const courseId = payload.courseId;
+      const backCal = courseId != null ? `c:cal:${courseId}` : 'c:hub';
       await sendAdminMessage(
         chatId,
         `✅ Дата сохранена в Sanity и на сайте.\n\n` +
           `${payload.lessonTitle ?? 'Урок'}\n${when}`,
         {
           inline_keyboard: [
-            [{ text: '📅 Ещё занятие', callback_data: 'c:sch:list' }],
-            [{ text: '🏠 На главную', callback_data: 'c:home' }],
+            ...(courseId != null
+              ? [[{ text: '📅 Расписание курса', callback_data: backCal }]]
+              : []),
+            [{ text: '🏠 Главная', callback_data: 'c:hub' }],
           ],
         },
       );
@@ -787,6 +786,13 @@ export async function handleCuratorMessage(
 
   if (staffMode === 'combined') return false;
 
+  const { getStaffCourseWorkspace } = await import('../staff/staff-course-session');
+  const ws = await getStaffCourseWorkspace(admin, telegramId);
+  if (ws?.role === 'curator') return false;
+
+  const menuHandled = await handleCuratorBotReplyMenu(admin, telegramId, chatId, text, 'curator_only');
+  if (menuHandled) return true;
+
   if (!CURATOR_MENU_LABEL_SET.has(text)) {
     if (
       state &&
@@ -800,33 +806,6 @@ export async function handleCuratorMessage(
     return true;
   }
 
-  const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
-
-  if (text === CURATOR_MENU_LABELS.cabinet) {
-    const screen = await renderCuratorCabinet(admin, telegramId);
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    return true;
-  }
-  if (text === CURATOR_MENU_LABELS.messages) {
-    const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
-    const screen = renderCuratorMessagesInbox(threads, storageEnabled, cabinetUrl);
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    return true;
-  }
-  if (text === CURATOR_MENU_LABELS.homework) {
-    const screen = renderCuratorHomeworkHub(cabinetUrl);
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    return true;
-  }
-  if (text === CURATOR_MENU_LABELS.course) {
-    const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
-    const screen = renderCuratorActivityHome(snapshot, cabinetUrl, undefined);
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    return true;
-  }
-  const students = await loadCuratorStudents(admin, telegramId);
-  const screen = renderCuratorStudentsList(students);
-  await sendAdminMessage(chatId, screen.text, screen.keyboard);
   return true;
 }
 
@@ -934,6 +913,10 @@ export async function handleCuratorAttachment(
 // и для не-менторов.
 // ---------------------------------------------------------------------------
 
+function isCourseStaffMyCourseCallback(data: string): boolean {
+  return data === 'c:mc' || data === 'c:hub' || data.startsWith('c:mc:') || data === 'noop';
+}
+
 export async function handleCuratorCallback(
   admin: SupabaseClient,
   data: string,
@@ -943,10 +926,25 @@ export async function handleCuratorCallback(
   callbackQueryId?: string,
 ): Promise<boolean> {
   if (!data.startsWith('c:')) return false;
-  if (!(await canUseCuratorBot(admin, telegramId))) return false;
+
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const curatorBot = caps.canCuratorBot;
+  const courseStaffOnly =
+    !curatorBot && caps.canCourseStaffBot && isCourseStaffMyCourseCallback(data);
+
+  if (!curatorBot && !courseStaffOnly) return false;
 
   const message: AdminMessage = { chatId, messageId };
-  const handled = await routeCuratorCallback(admin, message, telegramId, data.split(':'));
+  if (courseStaffOnly) {
+    const handled = await handleCuratorBotCallback(admin, message, telegramId, data);
+    if (!handled) return false;
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    return true;
+  }
+
+  const handled = await routeCuratorCallback(admin, message, telegramId, data.split(':'), data);
   if (!handled) return false;
 
   if (callbackQueryId) {
@@ -960,13 +958,26 @@ async function routeCuratorCallback(
   message: AdminMessage,
   telegramId: number,
   parts: string[],
+  fullData: string,
 ): Promise<boolean> {
+  const botHandled = await handleCuratorBotCallback(admin, message, telegramId, fullData);
+  if (botHandled) return true;
+
   const [, action, id, subId] = parts;
   const restId = parts.slice(3).join(':');
   const hwNumber = Number(subId);
   const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   const combined = resolveStaffBotMode(caps) === 'combined';
+
+  if (!combined) {
+    if (action !== 'noop') {
+      await editCuratorScreen(message, 'Эта кнопка устарела. Используйте меню под полем ввода.', {
+        inline_keyboard: [[{ text: '🏠 Главная', callback_data: 'c:hub' }]],
+      });
+    }
+    return true;
+  }
   const hwNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_HW_NAV : undefined;
   const msgNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_MSG_NAV : undefined;
   const courseNav: StaffScreenNav | undefined = combined ? COMBINED_CURATOR_COURSE_NAV : undefined;
@@ -978,12 +989,8 @@ async function routeCuratorCallback(
         await editCuratorScreen(message, COMBINED_HOME_TEXT, { inline_keyboard: [] });
         return true;
       }
-      try {
-        const home = await buildCuratorHomeScreen(admin, telegramId);
-        await editCuratorScreen(message, home.text, home.keyboard);
-      } catch {
-        await editCuratorScreen(message, CURATOR_HOME_FALLBACK, { inline_keyboard: [] });
-      }
+      const home = buildCuratorBotWelcome();
+      await editCuratorScreen(message, home.text, home.keyboard);
       return true;
     }
 

@@ -1,16 +1,26 @@
 import { NextResponse } from 'next/server';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getStaffAuth } from '@/lib/cabinet-auth';
+import {
+  assertStaffStudentCourseView,
+  memberCanDeliverCourse,
+  memberCanReviewHomework,
+} from '@/lib/curator/staff-course-access';
 import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
-import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { getLifeEvents, isLivesTableError } from '@/lib/bot/education/lives';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 type RouteParams = { params: Promise<{ telegramId: string }> };
 
-export async function GET(_request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+export async function GET(request: Request, { params }: RouteParams) {
+  const auth = await getStaffAuth();
   if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (
+    !memberCanReviewHomework(auth.roles, auth.telegramId) &&
+    !memberCanDeliverCourse(auth.roles, auth.telegramId)
+  ) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -21,13 +31,20 @@ export async function GET(_request: Request, { params }: RouteParams) {
   }
 
   try {
-    const content = await getDistrictCourseContent();
-    const courseId = content ? await resolveCourseIdForContent(auth.admin, content) : null;
-    if (!courseId) {
+    const url = new URL(request.url);
+    const courseIdRaw = url.searchParams.get('courseId');
+    let courseId: number | null =
+      courseIdRaw != null && courseIdRaw !== '' ? Number(courseIdRaw) : null;
+
+    if (courseId == null || !Number.isSafeInteger(courseId) || courseId <= 0) {
+      const content = await getDistrictCourseContent();
+      courseId = content ? await resolveCourseIdForContent(auth.admin, content) : null;
+    }
+    if (courseId == null || !Number.isSafeInteger(courseId) || courseId <= 0) {
       return NextResponse.json({ error: 'Course not found' }, { status: 404 });
     }
 
-    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId);
+    await assertStaffStudentCourseView(auth.admin, auth, studentTelegramId, courseId);
 
     const events = await getLifeEvents(auth.admin, studentTelegramId, courseId, 30);
     return NextResponse.json({

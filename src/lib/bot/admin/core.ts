@@ -73,9 +73,21 @@ export type AdminPayload = {
   lessonTitle?: string;
   lessonNumber?: number;
   mentorTelegramId?: number;
+  /** Курс, по которому ученик пишет куратору (student:mentor, context course). */
+  courseId?: number;
+  courseTitle?: string;
+  courseSlug?: string;
+  /** Активный курс в Telegram workspace куратора/проверяющего. */
+  staffWorkspace?: {
+    courseId: number;
+    role: 'curator' | 'check';
+    courseTitle: string;
+    courseSlug: string;
+  };
   /** Кому пишет ученик: teacher | curator (student:mentor). */
-  staffRole?: 'teacher' | 'curator';
+  staffRole?: 'teacher' | 'curator' | 'check';
   homework?: boolean;
+  mentorContext?: 'course' | 'lessons';
   adminHwId?: number;
   adminHwQueue?: string;
   adminHwPage?: number;
@@ -165,6 +177,7 @@ export type ConversationStep =
   | 'student:support'
   | 'student:support-thread'
   | 'student:mentor'
+  | 'student:mentor-pick'
   | 'student:course-hw-submit'
   | 'student:course-hw-comment'
   | 'student:course-hw-confirm'
@@ -180,7 +193,8 @@ export type ConversationStep =
   | 'admin:lead:trial:confirm'
   | 'admin:lead:followup:date'
   | 'admin:hw:search'
-  | 'admin:hw:revision';
+  | 'admin:hw:revision'
+  | 'staff:course-workspace';
 
 export type ConversationState = {
   telegram_id: number;

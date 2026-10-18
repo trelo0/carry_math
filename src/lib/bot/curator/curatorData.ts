@@ -10,7 +10,6 @@ import {
   type CourseHomeworkLessonRef,
 } from '../education/course-homework';
 import type { CourseLessonStudentProgress } from '../education/course-progress';
-import { resolveCourseIdForContent } from '../education/course-record';
 import { listCourseStudentTelegramIds } from '@/lib/curator/students';
 
 export type CuratorHomeworkRecord = CuratorHwItem & {
@@ -66,13 +65,16 @@ async function studentDisplayName(admin: SupabaseClient, telegramId: number): Pr
 export async function listCuratorStudentTelegramIds(
   admin: SupabaseClient,
   curatorTelegramId: number,
+  courseId?: number | null,
 ): Promise<number[]> {
-  const { data, error } = await admin
+  let query = admin
     .from('mentor_assignments')
     .select('telegram_id')
     .eq('mentor_telegram_id', curatorTelegramId)
     .eq('kind', 'curator')
     .eq('status', 'active');
+  if (courseId != null) query = query.eq('course_id', courseId);
+  const { data, error } = await query;
   if (error) throw error;
   return [...new Set((data ?? []).map((r) => r.telegram_id as number))];
 }
@@ -80,19 +82,25 @@ export async function listCuratorStudentTelegramIds(
 export async function loadCuratorStudents(
   admin: SupabaseClient,
   curatorTelegramId: number,
+  options?: { courseId?: number; courseSlug?: string },
 ): Promise<CuratorStudentRecord[]> {
-  const content = await getDistrictCourseContent();
+  const { resolveCuratorCourseContext } = await import('@/lib/curator/course-context');
+  const ctx =
+    options?.courseId && options.courseSlug
+      ? { courseId: options.courseId, slug: options.courseSlug, title: '' }
+      : await resolveCuratorCourseContext(admin, curatorTelegramId, {
+          courseId: options?.courseId,
+          courseSlug: options?.courseSlug,
+        });
+  if (!ctx) return [];
+
+  const content = await getDistrictCourseContent(ctx.slug);
   if (!content) return [];
 
-  let studentIds = await listCuratorStudentTelegramIds(admin, curatorTelegramId);
-  try {
-    const courseId = await resolveCourseIdForContent(admin, content);
-    if (courseId == null) throw new Error('no course');
-    const onCourse = await listCourseStudentTelegramIds(admin, courseId);
-    studentIds = [...new Set([...studentIds, ...onCourse])];
-  } catch {
-    /* course row optional */
-  }
+  const courseId = ctx.courseId;
+  const mentorIds = await listCuratorStudentTelegramIds(admin, curatorTelegramId, courseId);
+  const onCourse = await listCourseStudentTelegramIds(admin, courseId);
+  const studentIds = [...new Set([...mentorIds, ...onCourse])];
   if (studentIds.length === 0) return [];
 
   const lessons = flattenCourseLessons(content)

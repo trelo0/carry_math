@@ -63,7 +63,26 @@ export async function loadPurchaseFulfillmentSnapshot(
   product: AccessProduct,
   packageId: number,
   externalId?: string,
+  options?: { courseId?: number | null },
 ): Promise<PurchaseFulfillmentSnapshot> {
+  const courseId = options?.courseId ?? null;
+  let enrollmentQuery = admin
+    .from('course_enrollments')
+    .select('course_id, status')
+    .eq('telegram_id', telegramId)
+    .eq('status', 'active');
+  if (courseId != null) enrollmentQuery = enrollmentQuery.eq('course_id', courseId);
+  else enrollmentQuery = enrollmentQuery.order('started_at', { ascending: false }).limit(1);
+
+  let curatorQuery = admin
+    .from('mentor_assignments')
+    .select('mentor_telegram_id')
+    .eq('telegram_id', telegramId)
+    .eq('kind', 'curator')
+    .eq('status', 'active');
+  if (courseId != null) curatorQuery = curatorQuery.eq('course_id', courseId);
+  else curatorQuery = curatorQuery.order('started_at', { ascending: false }).limit(1);
+
   const [{ data: access }, { data: pkg }, paymentQuery, { data: enrollment }, { data: curator }] =
     await Promise.all([
       admin
@@ -91,27 +110,8 @@ export async function loadPurchaseFulfillmentSnapshot(
             .order('paid_at', { ascending: false })
             .limit(1)
             .maybeSingle(),
-      product === 'course'
-        ? admin
-            .from('course_enrollments')
-            .select('course_id, status')
-            .eq('telegram_id', telegramId)
-            .eq('status', 'active')
-            .order('started_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-      product === 'course'
-        ? admin
-            .from('mentor_assignments')
-            .select('mentor_telegram_id')
-            .eq('telegram_id', telegramId)
-            .eq('kind', 'curator')
-            .eq('status', 'active')
-            .order('started_at', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
+      product === 'course' ? enrollmentQuery.maybeSingle() : Promise.resolve({ data: null }),
+      product === 'course' ? curatorQuery.maybeSingle() : Promise.resolve({ data: null }),
     ]);
 
   const payment = paymentQuery.data;

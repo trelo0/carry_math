@@ -6,7 +6,10 @@ import type {
   HomeworkProgressStatus,
 } from '@/lib/bot/education/course-progress';
 import { purchaseScenarioLabel, sumActiveCoursePackages } from '@/lib/course-purchase-scenario';
-import { lessonGateMessage, lessonMapChipLabel } from '@/lib/cabinet-lesson-labels';
+import {
+  lessonGateMessage,
+  lessonMapChipLabel,
+} from '@/lib/cabinet-lesson-labels';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import type {
@@ -25,6 +28,9 @@ import {
   buildStopsFromCatalogPreviews,
   getCourseCabinetState,
   hasCourseCatalogOffer,
+  hasCoursePayment,
+  getCourseCabinetStateForCourse,
+  isCabinetLessonContentOpen,
   hasViewedCourseMap,
   lessonPathForStop,
   mapContentToCourseModules,
@@ -38,6 +44,8 @@ import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSli
 import CabinetAchievementToasts from '@/components/cabinet/CabinetAchievementToasts';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
 import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
+import HomeworkRowChip from '@/components/cabinet/HomeworkRowChip';
+import { homeworkLockedActionHint, homeworkRowState } from '@/lib/cabinet-homework-row';
 import {
   buildRoadmapGeometry,
   buildRoadSegments,
@@ -46,6 +54,15 @@ import {
   type RoadmapGeometry,
   type RoadTone,
 } from '@/components/cabinet/courseRoadmap';
+import {
+  clearCourseMapStale,
+  clearCourseSliceCache,
+  isCourseMapStale,
+  markCourseMapStale,
+  isCourseSliceCacheFresh,
+  readCourseSliceCache,
+  writeCourseSliceCache,
+} from '@/lib/cabinet-course-cache';
 
 /* -------------------------------------------------------------------------- */
 /* Типы карты курса (данные из Supabase + Sanity).                             */
@@ -79,7 +96,9 @@ type CourseStop = {
   isFirstChainGate?: boolean;
   isJoinArchive?: boolean;
   isStreamActiveModule?: boolean;
+  isStreamScheduleLesson?: boolean;
   isCurrent?: boolean;
+  inPackageQuota?: boolean;
   webinarSessionStatus?: CabinetCourseStop['webinarSessionStatus'];
 };
 
@@ -112,6 +131,8 @@ function mapCabinetStopToCourseStop(s: CabinetCourseStop): CourseStop {
     isFirstChainGate: s.isFirstChainGate,
     isJoinArchive: s.isJoinArchive,
     isStreamActiveModule: s.isStreamActiveModule,
+    isStreamScheduleLesson: s.isStreamScheduleLesson,
+    inPackageQuota: s.inPackageQuota,
   };
 }
 
@@ -359,13 +380,13 @@ function initials(name: string): string {
 
 const ROAD_TONE_STYLE: Record<RoadTone, { glow: string; ribbon: string; rim: string; core: string; mark: string; pad: string; station: string }> = {
   passed: {
-    glow: 'rgba(0, 168, 255, 0.16)',
-    ribbon: 'rgba(0, 175, 235, 0.52)',
-    rim: 'rgba(130, 220, 255, 0.65)',
-    core: 'rgba(200, 240, 255, 0.88)',
-    mark: 'rgba(255, 255, 255, 0.72)',
-    pad: 'rgba(0, 168, 255, 0.22)',
-    station: 'rgba(0, 190, 255, 0.85)',
+    glow: 'rgba(0, 168, 255, 0.08)',
+    ribbon: 'rgba(0, 145, 210, 0.38)',
+    rim: 'rgba(90, 170, 220, 0.35)',
+    core: 'rgba(120, 190, 230, 0.55)',
+    mark: 'rgba(255, 255, 255, 0.35)',
+    pad: 'rgba(0, 168, 255, 0.18)',
+    station: 'rgba(0, 175, 230, 0.72)',
   },
   active: {
     glow: 'rgba(0, 168, 255, 0.22)',
@@ -398,11 +419,14 @@ function stopLabel(
     | 'isFirstChainGate'
     | 'isTrialFree'
     | 'isJoinArchive'
+    | 'isCurrent'
+    | 'inPackageQuota'
   >,
   hasCourse: boolean,
 ): string {
   return lessonMapChipLabel({
     hasCourse,
+    inPackageQuota: stop.inPackageQuota,
     isTrialFree: stop.isTrialFree,
     mapAccessState: stop.mapAccessState,
     webinarSessionStatus: stop.webinarSessionStatus,
@@ -411,32 +435,54 @@ function stopLabel(
     homeworkStatus: stop.homeworkStatus,
     isFirstChainGate: stop.isFirstChainGate,
     isJoinArchive: stop.isJoinArchive,
+    isCurrent: stop.isCurrent,
   });
 }
 
 function RoadRibbon({ d, tone }: { d: string; tone: RoadTone }) {
   const s = ROAD_TONE_STYLE[tone];
+  const neon = tone === 'active';
+  const future = tone === 'future';
   return (
     <g className={`cab-rm-ribbon is-${tone}`}>
-      <path d={d} fill="none" stroke={s.glow} strokeWidth="22" strokeLinecap="round" strokeLinejoin="round" filter="url(#cab-rm-glow)" opacity="0.9" />
-      <path d={d} fill="none" stroke="rgba(0, 0, 0, 0.42)" strokeWidth="10" strokeLinecap="round" transform="translate(0, 2.5)" opacity="0.55" />
-      <path d={d} fill="none" stroke={s.ribbon} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-      <path d={d} fill="none" stroke={s.rim} strokeWidth="9" strokeLinecap="round" opacity="0.38" />
-      <path d={d} fill="none" stroke="rgba(4, 10, 22, 0.65)" strokeWidth="4.5" strokeLinecap="round" />
-      <path d={d} fill="none" stroke={s.core} strokeWidth="1.4" strokeLinecap="round" />
-      <path d={d} fill="none" stroke={s.mark} strokeWidth="0.9" strokeDasharray="7 11" strokeLinecap="round" />
+      <path
+        d={d}
+        fill="none"
+        stroke={s.glow}
+        strokeWidth={neon ? 26 : 16}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter="url(#cab-rm-glow)"
+        opacity={neon ? 0.95 : future ? 0.22 : 0.4}
+      />
+      <path d={d} fill="none" stroke="rgba(0, 0, 0, 0.5)" strokeWidth="11" strokeLinecap="round" transform="translate(0, 2.6)" opacity={neon ? 0.55 : 0.32} />
+      <path d={d} fill="none" stroke={s.ribbon} strokeWidth={neon ? 9 : 6.5} strokeLinecap="round" strokeLinejoin="round" />
+      {neon ? <path d={d} fill="none" stroke={s.rim} strokeWidth="10" strokeLinecap="round" opacity="0.42" /> : null}
+      <path d={d} fill="none" stroke="rgba(4, 10, 22, 0.72)" strokeWidth="4.6" strokeLinecap="round" />
+      <path d={d} fill="none" stroke={s.core} strokeWidth={neon ? 1.8 : 1.35} strokeLinecap="round" />
+      <path
+        d={d}
+        fill="none"
+        stroke={s.mark}
+        strokeWidth={neon ? 1.05 : 0.75}
+        strokeDasharray={neon ? '8 10' : '5 13'}
+        strokeLinecap="round"
+        opacity={future ? 0.45 : 1}
+      />
     </g>
   );
 }
 
 function RoadStations({
-  nowIndex,
+  pathEndIndex,
+  highlightIndex,
   locked,
   geometry,
   modules,
   stops,
 }: {
-  nowIndex: number;
+  pathEndIndex: number;
+  highlightIndex: number;
   locked: boolean;
   geometry: RoadmapGeometry;
   modules: { color: string }[];
@@ -445,17 +491,21 @@ function RoadStations({
   return (
     <g className="cab-rm-stations">
       {geometry.rmPts.map((p, i) => {
-        const tone = rmStopTone(i, nowIndex, locked);
+        const tone = rmStopTone(i, pathEndIndex, highlightIndex, locked);
         const s = ROAD_TONE_STYLE[tone];
         const modColor = moduleColorAt(modules, stops[i]?.module ?? 0);
         const pad = `${modColor}38`;
         const station = modColor;
         return (
           <g key={`st-${i}`} transform={`translate(${p.x}, ${p.y})`} className={`cab-rm-station is-${tone}`}>
-            <ellipse cx="0" cy="0" rx="17" ry="5.5" fill={pad} opacity="0.85" />
-            <ellipse cx="0" cy="-0.5" rx="11" ry="3.5" fill={station} opacity={tone === 'future' ? 0.45 : 0.72} />
-            <circle r="5.5" fill="rgba(6, 12, 24, 0.88)" stroke={station} strokeWidth="1.6" opacity={tone === 'future' ? 0.55 : 1} />
-            <circle r="2.2" fill={tone === 'active' ? 'rgba(255, 200, 110, 0.95)' : 'rgba(180, 230, 255, 0.9)'} opacity={tone === 'future' ? 0.35 : 0.95} />
+            <ellipse cx="0" cy="1.5" rx="19" ry="6.5" fill={pad} opacity="0.95" />
+            <ellipse cx="0" cy="0.2" rx="12" ry="3.8" fill={station} opacity={tone === 'future' ? 0.38 : 0.7} />
+            <circle r="7" fill="rgba(5, 10, 20, 0.9)" stroke={station} strokeWidth="1.8" opacity={tone === 'future' ? 0.5 : 1} />
+            <circle
+              r="2.6"
+              fill={tone === 'active' ? 'rgba(255, 210, 130, 1)' : 'rgba(200, 238, 255, 0.95)'}
+              opacity={tone === 'future' ? 0.32 : 1}
+            />
           </g>
         );
       })}
@@ -464,30 +514,111 @@ function RoadStations({
 }
 
 function CourseRoadTrack({
-  nowIndex,
+  pathEndIndex,
+  highlightIndex,
   locked,
   geometry,
   modules,
   stops,
 }: {
-  nowIndex: number;
+  pathEndIndex: number;
+  highlightIndex: number;
   locked: boolean;
   geometry: RoadmapGeometry;
   modules: { color: string }[];
   stops: CourseStop[];
 }) {
-  const segments = buildRoadSegments(stops, geometry, nowIndex, locked);
+  const segments = buildRoadSegments(stops, geometry, pathEndIndex, highlightIndex, locked);
   return (
     <g className="cab-rm-track">
       <defs>
         <filter id="cab-rm-glow" x="-80%" y="-200%" width="260%" height="500%">
           <feGaussianBlur stdDeviation="5.5" />
         </filter>
+        <filter id="cab-rm-beacon-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="3.2" />
+        </filter>
+        <radialGradient id="cab-rm-start-core" cx="34%" cy="30%" r="70%">
+          <stop offset="0%" stopColor="#f3fcff" />
+          <stop offset="42%" stopColor="#7ae6ff" />
+          <stop offset="100%" stopColor="#0678b0" />
+        </radialGradient>
+        <radialGradient id="cab-rm-finish-core" cx="34%" cy="30%" r="70%">
+          <stop offset="0%" stopColor="#fff8e8" />
+          <stop offset="46%" stopColor="#ffd36a" />
+          <stop offset="100%" stopColor="#c46a12" />
+        </radialGradient>
       </defs>
       {segments.map((seg, idx) => (
         <RoadRibbon key={idx} d={seg.d} tone={seg.tone} />
       ))}
-      <RoadStations nowIndex={nowIndex} locked={locked} geometry={geometry} modules={modules} stops={stops} />
+      <RoadStations
+        pathEndIndex={pathEndIndex}
+        highlightIndex={highlightIndex}
+        locked={locked}
+        geometry={geometry}
+        modules={modules}
+        stops={stops}
+      />
+    </g>
+  );
+}
+
+function RoadBeacon({ kind, x, y }: { kind: 'start' | 'finish'; x: number; y: number }) {
+  const isStart = kind === 'start';
+  return (
+    <g className={`cab-rm-beacon is-${kind}`} transform={`translate(${x} ${y})`}>
+      <ellipse className="cab-rm-beacon-pad" cx="0" cy="12" rx="26" ry="8" />
+      <circle className="cab-rm-beacon-halo" r="24" />
+      <circle className="cab-rm-beacon-pulse" r="22" />
+      <circle className="cab-rm-beacon-ring" r="19" />
+      <circle className="cab-rm-beacon-core" r="13" />
+      <g className="cab-rm-beacon-icon" transform="scale(0.78)">
+        <path d={isStart ? ICONS.rocket : ICONS.trophy} transform="translate(-12 -12)" />
+      </g>
+      <g className="cab-rm-beacon-tag" transform={`translate(0 ${isStart ? 36 : -34})`}>
+        <rect x="-30" y="-9" width="60" height="18" rx="9" />
+        <text textAnchor="middle" y="4">
+          {isStart ? 'СТАРТ' : 'ФИНИШ'}
+        </text>
+      </g>
+    </g>
+  );
+}
+
+function RoadModuleGaps({
+  geometry,
+  stops,
+  modules,
+}: {
+  geometry: RoadmapGeometry;
+  stops: CourseStop[];
+  modules: { color: string }[];
+}) {
+  return (
+    <g className="cab-rm-gaps">
+      {[...geometry.moduleBreaks].map((breakIndex) => {
+        const a = geometry.rmPts[breakIndex];
+        const b = geometry.rmPts[breakIndex + 1];
+        if (!a || !b) return null;
+        const nextModule = stops[breakIndex + 1]?.module ?? 0;
+        const color = moduleColorAt(modules, nextModule);
+        return (
+          <g
+            key={`gap-${breakIndex}`}
+            className="cab-rm-gap"
+            transform={`translate(${(a.x + b.x) / 2} ${(a.y + b.y) / 2})`}
+            style={{ color }}
+          >
+            <ellipse className="cab-rm-gap-pad" rx="24" ry="8" />
+            <path className="cab-rm-gap-bridge" d="M-22 0 C-11 -8 11 -8 22 0 C11 8 -11 8 -22 0 Z" />
+            <polygon className="cab-rm-gap-gem" points="0,-8 8,0 0,8 -8,0" />
+            <text className="cab-rm-gap-label" y="22">
+              {`M${nextModule + 1}`}
+            </text>
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -516,7 +647,21 @@ function CourseMap({
   const trackRef = useRef<HTMLDivElement>(null);
   const [thumb, setThumb] = useState({ left: 0, width: 1 });
   const geometry = useMemo(() => buildRoadmapGeometry(stops, modules.length), [stops, modules.length]);
-  const nowIndex = locked ? -1 : stops.findIndex((s) => s.status === 'now');
+  const streamScheduleIndex = stops.findIndex((s) => s.isStreamScheduleLesson);
+  const studentHighlightIndex = locked
+    ? -1
+    : stops.findIndex((s) => s.isCurrent || s.status === 'now');
+  const pathEndIndex = locked
+    ? -1
+    : streamScheduleIndex >= 0
+      ? streamScheduleIndex
+      : studentHighlightIndex;
+  const highlightIndex =
+    locked || studentHighlightIndex < 0
+      ? -1
+      : pathEndIndex >= 0
+        ? Math.min(studentHighlightIndex, pathEndIndex)
+        : studentHighlightIndex;
 
   const syncThumb = useCallback(() => {
     const wrap = wrapRef.current;
@@ -588,34 +733,50 @@ function CourseMap({
         <div className="cab-roadmap-canvas" style={{ width: geometry.canvasW }}>
           <svg className="cab-roadmap-svg" width={geometry.canvasW} height={geometry.canvasH} aria-hidden="true">
             <CourseRoadTrack
-              nowIndex={nowIndex}
+              pathEndIndex={pathEndIndex}
+              highlightIndex={highlightIndex}
               locked={!!locked}
               geometry={geometry}
               modules={modules}
               stops={stops}
             />
 
-            <circle cx={geometry.rmStart.x} cy={geometry.rmStart.y} r="22" className="cab-rm-start-ring" />
-            <circle cx={geometry.rmStart.x} cy={geometry.rmStart.y} r="14" className="cab-rm-start-bg" />
-            <text x={geometry.rmStart.x} y={geometry.rmStart.y + 36} textAnchor="middle" className="cab-rm-start-label">СТАРТ</text>
-
-            <circle cx={geometry.rmFinish.x} cy={geometry.rmFinish.y} r="22" className="cab-rm-finish-bg" />
-            <path d="M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z" className="cab-rm-finish-flag" transform={`translate(${geometry.rmFinish.x - 10} ${geometry.rmFinish.y - 10}) scale(0.62)`} />
-            <text x={geometry.rmFinish.x} y={geometry.rmFinish.y - 30} textAnchor="middle" className="cab-rm-finish-label">ФИНИШ</text>
+            <RoadModuleGaps geometry={geometry} stops={stops} modules={modules} />
+            <RoadBeacon kind="start" x={geometry.rmStart.x} y={geometry.rmStart.y} />
+            <RoadBeacon kind="finish" x={geometry.rmFinish.x} y={geometry.rmFinish.y} />
           </svg>
 
           {stops.map((s, i) => {
             const p = geometry.rmPts[i];
             if (!p) return null;
+            const paidWaiting =
+              hasCourse &&
+              (s.mapAccessState === 'locked_prerequisite' ||
+                s.mapAccessState === 'locked_prerequisite_past');
             const st: StopStatus = locked ? 'locked' : s.status;
-            const label = stopLabel({ ...s, status: st }, hasCourse);
+            const mapStatus: StopStatus | 'open' =
+              locked || (st === 'locked' && !paidWaiting && !s.isJoinArchive)
+                ? 'locked'
+                : st === 'locked'
+                  ? 'open'
+                  : st;
+            const label = stopLabel(
+              {
+                ...s,
+                status:
+                  st === 'locked' && mapStatus === 'open' && !paidWaiting ? 'now' : st,
+              },
+              hasCourse,
+            );
             const modColor = moduleColorAt(modules, s.module);
             const accessClass = s.mapAccessState ? ` access-${s.mapAccessState}` : '';
+            const streamVisual = !locked && s.isStreamScheduleLesson;
+            const studentVisual = !locked && (Boolean(s.isCurrent) || st === 'now');
             return (
               <div
                 key={s.id}
                 data-stop={s.id}
-                className={`cab-rm-stop is-${st} kind-${s.kind}${accessClass}${s.isScheduleActive ? ' is-schedule-active' : ''}${!locked && selected === s.id ? ' is-selected' : ''}${i % 2 === 0 ? ' plate-top' : ' plate-bottom'}`}
+                className={`cab-rm-stop is-${mapStatus} kind-${s.kind}${accessClass}${s.isScheduleActive ? ' is-schedule-active' : ''}${streamVisual ? ' is-stream-schedule' : ''}${studentVisual ? ' is-student-now' : ''}${!locked && selected === s.id ? ' is-selected' : ''}${i % 2 === 0 ? ' plate-top' : ' plate-bottom'}`}
                 style={{
                   left: p.x,
                   top: p.y,
@@ -629,21 +790,31 @@ function CourseMap({
                   type="button"
                   className="cab-rm-node"
                   onClick={() => onSelect(s.id)}
-                  disabled={st === 'locked' && !allowLockedSelect}
+                  disabled={mapStatus === 'locked' && !allowLockedSelect}
                   title={`${label}: ${s.title}`}
                   aria-label={`${label}: ${s.title}`}
                 >
-                  {st === 'now' && <span className="cab-rm-ping" aria-hidden="true" />}
+                  {streamVisual ? (
+                    <span className="cab-rm-ping is-stream" aria-hidden="true" />
+                  ) : null}
+                  {studentVisual && !streamVisual ? (
+                    <span className="cab-rm-ping is-student" aria-hidden="true" />
+                  ) : null}
                 </button>
                 <button
                   type="button"
                   className="cab-rm-plate"
                   onClick={() => onSelect(s.id)}
-                  disabled={st === 'locked' && !allowLockedSelect}
+                  disabled={mapStatus === 'locked' && !allowLockedSelect}
                 >
                   <span className="cab-rm-plate-top">
                     <b>{`M${s.module + 1} · ${s.numInModule}`}</b>
-                    <em>{s.date}</em>
+                    <em
+                      className={s.date === 'Уточняется' ? 'cab-rm-date-tbd' : undefined}
+                      title={s.date === 'Уточняется' ? 'Дата вебинара пока не назначена' : undefined}
+                    >
+                      {s.date}
+                    </em>
                   </span>
                   <span className="cab-rm-title">{s.title}</span>
                   <span className="cab-rm-label">{label}</span>
@@ -769,52 +940,6 @@ function formatCabinetLessonDate(date: string | null | undefined): string {
     : new Date(date);
   if (Number.isNaN(parsed.getTime())) return date;
   return parsed.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean) {
-  if (stop.isJoinArchive) {
-    return { tone: 'done' as const, label: 'Не требуется', action: 'none' as const };
-  }
-  const lessonLocked = stop.status === 'locked';
-  if (lessonLocked) {
-    return {
-      tone: 'locked' as const,
-      label: hasCourse ? 'Откроется после ДЗ предыдущего' : 'ДЗ недоступно',
-      action: 'locked' as const,
-    };
-  }
-
-  const hwNotReady =
-    stop.kind === 'webinar' &&
-    stop.webinarSessionStatus !== 'completed' &&
-    stop.status !== 'watched' &&
-    stop.status !== 'done';
-
-  const status: HomeworkProgressStatus = stop.homeworkStatus ?? 'pending';
-  if (hwNotReady && (status === 'pending' || !stop.homeworkStatus)) {
-    return { tone: 'locked' as const, label: 'Доступно после эфира', action: 'locked' as const };
-  }
-  if (status === 'approved') {
-    return { tone: 'done' as const, label: 'Одобрено', action: 'none' as const };
-  }
-  if (status === 'submitted') {
-    return { tone: 'pending' as const, label: 'Ожидает проверки', action: 'check_status' as const };
-  }
-  if (status === 'rejected') {
-    return {
-      tone: 'pending' as const,
-      label: 'На доработке',
-      action: 'view' as const,
-    };
-  }
-  if (stop.isTrialFree && !hasCourse) {
-    return {
-      tone: 'locked' as const,
-      label: 'Сдача после покупки курса',
-      action: 'locked' as const,
-    };
-  }
-  return { tone: 'todo' as const, label: 'Ожидает сдачи', action: 'submit' as const };
 }
 
 function moduleLegendStatus(
@@ -1434,7 +1559,15 @@ export default function CabinetShell({
   );
   const [courseSlice, setCourseSlice] = useState<CabinetCourseViewSlice | null>(null);
   const [courseSwitching, setCourseSwitching] = useState(false);
+  const [mapHydrating, setMapHydrating] = useState(false);
   const courseCacheRef = useRef<Map<string, CabinetCourseViewSlice>>(new Map());
+
+  useEffect(() => {
+    if (hasCoursePayment(data)) return;
+    clearCourseSliceCache();
+    courseCacheRef.current.clear();
+    setCourseSlice(null);
+  }, [data.accesses, data.packages]);
 
   useEffect(() => {
     if (!data.courseCatalog?.slug) return;
@@ -1536,10 +1669,6 @@ export default function CabinetShell({
     courseSlice?.courseCatalog?.id === activeCourseId
       ? courseSlice.enrollment != null
       : courseChoices.find((c) => c.id === activeCourseId)?.purchased === true;
-  const courseState: CourseCabinetState = activeCourseOwned
-    ? getCourseCabinetState(data)
-    : 'preview';
-
   const activeCatalogIndex = Math.max(
     0,
     courseChoices.findIndex((c) => c.id === activeCourseId),
@@ -1552,6 +1681,17 @@ export default function CabinetShell({
       : null) ??
     data.courseCatalogs.find((c) => c.id === activeCourseId) ??
     data.courseCatalog;
+
+  const activeCourseSlug = activeCatalog?.slug ?? null;
+  const courseState: CourseCabinetState =
+    activeCourseId != null && (activeCourseOwned || hasViewedCourseMap(data))
+      ? getCourseCabinetStateForCourse(
+          data,
+          activeCourseId,
+          activeCourseSlug,
+          activeCatalog?.title,
+        )
+      : 'preview';
 
   const catalogModulesFallback =
     activeCatalog?.modulePreviews?.map((m) => ({
@@ -1619,15 +1759,19 @@ export default function CabinetShell({
     window.history.replaceState(window.history.state, '', `/cabinet?${params.toString()}`);
   }, []);
 
-  const fetchCourseSlice = useCallback(async (slug: string) => {
-    const res = await fetch(`/api/cabinet/course/view?course=${encodeURIComponent(slug)}`, {
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error('course view failed');
+  const fetchMapProgress = useCallback(async (slug: string) => {
+    const res = await fetch(
+      `/api/cabinet/course/map-progress?course=${encodeURIComponent(slug)}`,
+      { cache: 'no-store', priority: 'high' } as RequestInit,
+    );
+    if (!res.ok) throw new Error('map progress failed');
     const slice = (await res.json()) as CabinetCourseViewSlice;
     courseCacheRef.current.set(slug, slice);
+    writeCourseSliceCache(slug, slice);
     return slice;
   }, []);
+
+  const fetchCourseSlice = fetchMapProgress;
 
   useEffect(() => {
     if (data.courseMapProgressLoaded) return;
@@ -1642,20 +1786,39 @@ export default function CabinetShell({
     const state = getCourseCabinetState(gateSlice);
     if (!hasViewedCourseMap(gateSlice) && state === 'preview') return;
 
+    const sessionCached = readCourseSliceCache(slug);
+    const stale = isCourseMapStale(slug);
+    if (sessionCached) {
+      courseCacheRef.current.set(slug, sessionCached.slice);
+      setCourseSlice(sessionCached.slice);
+      setStopId(
+        sessionCached.slice.courseStops.find((s) => s.status === 'now')?.id ??
+          sessionCached.slice.courseStops[0]?.id ??
+          0,
+      );
+    }
+
+    const cacheUsable = sessionCached && isCourseSliceCacheFresh(sessionCached) && !stale;
+    if (cacheUsable) {
+      return;
+    }
+
     let cancelled = false;
-    setCourseSwitching(true);
+    const silent = Boolean(sessionCached);
+    if (!silent) setMapHydrating(true);
     void (async () => {
       try {
-        const slice = await fetchCourseSlice(slug);
+        const slice = await fetchMapProgress(slug);
         if (cancelled) return;
         setCourseSlice(slice);
         setStopId(
           slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0,
         );
+        clearCourseMapStale(slug);
       } catch (error) {
         console.error('[cabinet] map hydrate failed:', error);
       } finally {
-        if (!cancelled) setCourseSwitching(false);
+        if (!cancelled) setMapHydrating(false);
       }
     })();
     return () => {
@@ -1667,7 +1830,7 @@ export default function CabinetShell({
     data.courseMapViewed,
     data.accesses,
     data.packages,
-    fetchCourseSlice,
+    fetchMapProgress,
   ]);
 
   const selectCourse = useCallback(
@@ -1765,13 +1928,99 @@ export default function CabinetShell({
 
   const myPackages = data.packages;
   const pkgHistory = data.payments;
-  const coursePackage = myPackages.find((p) => p.product === 'course');
-  const coursePkgAgg = useMemo(() => sumActiveCoursePackages(myPackages), [myPackages]);
-  const activeCourseEnrollment = data.courseEnrollments.find((e) => e.courseId === activeCourseId);
-  const activeScenarioLabel = purchaseScenarioLabel(activeCourseEnrollment?.purchaseScenario ?? null);
+  const coursePkgAgg = useMemo(
+    () =>
+      sumActiveCoursePackages(myPackages, activeCourseId, {
+        courseSlug: activeCatalog?.slug,
+        courseTitle: activeCatalog?.title,
+      }),
+    [myPackages, activeCourseId, activeCatalog?.slug, activeCatalog?.title],
+  );
+  const coursePackageSummaries = useMemo(() => {
+    const catalogById = new Map(data.courseCatalogs.map((c) => [c.id, c]));
+    const groups = new Map<number, typeof myPackages>();
+    const legacy: typeof myPackages = [];
+    for (const pkg of myPackages) {
+      if (pkg.product !== 'course') continue;
+      if (pkg.courseId == null) {
+        legacy.push(pkg);
+        continue;
+      }
+      const list = groups.get(pkg.courseId) ?? [];
+      list.push(pkg);
+      groups.set(pkg.courseId, list);
+    }
+    const rows: {
+      key: string;
+      courseId: number | null;
+      title: string;
+      remaining: number;
+      total: number;
+      hasActiveRemaining: boolean;
+      scenarioLabel: string | null;
+    }[] = [];
+    for (const [courseId, pkgs] of groups) {
+      const agg = sumActiveCoursePackages(pkgs, courseId);
+      if (agg.total <= 0) continue;
+      const enrollment = data.courseEnrollments.find((e) => e.courseId === courseId);
+      rows.push({
+        key: `course-${courseId}`,
+        courseId,
+        title: catalogById.get(courseId)?.title ?? pkgs[0]?.title ?? 'Курс',
+        ...agg,
+        scenarioLabel: purchaseScenarioLabel(enrollment?.purchaseScenario ?? null),
+      });
+    }
+    if (legacy.length > 0) {
+      const agg = sumActiveCoursePackages(legacy, null);
+      if (agg.total > 0) {
+        rows.push({
+          key: 'course-legacy',
+          courseId: null,
+          title: legacy[0]?.title ?? 'Курс',
+          ...agg,
+          scenarioLabel: purchaseScenarioLabel(data.enrollment?.purchaseScenario ?? null),
+        });
+      }
+    }
+    return rows.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  }, [myPackages, data.courseCatalogs, data.courseEnrollments, data.enrollment?.purchaseScenario]);
   const coursePaymentHistory = pkgHistory.filter(
     (h) => h.status === 'paid' && h.product === 'course',
   );
+
+  useEffect(() => {
+    if (paymentResult !== 'success') return;
+    clearCourseSliceCache();
+    courseCacheRef.current.clear();
+    for (const c of data.courseCatalogs) {
+      if (c.slug) markCourseMapStale(c.slug);
+    }
+    const slug =
+      activeCatalog?.slug ??
+      data.courseCatalogs.find((c) => c.id === activeCourseId)?.slug ??
+      data.courseCatalog?.slug;
+    if (slug) {
+      void fetchMapProgress(slug)
+        .then((slice) => {
+          setCourseSlice(slice);
+          setStopId(
+            slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0,
+          );
+          clearCourseMapStale(slug);
+        })
+        .catch((error) => console.error('[cabinet] map refresh after payment failed:', error));
+    }
+    router.refresh();
+  }, [
+    paymentResult,
+    activeCatalog?.slug,
+    activeCourseId,
+    data.courseCatalog?.slug,
+    data.courseCatalogs,
+    fetchMapProgress,
+    router,
+  ]);
 
   const emptyStopModule = { name: '—', color: '#ccc', count: 0, about: '' };
   const stop = courseStops.find((s) => s.id === stopId) ?? courseStops[0] ?? null;
@@ -1846,10 +2095,26 @@ export default function CabinetShell({
   }
 
   /** «Открыть занятие» — полноценная страница урока. */
+  const lessonCourseSlug = activeCatalog?.slug ?? data.courseCatalog?.slug ?? null;
+
   function openCourseLesson() {
     const detail = cabinetCourseStops.find((s) => s.id === stopId) ?? selectedCabinetStop;
     if (!detail) return;
-    const path = lessonPathForStop(detail);
+    const slug = lessonCourseSlug;
+    if (slug && courseSlice?.courseCatalog?.slug === slug) {
+      writeCourseSliceCache(slug, courseSlice);
+    } else if (slug && data.courseCatalog?.slug === slug) {
+      writeCourseSliceCache(slug, {
+        slug,
+        courseCatalog: data.courseCatalog!,
+        courseModules: data.courseModules,
+        courseStops: data.courseStops,
+        courseProgress: data.courseProgress,
+        lives: data.lives,
+        enrollment: data.enrollment,
+      });
+    }
+    const path = lessonPathForStop(detail, lessonCourseSlug);
     router.prefetch(path);
     router.push(path);
   }
@@ -1857,8 +2122,8 @@ export default function CabinetShell({
   useEffect(() => {
     const detail = cabinetCourseStops.find((s) => s.id === stopId);
     if (!detail) return;
-    router.prefetch(lessonPathForStop(detail));
-  }, [cabinetCourseStops, router, stopId]);
+    router.prefetch(lessonPathForStop(detail, lessonCourseSlug));
+  }, [cabinetCourseStops, lessonCourseSlug, router, stopId]);
 
   // Prefetch текущего и соседних открытых — быстрее вход в плеер.
   useEffect(() => {
@@ -1866,18 +2131,9 @@ export default function CabinetShell({
     const idx = open.findIndex((s) => s.id === stopId);
     const targets = [open[idx], open[idx - 1], open[idx + 1]].filter(Boolean);
     for (const s of targets) {
-      if (s) router.prefetch(lessonPathForStop(s));
+      if (s) router.prefetch(lessonPathForStop(s, lessonCourseSlug));
     }
-  }, [cabinetCourseStops, router, stopId]);
-
-  // Возврат с урока из bfcache — обновить % прогресса.
-  useEffect(() => {
-    const onPageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) router.refresh();
-    };
-    window.addEventListener('pageshow', onPageShow);
-    return () => window.removeEventListener('pageshow', onPageShow);
-  }, [router]);
+  }, [cabinetCourseStops, lessonCourseSlug, router, stopId]);
 
   async function confirmEnroll() {
     setEnrolling(true);
@@ -1896,6 +2152,18 @@ export default function CabinetShell({
         return;
       }
       setEnrollOpen(false);
+      const slug = activeCatalog?.slug?.trim();
+      if (slug) {
+        try {
+          const slice = await fetchMapProgress(slug);
+          setCourseSlice(slice);
+          setStopId(
+            slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0,
+          );
+        } catch (error) {
+          console.error('[cabinet] map after enroll failed:', error);
+        }
+      }
       router.refresh();
     } finally {
       setEnrolling(false);
@@ -1984,7 +2252,7 @@ export default function CabinetShell({
           </button>
           <a className="cab-home-link" href="/" title="Вернуться на главную">
             <Icon d={ICONS.back} />
-            <h1>Кабинет курса</h1>
+            <span className="cab-home-link-label">На главную</span>
           </a>
           <button
             type="button"
@@ -2060,12 +2328,6 @@ export default function CabinetShell({
                       <div className="cab-course-hero-copy">
                         <div className="cab-course-hero-title-row">
                           <span className="cab-course-hero-title">{sanityText(courseName)}</span>
-                          {hasCourse && (
-                            <div className="cab-course-hero-badge">
-                              <Icon d={ICONS.check} />
-                              <span>Вы записаны на курс</span>
-                            </div>
-                          )}
                         </div>
                         <h2>{sanityText(courseHeadline)}</h2>
                         <p>{sanityText(courseDescription)}</p>
@@ -2098,7 +2360,10 @@ export default function CabinetShell({
                   </div>
 
                   {courseTab === 'program' && (
-                    <div className="cab-course-map-block">
+                    <div
+                      className={`cab-course-map-block${mapHydrating ? ' is-map-hydrating' : ''}`}
+                      aria-busy={mapHydrating}
+                    >
                       <div className="cab-path-scene">
                         <div className="cab-path-float cab-path-float--head">
                           <div className="cab-path-map-head">
@@ -2197,61 +2462,58 @@ export default function CabinetShell({
                                 <span className="cab-hw-dot" aria-hidden="true">•</span>
                                 <span>{formatCabinetLessonDate(s.date)}</span>
                               </p>
-                              {hasCourse && !(s.isTrialFree && !hasCourse) ? (
-                                <HomeworkDeadlineBadge
-                                  homeworkStatus={s.homeworkStatus}
-                                  homeworkDeadlineAt={s.homeworkDeadlineAt}
-                                  homeworkRemainingMs={s.homeworkRemainingMs}
-                                  homeworkOverdueAt={s.homeworkOverdueAt}
-                                  placement="corner"
-                                  compact
-                                />
-                              ) : null}
                             </div>
-                            <span className={`cab-hw-status is-${hw.tone}`}>
-                              {hw.tone === 'done' ? <Icon d={ICONS.check} /> : <Icon d={ICONS.clock} />}
-                              {hw.label}
-                            </span>
-                            {hw.action === 'view' ? (
-                              <button
-                                type="button"
-                                className="cab-hw-action is-active"
-                                onClick={() => setHwReviewStop(s)}
-                              >
-                                <Icon d={ICONS.file} />
-                                Посмотреть ответ
-                                <Icon d={ICONS.chevron} />
-                              </button>
-                            ) : hw.action === 'locked' ? (
-                              <span className="cab-hw-action is-locked">
-                                <Icon d={ICONS.file} />
-                                {hw.label.includes('покупки') ? 'Сдача после покупки курса' : 'Доступно после вебинара'}
-                              </span>
-                            ) : hw.action === 'check_status' && s.sanityLessonId ? (
-                              <a
-                                className="cab-hw-action is-active"
-                                href={tgBotUrl(`hw_${s.sanityLessonId}`)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <Icon d={ICONS.homework} />
-                                Проверить статус
-                                <Icon d={ICONS.chevron} />
-                              </a>
-                            ) : hw.action === 'submit' && s.sanityLessonId ? (
-                              <a
-                                className="cab-hw-action is-active"
-                                href={tgBotUrl(`hw_${s.sanityLessonId}`)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <Icon d={ICONS.homework} />
-                                Сдать ДЗ в Telegram
-                                <Icon d={ICONS.chevron} />
-                              </a>
-                            ) : (
-                              <span className="cab-hw-action is-empty" aria-hidden="true" />
-                            )}
+                            <div className="cab-hw-side">
+                              <HomeworkRowChip
+                                row={hw}
+                                isJoinArchive={s.isJoinArchive}
+                                homeworkStatus={s.homeworkStatus}
+                                homeworkDeadlineAt={s.homeworkDeadlineAt}
+                                homeworkRemainingMs={s.homeworkRemainingMs}
+                                homeworkOverdueAt={s.homeworkOverdueAt}
+                                trackDeadline={hasCourse && !(s.isTrialFree && !hasCourse)}
+                              />
+                              {hw.action === 'view' ? (
+                                <button
+                                  type="button"
+                                  className="cab-hw-action is-active"
+                                  onClick={() => setHwReviewStop(s)}
+                                >
+                                  <Icon d={ICONS.file} />
+                                  Посмотреть ответ
+                                  <Icon d={ICONS.chevron} />
+                                </button>
+                              ) : hw.action === 'locked' ? (
+                                <span className="cab-hw-action is-locked">
+                                  <Icon d={ICONS.file} />
+                                  {homeworkLockedActionHint(hw.label, s)}
+                                </span>
+                              ) : hw.action === 'check_status' && s.sanityLessonId ? (
+                                <a
+                                  className="cab-hw-action is-active"
+                                  href={tgBotUrl(`hw_${s.sanityLessonId}`)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Icon d={ICONS.homework} />
+                                  Проверить статус
+                                  <Icon d={ICONS.chevron} />
+                                </a>
+                              ) : hw.action === 'submit' && s.sanityLessonId ? (
+                                <a
+                                  className="cab-hw-action is-active"
+                                  href={tgBotUrl(`hw_${s.sanityLessonId}`)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Icon d={ICONS.homework} />
+                                  Сдать ДЗ в Telegram
+                                  <Icon d={ICONS.chevron} />
+                                </a>
+                              ) : (
+                                <span className="cab-hw-action is-empty" aria-hidden="true" />
+                              )}
+                            </div>
                           </article>
                         );
                       })}
@@ -2264,7 +2526,13 @@ export default function CabinetShell({
                 </section>
 
                 {courseTab === 'program' && stop && (
-                  stop.status === 'locked' && !stop.isTrialFree ? (
+                  !isCabinetLessonContentOpen(
+                    {
+                      mapAccessState: selectedCabinetStop?.mapAccessState ?? stop.mapAccessState,
+                      isTrialFree: selectedCabinetStop?.isTrialFree ?? stop.isTrialFree,
+                    },
+                    courseState,
+                  ) ? (
                     <section className="cab-panel cab-lesson-panel cab-lesson-panel--v2 cab-lesson-panel--standalone">
                       <header className="cab-lesson-v2-head">
                         <div className="cab-lesson-v2-head-main">
@@ -2318,41 +2586,18 @@ export default function CabinetShell({
                           {(() => {
                             const cs = selectedCabinetStop ?? (stop as unknown as CabinetCourseStop);
                             const hw = homeworkRowState(cs, hasCourse);
-                            if (hw.tone !== 'locked') {
-                              const cls =
-                                hw.tone === 'done'
-                                  ? 'is-done'
-                                  : hw.tone === 'todo'
-                                    ? 'is-open'
-                                    : 'is-pending';
-                              return (
-                                <span className={`cab-lesson-v2-badge ${cls}`}>{hw.label}</span>
-                              );
-                            }
                             return (
-                              <span className="cab-lesson-v2-badge is-open">
-                                {lessonMapChipLabel({
-                                  hasCourse,
-                                  mapAccessState: cs.mapAccessState,
-                                  webinarSessionStatus: cs.webinarSessionStatus,
-                                  lessonKind: cs.kind,
-                                  stopStatus: cs.status,
-                                  homeworkStatus: cs.homeworkStatus,
-                                  isFirstChainGate: cs.isFirstChainGate,
-                                })}
-                              </span>
+                              <HomeworkRowChip
+                                row={hw}
+                                isJoinArchive={cs.isJoinArchive}
+                                homeworkStatus={cs.homeworkStatus}
+                                homeworkDeadlineAt={cs.homeworkDeadlineAt}
+                                homeworkRemainingMs={cs.homeworkRemainingMs}
+                                homeworkOverdueAt={cs.homeworkOverdueAt}
+                                trackDeadline={hasCourse && !(cs.isTrialFree && !hasCourse)}
+                              />
                             );
                           })()}
-                          {hasCourse && !(stop.isTrialFree && !hasCourse) ? (
-                            <HomeworkDeadlineBadge
-                              homeworkStatus={selectedCabinetStop?.homeworkStatus}
-                              homeworkDeadlineAt={selectedCabinetStop?.homeworkDeadlineAt}
-                              homeworkRemainingMs={selectedCabinetStop?.homeworkRemainingMs}
-                              homeworkOverdueAt={selectedCabinetStop?.homeworkOverdueAt}
-                              placement="inline"
-                              compact
-                            />
-                          ) : null}
                         </div>
                       </header>
                       {displayLives?.accessBlocked && selectedCabinetStop?.isCurrent ? (
@@ -2528,6 +2773,10 @@ export default function CabinetShell({
                       const offerScenarioLabel = purchaseScenarioLabel(
                         offerEnrollment?.purchaseScenario ?? null,
                       );
+                      const offerPkgAgg = sumActiveCoursePackages(
+                        myPackages,
+                        offerCatalog?.id ?? null,
+                      );
                       const lessonsLabel = `${offer.grantedLessons} ${
                         offer.grantedLessons === 1
                           ? 'занятие'
@@ -2581,8 +2830,8 @@ export default function CabinetShell({
                             className="cab-course-pick-cta"
                             savedPurchaseScenario={offerEnrollment?.purchaseScenario ?? null}
                             savedScenarioLabel={offerScenarioLabel}
-                            packageRemaining={coursePkgAgg.remaining}
-                            packageTotal={coursePkgAgg.total}
+                            packageRemaining={offerPkgAgg.remaining}
+                            packageTotal={offerPkgAgg.total}
                           >
                             <Icon d={ICONS.cart} />
                             Купить пакет
@@ -2596,38 +2845,73 @@ export default function CabinetShell({
 
                 <section className="cab-panel cab-mypkg-block">
                   <header className="cab-set-head">
-                    <span className="cab-set-num">Ваш пакет курса</span>
+                    <span className="cab-set-num">Ваши пакеты курсов</span>
                   </header>
-                  {coursePackage || coursePkgAgg.total > 0 ? (
-                    <div className="cab-course-pkg-summary">
-                      <strong>{coursePackage?.title ?? 'Пакет курса'}</strong>
-                      {activeScenarioLabel ? (
-                        <p className="cab-note cab-course-pkg-scenario">
-                          Формат обучения: <b>{activeScenarioLabel}</b>
-                        </p>
-                      ) : null}
-                      <p className="cab-note">
-                        Осталось оплаченных занятий курса:{' '}
-                        <b>
-                          {coursePkgAgg.remaining} / {coursePkgAgg.total}
-                        </b>{' '}
-                        {pluralLessons(coursePkgAgg.total)}
-                      </p>
-                      {displayLives?.accessBlocked ? (
-                        <span className="cab-pkg-status is-frozen">Курс заморожен</span>
-                      ) : coursePkgAgg.hasActiveRemaining || coursePackage?.active ? (
-                        <span className="cab-pkg-status is-active">
-                          <i aria-hidden="true" />
-                          Активен
-                        </span>
-                      ) : (
-                        <span className="cab-pkg-status">Завершён</span>
-                      )}
-                    </div>
+                  {coursePackageSummaries.length > 0 ? (
+                    <ul className="cab-course-pkg-list">
+                      {coursePackageSummaries.map((row) => {
+                        const remainPct =
+                          row.total > 0 ? Math.min(100, Math.round((row.remaining / row.total) * 100)) : 0;
+                        return (
+                          <li
+                            key={row.key}
+                            className={`cab-course-pkg-card${row.hasActiveRemaining ? ' is-active' : ' is-done'}`}
+                          >
+                            <div className="cab-course-pkg-card-head">
+                              <span className="cab-course-pkg-ico" aria-hidden="true">
+                                <Icon d={ICONS.course} />
+                              </span>
+                              <div className="cab-course-pkg-copy">
+                                <strong>{row.title}</strong>
+                                {row.scenarioLabel ? (
+                                  <em>
+                                    Формат: <b>{row.scenarioLabel}</b>
+                                  </em>
+                                ) : (
+                                  <em>Оплаченный пакет курса</em>
+                                )}
+                              </div>
+                              {row.hasActiveRemaining ? (
+                                <span className="cab-pkg-status is-active">
+                                  <i aria-hidden="true" />
+                                  Активен
+                                </span>
+                              ) : (
+                                <span className="cab-pkg-status">
+                                  <i aria-hidden="true" />
+                                  Завершён
+                                </span>
+                              )}
+                            </div>
+                            <div className="cab-course-pkg-meter">
+                              <div className="cab-course-pkg-meter-row">
+                                <span>Осталось занятий</span>
+                                <b>
+                                  {row.remaining}
+                                  <small>
+                                    {' '}
+                                    / {row.total} {pluralLessons(row.total)}
+                                  </small>
+                                </b>
+                              </div>
+                              <div
+                                className="cab-course-pkg-bar"
+                                role="progressbar"
+                                aria-valuemin={0}
+                                aria-valuenow={row.remaining}
+                                aria-valuemax={row.total}
+                                aria-label={`Осталось ${row.remaining} из ${row.total} ${pluralLessons(row.total)}`}
+                              >
+                                <i style={{ width: `${remainPct}%` }} />
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   ) : (
                     <p className="cab-note cab-pkg-empty-note">
-                      Пакет курса появится после первой оплаты. Нажми «Купить пакет» выше или оформи заявку через
-                      Telegram-бот.
+                      Пакет курса появится после первой оплаты. Нажми «Купить пакет» выше.
                     </p>
                   )}
                 </section>

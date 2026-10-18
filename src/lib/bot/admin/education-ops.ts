@@ -419,6 +419,13 @@ export async function handleEducationAction(
     return true;
   }
 
+  const { handleCourseStaffAdminAction, isCourseStaffAdminAction } = await import(
+    './course-staff-admin'
+  );
+  if (isCourseStaffAdminAction(data)) {
+    return handleCourseStaffAdminAction(admin, data, message);
+  }
+
   const hubHandled = await handleEducationHubAction(admin, data, message);
   if (hubHandled) return true;
 

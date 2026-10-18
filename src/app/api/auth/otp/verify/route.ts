@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
-import { randomBytes } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { preparePhoneAuthSignIn } from '@/lib/auth-user-by-phone';
 import { normalizePhone } from '@/lib/phone';
 import { verifyOtpHash } from '@/lib/otp';
 import { getIp, rateLimit } from '@/lib/ratelimit';
@@ -94,27 +94,7 @@ export async function POST(request: NextRequest) {
     // Пароль — случайный, одноразовый, существует только на сервере.
     // Phone-провайдер в Supabase выключен (ему нужен Twilio), поэтому
     // аккаунт живёт под синтетическим email, а телефон храним в metadata.
-    const tempPassword = randomBytes(32).toString('base64url');
-    const syntheticEmail = `u${phone.replace(/\D/g, '')}@auth.district.school`;
-    const { data: listed, error: listError } = await admin.auth.admin.listUsers({ page: 1 });
-    if (listError) throw listError;
-
-    let userId = (listed.users ?? []).find((u) => u.email === syntheticEmail)?.id;
-    if (!userId) {
-      const { data: created, error: createError } = await admin.auth.admin.createUser({
-        email: syntheticEmail,
-        password: tempPassword,
-        email_confirm: true,
-        user_metadata: { phone },
-      });
-      if (createError || !created.user) throw createError ?? new Error('user not created');
-      userId = created.user.id;
-    } else {
-      const { error: updateError } = await admin.auth.admin.updateUserById(userId, {
-        password: tempPassword,
-      });
-      if (updateError) throw updateError;
-    }
+    const { userId, syntheticEmail, tempPassword } = await preparePhoneAuthSignIn(admin, phone);
 
     const redirectTo = await resolveCabinetEntryPathForPhone(admin, phone, nextPath);
 

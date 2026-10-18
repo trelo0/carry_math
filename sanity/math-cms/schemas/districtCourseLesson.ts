@@ -25,6 +25,8 @@ export default defineType({
     defineField({
       name: 'moduleOrder',
       title: 'Порядок в модуле',
+      description:
+        '1 = первое занятие в модуле, 2 = второе и т.д. При создании через «Занятия» номер ставится автоматически; можно изменить вручную.',
       type: 'number',
       validation: (Rule) => Rule.required().min(1),
     }),
@@ -41,23 +43,37 @@ export default defineType({
       name: 'liveUrl',
       title: 'Ссылка на трансляцию',
       type: 'url',
+      validation: (Rule) =>
+        Rule.custom((value) => {
+          if (value == null || (typeof value === 'string' && !value.trim())) return true
+          if (typeof value === 'string' && URL.canParse(value)) return true
+          return 'Укажите полную ссылку (https://…)'
+        }),
     }),
     defineField({
       name: 'recordingUrl',
       title: 'Ссылка на запись',
       type: 'url',
+      validation: (Rule) =>
+        Rule.custom((value) => {
+          if (value == null || (typeof value === 'string' && !value.trim())) return true
+          if (typeof value === 'string' && URL.canParse(value)) return true
+          return 'Укажите полную ссылку (https://…)'
+        }),
     }),
     defineField({
       name: 'lessonMaterials',
       title: 'Материалы к занятию',
-      description: 'В кабинете видны только с включённой публикацией.',
+      description:
+        'Необязательно при создании. Обычно файлы добавляет куратор в личном кабинете во время вебинара. Здесь — только если нужно заранее.',
       type: 'array',
       of: [defineArrayMember({ type: 'lessonFile' })],
     }),
     defineField({
       name: 'lessonHomeworkFiles',
       title: 'Домашнее задание',
-      description: 'Файлы ДЗ. В кабинете видны только с включённой публикацией.',
+      description:
+        'Необязательно при создании. Файлы ДЗ чаще выкладывает куратор в кабинете после эфира. В кабинете видны только с включённой публикацией.',
       type: 'array',
       of: [defineArrayMember({ type: 'lessonFile' })],
     }),
@@ -149,6 +165,7 @@ export default defineType({
       title: 'Домашка (legacy)',
       type: 'lessonHomework',
       hidden: true,
+      options: { collapsible: false },
     }),
     defineField({
       name: 'curriculumBlock',

@@ -11,6 +11,7 @@ import {
   memberHasRole,
   type BotRole,
 } from '@/lib/bot/roles';
+import { staffHasAnyCourseAssignment } from '@/lib/bot/education/course-staff';
 
 export type CabinetAuthContext = {
   phone: string;
@@ -35,7 +36,11 @@ export function isCuratorCabinetRole(role: string): boolean {
 }
 
 export function memberCanAccessCuratorCabinet(roles: BotRole[], telegramId: number): boolean {
-  return memberHasRole(roles, 'curator') || hasFullStaffPreview(roles, telegramId);
+  return (
+    memberHasRole(roles, 'staff') ||
+    memberHasRole(roles, 'curator') ||
+    hasFullStaffPreview(roles, telegramId)
+  );
 }
 
 /** Авторизация кабинета: сессия Supabase → phone → telegram_id (или user_id в telegram_links). */
@@ -176,10 +181,25 @@ export async function getStaffAuth(): Promise<StaffAuthContext | null> {
   return { ...base, ...member };
 }
 
-/** @deprecated используй getStaffAuth */
-export async function getCuratorAuth(): Promise<StaffAuthContext | null> {
+/** Кабинет: проведение занятий (куратор курса или admin preview). */
+export async function getCourseDeliveryAuth(): Promise<StaffAuthContext | null> {
   const auth = await getStaffAuth();
   if (!auth) return null;
-  if (!memberCanAccessCuratorCabinet(auth.roles, auth.telegramId)) return null;
-  return auth;
+  if (hasFullStaffPreview(auth.roles, auth.telegramId)) return auth;
+  if (await staffHasAnyCourseAssignment(auth.admin, auth.telegramId, 'curator')) return auth;
+  return null;
+}
+
+/** Кабинет/API: проверка домашних заданий (назначение check или admin preview). */
+export async function getHomeworkCheckerAuth(): Promise<StaffAuthContext | null> {
+  const auth = await getStaffAuth();
+  if (!auth) return null;
+  if (hasFullStaffPreview(auth.roles, auth.telegramId)) return auth;
+  if (await staffHasAnyCourseAssignment(auth.admin, auth.telegramId, 'check')) return auth;
+  return null;
+}
+
+/** @deprecated используй getCourseDeliveryAuth */
+export async function getCuratorAuth(): Promise<StaffAuthContext | null> {
+  return getCourseDeliveryAuth();
 }

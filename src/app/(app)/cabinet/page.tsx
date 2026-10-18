@@ -1,13 +1,12 @@
+import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { isCreatorTelegramId } from '@/lib/bot/roles';
 import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
 import { resolveCabinetEntryPathForPhone } from '@/lib/cabinet-auth';
-import { getCabinetData } from '@/lib/cabinet';
-import CabinetShell from '@/components/cabinet/CabinetShell';
+import CabinetBootShell from '@/components/cabinet/CabinetBootShell';
+import CabinetPageContent from '@/components/cabinet/CabinetPageContent';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
-import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
 
 export const metadata = {
   title: 'Кабинет курса — District',
@@ -49,8 +48,6 @@ function cabinetReturnPath(sp: {
   return qs ? `/cabinet?${qs}` : '/cabinet';
 }
 
-// Личный кабинет ученика: отдельная часть сайта со своим прикладным
-// интерфейсом (без маркетинговой шапки и футера).
 export default async function CabinetPage({
   searchParams,
 }: {
@@ -74,33 +71,41 @@ export default async function CabinetPage({
   const phone =
     (data.user.user_metadata?.phone as string) ?? data.user.phone ?? '';
 
+  let admin: ReturnType<typeof createAdminClient> | null = null;
   try {
-    const admin = createAdminClient();
-    const entryPath = await resolveCabinetEntryPathForPhone(admin, phone, returnTo);
-    if (entryPath !== returnTo) {
-      redirect(entryPath);
-    }
+    admin = createAdminClient();
   } catch {
-    // service role недоступен — грузим ученический кабинет как раньше
+    admin = null;
   }
 
-  const cabinet = await getCabinetData(phone, data.user.created_at, sp.course, {
-    loadMapProgress: false,
-  });
-
-  if (!cabinet.telegramLinked) {
-    return <CabinetTelegramGate returnTo={returnTo} />;
+  if (admin) {
+    try {
+      const entryPath = await resolveCabinetEntryPathForPhone(admin, phone, returnTo);
+      if (entryPath !== returnTo) {
+        redirect(entryPath);
+      }
+    } catch {
+      // service role недоступен
+    }
   }
-
-  const showCabinetPick =
-    cabinet.telegramId != null && isCreatorTelegramId(cabinet.telegramId);
 
   return (
-    <CabinetShell
-      data={cabinet}
-      initialSection={parseSection(sp.section)}
-      initialPaymentResult={parsePaymentResult(sp.payment)}
-      showCabinetPick={showCabinetPick}
-    />
+    <Suspense
+      fallback={
+        <CabinetBootShell
+          initialSection={parseSection(sp.section)}
+          courseSlug={sp.course}
+        />
+      }
+    >
+      <CabinetPageContent
+        phone={phone}
+        createdAt={data.user.created_at}
+        courseSlug={sp.course}
+        section={sp.section}
+        payment={sp.payment}
+        returnTo={returnTo}
+      />
+    </Suspense>
   );
 }

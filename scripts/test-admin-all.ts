@@ -9,7 +9,7 @@ import { createAdminClient } from '../src/lib/supabase/admin';
 import { parseLeadTelegramId } from '@/lib/bot/admin/leads';
 import { buildAttentionItems } from '@/lib/bot/admin/home-attention';
 import { fetchAdminHubMetrics, attentionTaskCount } from '@/lib/bot/admin/hub-metrics';
-import { collectProblemItems } from '@/lib/bot/admin/problems-menu';
+import { collectProblemItems, isProblemsAction } from '@/lib/bot/admin/problems-menu';
 import {
   getBroadcastSegmentRecipients,
   isBroadcastSegmentId,
@@ -76,7 +76,8 @@ function unitTests(): void {
   check('isHubAction', isHubAction('ah:home') && isHubAction('ah:audit:0'));
   check('isCommsHubAction', isCommsHubAction('ah:hw:pending') && isCommsHubAction('ah:person:1:hw'));
   check('isPackagesAction', isPackagesAction('apk:menu'));
-  check('isAuditHubAction', isAuditHubAction('ah:problems'));
+  check('isAuditHubAction', isAuditHubAction('ah:audit:0'));
+  check('isProblemsAction', isProblemsAction('ah:problems'));
   check('hub attention count', attentionTaskCount({
     leadsNew: 1,
     purchasesPending: 0,

@@ -21,16 +21,29 @@ export async function resolveCourseFulfillContext(
   let startLessonId: number | null = null;
   let curatorTelegramId: number | null = null;
 
-  if (purchaseRequest.product !== 'course' || !purchaseRequest.course_slug) {
+  if (purchaseRequest.product !== 'course') {
+    return { courseId, startModuleId, startLessonId, curatorTelegramId };
+  }
+
+  let courseSlug = purchaseRequest.course_slug?.trim() || null;
+  if (!courseSlug && purchaseRequest.id) {
+    const { data: reqRow } = await admin
+      .from('purchase_requests')
+      .select('course_slug')
+      .eq('id', purchaseRequest.id)
+      .maybeSingle();
+    courseSlug = (reqRow?.course_slug as string | undefined)?.trim() || null;
+  }
+  if (!courseSlug) {
     return { courseId, startModuleId, startLessonId, curatorTelegramId };
   }
 
   const { resolveCourseIdForContent } = await import('@/lib/bot/education/course-record');
-  const { determineActiveModule, findFirstLessonInModule, findFirstPaidLesson } = await import(
+  const { resolveJoinCurrentStartIds, findFirstPaidLesson } = await import(
     '@/lib/bot/education/active-module'
   );
 
-  const courseContent = await getDistrictCourseContent(purchaseRequest.course_slug).catch(() => null);
+  const courseContent = await getDistrictCourseContent(courseSlug).catch(() => null);
   if (!courseContent) {
     return { courseId, startModuleId, startLessonId, curatorTelegramId };
   }
@@ -39,27 +52,16 @@ export async function resolveCourseFulfillContext(
   courseId = await resolveCourseIdForContent(admin, courseContent);
 
   if (scenario === 'join_current' && courseId) {
-    const activeModuleResult = await determineActiveModule(admin, courseContent);
-    if (activeModuleResult.module) {
-      const { data: moduleRow } = await admin
-        .from('course_modules')
-        .select('id')
-        .eq('course_id', courseId)
-        .eq('sort_order', activeModuleResult.module.sortOrder)
-        .maybeSingle();
-      if (moduleRow?.id) {
-        startModuleId = moduleRow.id as number;
-        const firstLessonSanityId = findFirstLessonInModule(activeModuleResult.module);
-        if (firstLessonSanityId) {
-          const { data: lessonRow } = await admin
-            .from('course_lessons')
-            .select('id')
-            .eq('course_id', courseId)
-            .eq('sanity_lesson_id', firstLessonSanityId)
-            .maybeSingle();
-          if (lessonRow?.id) startLessonId = lessonRow.id as number;
-        }
-      }
+    const joinStart = await resolveJoinCurrentStartIds(admin, courseId, courseContent);
+    startModuleId = joinStart.startModuleId;
+    startLessonId = joinStart.startLessonId;
+    if (!joinStart.startLessonSanityId) {
+      console.warn('[fulfill-from-request] join_current: active module / first lesson not resolved');
+    } else if (!startLessonId) {
+      console.warn(
+        '[fulfill-from-request] join_current: no course_lessons row for',
+        joinStart.startLessonSanityId,
+      );
     }
   } else if (scenario === 'start_from_beginning' && courseId) {
     const firstPaidSanityId = findFirstPaidLesson(courseContent);

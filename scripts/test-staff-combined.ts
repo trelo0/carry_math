@@ -6,12 +6,12 @@ import {
   resolveStaffBotMode,
   staffReplyKeyboard,
   type StaffCapabilities,
-} from '@/lib/bot/staff/staff-menu';
+} from '../src/lib/bot/staff/staff-menu';
 import {
   renderCombinedHomeworkHub,
   renderCombinedMessagesHub,
   renderCombinedStudentsHub,
-} from '@/lib/bot/staff/staff-combined-screens';
+} from '../src/lib/bot/staff/staff-combined-screens';
 
 let ok = 0;
 let fail = 0;
@@ -34,6 +34,7 @@ const combinedCaps: StaffCapabilities = {
   effectiveRole: 'teacher',
   canTeacherBot: true,
   canCuratorBot: true,
+  canCourseStaffBot: true,
 };
 
 console.log('Тест 1: mode combined');
@@ -44,7 +45,7 @@ console.log('Тест 2: клавиатура 6 пунктов + cabinet');
   const kb = staffReplyKeyboard(combinedCaps);
   const labels = (kb.keyboard ?? []).flat().map((b) => b.text);
   check('6 labels', labels.length === 6);
-  check('course', labels.includes(COMBINED_STAFF_MENU_LABELS.course));
+  check('course', labels.includes(COMBINED_STAFF_MENU_LABELS.myCourse));
   check('cabinet last', labels[labels.length - 1] === COMBINED_STAFF_MENU_LABELS.cabinet);
 }
 
@@ -53,7 +54,7 @@ console.log('Тест 3: hubs s:* callbacks');
   const st = JSON.stringify(renderCombinedStudentsHub(null).keyboard);
   const hw = JSON.stringify(renderCombinedHomeworkHub(null).keyboard);
   const msg = JSON.stringify(renderCombinedMessagesHub(null).keyboard);
-  check('students', st.includes('s:stu:c') && st.includes('s:stu:i'));
+  check('students', st.includes('s:stu:c') && st.includes('s:stu:les'));
   check('homework', hw.includes('s:hw:t') && hw.includes('s:hw:c'));
   check('messages', msg.includes('s:msg:t') && msg.includes('s:msg:c'));
 }

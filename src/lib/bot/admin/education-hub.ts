@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getStudentTeacher } from '@/lib/bot/education/assignments';
 import { getActiveCourses, getCourse, type Course } from '@/lib/bot/education/courses';
+import { listActiveCourseStaff } from '@/lib/bot/education/course-staff';
 import { listCoursesPresentInSanity } from '@/lib/bot/education/course-record';
 import { ACCESS_PRODUCT_LABELS } from '../accesses';
 import {
@@ -29,6 +30,7 @@ export async function renderEducationMenu(deliver: Deliver): Promise<void> {
         [{ text: '👤 Индивидуальные', callback_data: 'ae:ind:0' }],
         [{ text: '📝 Домашние задания', callback_data: 'ae:hw:hub' }],
         [{ text: '📅 Расписание', callback_data: 'ae:ls:day:0:a:0:0' }],
+        [{ text: '🔄 Миграция staff', callback_data: 'ae:migrate:staff' }],
         [homeButton()],
       ],
     },
@@ -109,6 +111,13 @@ export async function renderCourseDetail(
     return;
   }
   const students = await countCourseStudents(admin, courseId);
+  const [curators, checkers] = await Promise.all([
+    listActiveCourseStaff(admin, courseId, 'curator'),
+    listActiveCourseStaff(admin, courseId, 'check'),
+  ]);
+  const curatorId = curators[0]?.staff_telegram_id;
+  const checkId = checkers[0]?.staff_telegram_id;
+
   const lines = [
     `🎓 ${course.title}`,
     '',
@@ -116,10 +125,14 @@ export async function renderCourseDetail(
     course.description ? `📄 ${shorten(course.description, 200)}` : '',
     courseStatusLine(course),
     '',
+    `📡 Куратор: ${curatorId ?? '—'}`,
+    `📝 Проверяющий ДЗ: ${checkId ?? '—'}`,
+    '',
     'Модули, уроки, ДЗ и прогресс — на сайте в кабинете staff.',
   ].filter(Boolean);
 
   const keyboard: InlineButton[][] = [
+    [{ text: '👥 Сотрудники курса', callback_data: `ae:cs:${courseId}:m` }],
     [{ text: '👨‍🎓 Ученики курса', callback_data: `ae:ls:course:0` }],
     [{ text: '❤️ Жизни курса', callback_data: 'ae:lives' }],
     [{ text: '⬅️ К списку курсов', callback_data: 'ae:courses:0' }],
@@ -219,6 +232,51 @@ export async function handleEducationHubAction(
   if (data.startsWith('ae:ind:')) {
     const page = Number(data.slice('ae:ind:'.length)) || 0;
     await renderIndividualList(admin, message, page);
+    return true;
+  }
+  if (data === 'ae:migrate:staff') {
+    const { runMigrateStaffRoles } = await import('./migrate-staff-roles');
+    const preview = await runMigrateStaffRoles(admin, { dryRun: true, assignLegacy: false });
+    await editAdminMessage(
+      message,
+      [
+        '🔄 Миграция staff (preview, dry-run)',
+        '',
+        `primary → staff: ${preview.primaryUpdates}`,
+        `очистка extra curator/check: ${preview.extraUpdates}`,
+        `новые назначения (без --assign-legacy): ${preview.assignmentsCreated}`,
+        '',
+        'Применить на сервере:',
+        'npm run migrate:staff',
+        'С legacy-назначениями на все курсы:',
+        'npx tsx scripts/migrate-staff-roles.ts --assign-legacy',
+      ].join('\n'),
+      {
+        inline_keyboard: [
+          [{ text: '✅ Применить (dry-run + legacy)', callback_data: 'ae:migrate:staff:apply' }],
+          [{ text: '⬅️ Обучение', callback_data: 'ae:menu' }],
+          [homeButton()],
+        ],
+      },
+    );
+    return true;
+  }
+  if (data === 'ae:migrate:staff:apply') {
+    const { runMigrateStaffRoles } = await import('./migrate-staff-roles');
+    const applied = await runMigrateStaffRoles(admin, { dryRun: false, assignLegacy: true });
+    await editAdminMessage(
+      message,
+      [
+        '✅ Миграция staff выполнена',
+        '',
+        `primary → staff: ${applied.primaryUpdates}`,
+        `extra очищено: ${applied.extraUpdates}`,
+        `назначений создано: ${applied.assignmentsCreated}`,
+      ].join('\n'),
+      {
+        inline_keyboard: [[{ text: '⬅️ Обучение', callback_data: 'ae:menu' }], [homeButton()]],
+      },
+    );
     return true;
   }
   return false;

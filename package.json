@@ -21,14 +21,16 @@
     "deduct:life": "npx tsx scripts/deduct-life.ts",
     "grant:life": "npx tsx scripts/grant-life.ts",
     "test:admin": "npx tsx scripts/test-admin-all.ts",
-    "test:bots": "npx tsc --noEmit && npx tsx scripts/test-admin-all.ts && npx tsx scripts/test-admin-phase2.ts && npx tsx scripts/test-client-bot-scenarios.ts",
+    "migrate:staff": "npx tsx scripts/migrate-staff-roles.ts",
+    "migrate:staff:dry": "npx tsx scripts/migrate-staff-roles.ts --dry-run",
+    "test:bots": "npx tsc --noEmit && npx tsx scripts/test-staff-check-curator-split.ts && npx tsx scripts/test-check-bot-menu.ts && npx tsx scripts/test-staff-course-workspace.ts && npx tsx scripts/test-student-mentor-course-pick.ts && npx tsx scripts/test-staff-course-assignments.ts && npx tsx scripts/test-staff-combined.ts && npx tsx scripts/test-curator-bot-lessons.ts && npx tsx scripts/test-admin-all.ts && npx tsx scripts/test-admin-phase2.ts && npx tsx scripts/test-client-bot-scenarios.ts",
     "telegram:webhook:vercel": "node scripts/set-telegram-webhook.mjs vercel",
     "telegram:webhook:by": "node scripts/set-telegram-webhook.mjs by"
   },
   "dependencies": {
     "@sanity/client": "^7.17.0",
     "@sanity/image-url": "^1.2.0",
-    "@sanity/vision": "^4.22.0",
+    "@sanity/vision": "^5.29.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "@vercel/analytics": "^2.0.1",
@@ -37,7 +39,7 @@
     "next-sanity": "^11.6.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "sanity": "^4.22.0",
+    "sanity": "^5.29.0",
     "sharp": "^0.35.3",
     "styled-components": "^6.3.11"
   },

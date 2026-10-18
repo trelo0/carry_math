@@ -4,14 +4,35 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // (пункт «потом добавим») добавлялись без миграций схемы.
 // 'mentor' — легаси-запись из старых данных: curator и mentor — одна роль,
 // назначается и отображается только curator.
-export type BotRole = 'guest' | 'student' | 'curator' | 'teacher' | 'mentor' | 'admin' | 'test';
+export type BotRole =
+  | 'guest'
+  | 'student'
+  | 'staff'
+  | 'curator'
+  | 'check'
+  | 'teacher'
+  | 'mentor'
+  | 'admin'
+  | 'test';
 
-export const BOT_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'mentor', 'admin', 'test'];
+export const BOT_ROLES: BotRole[] = [
+  'guest',
+  'student',
+  'staff',
+  'curator',
+  'check',
+  'teacher',
+  'mentor',
+  'admin',
+  'test',
+];
 
 export const ROLE_LABELS: Record<BotRole, string> = {
   guest: 'гость',
   student: 'ученик',
+  staff: 'сотрудник',
   curator: 'куратор',
+  check: 'проверяющий ДЗ',
   teacher: 'преподаватель',
   mentor: 'куратор',
   admin: 'админ',
@@ -126,7 +147,9 @@ export function isCuratorOnlyMember(roles: BotRole[]): boolean {
 /** Staff (куратор / препод / admin) без роли ученика → /cabinet/staff. */
 export function isStaffOnlyMember(roles: BotRole[]): boolean {
   const isStaff =
+    memberHasRole(roles, 'staff') ||
     memberHasRole(roles, 'curator') ||
+    memberHasRole(roles, 'check') ||
     memberHasRole(roles, 'teacher') ||
     memberHasRole(roles, 'admin');
   return isStaff && !memberHasRole(roles, 'student');
@@ -134,7 +157,9 @@ export function isStaffOnlyMember(roles: BotRole[]): boolean {
 
 export function memberCanAccessStaffCabinet(roles: BotRole[], telegramId: number): boolean {
   return (
+    memberHasRole(roles, 'staff') ||
     memberHasRole(roles, 'curator') ||
+    memberHasRole(roles, 'check') ||
     memberHasRole(roles, 'teacher') ||
     memberHasRole(roles, 'admin') ||
     isCreatorTelegramId(telegramId)

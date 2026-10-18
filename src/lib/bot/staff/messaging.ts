@@ -4,7 +4,7 @@ import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { guardStaffToStudentMessage } from '@/lib/bot/moderation';
 
-export type StaffMessageRole = 'teacher' | 'curator';
+export type StaffMessageRole = 'teacher' | 'curator' | 'check';
 
 export type StaffMessageRow = {
   id: number;
@@ -33,6 +33,11 @@ function isMessagesTableError(error: unknown): boolean {
   const code = String(details?.code ?? '');
   if (code === '42P01' || code === 'PGRST205') return true;
   return message.includes('staff_student_messages');
+}
+
+function isCourseIdColumnError(error: unknown): boolean {
+  const message = String((error as { message?: unknown })?.message ?? error);
+  return message.includes('course_id');
 }
 
 export async function resolveMemberChatId(
@@ -70,13 +75,22 @@ async function assertStaffCanMessageStudent(
   staffTelegramId: number,
   staffRole: StaffMessageRole,
   studentTelegramId: number,
+  courseId?: number | null,
 ): Promise<void> {
   if (staffRole === 'teacher') {
     const ok = await teacherOwnsStudent(admin, staffTelegramId, studentTelegramId);
     if (!ok) throw new Error('Нет доступа к этому ученику.');
     return;
   }
-  await assertCuratorAssigned(admin, staffTelegramId, studentTelegramId);
+  if (staffRole === 'check') {
+    const { assertHomeworkCheckerAssigned } = await import('@/lib/bot/education/course-homework');
+    if (courseId == null) {
+      throw new Error('Укажите курс для переписки с учеником.');
+    }
+    await assertHomeworkCheckerAssigned(admin, staffTelegramId, studentTelegramId, { courseId });
+    return;
+  }
+  await assertCuratorAssigned(admin, staffTelegramId, studentTelegramId, { courseId });
 }
 
 export async function insertStaffMessage(
@@ -90,19 +104,26 @@ export async function insertStaffMessage(
     attachmentRef?: string | null;
     attachmentKind?: 'photo' | 'document' | 'voice' | null;
     markStaffRead?: boolean;
+    courseId?: number | null;
   },
 ): Promise<boolean> {
+  const base = {
+    staff_telegram_id: row.staffTelegramId,
+    student_telegram_id: row.studentTelegramId,
+    staff_role: row.staffRole,
+    direction: row.direction,
+    body: row.body,
+    attachment_ref: row.attachmentRef ?? null,
+    attachment_kind: row.attachmentKind ?? null,
+    staff_read_at: row.direction === 'staff_to_student' || row.markStaffRead ? new Date().toISOString() : null,
+  };
   try {
-    const { error } = await admin.from('staff_student_messages').insert({
-      staff_telegram_id: row.staffTelegramId,
-      student_telegram_id: row.studentTelegramId,
-      staff_role: row.staffRole,
-      direction: row.direction,
-      body: row.body,
-      attachment_ref: row.attachmentRef ?? null,
-      attachment_kind: row.attachmentKind ?? null,
-      staff_read_at: row.direction === 'staff_to_student' || row.markStaffRead ? new Date().toISOString() : null,
-    });
+    const payload =
+      row.courseId != null ? { ...base, course_id: row.courseId } : base;
+    let { error } = await admin.from('staff_student_messages').insert(payload);
+    if (error && row.courseId != null && isCourseIdColumnError(error)) {
+      ({ error } = await admin.from('staff_student_messages').insert(base));
+    }
     if (error) throw error;
     return true;
   } catch (error) {
@@ -120,6 +141,7 @@ export async function deliverStaffToStudent(
     body: string;
     attachmentRef?: string | null;
     attachmentKind?: 'photo' | 'document' | 'voice' | null;
+    courseId?: number | null;
   },
 ): Promise<void> {
   await assertStaffCanMessageStudent(
@@ -127,6 +149,7 @@ export async function deliverStaffToStudent(
     params.staffTelegramId,
     params.staffRole,
     params.studentTelegramId,
+    params.courseId,
   );
 
   const staffChatId = await resolveMemberChatId(admin, params.staffTelegramId);
@@ -148,7 +171,12 @@ export async function deliverStaffToStudent(
     throw new Error('У ученика нет chat_id — он ещё не писал боту.');
   }
 
-  const roleLabel = params.staffRole === 'teacher' ? 'преподавателя' : 'куратора';
+  const roleLabel =
+    params.staffRole === 'teacher'
+      ? 'преподавателя'
+      : params.staffRole === 'check'
+        ? 'проверяющего'
+        : 'куратора';
   const header = `💬 Сообщение от ${roleLabel} District`;
   if (params.body.trim()) {
     await telegramSend('sendMessage', {
@@ -176,6 +204,7 @@ export async function deliverStaffToStudent(
     body: params.body.trim() || '(вложение)',
     attachmentRef: params.attachmentRef,
     attachmentKind: params.attachmentKind,
+    courseId: params.courseId,
   });
 }
 
@@ -188,6 +217,7 @@ export async function notifyStaffInboundFromStudent(
     body: string;
     attachmentRef?: string | null;
     attachmentKind?: 'photo' | 'document' | 'voice' | null;
+    courseId?: number | null;
   },
 ): Promise<void> {
   await insertStaffMessage(admin, {
@@ -198,20 +228,33 @@ export async function notifyStaffInboundFromStudent(
     body: params.body.trim() || '(вложение)',
     attachmentRef: params.attachmentRef,
     attachmentKind: params.attachmentKind,
+    courseId: params.courseId,
   });
 
   const staffChatId = await resolveMemberChatId(admin, params.staffTelegramId);
   if (!staffChatId) return;
 
   const label = await staffStudentLabel(admin, params.studentTelegramId);
+  let courseLine = '';
+  if (params.courseId != null) {
+    const { data: courseRow } = await admin
+      .from('courses')
+      .select('title')
+      .eq('id', params.courseId)
+      .maybeSingle();
+    const title = (courseRow?.title as string | undefined)?.trim();
+    if (title) courseLine = `\n🎓 ${title}`;
+  }
   const replyCallback =
     params.staffRole === 'teacher'
       ? `t:msg:d:${params.studentTelegramId}`
-      : `c:msg:d:${params.studentTelegramId}`;
+      : params.staffRole === 'check'
+        ? `k:msg:${params.courseId ?? 0}:d:${params.studentTelegramId}`
+        : `c:msg:d:${params.studentTelegramId}`;
 
   await telegramSend('sendMessage', {
     chat_id: staffChatId,
-    text: ['💬 Сообщение от ученика', '', `👤 ${label}`, '', params.body.trim() || '📎 Вложение'].join('\n'),
+    text: ['💬 Сообщение от ученика', '', `👤 ${label}${courseLine}`, '', params.body.trim() || '📎 Вложение'].join('\n'),
     reply_markup: {
       inline_keyboard: [[{ text: '↩️ Ответить', callback_data: replyCallback }]],
     },
@@ -387,4 +430,133 @@ export async function markCuratorThreadRead(
   studentTelegramId: number,
 ): Promise<void> {
   await markStaffThreadRead(admin, curatorTelegramId, 'curator', studentTelegramId);
+}
+
+export async function listCheckThreadsForCourse(
+  admin: SupabaseClient,
+  checkTelegramId: number,
+  courseId: number,
+  studentTelegramIds: number[],
+  limit = 30,
+): Promise<{ threads: StaffThreadSummary[]; storageEnabled: boolean }> {
+  const allowed = new Set(studentTelegramIds);
+  try {
+    let q = admin
+      .from('staff_student_messages')
+      .select('student_telegram_id, body, created_at, direction, staff_read_at, course_id')
+      .eq('staff_telegram_id', checkTelegramId)
+      .eq('staff_role', 'check')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const rows = (data ?? []).filter((row) => {
+      const tg = row.student_telegram_id as number;
+      if (!allowed.has(tg)) return false;
+      const cid = row.course_id as number | null | undefined;
+      if (cid == null) return true;
+      return cid === courseId;
+    });
+
+    const byStudent = new Map<number, StaffThreadSummary>();
+    for (const row of rows) {
+      const studentId = row.student_telegram_id as number;
+      if (byStudent.has(studentId)) continue;
+      const unread = rows.filter(
+        (r) =>
+          r.student_telegram_id === studentId &&
+          r.direction === 'student_to_staff' &&
+          !r.staff_read_at,
+      ).length;
+      byStudent.set(studentId, {
+        studentTelegramId: studentId,
+        studentLabel: '',
+        unreadCount: unread,
+        lastBody: String(row.body ?? ''),
+        lastAt: row.created_at as string,
+      });
+      if (byStudent.size >= limit) break;
+    }
+
+    const threads = [...byStudent.values()];
+    for (const thread of threads) {
+      thread.studentLabel = await staffStudentLabel(admin, thread.studentTelegramId);
+    }
+    threads.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+    return { threads, storageEnabled: true };
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { threads: [], storageEnabled: false };
+  }
+}
+
+export async function loadCheckThreadMessages(
+  admin: SupabaseClient,
+  checkTelegramId: number,
+  studentTelegramId: number,
+  courseId?: number | null,
+  limit = 25,
+): Promise<{ messages: StaffMessageRow[]; storageEnabled: boolean }> {
+  try {
+    let q = admin
+      .from('staff_student_messages')
+      .select('*')
+      .eq('staff_telegram_id', checkTelegramId)
+      .eq('staff_role', 'check')
+      .eq('student_telegram_id', studentTelegramId)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (courseId != null) {
+      q = q.or(`course_id.eq.${courseId},course_id.is.null`);
+    }
+    const { data, error } = await q;
+    if (error) {
+      if (courseId != null && isCourseIdColumnError(error)) {
+        const fallback = await admin
+          .from('staff_student_messages')
+          .select('*')
+          .eq('staff_telegram_id', checkTelegramId)
+          .eq('staff_role', 'check')
+          .eq('student_telegram_id', studentTelegramId)
+          .order('created_at', { ascending: true })
+          .limit(limit);
+        if (fallback.error) throw fallback.error;
+        return {
+          messages: (fallback.data ?? []).map((r) => mapRow(r as Record<string, unknown>)),
+          storageEnabled: true,
+        };
+      }
+      throw error;
+    }
+    return { messages: (data ?? []).map((r) => mapRow(r as Record<string, unknown>)), storageEnabled: true };
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { messages: [], storageEnabled: false };
+  }
+}
+
+export async function markCheckThreadRead(
+  admin: SupabaseClient,
+  checkTelegramId: number,
+  studentTelegramId: number,
+  courseId?: number | null,
+): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    let q = admin
+      .from('staff_student_messages')
+      .update({ staff_read_at: now })
+      .eq('staff_telegram_id', checkTelegramId)
+      .eq('staff_role', 'check')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('direction', 'student_to_staff')
+      .is('staff_read_at', null);
+    if (courseId != null) {
+      q = q.or(`course_id.eq.${courseId},course_id.is.null`);
+    }
+    await q;
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+  }
 }

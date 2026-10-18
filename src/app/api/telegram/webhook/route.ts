@@ -22,6 +22,7 @@ import {
 import {
   beginStudentMentorQuestion,
   handleStudentMentorAttachment,
+  handleStudentMentorCallback,
   handleStudentMentorMessage,
 } from '@/lib/bot/studentMentorFlow';
 import {
@@ -36,6 +37,12 @@ import {
   sendTeacherStart,
 } from '@/lib/bot/teacher';
 import { handleCombinedStaffCallback, handleCombinedStaffMessage, sendStaffStart } from '@/lib/bot/staff/staff-combined-flow';
+import {
+  handleStaffCourseHubCallback,
+  handleStaffGlobalMenuMessage,
+  handleStaffWorkspaceMenuMessage,
+} from '@/lib/bot/staff/staff-course-hub-flow';
+import { handleCheckAttachment, handleCheckCallback, handleCheckMessage } from '@/lib/bot/check/check-flow';
 import { clearBotWizardStateOnMenuStart } from '@/lib/bot/conversation-reset';
 import {
   handleCuratorAttachment,
@@ -43,6 +50,7 @@ import {
   handleCuratorMessage,
   sendCuratorStart,
 } from '@/lib/bot/curator';
+import { scheduleHomeworkDeadlineSweep } from '@/lib/bot/education/homework-deadline-sweep';
 
 import {
   ensureMember,
@@ -155,8 +163,9 @@ export async function POST(request: Request) {
 
   if (!update) return NextResponse.json({ ok: true });
 
+  const admin = createAdminClient();
+
     try {
-    const admin = createAdminClient();
 
     // Контроль доступа (§20): заблокированные и ограниченные пользователи
     // не получают доступ ни через сообщения, ни через команды, ни через
@@ -578,6 +587,15 @@ export async function POST(request: Request) {
       );
       if (teacherDocHandled) return NextResponse.json({ ok: true });
 
+      const checkDocHandled = await handleCheckAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        'document',
+        update.message.document.file_id,
+      );
+      if (checkDocHandled) return NextResponse.json({ ok: true });
+
       const curatorDocHandled = await handleCuratorAttachment(
         admin,
         update.message.from.id,
@@ -649,6 +667,15 @@ export async function POST(request: Request) {
           { fileId: largest.file_id, kind: 'photo' },
         );
         if (clientLessonHwPhoto) return NextResponse.json({ ok: true });
+
+        const checkPhotoHandled = await handleCheckAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          'photo',
+          largest.file_id,
+        );
+        if (checkPhotoHandled) return NextResponse.json({ ok: true });
 
         const teacherPhotoHandled = await handleTeacherAttachment(
           admin,
@@ -729,6 +756,17 @@ export async function POST(request: Request) {
     ) {
       const largest = update.message.photo?.[update.message.photo.length - 1];
       const curatorFileId = update.message.voice?.file_id ?? largest?.file_id;
+      const checkHandled =
+        curatorFileId &&
+        (await handleCheckAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.voice?.file_id ? 'voice' : 'photo',
+          curatorFileId,
+        ));
+      if (checkHandled) return NextResponse.json({ ok: true });
+
       const curatorHandled =
         curatorFileId &&
         (await handleCuratorAttachment(
@@ -915,6 +953,30 @@ export async function POST(request: Request) {
       update.message.chat &&
       update.message.from
     ) {
+      const workspaceMenuHandled = await handleStaffWorkspaceMenuMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (workspaceMenuHandled) return NextResponse.json({ ok: true });
+
+      const checkHandled = await handleCheckMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (checkHandled) return NextResponse.json({ ok: true });
+
+      const staffGlobalHandled = await handleStaffGlobalMenuMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (staffGlobalHandled) return NextResponse.json({ ok: true });
+
       const combinedHandled = await handleCombinedStaffMessage(
         admin,
         update.message.from.id,
@@ -1024,6 +1086,15 @@ export async function POST(request: Request) {
       );
       if (courseApplyCallbackHandled) return NextResponse.json({ ok: true });
 
+      const mentorPickHandled = await handleStudentMentorCallback(
+        admin,
+        data,
+        chatId,
+        from.id,
+        id,
+      );
+      if (mentorPickHandled) return NextResponse.json({ ok: true });
+
       const purchaseHandled = await handleStudentPurchaseCallback(
         admin,
         data,
@@ -1081,6 +1152,26 @@ export async function POST(request: Request) {
         id,
       );
       if (guestHandled) return NextResponse.json({ ok: true });
+
+      const hubCbHandled = await handleStaffCourseHubCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (hubCbHandled) return NextResponse.json({ ok: true });
+
+      const checkCbHandled = await handleCheckCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        from.id,
+        id,
+      );
+      if (checkCbHandled) return NextResponse.json({ ok: true });
 
       const combinedHandled = await handleCombinedStaffCallback(
         admin,
@@ -1150,6 +1241,8 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Telegram webhook error:', error);
   }
+
+  scheduleHomeworkDeadlineSweep(admin);
 
   // Telegram ждёт быстрый 200, иначе будет ретраить.
   return NextResponse.json({ ok: true });

@@ -147,26 +147,39 @@ export function rmPathSlice(
   return rmDensePath(pts);
 }
 
-export function rmSegTone(segIndex: number, nowIndex: number, locked: boolean): RoadTone {
+/** pathEndIndex — до какой остановки потока идёт цветная полоса; highlightIndex — неон только у ученика. */
+export function rmSegTone(
+  segIndex: number,
+  pathEndIndex: number,
+  highlightIndex: number,
+  locked: boolean,
+): RoadTone {
   if (locked) return 'future';
-  if (nowIndex < 0) return 'future';
-  if (segIndex < nowIndex - 1) return 'passed';
-  if (segIndex <= nowIndex) return 'active';
-  return 'future';
+  if (pathEndIndex < 0) return 'future';
+  if (segIndex >= pathEndIndex) return 'future';
+  const activeSeg = highlightIndex > 0 ? highlightIndex - 1 : highlightIndex === 0 ? 0 : -1;
+  if (activeSeg >= 0 && segIndex === activeSeg) return 'active';
+  return 'passed';
 }
 
-export function rmStopTone(stopIndex: number, nowIndex: number, locked: boolean): RoadTone {
+export function rmStopTone(
+  stopIndex: number,
+  pathEndIndex: number,
+  highlightIndex: number,
+  locked: boolean,
+): RoadTone {
   if (locked) return 'future';
-  if (nowIndex < 0) return 'future';
-  if (stopIndex < nowIndex) return 'passed';
-  if (stopIndex === nowIndex) return 'active';
-  return 'future';
+  if (pathEndIndex < 0) return 'future';
+  if (stopIndex > pathEndIndex) return 'future';
+  if (highlightIndex >= 0 && stopIndex === highlightIndex) return 'active';
+  return 'passed';
 }
 
 export function buildRoadSegments(
   stops: RoadStop[],
   geometry: RoadmapGeometry,
-  nowIndex: number,
+  pathEndIndex: number,
+  highlightIndex: number,
   locked: boolean,
 ): { d: string; tone: RoadTone }[] {
   const { rmPts, rmStart, rmFinish, laneY } = geometry;
@@ -175,9 +188,9 @@ export function buildRoadSegments(
   const segments: { d: string; tone: RoadTone }[] = [];
   let i = 0;
   while (i <= lastSeg) {
-    const tone = rmSegTone(i, nowIndex, locked);
+    const tone = rmSegTone(i, pathEndIndex, highlightIndex, locked);
     let j = i;
-    while (j < lastSeg && rmSegTone(j + 1, nowIndex, locked) === tone) j += 1;
+    while (j < lastSeg && rmSegTone(j + 1, pathEndIndex, highlightIndex, locked) === tone) j += 1;
     const lead = i === 0 ? [rmStart, { x: rmPts[0].x - 24, y: rmPts[0].y }] : undefined;
     const tail =
       j === lastSeg

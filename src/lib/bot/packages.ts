@@ -47,6 +47,7 @@ export async function grantLessonPackage(
     lessons: number;
     expiresAt?: string | null;
     purchaseRequestId?: string;
+    courseId?: number | null;
   },
 ): Promise<LessonPackageRow> {
   const now = new Date().toISOString();
@@ -65,6 +66,7 @@ export async function grantLessonPackage(
         status: 'active',
         expires_at: options.expiresAt ?? null,
         purchase_request_id: options.purchaseRequestId,
+        course_id: product === 'course' ? (options.courseId ?? null) : null,
       })
       .select('*')
       .single();
@@ -72,14 +74,17 @@ export async function grantLessonPackage(
     return data as LessonPackageRow;
   }
   
-  // Legacy поведение: accumulate в существующий активный пакет
-  const { data: existing } = await admin
+  // Legacy: accumulate в активный пакет того же курса
+  let existingQuery = admin
     .from('lesson_packages')
     .select('id, total_lessons, remaining_lessons, status')
     .eq('telegram_id', telegramId)
     .eq('product', product)
-    .eq('status', 'active')
-    .maybeSingle();
+    .eq('status', 'active');
+  if (product === 'course' && options.courseId != null) {
+    existingQuery = existingQuery.eq('course_id', options.courseId);
+  }
+  const { data: existing } = await existingQuery.maybeSingle();
 
   if (existing) {
     const { data, error } = await admin
@@ -111,6 +116,7 @@ export async function grantLessonPackage(
       status: 'active',
       expires_at: options.expiresAt ?? null,
       purchase_request_id: null,
+      course_id: product === 'course' ? (options.courseId ?? null) : null,
     })
     .select('*')
     .single();
@@ -141,6 +147,7 @@ export async function ensureCourseEnrollmentOnPurchase(
   admin: SupabaseClient,
   telegramId: number,
   courseId?: number,
+  options?: { courseSlug?: string },
 ): Promise<number | null> {
   const targetCourseId = await resolveCourseId(admin, courseId);
   if (!targetCourseId) return null;
@@ -161,7 +168,10 @@ export async function ensureCourseEnrollmentOnPurchase(
     const lives = await getEnrollmentLives(admin, telegramId, targetCourseId);
     // После full block + новая оплата: сброс прогресса и блокировок «с нуля».
     if (lives?.fully_blocked) {
-      const courseContent = await getDistrictCourseContent().catch(() => null);
+      const slug = options?.courseSlug;
+      const courseContent = slug
+        ? await getDistrictCourseContent(slug).catch(() => null)
+        : await getDistrictCourseContent().catch(() => null);
       await resetCourseLearningForRepurchase(
         admin,
         telegramId,
@@ -190,7 +200,7 @@ async function resolveCourseId(admin: SupabaseClient, courseId?: number): Promis
 async function ensureCuratorOnCoursePurchase(
   admin: SupabaseClient,
   telegramId: number,
-  options?: { curatorTelegramId?: number; courseSlug?: string },
+  options?: { curatorTelegramId?: number; courseSlug?: string; courseId?: number },
 ): Promise<boolean> {
   const targetId = await resolveCuratorTelegramIdForCourse(
     admin,
@@ -199,19 +209,40 @@ async function ensureCuratorOnCoursePurchase(
   );
   if (!targetId) return false;
 
-  const { data: existing } = await admin
-    .from('mentor_assignments')
-    .select('id')
-    .eq('telegram_id', telegramId)
-    .eq('kind', 'curator')
-    .eq('status', 'active')
-    .limit(1)
-    .maybeSingle();
-  // Уже есть куратор — не переназначаем (ручное / прошлый курс).
-  if (existing) return true;
+  let courseId = options?.courseId ?? null;
+  if (courseId == null && options?.courseSlug) {
+    const { data: row } = await admin
+      .from('courses')
+      .select('id')
+      .eq('slug', options.courseSlug)
+      .maybeSingle();
+    courseId = (row?.id as number | undefined) ?? null;
+  }
+
+  if (courseId != null) {
+    const { data: existingForCourse } = await admin
+      .from('mentor_assignments')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .eq('kind', 'curator')
+      .eq('course_id', courseId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (existingForCourse) return true;
+  } else {
+    const { data: existing } = await admin
+      .from('mentor_assignments')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .eq('kind', 'curator')
+      .eq('status', 'active')
+      .is('course_id', null)
+      .maybeSingle();
+    if (existing) return true;
+  }
 
   try {
-    await assignCurator(admin, telegramId, targetId);
+    await assignCurator(admin, telegramId, targetId, { courseId: courseId ?? undefined });
     return true;
   } catch (error) {
     console.error('[purchase] curator assignment failed:', error);
@@ -234,8 +265,6 @@ export async function completeCoursePurchaseSideEffects(
     curatorTelegramId?: number;
   },
 ): Promise<void> {
-  await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId);
-
   let courseSlug = options.courseSlug;
   if (!courseSlug) {
     const { data: courseRow } = await admin
@@ -246,9 +275,14 @@ export async function completeCoursePurchaseSideEffects(
     courseSlug = (courseRow?.slug as string | undefined) ?? undefined;
   }
 
+  await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId, {
+    courseSlug,
+  });
+
   await ensureCuratorOnCoursePurchase(admin, telegramId, {
     curatorTelegramId: options.curatorTelegramId,
     courseSlug,
+    courseId: options.courseId,
   });
 
   try {
@@ -300,8 +334,10 @@ export async function completeProductPurchase(
   let curatorAssigned = false;
   let teacherAssigned = false;
   if (product === 'course') {
-    resolvedCourseId = await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId);
     let courseSlug = options.courseSlug;
+    resolvedCourseId = await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId, {
+      courseSlug,
+    });
     if (!courseSlug && resolvedCourseId) {
       const { data: courseRow } = await admin
         .from('courses')
@@ -313,6 +349,7 @@ export async function completeProductPurchase(
     curatorAssigned = await ensureCuratorOnCoursePurchase(admin, telegramId, {
       curatorTelegramId: options.curatorTelegramId,
       courseSlug,
+      courseId: resolvedCourseId ?? undefined,
     });
   }
 
@@ -333,12 +370,13 @@ export async function completeProductPurchase(
     lessons: options.lessons,
     expiresAt: options.expiresAt,
     purchaseRequestId: options.purchaseRequestId,
+    courseId: product === 'course' ? (resolvedCourseId ?? options.courseId ?? null) : null,
   });
 
   let lessonsGranted = 0;
   if (product === 'course' && resolvedCourseId) {
     try {
-      const courseContent = await getDistrictCourseContent().catch(() => null);
+      const courseContent = await getDistrictCourseContent(options.courseSlug).catch(() => null);
       lessonsGranted = await grantPackageLessonAccess(
         admin,
         telegramId,
@@ -347,6 +385,16 @@ export async function completeProductPurchase(
         options.lessons,
         courseContent,
       );
+      if (courseContent) {
+        const { syncJoinCurrentEnrollmentAccess } = await import('./education/course-access');
+        await syncJoinCurrentEnrollmentAccess(
+          admin,
+          telegramId,
+          resolvedCourseId,
+          courseContent,
+          pkg.id,
+        );
+      }
     } catch (error) {
       if (!isCourseAccessTableError(error)) throw error;
     }

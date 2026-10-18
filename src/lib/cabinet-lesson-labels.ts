@@ -17,6 +17,31 @@ function isPrerequisiteBlock(mapAccessState?: CourseMapAccessState): boolean {
   return mapAccessState === 'locked_prerequisite' || mapAccessState === 'locked_prerequisite_past';
 }
 
+/** Вебинар ещё не прошёл (нет записи / эфир в будущем) — на карте показываем «Скоро». */
+function isWebinarBeforeBroadcast(params: {
+  lessonKind?: 'webinar' | 'practice' | 'milestone';
+  webinarSessionStatus?: WebinarStatus;
+  stopStatus?: 'locked' | 'now' | 'watched' | 'done' | undefined;
+}): boolean {
+  if (params.lessonKind !== 'webinar') return false;
+  if (params.webinarSessionStatus === 'live') return false;
+  const webinarDone =
+    params.webinarSessionStatus === 'completed' ||
+    params.stopStatus === 'watched' ||
+    params.stopStatus === 'done';
+  return !webinarDone;
+}
+
+/** Маркер «где сейчас идёт поток курса» (расписание группы, не личный прогресс). */
+export function streamScheduleMapLabel(params: {
+  webinarSessionStatus?: WebinarStatus;
+  lessonKind?: 'webinar' | 'practice' | 'milestone';
+}): string {
+  if (params.webinarSessionStatus === 'live') return 'Идёт эфир';
+  if (params.lessonKind === 'webinar') return 'Сейчас в потоке';
+  return 'Сейчас в потоке';
+}
+
 /** Подпись точки на карте курса. */
 export function lessonMapChipLabel(params: {
   hasCourse: boolean;
@@ -30,6 +55,10 @@ export function lessonMapChipLabel(params: {
   /** Только у первого занятия в цепочке, где не пройдены предыдущие. */
   isFirstChainGate?: boolean;
   isJoinArchive?: boolean;
+  /** Текущее учебное занятие ученика на карте. */
+  isCurrent?: boolean;
+  /** Слот входит в оплаченный пакет (подпись на карте, не равно access). */
+  inPackageQuota?: boolean;
 }): string {
   if (params.isJoinArchive) {
     const webinarDone =
@@ -48,15 +77,28 @@ export function lessonMapChipLabel(params: {
   }
 
   const trialOnMap = Boolean(params.isTrialFree);
-  if (
-    !trialOnMap &&
-    (!params.hasCourse || isUnpaidPackage(params.mapAccessState))
-  ) {
+  const inPaidQuota = Boolean(params.inPackageQuota);
+  const coursePaidOnMap = params.hasCourse || inPaidQuota;
+
+  if (!trialOnMap && isUnpaidPackage(params.mapAccessState) && !inPaidQuota) {
+    return 'Закрыто';
+  }
+  if (!trialOnMap && !coursePaidOnMap) {
     return 'Закрыто';
   }
 
   if (params.homeworkStatus === 'approved' || params.stopStatus === 'done') {
     return 'Пройдено';
+  }
+
+  if (
+    isWebinarBeforeBroadcast({
+      lessonKind: params.lessonKind,
+      webinarSessionStatus: params.webinarSessionStatus,
+      stopStatus: params.stopStatus,
+    })
+  ) {
+    return 'Скоро';
   }
 
   if (isPrerequisiteBlock(params.mapAccessState)) {
@@ -66,20 +108,27 @@ export function lessonMapChipLabel(params: {
       if (params.lessonKind === 'webinar' && !webinarDone) {
         return 'Скоро';
       }
-      return 'Закрыто';
+      return coursePaidOnMap ? 'Ожидает' : 'Закрыто';
     }
-    return 'Доступно';
+    return coursePaidOnMap ? 'Ожидает' : 'Закрыто';
   }
 
   const webinarDone =
     params.webinarSessionStatus === 'completed' || params.stopStatus === 'watched';
 
-  if (params.lessonKind === 'webinar' && !webinarDone) {
-    return 'Скоро';
+  const isActiveLesson =
+    !isPrerequisiteBlock(params.mapAccessState) &&
+    (params.isCurrent || params.stopStatus === 'now' || params.mapAccessState === 'available');
+
+  if (isActiveLesson) {
+    if (params.lessonKind === 'webinar' && !webinarDone) {
+      return 'Доступно';
+    }
+    return 'Открыто';
   }
 
-  if (params.mapAccessState === 'available' || params.stopStatus === 'now') {
-    return 'Открыто';
+  if (params.lessonKind === 'webinar' && !webinarDone) {
+    return 'Скоро';
   }
 
   if (trialOnMap) {
@@ -115,8 +164,11 @@ export function lessonGateMessage(params: {
     return 'Пробное занятие — начните с просмотра материалов и вебинара.';
   }
 
-  if (!params.hasCourse || isUnpaidPackage(params.mapAccessState)) {
+  if (!params.hasCourse) {
     return 'Занятие откроется после оплаты пакета занятий курса. Купите или продлите пакет в разделе «Оплаты».';
+  }
+  if (isUnpaidPackage(params.mapAccessState)) {
+    return 'Занятие откроется после прохождения предыдущих занятий курса или когда откроется следующий слот пакета.';
   }
 
   if (isPrerequisiteBlock(params.mapAccessState)) {

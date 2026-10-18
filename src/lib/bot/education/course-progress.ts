@@ -155,6 +155,10 @@ export type CourseMapStop = {
   isJoinArchive: boolean;
   /** Модуль, который сейчас идёт в потоке (Sanity override или авто по вебинарам). */
   isStreamActiveModule: boolean;
+  /** Занятие, на котором сейчас идёт поток курса (live или следующее по программе). */
+  isStreamScheduleLesson: boolean;
+  /** Входит в оплаченную квоту пакета (для подписей на карте, без выдачи access). */
+  inPackageQuota: boolean;
 };
 
 export function isCourseProgressTableError(error: unknown): boolean {
@@ -257,11 +261,18 @@ export function computeMapAccessState(params: {
     };
   }
 
-  if (paidInPackage && params.hasAccess && params.previousCleared) {
+  if (paidInPackage && params.previousCleared && params.hasAccess) {
     return { mapAccessState: 'available', isScheduleActive };
   }
 
   if (paidInPackage && !params.previousCleared) {
+    return {
+      mapAccessState: sessionPast ? 'locked_prerequisite_past' : 'locked_prerequisite',
+      isScheduleActive,
+    };
+  }
+
+  if (paidInPackage && params.previousCleared && !params.hasAccess) {
     return {
       mapAccessState: sessionPast ? 'locked_prerequisite_past' : 'locked_prerequisite',
       isScheduleActive,
@@ -341,6 +352,9 @@ async function mergeLegacyLessonAccess(
   }
 }
 
+const MAP_PROGRESS_SELECT =
+  'sanity_lesson_id, live_attended_at, recording_watched_at, watch_percent, materials_opened, homework_status, homework_completed_at, review_note, homework_deadline_at, homework_remaining_ms, homework_overdue_at, completed_at';
+
 async function loadProgressAndAccessBySanity(
   admin: SupabaseClient,
   telegramId: number,
@@ -362,7 +376,7 @@ async function loadProgressAndAccessBySanity(
       .in('sanity_lesson_id', sanityLessonIds),
     admin
       .from('course_lesson_student_progress')
-      .select('*')
+      .select(MAP_PROGRESS_SELECT)
       .eq('telegram_id', telegramId)
       .in('sanity_lesson_id', sanityLessonIds),
   ]);
@@ -395,24 +409,23 @@ export async function buildCourseMapStopsFromContent(
     courseState: CourseCabinetState;
     hasCourseProductAccess: boolean;
     fullyBlocked?: boolean;
+    courseId?: number | null;
   },
 ): Promise<CourseMapStop[]> {
   const fullyBlocked = Boolean(options.fullyBlocked);
   const allLessons = flattenCourseLessons(content);
   const allSanityIds = allLessons.map((l) => l.sanityId);
-  const [{ accessMap, progressMap }, { data: allProgressRows }, sessionMap] = await Promise.all([
+  const [{ accessMap, progressMap }, sessionMap] = await Promise.all([
     loadProgressAndAccessBySanity(admin, telegramId, allSanityIds, content),
-    admin
-      .from('course_lesson_student_progress')
-      .select('sanity_lesson_id')
-      .eq('telegram_id', telegramId)
-      .not('sanity_lesson_id', 'is', null),
     loadSanityLessonSessionMap(admin, allSanityIds),
   ]);
 
-  const progressSanityIds = new Set(
-    (allProgressRows ?? []).map((r) => r.sanity_lesson_id as string).filter(Boolean),
-  );
+  const progressSanityIds = new Set<string>();
+  for (const lesson of allLessons) {
+    if (lesson.publicationStatus === 'archived' && progressMap.has(lesson.sanityId)) {
+      progressSanityIds.add(lesson.sanityId);
+    }
+  }
 
   const visibleLessons: { lesson: CourseLessonContent; moduleIndex: number; numInModule: number }[] =
     [];
@@ -426,71 +439,72 @@ export async function buildCourseMapStopsFromContent(
     }
   });
 
-  // Проверяем сценарий в course_enrollments
-  const { resolveCourseIdForContent } = await import('./course-record');
-  const courseId = await resolveCourseIdForContent(admin, content);
-  let scenario: 'start_from_beginning' | 'join_current' | null = null;
-  let startLessonSanityId: string | null = null;
-  
-  let enrollmentRow: {
+  let courseId = options.courseId ?? null;
+  if (courseId == null) {
+    const { resolveCourseIdForContent } = await import('./course-record');
+    courseId = await resolveCourseIdForContent(admin, content);
+  }
+
+  type EnrollmentRow = {
     purchase_scenario?: string | null;
     start_lesson_id?: number | null;
     start_module_id?: number | null;
-  } | null = null;
+  };
 
-  if (courseId) {
-    const { data: enrollment } = await admin
-      .from('course_enrollments')
-      .select('purchase_scenario, start_lesson_id, start_module_id')
-      .eq('telegram_id', telegramId)
-      .eq('course_id', courseId)
-      .maybeSingle();
-    enrollmentRow = enrollment;
+  const [{ data: enrollmentRow }, packageEntitlement] = await Promise.all([
+    courseId
+      ? admin
+          .from('course_enrollments')
+          .select('purchase_scenario, start_lesson_id, start_module_id')
+          .eq('telegram_id', telegramId)
+          .eq('course_id', courseId)
+          .maybeSingle()
+      : Promise.resolve({ data: null as EnrollmentRow | null }),
+    courseId
+      ? sumCoursePackageLessonEntitlement(admin, telegramId, courseId)
+      : Promise.resolve(0),
+  ]);
 
-    scenario = enrollment?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
+  const scenario = enrollmentRow?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
 
-    const { resolveEnrollmentStartLessonSanityId } = await import('./course-enrollment-start');
-    startLessonSanityId = await resolveEnrollmentStartLessonSanityId(
-      admin,
-      courseId,
-      content,
-      enrollment,
-    );
-  }
+  const { resolveEnrollmentStartLessonSanityId, buildJoinCurrentGateFromEnrollment, indexOfLessonInPublishedOrder } =
+    await import('./course-enrollment-start');
+  const startLessonSanityId =
+    courseId && enrollmentRow
+      ? await resolveEnrollmentStartLessonSanityId(admin, courseId, content, enrollmentRow)
+      : null;
 
   const orderedLessons = visibleLessons.map((v) => v.lesson);
 
-  const { determineActiveModule } = await import('./active-module');
-  const streamModuleResult = await determineActiveModule(admin, content);
+  const { resolveStreamSchedulePointer } = await import('./active-module');
+  const streamPointer = resolveStreamSchedulePointer(content, sessionMap);
   const streamActiveModuleIndex =
-    streamModuleResult.module != null
-      ? content.modules.findIndex((m) => m.sanityId === streamModuleResult.module!.sanityId)
+    streamPointer.activeModule != null
+      ? content.modules.findIndex((m) => m.sanityId === streamPointer.activeModule!.sanityId)
       : -1;
+  const streamScheduleSanityId = streamPointer.streamScheduleSanityId;
 
-  const joinStartIndex =
+  const joinGate =
+    scenario === 'join_current'
+      ? buildJoinCurrentGateFromEnrollment(enrollmentRow, content, startLessonSanityId)
+      : null;
+  const joinStartIndexVisible =
     scenario === 'join_current' && startLessonSanityId
-      ? orderedLessons.findIndex((l) => l.sanityId === startLessonSanityId)
+      ? indexOfLessonInPublishedOrder(orderedLessons, startLessonSanityId)
+      : null;
+  const gateStartIndex =
+    scenario === 'join_current' && joinStartIndexVisible != null && joinStartIndexVisible >= 0
+      ? joinStartIndexVisible
       : 0;
-  const gateStartIndex = joinStartIndex > 0 ? joinStartIndex : 0;
   const progressForGate = new Map<string, CourseLessonStudentProgress | undefined>();
   for (const { lesson } of visibleLessons) {
     progressForGate.set(lesson.sanityId, progressMap.get(lesson.sanityId));
   }
 
-  // Для join_current: определяем startIndex и помечаем архивные уроки
   const isArchiveLesson = new Set<string>();
-  
-  if (scenario === 'join_current' && startLessonSanityId) {
-    const startLessonIndex = orderedLessons.findIndex((l) => l.sanityId === startLessonSanityId);
-    if (startLessonIndex >= 0) {
-      // Помечаем уроки до стартового как архив
-      for (let i = 0; i < startLessonIndex; i++) {
-        isArchiveLesson.add(orderedLessons[i]?.sanityId ?? '');
-      }
-    }
+  if (joinGate?.startValid) {
+    for (const id of joinGate.archiveSanityIds) isArchiveLesson.add(id);
   }
-
-  const packageEntitlement = await sumCoursePackageLessonEntitlement(admin, telegramId);
   const effectiveHasCourseProduct =
     options.hasCourseProductAccess && packageEntitlement > 0;
   let paidLessonSlotIndex = 0;
@@ -512,10 +526,8 @@ export async function buildCourseMapStopsFromContent(
     } else if (lesson.isTrialFree) {
       inQuota = effectiveHasCourseProduct || options.courseState === 'enrolled_locked';
     } else if (effectiveHasCourseProduct && packageEntitlement > 0) {
-      if (lessonIndex >= gateStartIndex) {
-        inQuota = scanPaidSlotIndex < packageEntitlement;
-        scanPaidSlotIndex += 1;
-      }
+      inQuota = scanPaidSlotIndex < packageEntitlement;
+      scanPaidSlotIndex += 1;
     }
     if (
       inQuota &&
@@ -553,7 +565,7 @@ export async function buildCourseMapStopsFromContent(
           });
         })
         .sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
-  const currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
+  let currentSanityId = accessibleIncomplete[0]?.lesson.sanityId ?? null;
 
   return visibleLessons.map(({ lesson, moduleIndex, numInModule }, lessonIndex) => {
     const isJoinArchive = isArchiveLesson.has(lesson.sanityId);
@@ -580,25 +592,26 @@ export async function buildCourseMapStopsFromContent(
             sessionMap.get(lesson.sanityId),
           )
         : null;
+    const rawAccessStatus = accessMap.get(lesson.sanityId) ?? null;
+    let inPackageQuota = false;
+    if (isJoinArchive) {
+      inPackageQuota = false;
+    } else if (lesson.isTrialFree) {
+      inPackageQuota =
+        effectiveHasCourseProduct || options.courseState === 'enrolled_locked';
+    } else if (effectiveHasCourseProduct && packageEntitlement > 0) {
+      inPackageQuota = paidLessonSlotIndex < packageEntitlement;
+      paidLessonSlotIndex += 1;
+    }
+    const isCurrent = !fullyBlocked && lesson.sanityId === currentSanityId;
     const status = computeMapStopStatus({
       hasAccess: fullyBlocked ? false : access.hasAccess,
       accessBlocked,
       accessStatus: access.accessStatus,
       sessionStatus,
       progress,
-      isCurrent: !fullyBlocked && lesson.sanityId === currentSanityId,
+      isCurrent,
     });
-    const rawAccessStatus = accessMap.get(lesson.sanityId) ?? null;
-    let inPackageQuota = false;
-    if (isJoinArchive) {
-      inPackageQuota = effectiveHasCourseProduct;
-    } else if (lesson.isTrialFree) {
-      inPackageQuota =
-        effectiveHasCourseProduct || options.courseState === 'enrolled_locked';
-    } else if (effectiveHasCourseProduct && packageEntitlement > 0 && lessonIndex >= gateStartIndex) {
-      inPackageQuota = paidLessonSlotIndex < packageEntitlement;
-      paidLessonSlotIndex += 1;
-    }
     const { mapAccessState, isScheduleActive } = computeMapAccessState({
       hasAccess: fullyBlocked ? false : access.hasAccess,
       previousCleared: effectivePreviousCleared,
@@ -611,13 +624,18 @@ export async function buildCourseMapStopsFromContent(
       inPackageQuota,
     });
 
+    const homeworkProductAccess = lesson.isTrialFree
+      ? options.hasCourseProductAccess
+      : effectiveHasCourseProduct;
+    const hideTrialHomeworkPreview = lesson.isTrialFree && !options.hasCourseProductAccess;
+
     return {
       sanityLessonId: lesson.sanityId,
       lessonId: null,
       lessonIndex,
       moduleIndex,
       numInModule,
-      isCurrent: lesson.sanityId === currentSanityId,
+      isCurrent,
       title: lesson.title,
       description: lesson.description,
       kind: mapLessonKind(lesson.lessonType),
@@ -628,43 +646,40 @@ export async function buildCourseMapStopsFromContent(
       sessionStatus,
       mandatoryHomework: isJoinArchive
         ? false
-        : homeworkRequiredForLesson(lesson, effectiveHasCourseProduct, {
+        : homeworkRequiredForLesson(lesson, homeworkProductAccess, {
             isJoinArchive: isJoinArchive,
           }),
       homeworkStatus:
-        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
+        isJoinArchive || hideTrialHomeworkPreview
           ? null
           : (progress?.homework_status ?? null),
       homeworkTitle: lesson.homework?.title ?? null,
       homeworkReviewNote: progress?.review_note ?? null,
       homeworkCompletedAt: progress?.homework_completed_at ?? null,
       homeworkDeadlineAt:
-        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
+        isJoinArchive || hideTrialHomeworkPreview
           ? null
           : (progress?.homework_deadline_at ?? null),
       homeworkRemainingMs:
-        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
+        isJoinArchive || hideTrialHomeworkPreview
           ? null
           : typeof progress?.homework_remaining_ms === 'number'
             ? progress.homework_remaining_ms
             : null,
       homeworkOverdueAt:
-        isJoinArchive || (lesson.isTrialFree && !effectiveHasCourseProduct)
+        isJoinArchive || hideTrialHomeworkPreview
           ? null
           : (progress?.homework_overdue_at ?? null),
-      lessonProgressPercent:
-        isJoinArchive && effectiveHasCourseProduct
-          ? 100
-          : computeLessonProgressPercent({
-              recordingWatchedAt: progress?.recording_watched_at,
-              liveAttendedAt: progress?.live_attended_at,
-              homeworkStatus: isJoinArchive ? null : progress?.homework_status,
-              hasHomework: isJoinArchive
-                ? false
-                : homeworkRequiredForLesson(lesson, effectiveHasCourseProduct, {
-                    isJoinArchive,
-                  }),
+      lessonProgressPercent: computeLessonProgressPercent({
+        recordingWatchedAt: progress?.recording_watched_at,
+        liveAttendedAt: progress?.live_attended_at,
+        homeworkStatus: isJoinArchive ? null : progress?.homework_status,
+        hasHomework: isJoinArchive
+          ? false
+          : homeworkRequiredForLesson(lesson, homeworkProductAccess, {
+              isJoinArchive,
             }),
+      }),
       isTrialFree: lesson.isTrialFree,
       contentChips:
         lesson.contentChips?.length > 0
@@ -688,6 +703,10 @@ export async function buildCourseMapStopsFromContent(
       isFirstChainGate: lesson.sanityId === firstChainGateSanityId,
       isJoinArchive,
       isStreamActiveModule: moduleIndex === streamActiveModuleIndex,
+      isStreamScheduleLesson: Boolean(
+        streamScheduleSanityId && lesson.sanityId === streamScheduleSanityId,
+      ),
+      inPackageQuota,
     };
   });
 }
@@ -752,6 +771,8 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         isFirstChainGate: false,
         isJoinArchive: false,
         isStreamActiveModule: false,
+        isStreamScheduleLesson: false,
+        inPackageQuota: false,
       });
       lessonIndex += 1;
     }
@@ -892,6 +913,8 @@ export async function buildCourseMapStops(
       isFirstChainGate: false,
       isJoinArchive: false,
       isStreamActiveModule: false,
+      isStreamScheduleLesson: false,
+      inPackageQuota: hasAccess,
     };
   });
 }
@@ -981,12 +1004,19 @@ export async function markLiveAttended(
   });
 }
 
+export type CourseHomeworkReviewerRole = 'teacher' | 'admin' | 'curator' | 'check';
+
 export async function markHomeworkApproved(
   admin: SupabaseClient,
   telegramId: number,
   key: LessonProgressKey,
   reviewNote?: string,
-  options?: { materialKeys?: string[]; hasHomework?: boolean },
+  options?: {
+    materialKeys?: string[];
+    hasHomework?: boolean;
+    reviewerTelegramId?: number | null;
+    reviewerRole?: CourseHomeworkReviewerRole | null;
+  },
 ): Promise<CourseLessonStudentProgress> {
   const now = new Date().toISOString();
   const filter =
@@ -1012,11 +1042,17 @@ export async function markHomeworkApproved(
     hasHomework,
   });
 
+  const reviewerTelegramId = options?.reviewerTelegramId ?? null;
+  const reviewerRole = options?.reviewerRole ?? null;
+
   return writeProgressRow(admin, telegramId, key, {
     homework_status: 'approved',
     homework_completed_at: now,
     review_note: reviewNote?.trim() || null,
     completed_at: fullyDone ? now : null,
+    reviewed_by_telegram_id: reviewerTelegramId,
+    reviewed_at: reviewerTelegramId != null ? now : null,
+    reviewer_role: reviewerRole,
   });
 }
 

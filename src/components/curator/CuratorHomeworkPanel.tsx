@@ -13,20 +13,25 @@ function itemKey(item: CuratorHomeworkBoardItem): string {
 
 export default function CuratorHomeworkPanel({
   board,
+  courseId,
   busy,
   runAction,
   rejectTarget,
   rejectNote,
   onRejectNote,
   onRejectTarget,
+  readOnly = false,
 }: {
   board: CuratorHomeworkBoardItem[];
+  courseId?: number | null;
   busy: boolean;
   runAction: StaffRunAction;
   rejectTarget: CuratorHomeworkBoardItem | null;
   rejectNote: string;
   onRejectNote: (v: string) => void;
   onRejectTarget: (item: CuratorHomeworkBoardItem | null) => void;
+  /** Куратор без роли check — только просмотр статусов. */
+  readOnly?: boolean;
 }) {
   const [view, setView] = useState<'queue' | 'all'>('queue');
   const [moduleFilter, setModuleFilter] = useState<string>('all');
@@ -55,6 +60,7 @@ export default function CuratorHomeworkPanel({
           body: JSON.stringify({
             studentTelegramId: item.studentTelegramId,
             lessonNumber: item.number,
+            courseId: courseId ?? undefined,
           }),
         });
         if (!res.ok) {
@@ -79,6 +85,7 @@ export default function CuratorHomeworkPanel({
             studentTelegramId: item.studentTelegramId,
             lessonNumber: item.number,
             note: rejectNote.trim() || undefined,
+            courseId: courseId ?? undefined,
           }),
         });
         if (!res.ok) {
@@ -96,9 +103,11 @@ export default function CuratorHomeworkPanel({
     <div className="curator-panel curator-panel--wide">
       <header className="curator-page-head">
         <div>
-          <h1 className="curator-title">Домашние задания</h1>
+          <h1 className="curator-title">{readOnly ? 'Прогресс домашних заданий' : 'Домашние задания'}</h1>
           <p className="curator-muted">
-            Отправки из Telegram сохраняются в базе и отображаются здесь
+            {readOnly
+              ? 'Статусы ДЗ учеников. Принять или отклонить может назначенный проверяющий.'
+              : 'Отправки из Telegram сохраняются в базе и отображаются здесь'}
           </p>
         </div>
       </header>
@@ -169,7 +178,7 @@ export default function CuratorHomeworkPanel({
                   </p>
                 ) : null}
 
-                {item.status === 'submitted' ? (
+                {!readOnly && item.status === 'submitted' ? (
                   <div className="curator-btn-row">
                     <button
                       type="button"
@@ -190,7 +199,8 @@ export default function CuratorHomeworkPanel({
                   </div>
                 ) : null}
 
-                {rejectTarget?.sanityLessonId === item.sanityLessonId &&
+                {!readOnly &&
+                rejectTarget?.sanityLessonId === item.sanityLessonId &&
                 rejectTarget.studentId === item.studentId ? (
                   <div className="curator-reject-box">
                     <textarea

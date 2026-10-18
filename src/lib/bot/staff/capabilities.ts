@@ -1,7 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { usesClientBotUi } from '@/lib/bot/client-state';
+import { listCoursesForStaff } from '@/lib/bot/education/course-staff';
 import {
   canManageTeacherCabinet,
+  hasFullStaffPreview,
   isBotRole,
   loadMemberRoles,
   memberHasRole,
@@ -17,7 +19,10 @@ export type StaffCapabilities = {
   viewRole: BotRole | null;
   effectiveRole: BotRole;
   canTeacherBot: boolean;
+  /** Кураторские разделы бота (назначение curator на курс). */
   canCuratorBot: boolean;
+  /** «Мой курс» и check-меню (любое назначение curator/check). */
+  canCourseStaffBot: boolean;
 };
 
 /** Роли staff для Telegram: primary + extra_roles + view_role (/as). */
@@ -40,6 +45,18 @@ export async function loadStaffCapabilities(
   const member: MemberInfo = { role: primaryRole, viewRole };
   const effectiveRole = resolveEffectiveRole(member, telegramId);
 
+  const assignments = await listCoursesForStaff(admin, telegramId).catch(() => []);
+  const hasCuratorAssignment = assignments.some((a) => a.role === 'curator');
+  const hasCheckAssignment = assignments.some((a) => a.role === 'check');
+  const hasCourseStaffAssignment = hasCuratorAssignment || hasCheckAssignment;
+
+  const fullPreview = hasFullStaffPreview(roles, telegramId);
+  const legacyCurator = memberHasRole(roles, 'curator');
+  const canCuratorBot =
+    fullPreview || legacyCurator || hasCuratorAssignment;
+  const canCourseStaffBot =
+    fullPreview || legacyCurator || memberHasRole(roles, 'check') || hasCourseStaffAssignment;
+
   // Маска /as guest|student или role=guest — клиентский UI, не staff (в т.ч. для создателя).
   if (usesClientBotUi(effectiveRole)) {
     return {
@@ -50,6 +67,7 @@ export async function loadStaffCapabilities(
       effectiveRole,
       canTeacherBot: false,
       canCuratorBot: false,
+      canCourseStaffBot: false,
     };
   }
 
@@ -63,6 +81,7 @@ export async function loadStaffCapabilities(
       effectiveRole,
       canTeacherBot: true,
       canCuratorBot: false,
+      canCourseStaffBot: canCourseStaffBot,
     };
   }
   if (viewRole === 'curator') {
@@ -74,6 +93,7 @@ export async function loadStaffCapabilities(
       effectiveRole,
       canTeacherBot: false,
       canCuratorBot: true,
+      canCourseStaffBot: true,
     };
   }
 
@@ -86,7 +106,8 @@ export async function loadStaffCapabilities(
       viewRole,
       effectiveRole,
       canTeacherBot: true,
-      canCuratorBot: memberHasRole(roles, 'curator'),
+      canCuratorBot: canCuratorBot,
+      canCourseStaffBot,
     };
   }
   if (effectiveRole === 'curator') {
@@ -98,12 +119,11 @@ export async function loadStaffCapabilities(
       effectiveRole,
       canTeacherBot: memberHasRole(roles, 'teacher'),
       canCuratorBot: true,
+      canCourseStaffBot: true,
     };
   }
 
   const canTeacherBot = canManageTeacherCabinet(roles, telegramId);
-  const canCuratorBot =
-    memberHasRole(roles, 'curator') || memberHasRole(roles, 'admin');
 
   return {
     telegramId,
@@ -113,5 +133,6 @@ export async function loadStaffCapabilities(
     effectiveRole,
     canTeacherBot,
     canCuratorBot,
+    canCourseStaffBot,
   };
 }

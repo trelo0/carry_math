@@ -139,7 +139,7 @@ export default function CuratorShell({
         ) : null}
 
         {section === 'students' ? (
-          <CuratorStudentsPanel students={data.students} busy={busy} runAction={runAction} />
+          <CuratorStudentsPanel students={data.students} />
         ) : null}
 
         {section === 'homework' ? (

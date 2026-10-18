@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertStaffCourseCapability } from '@/lib/curator/staff-course-access';
 import { deductLifeForHomeworkDebtByCurator } from '@/lib/bot/education/course-homework';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 
 type RouteParams = { params: Promise<{ telegramId: string }> };
 
-type Body = { sanityLessonId?: string };
+type Body = { sanityLessonId?: string; courseId?: number };
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -31,11 +32,20 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    const { resolveCuratorApiCourse } = await import('@/lib/curator/api-course');
+    const course = await resolveCuratorApiCourse(auth.admin, auth.telegramId, body.courseId);
+    if (!course) {
+      return NextResponse.json({ error: 'Course not found' }, { status: 404 });
+    }
+    await assertStaffCourseCapability(auth.admin, auth, course.courseId, 'curator');
+
     const result = await deductLifeForHomeworkDebtByCurator(
       auth.admin,
       auth.telegramId,
       studentTelegramId,
       body.sanityLessonId,
+      'overdue',
+      { courseId: course.courseId },
     );
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');

@@ -95,9 +95,12 @@ BEGIN
   -- === Этап 2: grantLessonPackage с верификацией ===
   INSERT INTO public.lesson_packages (
     telegram_id, product, title, total_lessons, remaining_lessons,
-    purchase_request_id, expires_at
+    purchase_request_id, expires_at, course_id
   )
-  VALUES (p_telegram_id, p_product, p_title, p_lessons, p_lessons, p_id, p_expires_at)
+  VALUES (
+    p_telegram_id, p_product, p_title, p_lessons, p_lessons, p_id, p_expires_at,
+    CASE WHEN p_product = 'course' THEN p_course_id ELSE NULL END
+  )
   ON CONFLICT (purchase_request_id) DO NOTHING
   RETURNING id INTO v_package_id;
   

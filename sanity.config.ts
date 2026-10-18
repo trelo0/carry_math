@@ -5,54 +5,107 @@ import schemaTypes from './sanity/math-cms/schemas/schemaTypes'
 import {DeleteCourseAction} from './sanity/actions/DeleteCourseAction'
 import {DeleteCourseLessonAction} from './sanity/actions/DeleteCourseLessonAction'
 import {DeleteModuleAction} from './sanity/actions/DeleteModuleAction'
+import {PublishCourseLessonAction} from './sanity/actions/PublishCourseLessonAction'
+import {nextLessonModuleOrder, nextModuleSortOrder} from './sanity/lib/nextSortOrder'
+
+function courseHub(S: StructureBuilder, courseId: string) {
+  return S.list()
+    .title('Курс')
+    .items([
+      S.listItem()
+        .title('① Настройки курса')
+        .child(S.document().schemaType('districtCourse').documentId(courseId)),
+      S.listItem()
+        .title('② Модули')
+        .child(
+          S.list()
+            .title('Модули этого курса')
+            .items([
+              S.listItem()
+                .title('＋ Новый модуль')
+                .child(
+                  S.document()
+                    .schemaType('districtModule')
+                    .initialValueTemplate('districtModule-in-course', {courseId}),
+                ),
+              S.listItem()
+                .title('Список модулей')
+                .child(
+                  S.documentTypeList('districtModule')
+                    .title('Модули')
+                    .filter('_type == "districtModule" && course._ref == $courseId')
+                    .params({courseId})
+                    .defaultOrdering([{field: 'sortOrder', direction: 'asc'}])
+                    .child((moduleId) =>
+                      S.list()
+                        .title('Модуль')
+                        .items([
+                          S.listItem()
+                            .title('Настройки модуля')
+                            .child(
+                              S.document().schemaType('districtModule').documentId(moduleId),
+                            ),
+                          S.listItem()
+                            .title('③ Занятия')
+                            .child(
+                              S.list()
+                                .title('Занятия модуля')
+                                .items([
+                                  S.listItem()
+                                    .title('＋ Новое занятие')
+                                    .child(
+                                      S.document()
+                                        .schemaType('districtCourseLesson')
+                                        .initialValueTemplate('districtCourseLesson-in-module', {
+                                          moduleId,
+                                        }),
+                                    ),
+                                  S.listItem()
+                                    .title('Список занятий')
+                                    .child(
+                                      S.documentTypeList('districtCourseLesson')
+                                        .title('Занятия')
+                                        .filter(
+                                          '_type == "districtCourseLesson" && module._ref == $moduleId',
+                                        )
+                                        .params({moduleId})
+                                        .defaultOrdering([{field: 'moduleOrder', direction: 'asc'}])
+                                        .child((lessonId) =>
+                                          S.document()
+                                            .schemaType('districtCourseLesson')
+                                            .documentId(lessonId),
+                                        ),
+                                    ),
+                                ]),
+                            ),
+                        ]),
+                    ),
+                ),
+            ]),
+        ),
+    ])
+}
 
 function coursesStructure(S: StructureBuilder) {
-  return S.documentTypeList('districtCourse')
+  return S.list()
     .title('Курсы')
-    .defaultOrdering([{field: 'title', direction: 'asc'}])
-    .initialValueTemplates([S.initialValueTemplateItem('districtCourse-new')])
-    .child((courseId) =>
-      S.list()
-        .title('Курс')
-        .items([
-          S.listItem()
-            .title('① Настройки курса')
-            .child(S.document().schemaType('districtCourse').documentId(courseId)),
-          S.listItem()
-            .title('② Модули')
-            .child(
-              S.documentTypeList('districtModule')
-                .title('Модули этого курса')
-                .filter('_type == "districtModule" && course._ref == $courseId')
-                .params({courseId})
-                .defaultOrdering([{field: 'sortOrder', direction: 'asc'}])
-                .initialValueTemplates([
-                  S.initialValueTemplateItem('districtModule-in-course', {courseId}),
-                ])
-                .child((moduleId) =>
-                  S.list()
-                    .title('Модуль')
-                    .items([
-                      S.listItem()
-                        .title('Настройки модуля')
-                        .child(S.document().schemaType('districtModule').documentId(moduleId)),
-                      S.listItem()
-                        .title('③ Занятия')
-                        .child(
-                          S.documentTypeList('districtCourseLesson')
-                            .title('Занятия модуля')
-                            .filter('_type == "districtCourseLesson" && module._ref == $moduleId')
-                            .params({moduleId})
-                            .defaultOrdering([{field: 'moduleOrder', direction: 'asc'}])
-                            .initialValueTemplates([
-                              S.initialValueTemplateItem('districtCourseLesson-in-module', {moduleId}),
-                            ]),
-                        ),
-                    ]),
-                ),
-            ),
-        ]),
-    )
+    .items([
+      S.listItem()
+        .title('＋ Новый курс')
+        .child(
+          S.document()
+            .schemaType('districtCourse')
+            .initialValueTemplate('districtCourse-new'),
+        ),
+      S.listItem()
+        .title('Список курсов')
+        .child(
+          S.documentTypeList('districtCourse')
+            .title('Курсы')
+            .defaultOrdering([{field: 'title', direction: 'asc'}])
+            .child((courseId) => courseHub(S, courseId)),
+        ),
+    ])
 }
 
 export default defineConfig({
@@ -273,24 +326,38 @@ export default defineConfig({
         title: 'Модуль',
         schemaType: 'districtModule',
         parameters: [{name: 'courseId', type: 'string'}],
-        value: ({courseId}: {courseId: string}) => ({
-          course: {_type: 'reference', _ref: courseId, _weak: true},
-          color: '#4f7cff',
-          sortOrder: 0,
-        }),
+        value: async (
+          {courseId}: {courseId: string},
+          {getClient}: {getClient: (opts: {apiVersion: string}) => import('@sanity/client').SanityClient},
+        ) => {
+          const client = getClient({apiVersion: '2024-01-01'})
+          const sortOrder = await nextModuleSortOrder(client, courseId)
+          return {
+            course: {_type: 'reference', _ref: courseId, _weak: true},
+            color: '#4f7cff',
+            sortOrder,
+          }
+        },
       },
       {
         id: 'districtCourseLesson-in-module',
         title: 'Занятие',
         schemaType: 'districtCourseLesson',
         parameters: [{name: 'moduleId', type: 'string'}],
-        value: ({moduleId}: {moduleId: string}) => ({
-          module: {_type: 'reference', _ref: moduleId, _weak: true},
-          lessonType: 'webinar',
-          publicationStatus: 'published',
-          moduleOrder: 1,
-          contentChips: ['Теория', 'Разбор задач', 'Практика', 'Домашнее задание'],
-        }),
+        value: async (
+          {moduleId}: {moduleId: string},
+          {getClient}: {getClient: (opts: {apiVersion: string}) => import('@sanity/client').SanityClient},
+        ) => {
+          const client = getClient({apiVersion: '2024-01-01'})
+          const moduleOrder = await nextLessonModuleOrder(client, moduleId)
+          return {
+            module: {_type: 'reference', _ref: moduleId, _weak: true},
+            lessonType: 'webinar',
+            publicationStatus: 'published',
+            moduleOrder,
+            contentChips: ['Теория', 'Разбор задач', 'Практика', 'Домашнее задание'],
+          }
+        },
       },
     ],
   },
@@ -325,12 +392,15 @@ export default defineConfig({
       }
       if (schemaType === 'districtCourseLesson') {
         return prev
-          .filter(({action}) => action !== 'delete')
-          .concat([DeleteCourseLessonAction])
+          .filter(
+            ({action}) =>
+              action !== 'delete' && action !== 'publish' && action !== 'schedule',
+          )
+          .concat([PublishCourseLessonAction, DeleteCourseLessonAction])
       }
       if (schemaType === 'districtModule') {
         return prev
-          .filter(({action}) => action !== 'delete')
+          .filter(({action}) => action !== 'delete' && action !== 'schedule')
           .concat([DeleteModuleAction])
       }
       if (schemaType === 'districtCourse') {

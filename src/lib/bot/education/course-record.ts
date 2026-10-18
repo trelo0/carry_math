@@ -40,6 +40,12 @@ export async function ensureDistrictCourseRecord(
       })
       .eq('id', existingId);
     if (error) throw error;
+    if (content) {
+      const { syncCourseStaffFromContent } = await import('./course-staff');
+      await syncCourseStaffFromContent(admin, existingId, content, { courseSlug: slug }).catch(
+        (e) => console.warn('[course-record] staff sync failed:', e),
+      );
+    }
     return existingId;
   }
 
@@ -56,7 +62,14 @@ export async function ensureDistrictCourseRecord(
     .select('id')
     .single();
   if (insertError) throw insertError;
-  return inserted.id as number;
+  const newId = inserted.id as number;
+  if (content) {
+    const { syncCourseStaffFromContent } = await import('./course-staff');
+    await syncCourseStaffFromContent(admin, newId, content, { courseSlug: slug }).catch((e) =>
+      console.warn('[course-record] staff sync failed:', e),
+    );
+  }
+  return newId;
 }
 
 export async function resolveCourseIdForContent(
@@ -99,21 +112,22 @@ export async function lookupCourseIdsBySlugs(
 export async function listCoursesPresentInSanity(
   admin: SupabaseClient,
 ): Promise<Array<{ id: number; title: string; slug: string; description: string | null; is_active: boolean; created_at: string; updated_at: string }>> {
-  const { getDistrictCourseContent } = await import('@/lib/studio/courseContent');
-  const content = await getDistrictCourseContent().catch(() => null);
-  if (!content) return [];
+  const { listDistrictCourseSummaries } = await import('@/lib/studio/courseContent');
+  const summaries = await listDistrictCourseSummaries().catch(() => []);
+  if (summaries.length === 0) return [];
 
-  const id = await resolveCourseIdForContent(admin, content);
-  if (!id) return [];
+  const slugs = summaries.map((s) => s.slug);
+  const idBySlug = await lookupCourseIdsBySlugs(admin, slugs);
+  const ids = [...idBySlug.values()];
+  if (ids.length === 0) return [];
 
   const { data, error } = await admin
     .from('courses')
     .select('id, title, slug, description, is_active, created_at, updated_at')
-    .eq('id', id)
-    .maybeSingle();
+    .in('id', ids)
+    .order('title', { ascending: true });
   if (error) throw error;
-  if (!data) return [];
-  return [data as {
+  return (data ?? []) as Array<{
     id: number;
     title: string;
     slug: string;
@@ -121,5 +135,5 @@ export async function listCoursesPresentInSanity(
     is_active: boolean;
     created_at: string;
     updated_at: string;
-  }];
+  }>;
 }

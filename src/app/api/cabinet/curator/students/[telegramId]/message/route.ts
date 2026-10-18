@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertStaffCourseCapability } from '@/lib/curator/staff-course-access';
 import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { telegramSend } from '@/lib/telegram';
 
 type RouteParams = { params: Promise<{ telegramId: string }> };
-type Body = { text?: string };
+type Body = { text?: string; courseId?: number };
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -32,7 +33,15 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId);
+    const { resolveCuratorApiCourse } = await import('@/lib/curator/api-course');
+    const course = await resolveCuratorApiCourse(auth.admin, auth.telegramId, body.courseId);
+    if (!course) {
+      return NextResponse.json({ error: 'Course not found' }, { status: 404 });
+    }
+    await assertStaffCourseCapability(auth.admin, auth, course.courseId, 'curator');
+    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId, {
+      courseId: course.courseId,
+    });
 
     const { data: member, error } = await auth.admin
       .from('bot_members')

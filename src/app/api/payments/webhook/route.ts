@@ -212,6 +212,14 @@ export async function POST(request: Request) {
 
         fulfillCourseContext = await resolveCourseFulfillContext(admin, purchaseRequest, scenario);
 
+        if (purchaseRequest.product === 'course' && !fulfillCourseContext.courseId) {
+          console.error('[bePaid webhook] Course purchase without resolvable course_id', {
+            requestId: purchaseRequest.id,
+            courseSlug: purchaseRequest.course_slug,
+          });
+          return NextResponse.json({ error: 'Course not resolved for payment' }, { status: 409 });
+        }
+
         const { data, error } = await admin.rpc('fulfill_purchase_full', {
           p_id: tracking_id,
           p_expected_version: lockResult.version,

@@ -5,7 +5,7 @@ export default defineType({
   title: 'Домашнее задание',
   type: 'object',
   fields: [
-    defineField({ name: 'title', title: 'Название', type: 'string', validation: (Rule) => Rule.required() }),
+    defineField({ name: 'title', title: 'Название', type: 'string' }),
     defineField({ name: 'description', title: 'Описание', type: 'text', rows: 3 }),
     defineField({ name: 'fileName', title: 'Имя файла', type: 'string' }),
     defineField({ name: 'fileSize', title: 'Размер', type: 'string' }),

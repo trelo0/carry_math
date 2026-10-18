@@ -57,6 +57,14 @@ export default defineType({
       group: 'main',
     }),
     defineField({
+      name: 'checkTelegramId',
+      title: 'Проверяющий ДЗ (Telegram ID)',
+      description:
+        'Сотрудник с ролью check в боте. Проверяет домашние задания по этому курсу (не ведёт эфиры и не куратор). После сохранения документа назначение подтянется в базу при следующей синхронизации курса. Можно также назначить в админ-боте: Обучение → Курс → Сотрудники курса.',
+      type: 'number',
+      group: 'main',
+    }),
+    defineField({
       name: 'deliveryFormat',
       title: 'Формат обучения',
       type: 'string',
@@ -202,7 +210,8 @@ export default defineType({
     defineField({
       name: 'purchaseScenarios',
       title: 'Сценарии покупки',
-      description: 'Две карточки выбора формата обучения при покупке курса',
+      description:
+        'Необязательно. Если заполнить обе карточки — при покупке ученик выбирает формат (как на основном курсе). Пусто — простая оплата bePaid без выбора.',
       type: 'object',
       group: 'pricing',
       options: { collapsible: false },

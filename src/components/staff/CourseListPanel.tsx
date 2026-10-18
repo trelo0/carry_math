@@ -1,32 +1,44 @@
 'use client';
 
-type Props = {
-  courseTitle: string;
+import { courseRoleBadgeShort } from '@/lib/staff/course-assignment-ui';
+
+export type StaffCourseListItem = {
+  courseId: number;
+  title: string;
   studentCount: number;
   lessonCount: number;
-  onOpenCourse: () => void;
+  role: 'curator' | 'check';
 };
 
-export default function CourseListPanel({
-  courseTitle,
-  studentCount,
-  lessonCount,
-  onOpenCourse,
-}: Props) {
+type Props = {
+  courses: StaffCourseListItem[];
+  onOpenCourse: (courseId: number, role: 'curator' | 'check') => void;
+};
+
+export default function CourseListPanel({ courses, onOpenCourse }: Props) {
   return (
     <div className="curator-panel">
       <h1 className="curator-title">Мои курсы</h1>
-      <p className="curator-muted">Курсы, с которыми вы работаете как куратор.</p>
+      <p className="curator-muted">
+        Выберите курс — разделы зависят от вашей роли на этом курсе (куратор или проверка ДЗ).
+      </p>
 
       <ul className="staff-course-list">
-        <li>
-          <button type="button" className="staff-course-card" onClick={onOpenCourse}>
-            <strong>{courseTitle}</strong>
-            <span>
-              {studentCount} учеников · {lessonCount} уроков
-            </span>
-          </button>
-        </li>
+        {courses.map((course) => (
+          <li key={`${course.courseId}-${course.role}`}>
+            <button
+              type="button"
+              className="staff-course-card"
+              onClick={() => onOpenCourse(course.courseId, course.role)}
+            >
+              <strong>{course.title}</strong>
+              <span>
+                {courseRoleBadgeShort(course.role)} · {course.studentCount}{' '}
+                учеников · {course.lessonCount} уроков
+              </span>
+            </button>
+          </li>
+        ))}
       </ul>
     </div>
   );

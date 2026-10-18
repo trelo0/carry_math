@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DistrictCourseContent } from '@/lib/studio/courseContent';
-import { flattenCourseLessons } from '@/lib/studio/courseContent';
-import { findFirstLessonInModule } from './active-module';
+import {
+  buildPublishedLessonSequence,
+  determineActiveModuleForJoinCurrent,
+  findFirstLessonInModule,
+} from './active-module';
 
-/** Sanity id первого занятия сценария join_current (из enrollment, не пересчитываем поток). */
+/** Sanity id первого занятия сценария join_current (только из enrollment). */
 export async function resolveEnrollmentStartLessonSanityId(
   admin: SupabaseClient,
   courseId: number,
@@ -11,50 +14,110 @@ export async function resolveEnrollmentStartLessonSanityId(
   enrollment: {
     start_lesson_id?: number | null;
     start_module_id?: number | null;
+    purchase_scenario?: string | null;
   } | null,
 ): Promise<string | null> {
-  if (!enrollment) return null;
+  if (!enrollment || enrollment.purchase_scenario !== 'join_current') return null;
 
+  const startModuleId = enrollment.start_module_id as number | null | undefined;
   const startLessonId = enrollment.start_lesson_id as number | null | undefined;
+
+  let moduleSortOrder: number | null = null;
+  if (startModuleId) {
+    const { data: moduleRow } = await admin
+      .from('course_modules')
+      .select('sort_order')
+      .eq('id', startModuleId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+    moduleSortOrder =
+      moduleRow?.sort_order != null ? (moduleRow.sort_order as number) : null;
+  }
+
+  const modBySort =
+    moduleSortOrder != null
+      ? content.modules.find((m) => m.sortOrder === moduleSortOrder)
+      : undefined;
+
   if (startLessonId) {
     const { data: startLessonRow } = await admin
       .from('course_lessons')
-      .select('sanity_lesson_id')
+      .select('sanity_lesson_id, module_id')
       .eq('id', startLessonId)
+      .eq('course_id', courseId)
       .maybeSingle();
+
     const sanityId = startLessonRow?.sanity_lesson_id as string | null | undefined;
-    if (sanityId) return sanityId;
+    if (!sanityId) return null;
+
+    const lessonInContent = buildPublishedLessonSequence(content).find(
+      (l) => l.sanityId === sanityId,
+    );
+    if (!lessonInContent) return null;
+
+    if (startModuleId && startLessonRow?.module_id != null) {
+      if (Number(startLessonRow.module_id) !== Number(startModuleId)) {
+        return null;
+      }
+    }
+
+    if (modBySort && !modBySort.lessons.some((l) => l.sanityId === sanityId)) {
+      return null;
+    }
+
+    return sanityId;
   }
 
-  const startModuleId = enrollment.start_module_id as number | null | undefined;
-  if (!startModuleId) return null;
+  if (modBySort) return findFirstLessonInModule(modBySort);
 
-  const { data: moduleRow } = await admin
-    .from('course_modules')
-    .select('sort_order')
-    .eq('id', startModuleId)
-    .maybeSingle();
-  const sortOrder = moduleRow?.sort_order as number | undefined;
-  if (sortOrder == null) return null;
+  // Оплата join_current без start_* (legacy / пустой course_modules): восстановить якорь из Sanity.
+  const active = await determineActiveModuleForJoinCurrent(admin, content);
+  if (active.module) return findFirstLessonInModule(active.module);
 
-  const mod = content.modules.find((m) => m.sortOrder === sortOrder);
-  if (!mod) return null;
-  return findFirstLessonInModule(mod);
+  return null;
 }
 
 export function indexOfLessonInPublishedOrder(
   orderedLessons: { sanityId: string }[],
   startSanityId: string | null,
-): number {
-  if (!startSanityId) return 0;
+): number | null {
+  if (!startSanityId) return null;
   const idx = orderedLessons.findIndex((l) => l.sanityId === startSanityId);
-  return idx >= 0 ? idx : 0;
+  return idx >= 0 ? idx : null;
 }
 
 export type JoinCurrentGateContext = {
   gateStartIndex: number;
   archiveSanityIds: Set<string>;
+  startValid: boolean;
 };
+
+export function buildJoinCurrentGateFromEnrollment(
+  enrollment: { purchase_scenario?: string | null } | null,
+  content: DistrictCourseContent,
+  startSanityId: string | null,
+): JoinCurrentGateContext | null {
+  if (enrollment?.purchase_scenario !== 'join_current') return null;
+
+  const published = buildPublishedLessonSequence(content);
+  const joinStartIndex = indexOfLessonInPublishedOrder(published, startSanityId);
+
+  if (joinStartIndex == null || !startSanityId) {
+    return {
+      gateStartIndex: 0,
+      archiveSanityIds: new Set(),
+      startValid: false,
+    };
+  }
+
+  const archiveSanityIds = new Set(published.slice(0, joinStartIndex).map((l) => l.sanityId));
+
+  return {
+    gateStartIndex: joinStartIndex,
+    archiveSanityIds,
+    startValid: true,
+  };
+}
 
 /** Фиксированный старт join_current из enrollment (не меняется при смене активного модуля потока). */
 export async function loadJoinCurrentGateContext(
@@ -74,20 +137,19 @@ export async function loadJoinCurrentGateContext(
 
   if (enrollment?.purchase_scenario !== 'join_current') return null;
 
-  const published = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
-  const startSanityId = await resolveEnrollmentStartLessonSanityId(admin, courseId, content, enrollment);
-  const gateStartIndex = indexOfLessonInPublishedOrder(published, startSanityId);
-  const effectiveGate = gateStartIndex > 0 ? gateStartIndex : 0;
-  const archiveSanityIds = new Set(
-    published.slice(0, effectiveGate).map((l) => l.sanityId),
+  const startSanityId = await resolveEnrollmentStartLessonSanityId(
+    admin,
+    courseId,
+    content,
+    enrollment,
   );
-
-  return { gateStartIndex: effectiveGate, archiveSanityIds };
+  return buildJoinCurrentGateFromEnrollment(enrollment, content, startSanityId);
 }
 
 export function isJoinArchiveSanityId(
   ctx: JoinCurrentGateContext | null | undefined,
   sanityLessonId: string,
 ): boolean {
-  return Boolean(ctx?.archiveSanityIds.has(sanityLessonId));
+  if (!ctx?.startValid) return false;
+  return ctx.archiveSanityIds.has(sanityLessonId);
 }

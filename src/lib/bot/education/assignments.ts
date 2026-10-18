@@ -18,6 +18,7 @@ export type MentorAssignment = {
   telegram_id: number;
   mentor_telegram_id: number;
   kind: AssignmentKind;
+  course_id: number | null;
   status: EducationStatus;
   started_at: string;
   ended_at: string | null;
@@ -33,7 +34,13 @@ export type StudentMentor = {
 };
 
 const ASSIGNMENT_COLUMNS =
-  'id, telegram_id, mentor_telegram_id, kind, status, started_at, ended_at, created_at, updated_at';
+  'id, telegram_id, mentor_telegram_id, kind, course_id, status, started_at, ended_at, created_at, updated_at';
+
+export type AssignMentorOptions = {
+  startedAt?: string;
+  /** Зачисление на конкретный курс; без course_id — legacy (individual/group). */
+  courseId?: number | null;
+};
 
 // Валидация роли на сервере (не полагаемся на Telegram UI):
 // kind = 'teacher' требует роль teacher, kind = 'curator' — curator.
@@ -60,39 +67,52 @@ async function assign(
   telegramId: number,
   mentorTelegramId: number,
   kind: AssignmentKind,
-  options: { startedAt?: string } = {},
+  options: AssignMentorOptions = {},
 ): Promise<MentorAssignment> {
   await assertMentorRole(admin, mentorTelegramId, kind);
 
   const now = new Date().toISOString();
+  const courseId = options.courseId ?? null;
 
-  // У ученика одно активное назначение каждого типа: предыдущее завершаем
-  // статусом completed (история сохраняется), затем выдаём новое.
-  const { error: closeError } = await admin
+  let closeQuery = admin
     .from('mentor_assignments')
     .update({ status: 'completed', ended_at: now, updated_at: now })
     .eq('telegram_id', telegramId)
     .eq('kind', kind)
     .eq('status', 'active');
+  if (courseId != null) {
+    closeQuery = closeQuery.eq('course_id', courseId);
+  } else {
+    closeQuery = closeQuery.is('course_id', null);
+  }
+  const { error: closeError } = await closeQuery;
   if (closeError) throw closeError;
+
+  const row = {
+    telegram_id: telegramId,
+    mentor_telegram_id: mentorTelegramId,
+    kind,
+    course_id: courseId,
+    status: 'active' as const,
+    started_at: options.startedAt ?? now,
+    ended_at: null,
+    updated_at: now,
+  };
 
   const { data, error } = await admin
     .from('mentor_assignments')
-    .upsert(
-      {
-        telegram_id: telegramId,
-        mentor_telegram_id: mentorTelegramId,
-        kind,
-        status: 'active',
-        started_at: options.startedAt ?? now,
-        ended_at: null,
-        updated_at: now,
-      },
-      { onConflict: 'telegram_id,kind,mentor_telegram_id' },
-    )
+    .upsert(row, { onConflict: 'telegram_id,kind,mentor_telegram_id' })
     .select(ASSIGNMENT_COLUMNS)
     .single();
-  if (error) throw error;
+  if (error) {
+    const { data: inserted, error: insertError } = await admin
+      .from('mentor_assignments')
+      .insert(row)
+      .select(ASSIGNMENT_COLUMNS)
+      .single();
+    if (insertError) throw insertError;
+    return inserted as MentorAssignment;
+  }
   return data as MentorAssignment;
 }
 
@@ -100,7 +120,7 @@ export async function assignTeacher(
   admin: SupabaseClient,
   telegramId: number,
   teacherTelegramId: number,
-  options: { startedAt?: string } = {},
+  options: AssignMentorOptions = {},
 ): Promise<MentorAssignment> {
   return assign(admin, telegramId, teacherTelegramId, 'teacher', options);
 }
@@ -109,7 +129,7 @@ export async function assignCurator(
   admin: SupabaseClient,
   telegramId: number,
   curatorTelegramId: number,
-  options: { startedAt?: string } = {},
+  options: AssignMentorOptions = {},
 ): Promise<MentorAssignment> {
   return assign(admin, telegramId, curatorTelegramId, 'curator', options);
 }
@@ -137,6 +157,7 @@ export async function getStudentAssignments(
   admin: SupabaseClient,
   telegramId: number,
   kind?: AssignmentKind,
+  options?: { courseId?: number | null },
 ): Promise<MentorAssignment[]> {
   let query = admin
     .from('mentor_assignments')
@@ -145,6 +166,7 @@ export async function getStudentAssignments(
     .eq('status', 'active')
     .order('started_at', { ascending: false });
   if (kind) query = query.eq('kind', kind);
+  if (options?.courseId != null) query = query.eq('course_id', options.courseId);
   const { data, error } = await query;
   if (error) throw error;
   return (data ?? []) as MentorAssignment[];
@@ -166,9 +188,11 @@ async function memberName(admin: SupabaseClient, telegramId: number): Promise<st
 export async function getStudentTeacher(
   admin: SupabaseClient,
   telegramId: number,
-  options?: { assignmentsOnly?: boolean },
+  options?: { assignmentsOnly?: boolean; courseId?: number | null },
 ): Promise<StudentMentor | null> {
-  const assignments = await getStudentAssignments(admin, telegramId, 'teacher');
+  const assignments = await getStudentAssignments(admin, telegramId, 'teacher', {
+    courseId: options?.courseId,
+  });
   const personal = assignments[0];
   if (personal) {
     return {
@@ -244,8 +268,10 @@ export async function getStudentOrdinaryTeacherIds(
 export async function getStudentCurator(
   admin: SupabaseClient,
   telegramId: number,
+  options?: { courseId?: number | null },
 ): Promise<StudentMentor | null> {
-  const assignments = await getStudentAssignments(admin, telegramId, 'curator');
+  const courseId = options?.courseId;
+  const assignments = await getStudentAssignments(admin, telegramId, 'curator', { courseId });
   const personal = assignments[0];
   if (personal) {
     return {
@@ -253,6 +279,19 @@ export async function getStudentCurator(
       fullName: await memberName(admin, personal.mentor_telegram_id),
       source: 'personal',
     };
+  }
+
+  if (courseId != null) {
+    const { resolveCourseCuratorStaffTelegramId } = await import('./course-staff');
+    const staffCurator = await resolveCourseCuratorStaffTelegramId(admin, courseId);
+    if (staffCurator) {
+      return {
+        telegramId: staffCurator,
+        fullName: await memberName(admin, staffCurator),
+        source: 'personal',
+      };
+    }
+    return null;
   }
 
   for (const group of await getStudentGroups(admin, telegramId)) {
@@ -265,4 +304,20 @@ export async function getStudentCurator(
     }
   }
   return null;
+}
+
+/** Проверяющий ДЗ курса (course_staff_assignments, role check). */
+export async function getStudentCheckStaff(
+  admin: SupabaseClient,
+  _telegramId: number,
+  courseId: number,
+): Promise<StudentMentor | null> {
+  const { resolveCourseCheckStaffTelegramId } = await import('./course-staff');
+  const checkId = await resolveCourseCheckStaffTelegramId(admin, courseId);
+  if (!checkId) return null;
+  return {
+    telegramId: checkId,
+    fullName: await memberName(admin, checkId),
+    source: 'personal',
+  };
 }

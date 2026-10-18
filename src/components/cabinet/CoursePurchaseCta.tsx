@@ -4,12 +4,8 @@ import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import PurchaseScenarioModal from '@/components/cabinet/PurchaseScenarioModal';
 import CoursePackageRenewConfirm from '@/components/cabinet/CoursePackageRenewConfirm';
-import type { CoursePaymentOffer, PurchaseScenarios } from '@/lib/studio/courseContent';
+import type { CoursePaymentOffer } from '@/lib/studio/courseContent';
 import type { PurchaseScenario } from '@/lib/course-purchase-scenario';
-
-function checkoutHref(courseSlug: string): string {
-  return `/cabinet/checkout?product=course&course=${encodeURIComponent(courseSlug)}`;
-}
 
 type CoursePurchaseCtaProps = {
   offer: CoursePaymentOffer;
@@ -33,8 +29,9 @@ export default function CoursePurchaseCta({
 }: CoursePurchaseCtaProps) {
   const [renewConfirmOpen, setRenewConfirmOpen] = useState(false);
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
-  const scenarios: PurchaseScenarios | null | undefined = offer.purchaseScenarios;
+  const scenarios = offer.purchaseScenarios ?? null;
   const isFirstPurchase = !savedPurchaseScenario;
+  const payMode = isFirstPurchase ? (scenarios ? 'first' : 'direct') : 'extend';
   const hasActivePackage = packageRemaining > 0;
 
   const openPurchaseFlow = () => {
@@ -50,19 +47,11 @@ export default function CoursePurchaseCta({
     setPurchaseModalOpen(true);
   };
 
-  if (!scenarios && isFirstPurchase) {
-    return (
-      <a className={className} href={checkoutHref(offer.slug)}>
-        {children}
-      </a>
-    );
-  }
-
   const modal =
     purchaseModalOpen && typeof document !== 'undefined' ? (
       <PurchaseScenarioModal
-        scenarios={isFirstPurchase ? scenarios ?? null : null}
-        mode={isFirstPurchase ? 'first' : 'extend'}
+        scenarios={payMode === 'first' ? scenarios : null}
+        mode={payMode}
         priceByn={offer.priceByn}
         courseSlug={offer.slug}
         grantedLessons={offer.grantedLessons}

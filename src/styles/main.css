@@ -2259,7 +2259,7 @@ section[data-reveal] {
 .main-page .mission-map,
 .main-page.sub-page .teacher-hud-grid,
 .main-page.sub-page .process-timeline-alt {
-  contain: layout style paint;
+  contain: layout style;
 }
 
 .hero-signup-wrap {

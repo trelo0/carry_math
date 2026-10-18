@@ -12,7 +12,7 @@ import IndTeacherPhotoFrame from '@/components/ui/IndTeacherPhotoFrame';
 import { Principle, ProcessStep, Stat } from '@/data/types';
 import { SiteSettings } from '@/lib/studio/sanityData';
 import type { IndividualPageContent, FormatColumn } from '@/data/individualPageContent';
-import { INDIVIDUAL_PAGE_DEFAULTS } from '@/data/individualPageContent';
+import { INDIVIDUAL_DIAGNOSTIC_COPY, INDIVIDUAL_PAGE_DEFAULTS } from '@/data/individualPageContent';
 import { pickArr, pickStr } from '@/data/mainPageContent';
 import type { TeacherWithPhoto } from '@/lib/studio/teacherPhotos';
 import {
@@ -297,9 +297,9 @@ export default function HomePageClient({
   }));
 
   const diagnostic = content?.diagnostic;
-  const diagnosticSteps = pickArr(diagnostic?.steps, D.diagnostic.steps).map((step) => ({
-    title: pickStr(step?.title, ''),
-    text: pickStr(step?.text, ''),
+  const diagnosticSteps = pickArr(diagnostic?.steps, INDIVIDUAL_DIAGNOSTIC_COPY.steps).map((step, i) => ({
+    title: pickStr(step?.title, INDIVIDUAL_DIAGNOSTIC_COPY.steps[i]?.title ?? ''),
+    text: pickStr(step?.text, INDIVIDUAL_DIAGNOSTIC_COPY.steps[i]?.text ?? ''),
   }));
 
   const heroTitleWords = heroTitle.trim().split(/\s+/);
@@ -1089,10 +1089,9 @@ export default function HomePageClient({
         </section>
         <div id="diagnostic">
           <DiagnosticSection
-            eyebrow={diagnostic?.eyebrow}
-            title={diagnostic?.title}
-            text={diagnostic?.text}
-            buttonText={diagnostic?.buttonText}
+            eyebrow={pickStr(diagnostic?.eyebrow, INDIVIDUAL_DIAGNOSTIC_COPY.eyebrow)}
+            title={pickStr(diagnostic?.title, INDIVIDUAL_DIAGNOSTIC_COPY.title)}
+            text={pickStr(diagnostic?.text, INDIVIDUAL_DIAGNOSTIC_COPY.text)}
             steps={diagnosticSteps}
           />
         </div>

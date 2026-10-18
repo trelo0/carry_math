@@ -6,7 +6,7 @@ create table if not exists public.staff_student_messages (
   id bigint generated always as identity primary key,
   staff_telegram_id bigint not null references public.bot_members (telegram_id) on delete cascade,
   student_telegram_id bigint not null references public.bot_members (telegram_id) on delete cascade,
-  staff_role text not null check (staff_role in ('teacher', 'curator')),
+  staff_role text not null check (staff_role in ('teacher', 'curator', 'check')),
   direction text not null check (direction in ('student_to_staff', 'staff_to_student')),
   body text not null default '',
   attachment_ref text,

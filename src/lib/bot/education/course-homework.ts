@@ -134,11 +134,67 @@ async function assertLessonAccess(
   }
 }
 
+export async function assertHomeworkCheckerAssigned(
+  admin: SupabaseClient,
+  checkerTelegramId: number,
+  studentTelegramId: number,
+  options?: { courseId?: number | null; allowAdminPreview?: boolean },
+): Promise<void> {
+  const courseId = options?.courseId;
+
+  if (courseId != null) {
+    const { isStudentOnCourse } = await import('./student-course-context');
+    const { staffHasCourseAccess } = await import('./course-staff');
+    const onCourse = await isStudentOnCourse(admin, studentTelegramId, courseId);
+    if (!onCourse) {
+      throw new CourseHomeworkError('Ученик не на этом курсе.', 'NOT_ASSIGNED');
+    }
+    if (await staffHasCourseAccess(admin, checkerTelegramId, courseId, 'check')) {
+      return;
+    }
+    if (options?.allowAdminPreview) {
+      const { hasFullStaffPreview, loadMemberRoles } = await import('@/lib/bot/roles');
+      const roles = await loadMemberRoles(admin, checkerTelegramId);
+      if (hasFullStaffPreview(roles, checkerTelegramId)) return;
+    }
+    throw new CourseHomeworkError('Нет назначения проверяющим на этот курс.', 'NOT_ASSIGNED');
+  }
+
+  throw new CourseHomeworkError('Укажите курс для проверки ДЗ.', 'NOT_ASSIGNED');
+}
+
 export async function assertCuratorAssigned(
   admin: SupabaseClient,
   curatorTelegramId: number,
   studentTelegramId: number,
+  options?: { courseId?: number | null },
 ): Promise<void> {
+  const courseId = options?.courseId;
+
+  if (courseId != null) {
+    const { isStudentOnCourse } = await import('./student-course-context');
+    const { staffHasCourseAccess } = await import('./course-staff');
+    const onCourse = await isStudentOnCourse(admin, studentTelegramId, courseId);
+    if (!onCourse) {
+      throw new CourseHomeworkError('Ученик не на этом курсе.', 'NOT_ASSIGNED');
+    }
+    if (await staffHasCourseAccess(admin, curatorTelegramId, courseId, 'curator')) {
+      return;
+    }
+    const { data, error } = await admin
+      .from('mentor_assignments')
+      .select('id')
+      .eq('telegram_id', studentTelegramId)
+      .eq('mentor_telegram_id', curatorTelegramId)
+      .eq('kind', 'curator')
+      .eq('course_id', courseId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return;
+    throw new CourseHomeworkError('Ученик не закреплён за этим куратором.', 'NOT_ASSIGNED');
+  }
+
   const { data, error } = await admin
     .from('mentor_assignments')
     .select('id')
@@ -279,18 +335,36 @@ export async function markHomeworkSubmitted(
   telegramId: number,
   sanityLessonId: string,
   input: CourseHomeworkSubmitInput,
+  options?: { courseSlug?: string | null },
 ): Promise<CourseLessonStudentProgress> {
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const { resolveCourseForSanityLesson } = await import('./student-course-context');
+  const { studentHasCourseAccessForCourse } = await import('./course-access');
+
+  const resolved =
+    (options?.courseSlug
+      ? await (async () => {
+          const content = await getDistrictCourseContent(options.courseSlug!).catch(() => null);
+          if (!content) return null;
+          const lesson = findLessonBySanityId(content, sanityLessonId);
+          if (!lesson) return null;
+          const { resolveCourseIdForContent } = await import('./course-record');
+          const courseId = await resolveCourseIdForContent(admin, content);
+          if (courseId == null) return null;
+          return { courseId, slug: content.slug, content };
+        })()
+      : null) ?? (await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId));
+
+  if (!resolved) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const { content, courseId } = resolved;
   const lesson = findLessonBySanityId(content, sanityLessonId);
   if (!lesson) throw new CourseHomeworkError('Занятие не найдено.', 'LESSON_NOT_FOUND');
 
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  const hasCourseProduct = await studentHasCourseAccessForCourse(admin, telegramId, courseId);
   if (lesson.isTrialFree && !hasCourseProduct) {
     throw new CourseHomeworkError('Сдача ДЗ доступна после покупки пакета курса.', 'NO_ACCESS');
   }
 
-  const courseIdForGate = await resolveCourseIdForContent(admin, content);
+  const courseIdForGate = courseId;
   if (courseIdForGate) {
     const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
       './course-enrollment-start'
@@ -375,11 +449,33 @@ export async function markHomeworkSubmitted(
   return data as CourseLessonStudentProgress;
 }
 
+export type CourseHomeworkReviewerRole = import('./course-progress').CourseHomeworkReviewerRole;
+
+export async function resolveCourseHomeworkReviewerRole(
+  admin: SupabaseClient,
+  reviewerTelegramId: number,
+  courseId?: number | null,
+): Promise<CourseHomeworkReviewerRole> {
+  const { loadMemberRoles, hasFullStaffPreview, memberHasRole } = await import('@/lib/bot/roles');
+  const { staffHasCourseAccess } = await import('./course-staff');
+  const roles = await loadMemberRoles(admin, reviewerTelegramId);
+  if (hasFullStaffPreview(roles, reviewerTelegramId)) return 'admin';
+  if (courseId != null) {
+    if (await staffHasCourseAccess(admin, reviewerTelegramId, courseId, 'check')) return 'check';
+    if (await staffHasCourseAccess(admin, reviewerTelegramId, courseId, 'curator')) return 'curator';
+  }
+  if (memberHasRole(roles, 'check')) return 'check';
+  if (memberHasRole(roles, 'curator')) return 'curator';
+  if (memberHasRole(roles, 'teacher')) return 'teacher';
+  return 'check';
+}
+
 export async function markHomeworkRejected(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
   note?: string,
+  reviewer?: { telegramId: number; role: CourseHomeworkReviewerRole },
 ): Promise<CourseLessonStudentProgress> {
   const progress = await loadProgress(admin, telegramId, sanityLessonId);
   if (!progress || progress.homework_status !== 'submitted') {
@@ -394,6 +490,9 @@ export async function markHomeworkRejected(
       homework_status: 'rejected',
       review_note: note?.trim() || null,
       updated_at: now,
+      reviewed_by_telegram_id: reviewer?.telegramId ?? null,
+      reviewed_at: reviewer?.telegramId != null ? now : null,
+      reviewer_role: reviewer?.role ?? null,
     })
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
@@ -417,18 +516,32 @@ export async function approveCourseHomeworkByCurator(
   curatorTelegramId: number,
   studentTelegramId: number,
   lessonNumber: number,
+  options?: { courseId?: number | null; courseSlug?: string | null },
 ): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress }> {
-  const content = await getDistrictCourseContent();
+  const slug = options?.courseSlug ?? undefined;
+  const content = await getDistrictCourseContent(slug);
   if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
   const lesson = findLessonByNumber(content, lessonNumber);
   if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
 
-  await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId);
+  const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
+  const roles = await loadMemberRoles(admin, curatorTelegramId);
+  await assertHomeworkCheckerAssigned(admin, curatorTelegramId, studentTelegramId, {
+    courseId: options?.courseId,
+    allowAdminPreview: hasFullStaffPreview(roles, curatorTelegramId),
+  });
   const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
   if (!progress || progress.homework_status !== 'submitted') {
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
 
+  const resolvedCourseId =
+    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
+  const reviewerRole = await resolveCourseHomeworkReviewerRole(
+    admin,
+    curatorTelegramId,
+    resolvedCourseId,
+  );
   const updated = await markHomeworkApproved(
     admin,
     studentTelegramId,
@@ -437,12 +550,14 @@ export async function approveCourseHomeworkByCurator(
     {
       materialKeys: collectLessonMaterialKeys(lesson),
       hasHomework: lessonHasHomework(lesson),
+      reviewerTelegramId: curatorTelegramId,
+      reviewerRole,
     },
   );
   await finalizeDeadlineOnApprove(admin, studentTelegramId, lesson.sanityId);
 
   try {
-    const courseId = await resolveCourseIdForContent(admin, content);
+    const courseId = resolvedCourseId;
     if (courseId) {
       await unlockNextCourseLessonAfterCleared(admin, studentTelegramId, courseId, content);
     }
@@ -466,19 +581,36 @@ export async function rejectCourseHomeworkByCurator(
   studentTelegramId: number,
   lessonNumber: number,
   note?: string,
+  options?: { courseId?: number | null; courseSlug?: string | null },
 ): Promise<{
   lesson: CourseLessonContent;
   progress: CourseLessonStudentProgress;
   lifeDeduction: HomeworkLifeDeductionResult | null;
 }> {
-  const content = await getDistrictCourseContent();
+  const slug = options?.courseSlug ?? undefined;
+  const content = await getDistrictCourseContent(slug);
   if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
   const lesson = findLessonByNumber(content, lessonNumber);
   if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
 
-  await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId);
+  const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
+  const roles = await loadMemberRoles(admin, curatorTelegramId);
+  await assertHomeworkCheckerAssigned(admin, curatorTelegramId, studentTelegramId, {
+    courseId: options?.courseId,
+    allowAdminPreview: hasFullStaffPreview(roles, curatorTelegramId),
+  });
   // Reject только возобновляет таймер; жизнь за просрочку — вручную.
-  const updated = await markHomeworkRejected(admin, studentTelegramId, lesson.sanityId, note);
+  const resolvedCourseId =
+    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
+  const reviewerRole = await resolveCourseHomeworkReviewerRole(
+    admin,
+    curatorTelegramId,
+    resolvedCourseId,
+  );
+  const updated = await markHomeworkRejected(admin, studentTelegramId, lesson.sanityId, note, {
+    telegramId: curatorTelegramId,
+    role: reviewerRole,
+  });
   return { lesson, progress: updated, lifeDeduction: null };
 }
 
@@ -488,35 +620,122 @@ export async function deductLifeForHomeworkDebtByCurator(
   studentTelegramId: number,
   sanityLessonId: string,
   failureKind: Extract<HomeworkLifeFailureKind, 'notSubmitted' | 'notCompleted' | 'overdue'> = 'overdue',
+  options?: { courseId?: number | null },
 ): Promise<{ lifeDeduction: HomeworkLifeDeductionResult | null }> {
-  await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId);
+  await assertCuratorAssigned(admin, curatorTelegramId, studentTelegramId, {
+    courseId: options?.courseId,
+  });
   const lifeDeduction = await tryDeductLifeForHomework(
     admin,
     curatorTelegramId,
     studentTelegramId,
     sanityLessonId,
     failureKind,
+    options?.courseId,
   );
   return { lifeDeduction };
 }
 
+export async function deductLifeForHomeworkDebtByChecker(
+  admin: SupabaseClient,
+  checkerTelegramId: number,
+  studentTelegramId: number,
+  sanityLessonId: string,
+  failureKind: Extract<HomeworkLifeFailureKind, 'notSubmitted' | 'notCompleted' | 'overdue'> = 'overdue',
+  options?: { courseId?: number | null; courseSlug?: string | null },
+): Promise<{ lifeDeduction: HomeworkLifeDeductionResult | null }> {
+  const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
+  const roles = await loadMemberRoles(admin, checkerTelegramId);
+  await assertHomeworkCheckerAssigned(admin, checkerTelegramId, studentTelegramId, {
+    courseId: options?.courseId,
+    allowAdminPreview: hasFullStaffPreview(roles, checkerTelegramId),
+  });
+  const lifeDeduction = await tryDeductLifeForHomework(
+    admin,
+    checkerTelegramId,
+    studentTelegramId,
+    sanityLessonId,
+    failureKind,
+    options?.courseId,
+    options?.courseSlug,
+  );
+  return { lifeDeduction };
+}
+
+export async function addCourseHomeworkReviewComment(
+  admin: SupabaseClient,
+  checkerTelegramId: number,
+  studentTelegramId: number,
+  lessonNumber: number,
+  note: string,
+  options?: { courseId?: number | null; courseSlug?: string | null },
+): Promise<{ lesson: CourseLessonContent }> {
+  const trimmed = note.trim();
+  if (!trimmed) throw new CourseHomeworkError('Комментарий пустой.', 'NOT_SUBMITTED');
+
+  const slug = options?.courseSlug ?? undefined;
+  const content = await getDistrictCourseContent(slug);
+  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const lesson = findLessonByNumber(content, lessonNumber);
+  if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
+
+  const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
+  const roles = await loadMemberRoles(admin, checkerTelegramId);
+  await assertHomeworkCheckerAssigned(admin, checkerTelegramId, studentTelegramId, {
+    courseId: options?.courseId,
+    allowAdminPreview: hasFullStaffPreview(roles, checkerTelegramId),
+  });
+
+  const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
+  if (!progress) {
+    throw new CourseHomeworkError('У ученика нет прогресса по этому занятию.', 'NOT_SUBMITTED');
+  }
+
+  const now = new Date().toISOString();
+  const resolvedCourseId =
+    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
+  const reviewerRole = await resolveCourseHomeworkReviewerRole(
+    admin,
+    checkerTelegramId,
+    resolvedCourseId,
+  );
+
+  const { error } = await admin
+    .from('course_lesson_student_progress')
+    .update({
+      review_note: trimmed,
+      updated_at: now,
+      reviewed_by_telegram_id: checkerTelegramId,
+      reviewed_at: now,
+      reviewer_role: reviewerRole,
+    })
+    .eq('telegram_id', studentTelegramId)
+    .eq('sanity_lesson_id', lesson.sanityId);
+  if (error) throw error;
+
+  return { lesson };
+}
+
 async function tryDeductLifeForHomework(
   admin: SupabaseClient,
-  curatorTelegramId: number,
+  actorTelegramId: number,
   studentTelegramId: number,
   sanityLessonId: string,
   failureKind: HomeworkLifeFailureKind,
+  courseIdOverride?: number | null,
+  courseSlug?: string | null,
 ): Promise<HomeworkLifeDeductionResult | null> {
-  const content = await getDistrictCourseContent();
+  const content = await getDistrictCourseContent(courseSlug ?? undefined);
   if (!content) return null;
-  const courseId = await resolveCourseIdForContent(admin, content);
+  const courseId =
+    courseIdOverride ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
   if (!courseId) return null;
 
   try {
     const { state, deducted } = await deductLifeForHomeworkFailure(admin, {
       telegramId: studentTelegramId,
       courseId,
-      curatorTelegramId,
+      curatorTelegramId: actorTelegramId,
       sanityLessonId,
       failureKind,
     });

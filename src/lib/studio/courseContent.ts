@@ -127,6 +127,8 @@ export type DistrictCourseContent = {
   curatorName: string | null;
   /** Telegram ID куратора этого курса (Sanity). */
   curatorTelegramId: number | null;
+  /** Telegram ID проверяющего ДЗ (Sanity). */
+  checkTelegramId: number | null;
   /** Цена оплаты в кабинете (BYN). */
   priceByn: number | null;
   /** Сколько занятий выдаётся после оплаты. */
@@ -161,7 +163,10 @@ function getClient({ preview, includeDrafts }: FetchOptions = {}) {
 }
 
 function getSanityFetchOptions({ preview }: FetchOptions) {
-  return { cache: 'no-store' as const };
+  if (preview) return { cache: 'no-store' as const };
+  return {
+    next: { revalidate: 120, tags: ['sanity:course-content'] },
+  };
 }
 
 const LESSON_FIELDS = groq`{
@@ -250,6 +255,7 @@ const COURSE_CONTENT_QUERY = groq`*[_type == "districtCourse" && (slug.current =
   cabinetPreviewAudience,
   "curatorName": curator->name,
   curatorTelegramId,
+  checkTelegramId,
   "modulesFromCourse": modules[]->${MODULE_FIELDS},
   "modulesFromRefs": *[_type == "districtModule" && course._ref == ^._id] | order(sortOrder asc) ${MODULE_FIELDS}
 }`;
@@ -271,11 +277,14 @@ const COURSE_SUMMARIES_QUERY = groq`*[_type == "districtCourse" && defined(slug.
   cabinetPreviewAudience,
   "curatorName": curator->name,
   curatorTelegramId,
-  "moduleCount": count(coalesce(modules, *[_type == "districtModule" && course._ref == ^._id])),
-  "totalLessons": count(*[_type == "districtCourseLesson" && (
-    module._ref in coalesce(modules[]._ref, []) ||
+  checkTelegramId,
+  "moduleCount": count(*[_type == "districtModule" && course._ref == ^._id]),
+  "totalLessons": count(*[
+    _type == "districtCourseLesson" &&
+    publicationStatus == "published" &&
+    defined(module._ref) &&
     module->course._ref == ^._id
-  ) && publicationStatus != "archived"])
+  ])
 }`;
 
 const COURSE_OFFERS_QUERY = groq`*[_type == "districtCourse" && defined(slug.current) && (
@@ -485,7 +494,14 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
 
   const modulesFromCourse = (raw.modulesFromCourse as Record<string, unknown>[] | null) ?? [];
   const modulesFromRefs = (raw.modulesFromRefs as Record<string, unknown>[] | null) ?? [];
-  const modulesRaw = modulesFromCourse.length ? modulesFromCourse : modulesFromRefs;
+  const modulesById = new Map<string, Record<string, unknown>>();
+  for (const mod of modulesFromRefs) {
+    if (mod?.sanityId) modulesById.set(mod.sanityId as string, mod);
+  }
+  for (const mod of modulesFromCourse) {
+    if (mod?.sanityId) modulesById.set(mod.sanityId as string, mod);
+  }
+  const modulesRaw = [...modulesById.values()];
   const modules: CourseModuleContent[] = modulesRaw
     .filter(Boolean)
     .map((mod, mi) => {
@@ -493,7 +509,12 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
       const lessons = lessonsRaw
         .map(normalizeLesson)
         .filter((l): l is CourseLessonContent => l !== null)
-        .sort((a, b) => a.lessonNumber - b.lessonNumber || a.sortOrder - b.sortOrder);
+        .sort(
+          (a, b) =>
+            a.moduleOrder - b.moduleOrder ||
+            a.lessonNumber - b.lessonNumber ||
+            a.sortOrder - b.sortOrder,
+        );
       return {
         sanityId: mod.sanityId as string,
         title: mod.title as string,
@@ -531,6 +552,10 @@ function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseCon
     curatorTelegramId:
       typeof raw.curatorTelegramId === 'number' && Number.isFinite(raw.curatorTelegramId)
         ? (raw.curatorTelegramId as number)
+        : null,
+    checkTelegramId:
+      typeof raw.checkTelegramId === 'number' && Number.isFinite(raw.checkTelegramId)
+        ? (raw.checkTelegramId as number)
         : null,
     priceByn: pricing.priceByn,
     grantedLessons: pricing.grantedLessons,
@@ -617,9 +642,9 @@ export async function attachPurchaseScenariosToOffers(
   return Promise.all(
     offers.map(async (offer) => {
       const content = await getDistrictCourseContent(offer.slug, options);
-      const purchaseScenarios = content?.purchaseScenarios ?? null;
-      if (!purchaseScenarios) return offer;
-      return { ...offer, purchaseScenarios };
+      const fromContent = content?.purchaseScenarios ?? null;
+      if (!fromContent) return offer;
+      return { ...offer, purchaseScenarios: fromContent };
     }),
   );
 }
@@ -732,7 +757,9 @@ export const listCoursePaymentOffers = cache(async function listCoursePaymentOff
       cardText: pricing.cardText,
       priceByn: pricing.priceByn,
       grantedLessons: pricing.grantedLessons,
-      purchaseScenarios: row.purchaseScenarios ?? null,
+      purchaseScenarios: normalizePurchaseScenarios(
+        (row.purchaseScenarios as Record<string, unknown> | null) ?? null,
+      ),
     });
   }
   return out;

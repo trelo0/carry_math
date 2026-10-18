@@ -4,6 +4,7 @@ import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-log
 import { getStaffAuth } from '@/lib/cabinet-auth';
 import { isCreatorTelegramId } from '@/lib/bot/roles';
 import { getStaffCabinetData } from '@/lib/teacher/cabinet-data';
+import { parseStaffCourseRole } from '@/lib/staff/staff-cabinet-url';
 import StaffShell from '@/components/staff/StaffShell';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
@@ -21,9 +22,16 @@ function parseSection(value: string | undefined): string | undefined {
 export default async function StaffCabinetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; lesson?: string; login?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    lesson?: string;
+    login?: string;
+    courseId?: string;
+    courseRole?: string;
+  }>;
 }) {
   const sp = await searchParams;
+  const courseRole = parseStaffCourseRole(sp.courseRole);
   const supabase = await createClient();
   const { data: authUser } = await supabase.auth.getUser();
 
@@ -60,11 +68,16 @@ export default async function StaffCabinetPage({
 
   let data;
   try {
+    const courseIdRaw = sp.courseId ? Number(sp.courseId) : undefined;
     data = await getStaffCabinetData(
       staffAuth.admin,
       staffAuth.telegramId,
       staffAuth.roles,
       staffAuth.fullName,
+      {
+        courseId: Number.isFinite(courseIdRaw) ? courseIdRaw : undefined,
+        courseRole,
+      },
     );
   } catch (error) {
     console.error('[cabinet/staff]', error);
@@ -85,6 +98,10 @@ export default async function StaffCabinetPage({
       data={data}
       initialSection={parseSection(sp.section)}
       initialLessonId={sp.lesson}
+      initialCourseId={
+        sp.courseId && Number.isFinite(Number(sp.courseId)) ? Number(sp.courseId) : undefined
+      }
+      initialCourseRole={courseRole}
       showCabinetPick={isCreatorTelegramId(staffAuth.telegramId)}
     />
   );

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { findLessonBySanityId } from '@/lib/bot/education/course-homework';
 import {
@@ -15,7 +16,7 @@ type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 type Body = { action?: 'start' | 'end' };
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -39,6 +40,8 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+
     if (body.action === 'start') {
       if (!lesson.liveUrl?.trim()) {
         return NextResponse.json(

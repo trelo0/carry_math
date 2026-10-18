@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
-import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertStaffCourseCapability } from '@/lib/curator/staff-course-access';
 import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { unfreezeEnrollment } from '@/lib/bot/education/lives';
 import { curatorJsonError } from '@/lib/curator/api-errors';
-import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 type RouteParams = { params: Promise<{ telegramId: string }> };
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -22,21 +21,25 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   let reason = 'Разморозка куратором';
+  let bodyCourseId: number | undefined;
   try {
-    const body = (await request.json()) as { reason?: string };
+    const body = (await request.json()) as { reason?: string; courseId?: number };
     if (body.reason?.trim()) reason = body.reason.trim();
+    if (typeof body.courseId === 'number') bodyCourseId = body.courseId;
   } catch {
     /* optional body */
   }
 
   try {
-    const content = await getDistrictCourseContent();
-    const courseId = content ? await resolveCourseIdForContent(auth.admin, content) : null;
-    if (!courseId) {
+    const { resolveCuratorApiCourse } = await import('@/lib/curator/api-course');
+    const course = await resolveCuratorApiCourse(auth.admin, auth.telegramId, bodyCourseId);
+    if (!course) {
       return NextResponse.json({ error: 'Course not found' }, { status: 404 });
     }
+    const courseId = course.courseId;
 
-    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId);
+    await assertStaffCourseCapability(auth.admin, auth, courseId, 'curator');
+    await assertCuratorAssigned(auth.admin, auth.telegramId, studentTelegramId, { courseId });
 
     const state = await unfreezeEnrollment(auth.admin, {
       telegramId: studentTelegramId,

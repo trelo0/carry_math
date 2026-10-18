@@ -616,31 +616,70 @@
   padding-bottom: clamp(48px, 7vw, 96px);
 }
 
+.section-diagnostic .container {
+  max-width: min(1180px, 100%);
+}
+
 .diagnostic-grid {
   display: grid;
-  grid-template-columns: 1fr 1.15fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   align-items: stretch;
+  gap: 0;
+}
+
+.diagnostic-panel-deco {
+  position: absolute;
+  right: -10%;
+  bottom: -8%;
+  width: min(88%, 520px);
+  height: 52%;
+  max-height: none;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.92;
+}
+
+.diagnostic-panel-deco svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: 100% 100%;
 }
 
 .diagnostic-panel {
-  background: var(--accent);
-  color: #16212e;
+  position: relative;
+  overflow: hidden;
+  background: #ffb533;
+  color: #0a0e1a;
   padding: clamp(28px, 3.5vw, 52px);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  box-shadow: 0 24px 64px rgba(232, 149, 44, 0.16);
+  justify-content: flex-start;
+  padding-top: clamp(44px, 4.6vw, 58px);
+  min-height: 100%;
+  box-shadow: none;
+}
+
+.diagnostic-panel-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 28rem;
 }
 
 .diagnostic-eyebrow {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(22, 33, 46, 0.85);
+  color: rgba(10, 14, 26, 0.88);
 }
 
 .diagnostic-eyebrow svg {
@@ -653,91 +692,86 @@
   font-family: var(--font-heading, inherit);
   font-weight: 700;
   text-transform: uppercase;
-  font-size: clamp(30px, 3.6vw, 52px);
+  font-size: clamp(32px, 3.75vw, 54px);
   line-height: 1.02;
   letter-spacing: 0.01em;
-  color: #16212e;
-  margin: 20px 0 14px;
+  color: #0a0e1a;
+  margin: 18px 0 13px;
+  max-width: 12ch;
 }
 
 .diagnostic-text {
   font-size: 15.5px;
   line-height: 1.65;
   font-weight: 500;
-  color: rgba(22, 33, 46, 0.78);
+  color: rgba(10, 14, 26, 0.78);
   max-width: 46ch;
-  margin: 0 0 30px;
-}
-
-.diagnostic-cta {
-  margin-top: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 24px;
-  border: 1.5px solid #16212e;
-  background: transparent;
-  color: #16212e;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.diagnostic-cta:hover {
-  background: #16212e;
-  color: var(--accent);
+  margin: 0;
 }
 
 .diagnostic-steps {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.015) 60%,
-    transparent 100%
-  );
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  background: transparent;
+  padding: clamp(28px, 3.5vw, 52px);
+  box-sizing: border-box;
 }
 
 .diagnostic-step {
   flex: 1;
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 22px;
-  padding: clamp(20px, 2.6vw, 34px) clamp(20px, 2.8vw, 38px);
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0 22px;
+  padding: clamp(20px, 2.4vw, 32px) 0;
+}
+
+.diagnostic-step:first-child {
+  padding-top: 0;
+}
+
+.diagnostic-step:last-child {
+  padding-bottom: 0;
 }
 
 .diagnostic-step + .diagnostic-step {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .diagnostic-step-number {
   font-family: var(--font-heading, inherit);
   font-weight: 600;
   font-size: 15px;
+  line-height: 1.2;
   letter-spacing: 0.08em;
-  color: var(--accent);
+  color: #ffb533;
   padding-top: 2px;
+  min-width: 1.75rem;
+}
+
+.diagnostic-step-vrule {
+  width: 1px;
+  align-self: stretch;
+  min-height: 2.75rem;
+  background: rgba(255, 255, 255, 0.22);
+  margin-top: 2px;
 }
 
 .diagnostic-step-content h3 {
   font-family: var(--font-heading, inherit);
   text-transform: uppercase;
-  font-size: 16px;
+  font-size: clamp(13px, 1.05vw, 14px);
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: var(--text-primary);
+  color: var(--text-primary, #eef4ff);
   margin: 0 0 8px;
 }
 
 .diagnostic-step-content p {
-  font-size: 14.5px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+  font-size: clamp(14px, 1.12vw, 15.5px);
+  line-height: 1.62;
+  color: rgba(130, 158, 198, 0.92);
   margin: 0;
   max-width: 52ch;
 }
@@ -745,6 +779,11 @@
 @media (max-width: 900px) {
   .diagnostic-grid {
     grid-template-columns: 1fr;
+  }
+
+  .diagnostic-steps {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: clamp(24px, 4vw, 40px) clamp(20px, 4vw, 32px);
   }
 }
 /* ===== RPG-акценты «гильдии» (облегчённая перекожа /individual) ===== */
@@ -762,13 +801,8 @@
   color: var(--gold);
 }
 
-.diagnostic-eyebrow {
-  color: var(--gold);
-}
-
 .diagnostic-step-number {
   color: var(--gold);
-  border-color: rgba(232, 149, 44, 0.5);
 }
 
 /* золотой keyboard-focus по всей странице */
@@ -1237,13 +1271,15 @@ button:focus-visible {
   background: transparent;
   overflow: hidden;
   isolation: isolate;
+  clip-path: none;
   box-shadow: var(--ind-glass-inset), var(--ind-glass-shadow);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
 .ind-teacher .teacher-hud:hover {
   border-color: rgba(120, 210, 255, 0.62);
   box-shadow: var(--ind-glass-inset), 0 10px 28px rgba(2, 6, 18, 0.32);
-  transform: translateY(-2px);
+  transform: translate3d(0, -2px, 0);
 }
 
 .ind-teacher .teacher-hud__fill {
@@ -1409,6 +1445,7 @@ button:focus-visible {
   object-fit: cover;
   object-position: bottom center;
   transform: none;
+  transition: none;
   pointer-events: auto;
 }
 
@@ -1493,12 +1530,12 @@ button:focus-visible {
   white-space: nowrap;
 }
 
-.ind-teacher .teacher-hud:hover .teacher-hud__fill {
-  box-shadow: var(--ind-glass-inset), 0 10px 28px rgba(2, 6, 18, 0.32);
+.ind-teacher .teacher-hud:hover .teacher-hud-photo img:not(.teacher-hud-photo-img) {
+  transform: translateX(-50%);
 }
 
-.ind-teacher .teacher-hud:hover .teacher-hud-photo img {
-  transform: translateX(-50%);
+.ind-teacher .teacher-hud:hover .teacher-hud-photo .teacher-hud-photo-img {
+  transform: none;
 }
 
 @media (max-width: 768px) {
@@ -2799,29 +2836,12 @@ button:focus-visible {
 }
 
 /* диагностика — янтарная гамма */
-.section-diagnostic .diagnostic-panel {
-  border: 1px solid rgba(232, 149, 44, 0.5);
-  box-shadow: 0 0 30px rgba(232, 149, 44, 0.18);
-}
-
-.section-diagnostic .diagnostic-cta {
-  background: linear-gradient(180deg, var(--gold-hover), var(--gold));
-  color: #0a0e1a;
-  border: none;
-  box-shadow: 0 0 22px rgba(232, 149, 44, 0.35);
-}
-
-.section-diagnostic .diagnostic-cta:hover {
-  box-shadow: 0 0 32px rgba(255, 171, 64, 0.5);
-}
-
 .section-diagnostic .diagnostic-step-number {
-  border-color: rgba(232, 149, 44, 0.55);
-  color: var(--gold);
+  color: var(--gold, #ffb533);
 }
 
-.section-diagnostic svg {
-  color: var(--gold);
+.section-diagnostic .diagnostic-eyebrow svg {
+  color: rgba(10, 14, 26, 0.78);
 }
 
 /* отступы секций подстраницы */
@@ -4057,7 +4077,12 @@ button:focus-visible {
   border: 1.5px solid rgba(232, 149, 44, 0.5);
   border-right: none;
   border-radius: 18px 0 0 18px;
-  box-shadow: inset 0 0 34px rgba(232, 149, 44, 0.07);
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 0%, rgba(255, 154, 46, 0.11), transparent 68%),
+    var(--ind-glass-fill);
+  box-shadow:
+    inset 0 0 34px rgba(232, 149, 44, 0.07),
+    0 0 26px rgba(255, 154, 46, 0.14);
   text-align: right;
 }
 
@@ -4065,7 +4090,12 @@ button:focus-visible {
   border: 1.5px solid rgba(110, 184, 217, 0.48);
   border-left: none;
   border-radius: 0 18px 18px 0;
-  box-shadow: inset 0 0 34px rgba(110, 184, 217, 0.08);
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 0%, rgba(0, 140, 220, 0.1), transparent 68%),
+    var(--ind-glass-fill);
+  box-shadow:
+    inset 0 0 34px rgba(110, 184, 217, 0.08),
+    0 0 26px rgba(0, 168, 255, 0.12);
 }
 
 .vs-axis {
@@ -4379,14 +4409,14 @@ button:focus-visible {
   }
 
   .vs-side--solo {
-    border-right: 1.5px solid rgba(0, 168, 255, 0.45);
+    border-right: 1.5px solid rgba(232, 149, 44, 0.5);
     border-radius: 18px 18px 0 0;
     text-align: left;
   }
 
   .vs-side--solo .vs-perks li {
     border-right: none;
-    border-left: 2px solid rgba(0, 168, 255, 0.5);
+    border-left: 2px solid rgba(232, 149, 44, 0.5);
     padding: 7px 0 7px 14px;
   }
 
@@ -4394,8 +4424,17 @@ button:focus-visible {
     display: none;
   }
 
+  .vs-side--solo .vs-perks li::before {
+    content: "◆";
+    position: absolute;
+    left: -6px;
+    top: 10px;
+    font-size: 10px;
+    color: var(--gold);
+  }
+
   .vs-side--group {
-    border-left: 1.5px solid rgba(232, 149, 44, 0.5);
+    border-left: 1.5px solid rgba(110, 184, 217, 0.48);
     border-radius: 0 0 18px 18px;
   }
 
@@ -4588,19 +4627,23 @@ button:focus-visible {
   text-shadow: 0 0 10px rgba(0, 168, 255, 0.5);
 }
 
-/* ===== диагностика: полностью янтарная ===== */
+/* ===== диагностика: янтарная панель + прозрачный список ===== */
 .section-diagnostic .diagnostic-panel {
-  background: linear-gradient(180deg, rgba(232, 149, 44, 0.09), rgba(13, 21, 38, 0.88));
-  border: 1px solid rgba(232, 149, 44, 0.55);
-  box-shadow: 0 0 34px rgba(232, 149, 44, 0.2);
+  background: linear-gradient(145deg, var(--gold-hover, #ffc04a) 0%, var(--gold, #ffb533) 42%, #f5a820 100%);
+  border: none;
+  box-shadow: 0 24px 64px rgba(232, 149, 44, 0.16);
 }
 
 .section-diagnostic .diagnostic-steps {
-  border-color: rgba(232, 149, 44, 0.3);
+  background: transparent;
+}
+
+.section-diagnostic .diagnostic-step-number {
+  color: var(--gold, #ffb533);
 }
 
 .section-diagnostic .diagnostic-step + .diagnostic-step {
-  border-color: rgba(232, 149, 44, 0.25);
+  border-top-color: var(--border, rgba(255, 255, 255, 0.1));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4631,14 +4674,34 @@ button:focus-visible {
 .vs-split--solo-focus .vs-badge { box-shadow: -10px 0 28px rgba(232, 149, 44, 0.48); }
 .vs-split--group-focus .vs-badge { box-shadow: 10px 0 28px rgba(110, 184, 217, 0.42); }
 .vs-side { transition: background 220ms ease, border-color 220ms ease, box-shadow 220ms ease; }
-.vs-side--solo:hover, .vs-side--solo:focus-within { background: rgba(232, 149, 44, 0.08); border-color: rgba(232, 149, 44, 0.82); }
-.vs-side--group:hover, .vs-side--group:focus-within { background: rgba(110, 184, 217, 0.08); border-color: rgba(126, 200, 232, 0.72); }
+.vs-side--solo:hover,
+.vs-side--solo:focus-within {
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 0%, rgba(255, 154, 46, 0.16), transparent 68%),
+    var(--ind-glass-fill);
+  border-color: rgba(232, 149, 44, 0.82);
+  box-shadow:
+    inset 0 0 34px rgba(232, 149, 44, 0.1),
+    0 0 34px rgba(255, 154, 46, 0.24);
+}
 
-/* ===== Diagnostic panel uses the same amber surface as its CTA ===== */
-.section-diagnostic .diagnostic-panel { background: linear-gradient(180deg,var(--gold-hover),var(--gold)); color: #0a0e1a; }
-.section-diagnostic .diagnostic-eyebrow, .section-diagnostic .diagnostic-eyebrow svg, .section-diagnostic .diagnostic-title, .section-diagnostic .diagnostic-text { color: #0a0e1a; }
-.section-diagnostic .diagnostic-cta { background: linear-gradient(180deg,var(--gold-hover),var(--gold)); border: 1.5px solid rgba(10,14,26,.76); box-shadow: none; }
-.section-diagnostic .diagnostic-cta:hover { background: #0a0e1a; color: var(--gold); box-shadow: none; }
+.vs-side--group:hover,
+.vs-side--group:focus-within {
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 0%, rgba(0, 140, 220, 0.14), transparent 68%),
+    var(--ind-glass-fill);
+  border-color: rgba(126, 200, 232, 0.72);
+  box-shadow:
+    inset 0 0 34px rgba(110, 184, 217, 0.1),
+    0 0 34px rgba(0, 168, 255, 0.2);
+}
+
+.section-diagnostic .diagnostic-eyebrow,
+.section-diagnostic .diagnostic-eyebrow svg,
+.section-diagnostic .diagnostic-title,
+.section-diagnostic .diagnostic-text {
+  color: #0a0e1a;
+}
 
 @media (max-width: 720px) {
   .booking-layout-toggle { align-items: flex-start; flex-direction: column; gap: 10px; }

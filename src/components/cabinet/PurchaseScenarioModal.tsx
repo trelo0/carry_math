@@ -23,7 +23,7 @@ interface PurchaseScenarioModalProps {
   priceByn: number;
   courseSlug: string;
   onClose: () => void;
-  mode?: 'first' | 'extend';
+  mode?: 'first' | 'extend' | 'direct';
   grantedLessons?: number;
   savedScenarioLabel?: string | null;
 }
@@ -43,11 +43,12 @@ export default function PurchaseScenarioModal({
   const [error, setError] = useState<string | null>(null);
 
   const isExtend = mode === 'extend';
-  if (!isExtend && !scenarios) return null;
+  const isDirect = mode === 'direct';
+  if (!isExtend && !isDirect && !scenarios) return null;
 
   const handlePayClick = async () => {
-    const scenarioToSend = isExtend ? undefined : selectedScenario;
-    if (!isExtend && !selectedScenario) return;
+    const scenarioToSend = isExtend || isDirect ? undefined : selectedScenario;
+    if (!isExtend && !isDirect && !selectedScenario) return;
     if (!consent) return;
 
     setIsProcessing(true);
@@ -112,17 +113,19 @@ export default function PurchaseScenarioModal({
         </button>
 
         <h2 id="pscenario-title" className="pscenario-title">
-          {isExtend ? 'Купить пакет занятий' : 'Выберите формат обучения'}
+          {isExtend ? 'Купить пакет занятий' : isDirect ? 'Оплата курса' : 'Выберите формат обучения'}
         </h2>
         <p className="pscenario-subtitle">
           {isExtend
             ? `Пакет из ${grantedLessons} занятий по вашему сохранённому формату обучения${
                 savedScenarioLabel ? `: ${savedScenarioLabel}` : ''
               }.`
-            : 'Два варианта прохождения курса. Выберите подходящий для вас.'}
+            : isDirect
+              ? `Пакет из ${grantedLessons} занятий. Оплата на защищённой странице bePaid.`
+              : 'Два варианта прохождения курса. Выберите подходящий для вас.'}
         </p>
 
-        {!isExtend && scenarios ? (
+        {!isExtend && !isDirect && scenarios ? (
         <div className="scenario-cards">
           {/* Card 1: Start from beginning */}
           <div
@@ -168,7 +171,7 @@ export default function PurchaseScenarioModal({
 
         <div className="pscenario-price">
           <strong>{priceByn} BYN</strong>
-          <span>одинаковая цена для обоих форматов</span>
+          <span>{isDirect || isExtend ? 'к оплате' : 'одинаковая цена для обоих форматов'}</span>
         </div>
 
         <div className="pscenario-consent">
@@ -182,7 +185,7 @@ export default function PurchaseScenarioModal({
         )}
 
         <div className="pscenario-actions">
-          {(isExtend || selectedScenario) && consent ? (
+          {(isExtend || isDirect || selectedScenario) && consent ? (
             <button
               type="button"
               className="pscenario-button primary"
@@ -191,15 +194,15 @@ export default function PurchaseScenarioModal({
             >
               {isProcessing
                 ? 'Создание платежа...'
-                : isExtend
-                  ? `Оплатить пакет · ${grantedLessons} занятий`
+                : isExtend || isDirect
+                  ? `Оплатить · ${grantedLessons} занятий`
                   : selectedScenario === 'start_from_beginning'
                     ? scenarios!.startFromBeginning.buttonLabel
                     : scenarios!.joinCurrent.buttonLabel}
             </button>
           ) : (
             <button type="button" className="pscenario-button primary" disabled>
-              {!isExtend && !selectedScenario
+              {!isExtend && !isDirect && !selectedScenario
                 ? 'Выберите формат обучения'
                 : 'Примите политику конфиденциальности'}
             </button>

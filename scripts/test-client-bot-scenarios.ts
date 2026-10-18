@@ -63,7 +63,12 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, G);
     check('phase guest', state.phase === 'guest');
     const rows = rowTexts(G, state);
-    check('2 кнопки гостя', rows.length === 2 && rows[0].includes(CLIENT_LABELS.onlineCourse));
+    check(
+      'меню гостя (курс + занятия + админ)',
+      rows.length === 3 &&
+        rows.some((r) => r.includes(CLIENT_LABELS.onlineCourse)) &&
+        rows.some((r) => r.includes(CLIENT_LABELS.lessonsWithTeacher)),
+    );
   }
 
   console.log('5: client_idle');
@@ -80,7 +85,12 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, IDLE, { memberRole: 'student' });
     check('phase client_idle', state.phase === 'client_idle');
     const rows = rowTexts(IDLE, state);
-    check('есть занятия с преподом', rows.some((r) => r.includes(CLIENT_LABELS.lessonsWithTeacher)));
+    check(
+      'idle: купить обучение или мои занятия',
+      rows.some(
+        (r) => r.includes(CLIENT_LABELS.buyEducation) || r.includes(CLIENT_LABELS.myLessons),
+      ),
+    );
   }
 
   console.log('6: active course');
@@ -90,7 +100,7 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, ACTIVE_COURSE, { memberRole: 'student' });
     check('phase client_active', state.phase === 'client_active');
     const rows = rowTexts(ACTIVE_COURSE, state);
-    check('онлайн-курс в меню', rows.some((r) => r.includes(CLIENT_LABELS.onlineCourse)));
+    check('активный курс: «Мой курс» в меню', rows.some((r) => r.includes(CLIENT_LABELS.myCourse)));
   }
 
   console.log('7–8: active lessons + combo');

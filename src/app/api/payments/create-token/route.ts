@@ -116,10 +116,7 @@ export async function POST(request: Request) {
     }
 
     if (!effectiveScenario) {
-      return NextResponse.json(
-        { error: 'Для первой покупки выберите формат прохождения курса.' },
-        { status: 400 },
-      );
+      effectiveScenario = 'start_from_beginning';
     }
 
     const pricing = await getCabinetPricing();
@@ -137,7 +134,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: processingRequest } = await admin
+    const processingQuery = admin
       .from('purchase_requests')
       .select('id')
       .eq('telegram_id', telegramId)
@@ -145,7 +142,8 @@ export async function POST(request: Request) {
       .eq('package_index', 0)
       .is('teacher_id', null)
       .eq('status', 'processing')
-      .maybeSingle();
+      .eq('course_slug', courseSlug);
+    const { data: processingRequest } = await processingQuery.maybeSingle();
 
     if (processingRequest) {
       return NextResponse.json(

@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { memberHasRole } from '@/lib/bot/roles';
+import {
+  canReviewHomeworkOnCourse,
+  canViewHomeworkProgressOnCourse,
+  defaultWebSectionForCourseRole,
+  webNavSectionsForCourseRole,
+  webSectionNavLabel,
+} from '@/lib/staff/course-assignment-ui';
+import { buildStaffCabinetPath } from '@/lib/staff/staff-cabinet-url';
 import type { StaffCabinetData } from '@/lib/teacher/cabinet-data';
 import type { CuratorHomeworkQueueItem } from '@/lib/curator/cabinet-data';
 import CuratorDashboard from '@/components/curator/CuratorDashboard';
@@ -73,35 +82,55 @@ const COURSE_SECTIONS = new Set<StaffSection>([
   'course-homework',
 ]);
 
-function canShowCurator(data: StaffCabinetData): boolean {
-  return Boolean(
-    data.curator && (data.fullStaffPreview || memberHasRole(data.memberRoles, 'curator')),
-  );
-}
-
 function canShowTeacher(data: StaffCabinetData): boolean {
   return Boolean(
     data.teacher && (data.fullStaffPreview || memberHasRole(data.memberRoles, 'teacher')),
   );
 }
 
+function hasCourseAssignments(data: StaffCabinetData): boolean {
+  return Boolean(data.curator && data.curator.assignedCourses.length > 0);
+}
+
+/** Кураторские инструменты на активном курсе (расписание, модули, жизни). */
+function canShowCuratorCourseTools(data: StaffCabinetData): boolean {
+  if (!data.curator) return false;
+  if (data.fullStaffPreview) return true;
+  return data.curator.activeCourseRole === 'curator';
+}
+
+function canReviewCourseHomework(data: StaffCabinetData): boolean {
+  return canReviewHomeworkOnCourse(
+    data.curator?.activeCourseRole ?? null,
+    data.fullStaffPreview,
+  );
+}
+
+function canViewCourseHomeworkProgress(data: StaffCabinetData): boolean {
+  return canViewHomeworkProgressOnCourse(
+    data.curator?.activeCourseRole ?? null,
+    data.fullStaffPreview,
+  );
+}
+
 function canShowSchedule(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) || canShowCurator(data);
+  return canShowTeacher(data) || canShowCuratorCourseTools(data);
 }
 
 function canShowStudents(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) || canShowCurator(data);
+  return canShowTeacher(data) || canShowCuratorCourseTools(data);
 }
 
 function isCombinedStaff(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) && canShowCurator(data);
+  return canShowTeacher(data) && hasCourseAssignments(data);
 }
 
 function buildStaffNav(data: StaffCabinetData): NavGroup[] {
   const groups: NavGroup[] = [];
   const showTeacher = canShowTeacher(data);
-  const showCurator = canShowCurator(data) && Boolean(data.curator);
-  const combined = showTeacher && showCurator;
+  const showCourseNav = hasCourseAssignments(data) && Boolean(data.curator);
+  const courseTools = canShowCuratorCourseTools(data);
+  const combined = showTeacher && showCourseNav;
 
   if (combined) {
     groups.push({
@@ -121,7 +150,7 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
         { id: 'teacher-groups', label: 'Группы' },
       ],
     });
-  } else if (showCurator) {
+  } else if (showCourseNav && courseTools) {
     groups.push({
       label: 'Моя работа',
       items: [
@@ -131,22 +160,31 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
     });
   }
 
-  if (showCurator && data.curator) {
+  if (showCourseNav && data.curator) {
     const courseTitle = data.curator.courseTitle;
+    const role = data.curator.activeCourseRole;
+    const courseItems: NavItem[] = [{ id: 'course-list', label: 'Мои курсы' }];
     groups.push({
       label: 'Курсы',
-      items: [{ id: 'course-list', label: 'Мои курсы' }],
-      subLabel: courseTitle,
+      items: courseItems,
+      subLabel: data.curator.courseId ? courseTitle : undefined,
     });
-    groups.push({
-      label: courseTitle,
-      items: [
-        { id: 'course-overview', label: 'Обзор', indent: true },
-        { id: 'course-students', label: 'Ученики', indent: true },
-        { id: 'course-lessons', label: 'Модули и уроки', indent: true },
-        { id: 'course-history', label: 'История', indent: true },
-      ],
-    });
+    if (data.curator.courseId && role) {
+      const sectionIds = webNavSectionsForCourseRole(role, {
+        fullPreview: data.fullStaffPreview,
+      });
+      const subItems: NavItem[] = sectionIds.map((id) => ({
+        id: id as StaffSection,
+        label: webSectionNavLabel(id, role),
+        indent: true,
+      }));
+      if (subItems.length > 0) {
+        groups.push({
+          label: courseTitle,
+          items: subItems,
+        });
+      }
+    }
   }
 
   groups.push({
@@ -159,7 +197,12 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
 
 function defaultSection(data: StaffCabinetData): StaffSection {
   if (canShowSchedule(data)) return 'teacher-calendar';
-  if (canShowCurator(data)) return 'course-overview';
+  if (hasCourseAssignments(data) && data.curator?.activeCourseRole) {
+    const sec = defaultWebSectionForCourseRole(data.curator.activeCourseRole, {
+      fullPreview: data.fullStaffPreview,
+    });
+    return sec === 'course-list' ? 'course-list' : sec;
+  }
   return 'settings';
 }
 
@@ -174,8 +217,19 @@ function isCourseSection(section: StaffSection): boolean {
   return COURSE_SECTIONS.has(section);
 }
 
-async function reloadData(): Promise<StaffCabinetData> {
-  const res = await fetch('/api/cabinet/staff/data', { cache: 'no-store' });
+async function reloadData(
+  courseId?: number | null,
+  courseRole?: 'curator' | 'check' | null,
+): Promise<StaffCabinetData> {
+  const params = new URLSearchParams();
+  if (courseId != null && Number.isFinite(courseId)) {
+    params.set('courseId', String(courseId));
+  }
+  if (courseRole === 'curator' || courseRole === 'check') {
+    params.set('courseRole', courseRole);
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`/api/cabinet/staff/data${qs}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Не удалось обновить данные');
   return res.json() as Promise<StaffCabinetData>;
 }
@@ -190,6 +244,8 @@ type Props = {
   data: StaffCabinetData;
   initialSection?: string;
   initialLessonId?: string;
+  initialCourseId?: number | null;
+  initialCourseRole?: 'curator' | 'check' | null;
   showCabinetPick?: boolean;
 };
 
@@ -197,9 +253,18 @@ export default function StaffShell({
   data: initialData,
   initialSection,
   initialLessonId,
+  initialCourseId,
+  initialCourseRole,
   showCabinetPick,
 }: Props) {
+  const router = useRouter();
   const [data, setData] = useState(initialData);
+  const [activeCourseId, setActiveCourseId] = useState<number | null>(
+    initialCourseId ?? initialData.curator?.courseId ?? null,
+  );
+  const [activeCourseRole, setActiveCourseRole] = useState<'curator' | 'check' | null>(
+    initialCourseRole ?? initialData.curator?.activeCourseRole ?? null,
+  );
   const [section, setSection] = useState<StaffSection>(() =>
     resolveInitialSection(initialData, initialSection),
   );
@@ -214,8 +279,37 @@ export default function StaffShell({
 
   const navGroups = useMemo(() => buildStaffNav(data), [data]);
   const courseTitle = data.curator?.courseTitle ?? 'Курс';
-  const scheduleMode = resolveStaffScheduleMode(canShowTeacher(data), canShowCurator(data));
+  const scheduleMode = resolveStaffScheduleMode(canShowTeacher(data), canShowCuratorCourseTools(data));
   const combinedStaff = isCombinedStaff(data);
+
+  const syncStaffUrl = useCallback(
+    (patch: {
+      section?: StaffSection;
+      courseId?: number | null;
+      courseRole?: 'curator' | 'check' | null;
+      lesson?: string | null;
+    }) => {
+      const nextSection = patch.section ?? section;
+      const nextCourseId = patch.courseId !== undefined ? patch.courseId : activeCourseId;
+      const nextRole = patch.courseRole !== undefined ? patch.courseRole : activeCourseRole;
+      const lesson =
+        patch.lesson !== undefined
+          ? patch.lesson
+          : nextSection === 'course-lessons' && selectedLessonId
+            ? selectedLessonId
+            : null;
+      router.replace(
+        buildStaffCabinetPath({
+          section: nextSection,
+          courseId: nextCourseId,
+          courseRole: nextRole,
+          lesson: lesson ?? undefined,
+        }),
+        { scroll: false },
+      );
+    },
+    [section, activeCourseId, activeCourseRole, selectedLessonId, router],
+  );
 
   const refresh = useCallback(async (scope: StaffRefreshScope = 'full') => {
     if (scope === 'none') return;
@@ -224,9 +318,11 @@ export default function StaffShell({
       setData((prev) => ({ ...prev, teacher }));
       return;
     }
-    const next = await reloadData();
+    const next = await reloadData(activeCourseId, activeCourseRole);
     setData(next);
-  }, []);
+    if (next.curator?.courseId != null) setActiveCourseId(next.curator.courseId);
+    if (next.curator?.activeCourseRole) setActiveCourseRole(next.curator.activeCourseRole);
+  }, [activeCourseId, activeCourseRole]);
 
   const patchTeacher = useCallback((patch: (prev: TeacherCabinetData) => TeacherCabinetData) => {
     setData((prev) => {
@@ -312,15 +408,17 @@ export default function StaffShell({
     (section === 'teacher-calendar' ||
       section === 'teacher-students' ||
       section === 'teacher-groups' ||
-      (!canShowCurator(data) && section === 'settings'));
+      (!hasCourseAssignments(data) && section === 'settings'));
 
   const roleLabel = useMemo(() => {
     if (data.fullStaffPreview) return 'Admin · preview';
     const parts: string[] = [];
-    if (memberHasRole(data.memberRoles, 'curator')) parts.push('Куратор');
     if (memberHasRole(data.memberRoles, 'teacher')) parts.push('Преподаватель');
+    if (data.curator?.assignedCourses.some((c) => c.role === 'curator')) parts.push('Куратор курса');
+    if (data.curator?.assignedCourses.some((c) => c.role === 'check')) parts.push('Проверка ДЗ');
+    if (memberHasRole(data.memberRoles, 'staff')) parts.push('Сотрудник');
     return parts.join(' · ') || 'Staff';
-  }, [data.fullStaffPreview, data.memberRoles]);
+  }, [data.fullStaffPreview, data.memberRoles, data.curator?.assignedCourses]);
 
   useEffect(() => {
     if (section === 'teacher-calendar' && !canShowSchedule(data)) {
@@ -333,7 +431,19 @@ export default function StaffShell({
     if (isTeacherOnlySection && !canShowTeacher(data)) {
       setSection(defaultSection(data));
     }
-    if (isCourseSection(section) && !canShowCurator(data)) {
+    if (isCourseSection(section) && !hasCourseAssignments(data)) {
+      setSection(defaultSection(data));
+    }
+    if (section === 'course-overview' && !canShowCuratorCourseTools(data)) {
+      setSection(canViewCourseHomeworkProgress(data) ? 'course-homework' : 'course-list');
+    }
+    if (
+      (section === 'course-students' || section === 'course-lessons' || section === 'course-history') &&
+      !canShowCuratorCourseTools(data)
+    ) {
+      setSection('course-list');
+    }
+    if (section === 'course-homework' && !canViewCourseHomeworkProgress(data)) {
       setSection(defaultSection(data));
     }
   }, [section, data]);
@@ -341,6 +451,7 @@ export default function StaffShell({
   const handleNavClick = (itemId: StaffSection) => {
     setSection(itemId);
     if (itemId !== 'course-lessons') setSelectedLessonId(null);
+    syncStaffUrl({ section: itemId, lesson: itemId === 'course-lessons' ? selectedLessonId : null });
   };
 
   return (
@@ -402,7 +513,7 @@ export default function StaffShell({
         {section === 'teacher-calendar' && canShowSchedule(data) ? (
           <>
             <StaffContextHeader
-              area={combinedStaff || (canShowCurator(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
+              area={combinedStaff || (canShowCuratorCourseTools(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
             />
             <TeacherSchedulePanel
               mode={scheduleMode}
@@ -427,7 +538,7 @@ export default function StaffShell({
         {section === 'teacher-students' && canShowStudents(data) ? (
           <>
             <StaffContextHeader
-              area={combinedStaff || (canShowCurator(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
+              area={combinedStaff || (canShowCuratorCourseTools(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
             />
             <StaffStudentsPanel
               key={selectedTeacherStudentId ?? 'staff-students'}
@@ -463,15 +574,46 @@ export default function StaffShell({
         {section === 'course-list' && data.curator ? (
           <div className="course-page">
             <CourseListPanel
-              courseTitle={courseTitle}
-              studentCount={data.curator.students.length}
-              lessonCount={data.curator.lessons.length}
-              onOpenCourse={() => setSection('course-overview')}
+              courses={
+                data.curator.assignedCourses.length > 0
+                  ? data.curator.assignedCourses.map((c) => ({
+                      courseId: c.courseId,
+                      title: c.title,
+                      studentCount: c.studentCount,
+                      lessonCount: c.lessonCount,
+                      role: c.role,
+                    }))
+                  : data.curator.courseId && data.curator.activeCourseRole
+                    ? [
+                        {
+                          courseId: data.curator.courseId,
+                          title: courseTitle,
+                          studentCount: data.curator.students.length,
+                          lessonCount: data.curator.lessons.length,
+                          role: data.curator.activeCourseRole,
+                        },
+                      ]
+                    : []
+              }
+              onOpenCourse={(courseId, role) => {
+                setActiveCourseId(courseId);
+                setActiveCourseRole(role);
+                void reloadData(courseId, role)
+                  .then((next) => {
+                    setData(next);
+                    const sec = defaultWebSectionForCourseRole(role, {
+                      fullPreview: next.fullStaffPreview,
+                    }) as StaffSection;
+                    setSection(sec);
+                    syncStaffUrl({ section: sec, courseId, courseRole: role, lesson: null });
+                  })
+                  .catch(() => undefined);
+              }}
             />
           </div>
         ) : null}
 
-        {section === 'course-overview' && data.curator ? (
+        {section === 'course-overview' && data.curator && canShowCuratorCourseTools(data) ? (
           <div className="course-page">
             <StaffContextHeader area="course" courseTitle={courseTitle} />
             <CuratorDashboard
@@ -486,14 +628,14 @@ export default function StaffShell({
           </div>
         ) : null}
 
-        {section === 'course-students' && data.curator ? (
+        {section === 'course-students' && data.curator && canShowCuratorCourseTools(data) ? (
           <div className="course-page">
             <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CuratorStudentsPanel students={data.curator.students} busy={busy} runAction={runAction} />
+            <CuratorStudentsPanel students={data.curator.students} />
           </div>
         ) : null}
 
-        {section === 'course-lessons' && data.curator ? (
+        {section === 'course-lessons' && data.curator && canShowCuratorCourseTools(data) ? (
           <div className="course-page">
             <StaffContextHeader area="course" courseTitle={courseTitle} />
             <CuratorLessonsPanel
@@ -507,24 +649,26 @@ export default function StaffShell({
           </div>
         ) : null}
 
-        {section === 'course-history' && data.curator ? (
+        {section === 'course-history' && data.curator && canShowCuratorCourseTools(data) ? (
           <div className="course-page">
             <StaffContextHeader area="course" courseTitle={courseTitle} />
             <CourseHistoryPanel lessons={data.curator.lessons} onOpenLesson={openCourseLesson} />
           </div>
         ) : null}
 
-        {section === 'course-homework' && data.curator ? (
+        {section === 'course-homework' && data.curator && canViewCourseHomeworkProgress(data) ? (
           <>
             <StaffContextHeader area="course" courseTitle={courseTitle} />
             <CuratorHomeworkPanel
               board={data.curator.homeworkBoard}
+              courseId={data.curator.courseId}
               busy={busy}
               runAction={runAction}
               rejectTarget={rejectTarget}
               rejectNote={rejectNote}
               onRejectNote={setRejectNote}
               onRejectTarget={setRejectTarget}
+              readOnly={!canReviewCourseHomework(data)}
             />
           </>
         ) : null}
@@ -535,7 +679,7 @@ export default function StaffShell({
             courseTitle={courseTitle}
             sanityWriteEnabled={data.curator?.sanityWriteEnabled ?? false}
             showTeacher={canShowTeacher(data)}
-            showCurator={canShowCurator(data)}
+            showCurator={canShowCuratorCourseTools(data) || hasCourseAssignments(data)}
           />
         ) : null}
       </main>

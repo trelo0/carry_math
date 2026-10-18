@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getCabinetCourseViewSlice } from '@/lib/cabinet';
+import { getCabinetCourseMapProgress } from '@/lib/cabinet';
 
 /** Быстрый срез курса для переключателя в кабинете (без полной перезагрузки). */
 export async function GET(request: Request) {
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const slice = await getCabinetCourseViewSlice(phone, slug);
+    const slice = await getCabinetCourseMapProgress(phone, slug);
     if (!slice) {
       return NextResponse.json({ error: 'Course not found' }, { status: 404 });
     }

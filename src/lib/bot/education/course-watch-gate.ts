@@ -3,6 +3,7 @@ import { getDistrictCourseContent, flattenCourseLessons } from '@/lib/studio/cou
 import {
   canStudentWatchSanityLesson,
   unlockNextCourseLessonAfterCleared,
+  studentHasCourseAccessForCourse,
 } from '@/lib/bot/education/course-access';
 import {
   markLiveAttended,
@@ -13,9 +14,10 @@ import {
 } from '@/lib/bot/education/course-progress';
 import { isLessonProgressCompleted } from '@/lib/bot/education/lesson-progress-calc';
 import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
-import { studentHasCourseProductAccess } from '@/lib/bot/education/course-access';
 import { ensureHomeworkDeadlineStarted } from '@/lib/bot/education/homework-deadline';
 import { homeworkRequiredForLesson } from '@/lib/bot/education/lesson-progress-calc';
+import { resolveCourseForSanityLesson } from '@/lib/bot/education/student-course-context';
+import type { DistrictCourseContent } from '@/lib/studio/courseContent';
 
 export class CourseWatchDeniedError extends Error {
   constructor(message: string) {
@@ -24,30 +26,46 @@ export class CourseWatchDeniedError extends Error {
   }
 }
 
+async function resolveLessonCourseContext(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+): Promise<{ content: DistrictCourseContent; courseId: number }> {
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+  if (resolved) {
+    return { content: resolved.content, courseId: resolved.courseId };
+  }
+  const content = await getDistrictCourseContent();
+  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
+  const courseId = await resolveCourseIdForContent(admin, content);
+  if (!courseId) throw new CourseWatchDeniedError('Курс не найден.');
+  return { content, courseId };
+}
+
 async function afterProgressMaybeCompleteAndUnlock(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
   progress: CourseLessonStudentProgress,
+  ctx: { content: DistrictCourseContent; courseId: number },
 ): Promise<void> {
-  const content = await getDistrictCourseContent().catch(() => null);
-  if (!content) return;
+  const { content, courseId } = ctx;
   const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
   if (!lesson) return;
 
-  const courseId = await resolveCourseIdForContent(admin, content);
   const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
     './course-enrollment-start'
   );
   const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
   if (isJoinArchiveSanityId(joinGate, sanityLessonId)) return;
 
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+  const hasCourseProduct = await studentHasCourseAccessForCourse(admin, telegramId, courseId);
+  const hwForCompletion = homeworkRequiredForLesson(lesson, hasCourseProduct);
   const done = isLessonProgressCompleted({
     recordingWatchedAt: progress.recording_watched_at,
     liveAttendedAt: progress.live_attended_at,
     homeworkStatus: progress.homework_status,
-    hasHomework: homeworkRequiredForLesson(lesson, hasCourseProduct),
+    hasHomework: hwForCompletion,
   });
 
   if (done && !progress.completed_at) {
@@ -60,12 +78,8 @@ async function afterProgressMaybeCompleteAndUnlock(
 
   if (!done) return;
 
-  if (lesson.isTrialFree && !hasCourseProduct) return;
-
   try {
-    if (courseId) {
-      await unlockNextCourseLessonAfterCleared(admin, telegramId, courseId, content);
-    }
+    await unlockNextCourseLessonAfterCleared(admin, telegramId, courseId, content);
   } catch (error) {
     console.error('[courseWatch] unlock after progress failed:', error);
   }
@@ -77,19 +91,20 @@ async function startDeadlineIfNeeded(
   sanityLessonId: string,
   lesson: { isTrialFree: boolean },
   hasCourseProduct: boolean,
-  content: Awaited<ReturnType<typeof getDistrictCourseContent>>,
+  content: DistrictCourseContent,
+  courseId: number,
 ): Promise<void> {
   if (lesson.isTrialFree && !hasCourseProduct) return;
-  const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
   const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
     './course-enrollment-start'
   );
-  if (content && courseId) {
-    const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
-    if (isJoinArchiveSanityId(joinGate, sanityLessonId)) return;
-  }
+  const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
+  if (isJoinArchiveSanityId(joinGate, sanityLessonId)) return;
   try {
-    await ensureHomeworkDeadlineStarted(admin, telegramId, sanityLessonId, { hasAccess: true });
+    await ensureHomeworkDeadlineStarted(admin, telegramId, sanityLessonId, {
+      hasAccess: true,
+      courseId,
+    });
   } catch (error) {
     console.error('[courseWatch] deadline start failed:', error);
   }
@@ -101,17 +116,29 @@ export async function watchRecordingWithAccessGate(
   sanityLessonId: string,
   watchPercent?: number,
 ): Promise<CourseLessonStudentProgress> {
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
-
-  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
+  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct, content);
+  const lesson = flattenCourseLessons(ctx.content).find((l) => l.sanityId === sanityLessonId);
+  const hasCourseProduct = await studentHasCourseAccessForCourse(
+    admin,
+    telegramId,
+    ctx.courseId,
+  );
   const progress = await markRecordingWatched(admin, telegramId, { sanityLessonId }, watchPercent);
-  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
+  if (lesson) {
+    await startDeadlineIfNeeded(
+      admin,
+      telegramId,
+      sanityLessonId,
+      lesson,
+      hasCourseProduct,
+      ctx.content,
+      ctx.courseId,
+    );
+  }
+  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }
 
@@ -121,17 +148,29 @@ export async function watchLiveWithAccessGate(
   sanityLessonId: string,
   watchPercent?: number,
 ): Promise<CourseLessonStudentProgress> {
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
-
-  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
+  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (lesson) await startDeadlineIfNeeded(admin, telegramId, sanityLessonId, lesson, hasCourseProduct, content);
+  const lesson = flattenCourseLessons(ctx.content).find((l) => l.sanityId === sanityLessonId);
+  const hasCourseProduct = await studentHasCourseAccessForCourse(
+    admin,
+    telegramId,
+    ctx.courseId,
+  );
   const progress = await markLiveAttended(admin, telegramId, { sanityLessonId }, watchPercent);
-  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
+  if (lesson) {
+    await startDeadlineIfNeeded(
+      admin,
+      telegramId,
+      sanityLessonId,
+      lesson,
+      hasCourseProduct,
+      ctx.content,
+      ctx.courseId,
+    );
+  }
+  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }
 
@@ -141,15 +180,12 @@ export async function reportLessonWatchPercentWithGate(
   sanityLessonId: string,
   watchPercent: number,
 ): Promise<CourseLessonStudentProgress> {
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
-
-  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
+  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  // Таймер ДЗ стартует только по Play (watch-live / watch-recording), не по percent/material.
   const progress = await reportWatchPercent(admin, telegramId, sanityLessonId, watchPercent);
-  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
+  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }
 
@@ -159,13 +195,11 @@ export async function reportLessonMaterialOpenedWithGate(
   sanityLessonId: string,
   materialKey: string,
 ): Promise<CourseLessonStudentProgress> {
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
-
-  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, content);
+  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
   const progress = await reportMaterialOpened(admin, telegramId, sanityLessonId, materialKey);
-  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress);
+  await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }

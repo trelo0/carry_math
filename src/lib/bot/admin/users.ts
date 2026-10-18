@@ -73,7 +73,7 @@ export function isPanelAction(data: string): boolean {
 }
 
 // Роли, которые админ назначает через панель. test — только владелец бота.
-const ASSIGNABLE_ROLES: BotRole[] = ['guest', 'student', 'curator', 'teacher', 'admin'];
+const ASSIGNABLE_ROLES: BotRole[] = ['guest', 'student', 'staff', 'teacher', 'admin'];
 
 // Размер страницы списка пользователей задаёт USERS_PER_PAGE в core.ts.
 

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { studentHasCourseProductAccess } from './course-access';
+import { studentHasCourseAccessForCourse, studentHasCourseProductAccess } from './course-access';
 import {
   flattenCourseLessons,
   getDistrictCourseContent,
@@ -104,11 +104,28 @@ async function loadDeadlineRow(
 }
 
 async function resolveLesson(
+  admin: SupabaseClient,
+  telegramId: number,
   sanityLessonId: string,
 ): Promise<CourseLessonContent | null> {
-  const content = await getDistrictCourseContent().catch(() => null);
-  if (!content) return null;
-  return flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId) ?? null;
+  const { resolveCourseForSanityLesson } = await import('./student-course-context');
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+  if (resolved) {
+    return (
+      flattenCourseLessons(resolved.content).find((l) => l.sanityId === sanityLessonId) ?? null
+    );
+  }
+  const { listDistrictCourseSummaries } = await import('@/lib/studio/courseContent');
+  const summaries = await listDistrictCourseSummaries().catch(() => []);
+  for (const summary of summaries) {
+    const content = await getDistrictCourseContent(summary.slug).catch(() => null);
+    if (!content) continue;
+    const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
+    if (lesson) return lesson;
+  }
+  const fallback = await getDistrictCourseContent().catch(() => null);
+  if (!fallback) return null;
+  return flattenCourseLessons(fallback).find((l) => l.sanityId === sanityLessonId) ?? null;
 }
 
 /**
@@ -119,20 +136,30 @@ export async function ensureHomeworkDeadlineStarted(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
-  options?: { hasAccess?: boolean; learningMode?: LearningMode },
+  options?: { hasAccess?: boolean; learningMode?: LearningMode; courseId?: number },
 ): Promise<(CourseLessonStudentProgress & HomeworkDeadlineFields) | null> {
   const mode = options?.learningMode ?? DEFAULT_LEARNING_MODE;
   if (mode === 'self_paced_no_hw_check') return null;
 
-  const lesson = await resolveLesson(sanityLessonId);
+  const lesson = await resolveLesson(admin, telegramId, sanityLessonId);
   if (!lesson || !lessonHasHomework(lesson)) return null;
   if (options?.hasAccess === false) return null;
 
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-  if (lesson.isTrialFree && !hasCourseProduct) return null;
+  if (lesson.isTrialFree) {
+    const hasCourseProduct = options?.courseId
+      ? await studentHasCourseAccessForCourse(admin, telegramId, options.courseId)
+      : await studentHasCourseProductAccess(admin, telegramId);
+    if (!hasCourseProduct) return null;
+  }
 
   const existing = await loadDeadlineRow(admin, telegramId, sanityLessonId);
-  if (existing?.homework_deadline_at || existing?.lesson_first_opened_at) {
+  if (existing?.homework_deadline_at) {
+    return existing;
+  }
+  if (
+    existing?.homework_status === 'approved' ||
+    existing?.homework_status === 'submitted'
+  ) {
     return existing;
   }
 
@@ -402,6 +429,7 @@ export async function ensureOverdueMarked(
 
 /**
  * После первой оплаты курса: на пробном занятии таймер ДЗ снова 72 ч (если ДЗ ещё не принято).
+ * join_current: пробник в архиве — не трогаем (и снимаем висящий дедлайн, если был).
  */
 export async function resetTrialHomeworkDeadlineOnCoursePurchase(
   admin: SupabaseClient,
@@ -415,6 +443,65 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
 
   const row = await loadDeadlineRow(admin, telegramId, trial.sanityId);
   if (row?.homework_status === 'approved') return;
+  if (row?.homework_status === 'submitted') return;
+
+  const { resolveCourseIdForContent } = await import('./course-record');
+  const courseId = await resolveCourseIdForContent(admin, content);
+  if (courseId) {
+    const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+      './course-enrollment-start'
+    );
+    const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
+    if (isJoinArchiveSanityId(joinGate, trial.sanityId)) {
+      if (
+        row &&
+        (row.homework_deadline_at ||
+          row.homework_overdue_at ||
+          row.homework_remaining_ms != null)
+      ) {
+        const clearNow = new Date().toISOString();
+        const { error: clearError } = await admin
+          .from('course_lesson_student_progress')
+          .update({
+            homework_deadline_at: null,
+            homework_remaining_ms: null,
+            homework_overdue_at: null,
+            hw_remind_12h_at: null,
+            hw_remind_6h_at: null,
+            hw_remind_2h_at: null,
+            hw_overdue_student_at: null,
+            hw_overdue_curator_at: null,
+            updated_at: clearNow,
+          })
+          .eq('telegram_id', telegramId)
+          .eq('sanity_lesson_id', trial.sanityId);
+        if (clearError && !isMissingColumnError(clearError)) throw clearError;
+      }
+      return;
+    }
+
+    const { data: enrollment } = await admin
+      .from('course_enrollments')
+      .select('started_at')
+      .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
+      .eq('status', 'active')
+      .maybeSingle();
+    const enrolledAt = enrollment?.started_at
+      ? Date.parse(String(enrollment.started_at))
+      : NaN;
+    const deadlineAt = row?.homework_deadline_at
+      ? Date.parse(String(row.homework_deadline_at))
+      : NaN;
+    // Уже перезапускали таймер после оплаты (не дублировать webhook / старые вызовы).
+    if (
+      Number.isFinite(enrolledAt) &&
+      Number.isFinite(deadlineAt) &&
+      deadlineAt >= enrolledAt - 60_000
+    ) {
+      return;
+    }
+  }
 
   const now = new Date();
   const nowIso = now.toISOString();
@@ -449,4 +536,54 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
     ...patch,
   });
   if (insertError && !isMissingColumnError(insertError)) throw insertError;
+}
+
+/**
+ * Курс уже оплачен, пробный вебинар просмотрен, дедлайна нет — старт 72ч (идемпотентно).
+ */
+export async function ensureTrialHomeworkDeadlineIfEligible(
+  admin: SupabaseClient,
+  telegramId: number,
+  content: import('@/lib/studio/courseContent').DistrictCourseContent,
+  courseId?: number | null,
+): Promise<void> {
+  const { resolveCourseIdForContent } = await import('./course-record');
+  const resolvedCourseId =
+    courseId ?? (await resolveCourseIdForContent(admin, content));
+  if (!resolvedCourseId) return;
+  const hasCourseProduct = await studentHasCourseAccessForCourse(
+    admin,
+    telegramId,
+    resolvedCourseId,
+  );
+  if (!hasCourseProduct) return;
+
+  const trial = flattenCourseLessons(content).find((l) => l.isTrialFree);
+  if (!trial?.sanityId || !lessonHasHomework(trial)) return;
+
+  if (resolvedCourseId) {
+    const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
+      './course-enrollment-start'
+    );
+    const joinGate = await loadJoinCurrentGateContext(admin, telegramId, resolvedCourseId, content);
+    if (isJoinArchiveSanityId(joinGate, trial.sanityId)) return;
+  }
+
+  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId);
+  if (row?.homework_deadline_at) return;
+  if (row?.homework_status === 'approved' || row?.homework_status === 'submitted') return;
+
+  const { data: watchRow, error: watchError } = await admin
+    .from('course_lesson_student_progress')
+    .select('recording_watched_at, live_attended_at')
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', trial.sanityId)
+    .maybeSingle();
+  if (watchError && !isMissingColumnError(watchError)) throw watchError;
+  if (!watchRow?.recording_watched_at && !watchRow?.live_attended_at) return;
+
+  await ensureHomeworkDeadlineStarted(admin, telegramId, trial.sanityId, {
+    hasAccess: true,
+    courseId: resolvedCourseId,
+  });
 }

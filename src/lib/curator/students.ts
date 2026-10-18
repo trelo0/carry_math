@@ -50,32 +50,17 @@ export async function listCourseStudentTelegramIds(
   admin: SupabaseClient,
   courseId: number,
 ): Promise<number[]> {
+  const { data: enrollments, error } = await admin
+    .from('course_enrollments')
+    .select('telegram_id')
+    .eq('course_id', courseId)
+    .eq('status', ACTIVE);
+  if (error) throw error;
+
   const ids = new Set<number>();
-
-  const [{ data: enrollments }, { data: accesses }] = await Promise.all([
-    admin
-      .from('course_enrollments')
-      .select('telegram_id')
-      .eq('course_id', courseId)
-      .eq('status', ACTIVE),
-    admin
-      .from('user_accesses')
-      .select('telegram_id, expires_at')
-      .eq('product', 'course')
-      .eq('status', ACTIVE),
-  ]);
-
   for (const row of enrollments ?? []) {
     ids.add(row.telegram_id as number);
   }
-
-  const now = Date.now();
-  for (const row of accesses ?? []) {
-    const exp = row.expires_at as string | null;
-    if (exp && Date.parse(exp) < now) continue;
-    ids.add(row.telegram_id as number);
-  }
-
   return [...ids];
 }
 
@@ -99,22 +84,43 @@ export type CuratorStudentView = CuratorStudentRecord & {
   revisionIdle: boolean;
   /** Текущий открытый урок без прогресса (название). */
   stuckLessonLabel: string | null;
+  /** Остаток по активным пакетам product=course (оплаченные занятия). */
+  remainingPaidLessons: number;
 };
 
 export async function loadCuratorCourseStudents(
   admin: SupabaseClient,
   curatorTelegramId: number,
+  options?: {
+    courseId?: number;
+    courseSlug?: string;
+    skipStaffCheck?: boolean;
+    fullPreview?: boolean;
+  },
 ): Promise<{ courseId: number | null; students: CuratorStudentView[] }> {
-  const content = await getDistrictCourseContent();
-  if (!content) return { courseId: null, students: [] };
-
-  let courseId: number | null = null;
-  try {
-    courseId = await resolveCourseIdForContent(admin, content);
-  } catch {
-    courseId = null;
+  let courseId = options?.courseId;
+  let courseSlug = options?.courseSlug;
+  if (courseId == null || !courseSlug) {
+    const { resolveStaffCourseContext } = await import('@/lib/curator/course-context');
+    const ctx = await resolveStaffCourseContext(admin, curatorTelegramId, {
+      fullPreview: options?.fullPreview,
+    });
+    if (!ctx) return { courseId: null, students: [] };
+    courseId = ctx.courseId;
+    courseSlug = ctx.slug;
   }
-  if (!courseId) return { courseId: null, students: [] };
+
+  if (!options?.skipStaffCheck && !options?.fullPreview) {
+    const { staffHasCourseAccess } = await import('@/lib/bot/education/course-staff');
+    const [asCurator, asCheck] = await Promise.all([
+      staffHasCourseAccess(admin, curatorTelegramId, courseId, 'curator'),
+      staffHasCourseAccess(admin, curatorTelegramId, courseId, 'check'),
+    ]);
+    if (!asCurator && !asCheck) return { courseId, students: [] };
+  }
+
+  const content = await getDistrictCourseContent(courseSlug);
+  if (!content) return { courseId, students: [] };
 
   const studentIds = await listCourseStudentTelegramIds(admin, courseId);
   if (studentIds.length === 0) return { courseId, students: [] };
@@ -165,6 +171,27 @@ export async function loadCuratorCourseStudents(
   const enrolledAtMap = new Map<number, string>();
   for (const row of enrollmentDates ?? []) {
     enrolledAtMap.set(row.telegram_id as number, row.started_at as string);
+  }
+
+  const { data: packageRows } = await admin
+    .from('lesson_packages')
+    .select('telegram_id, remaining_lessons, course_id')
+    .in('telegram_id', studentIds)
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .gt('remaining_lessons', 0);
+
+  const remainingPaidByStudent = new Map<number, number>();
+  for (const id of studentIds) remainingPaidByStudent.set(id, 0);
+  for (const row of packageRows ?? []) {
+    const tg = row.telegram_id as number;
+    const pkgCourse = row.course_id as number | null;
+    if (pkgCourse != null && pkgCourse !== courseId) continue;
+    const prev = remainingPaidByStudent.get(tg) ?? 0;
+    remainingPaidByStudent.set(
+      tg,
+      prev + Math.max(0, (row.remaining_lessons as number) ?? 0),
+    );
   }
 
   const students: CuratorStudentView[] = [];
@@ -286,6 +313,7 @@ export async function loadCuratorCourseStudents(
       staleReviewDays,
       revisionIdle,
       stuckLessonLabel,
+      remainingPaidLessons: remainingPaidByStudent.get(telegramId) ?? 0,
     });
   }
 

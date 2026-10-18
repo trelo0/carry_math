@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CourseLessonContent, DistrictCourseContent } from '@/lib/studio/courseContent';
-import { flattenCourseLessons } from '@/lib/studio/courseContent';
+import { DISTRICT_COURSE_SLUG, flattenCourseLessons } from '@/lib/studio/courseContent';
 import { revokeAccess } from '@/lib/bot/accesses';
 import type { CourseLessonStudentProgress } from './course-progress';
 import { homeworkRequiredForLesson, isLessonProgressCompleted } from './lesson-progress-calc';
@@ -55,6 +55,78 @@ export function isCourseLessonCleared(
   });
 }
 
+export function isLegacyDistrictCourseSlug(courseSlug: string | null | undefined): boolean {
+  return courseSlug === DISTRICT_COURSE_SLUG || courseSlug === 'kurs-district';
+}
+
+/** Пакет course относится к курсу (course_id, legacy null для основного slug, совпадение title). */
+export function courseLessonPackageMatchesCourse(
+  pkgCourseId: number | null | undefined,
+  pkgTitle: string | null | undefined,
+  courseId: number,
+  courseSlug: string | null | undefined,
+  courseTitle?: string | null,
+): boolean {
+  if (pkgCourseId === courseId) return true;
+  if (pkgCourseId != null) return false;
+  if (isLegacyDistrictCourseSlug(courseSlug)) return true;
+  const pt = pkgTitle?.trim();
+  const ct = courseTitle?.trim();
+  if (pt && ct && pt === ct) return true;
+  return false;
+}
+
+/** Все id строк courses, относящихся к тому же курсу (slug / sanity_id). */
+export async function expandCourseIdAliases(
+  admin: SupabaseClient,
+  courseId: number,
+): Promise<number[]> {
+  const { data: row } = await admin
+    .from('courses')
+    .select('id, slug, sanity_id')
+    .eq('id', courseId)
+    .maybeSingle();
+  if (!row) return [courseId];
+  const sanityId = (row.sanity_id as string | null | undefined)?.trim();
+  if (sanityId) {
+    const { data: rows } = await admin.from('courses').select('id').eq('sanity_id', sanityId);
+    const ids = (rows ?? []).map((r) => r.id as number);
+    if (ids.length > 0) return ids;
+  }
+  const slug = (row.slug as string | null | undefined)?.trim();
+  if (slug) {
+    const { data: rows } = await admin.from('courses').select('id').eq('slug', slug);
+    const ids = (rows ?? []).map((r) => r.id as number);
+    if (ids.length > 0) return ids;
+  }
+  return [courseId];
+}
+
+export function coursePackageRowMatchesCourse(
+  pkgCourseId: number | null | undefined,
+  pkgTitle: string | null | undefined,
+  courseId: number,
+  courseSlug: string | null | undefined,
+  courseTitle: string | null | undefined,
+  aliasIds: ReadonlySet<number>,
+  slugByPkgCourseId: ReadonlyMap<number, string>,
+): boolean {
+  if (pkgCourseId != null) {
+    if (aliasIds.has(pkgCourseId)) return true;
+    const targetSlug = courseSlug?.trim();
+    const pkgSlug = slugByPkgCourseId.get(pkgCourseId)?.trim();
+    if (targetSlug && pkgSlug && targetSlug === pkgSlug) return true;
+    return false;
+  }
+  return courseLessonPackageMatchesCourse(
+    null,
+    pkgTitle,
+    courseId,
+    courseSlug,
+    courseTitle,
+  );
+}
+
 export function previousCourseLessonsCleared(
   lessons: CourseLessonContent[],
   index: number,
@@ -89,8 +161,8 @@ export async function studentHasCourseProductAccess(
 }
 
 /**
- * Только если в БД **нет ни одной** строки lesson_packages (product=course) — например админ удалил пакеты.
- * Нулевой remaining / status=completed **не** триггерит сброс: прогресс и доступ к пройденным занятиям сохраняются.
+ * Если нет оплаченной квоты (sum total_lessons по course-пакетам = 0) — сброс join_current / прогресса / access.
+ * Пустые или «обнулённые» строки lesson_packages сами по себе не блокируют сброс.
  */
 export async function resetCourseWhenNoPaidPackages(
   admin: SupabaseClient,
@@ -98,13 +170,8 @@ export async function resetCourseWhenNoPaidPackages(
   courseId: number,
   content?: DistrictCourseContent | null,
 ): Promise<boolean> {
-  const { count, error: countError } = await admin
-    .from('lesson_packages')
-    .select('id', { count: 'exact', head: true })
-    .eq('telegram_id', telegramId)
-    .eq('product', 'course');
-  if (countError) throw countError;
-  if ((count ?? 0) > 0) return false;
+  const entitlement = await sumCoursePackageLessonEntitlement(admin, telegramId, courseId);
+  if (entitlement > 0) return false;
 
   try {
     await revokeAccess(admin, telegramId, 'course');
@@ -134,15 +201,84 @@ export async function resetCourseWhenNoPaidPackages(
 export async function sumCoursePackageLessonEntitlement(
   admin: SupabaseClient,
   telegramId: number,
+  courseId?: number | null,
 ): Promise<number> {
   const { data, error } = await admin
     .from('lesson_packages')
-    .select('total_lessons, status')
+    .select('total_lessons, status, course_id, title')
     .eq('telegram_id', telegramId)
     .eq('product', 'course')
     .neq('status', 'cancelled');
   if (error) throw error;
-  return (data ?? []).reduce((sum, row) => sum + Math.max(0, row.total_lessons as number), 0);
+  const rows = data ?? [];
+  if (courseId == null) {
+    return rows.reduce((sum, row) => sum + Math.max(0, row.total_lessons as number), 0);
+  }
+
+  const { data: courseRow } = await admin
+    .from('courses')
+    .select('slug, title')
+    .eq('id', courseId)
+    .maybeSingle();
+  const slug = (courseRow?.slug as string | undefined)?.trim() ?? null;
+  const courseTitle = (courseRow?.title as string | undefined) ?? null;
+  const aliasIds = new Set(await expandCourseIdAliases(admin, courseId));
+  const pkgCourseIds = [
+    ...new Set(
+      rows
+        .map((row) => row.course_id as number | null)
+        .filter((id): id is number => id != null),
+    ),
+  ];
+  const slugByPkgCourseId = new Map<number, string>();
+  if (pkgCourseIds.length > 0) {
+    const { data: courseRows } = await admin
+      .from('courses')
+      .select('id, slug')
+      .in('id', pkgCourseIds);
+    for (const c of courseRows ?? []) {
+      if (c.id != null && c.slug) slugByPkgCourseId.set(c.id as number, c.slug as string);
+    }
+  }
+
+  return rows.reduce((sum, row) => {
+    const total = Math.max(0, row.total_lessons as number);
+    const pkgTitle = (row as { title?: string }).title;
+    if (
+      coursePackageRowMatchesCourse(
+        row.course_id as number | null,
+        pkgTitle,
+        courseId,
+        slug,
+        courseTitle,
+        aliasIds,
+        slugByPkgCourseId,
+      )
+    ) {
+      return sum + total;
+    }
+    return sum;
+  }, 0);
+}
+
+/** Есть оплаченный пакет / зачисление на конкретный курс. */
+export async function studentHasCourseAccessForCourse(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+): Promise<boolean> {
+  const aliasIds = await expandCourseIdAliases(admin, courseId);
+  const { data: enrollment } = await admin
+    .from('course_enrollments')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .in('course_id', aliasIds)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+  if (!enrollment) return false;
+  const entitlement = await sumCoursePackageLessonEntitlement(admin, telegramId, courseId);
+  return entitlement > 0;
 }
 
 /**
@@ -376,9 +512,51 @@ async function loadProgressMap(
   );
 }
 
+export type EnsureCurrentLessonUnlockedOptions = {
+  packageId?: number | null;
+  /** Списать 1 занятие из пакета при выдаче package-доступа (после одобрения ДЗ / завершения вебинара). */
+  consumePackageCredit?: boolean;
+};
+
+async function resolveActiveCoursePackageId(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  preferredPackageId?: number | null,
+): Promise<number | null> {
+  if (preferredPackageId) {
+    const { data: preferred } = await admin
+      .from('lesson_packages')
+      .select('id')
+      .eq('id', preferredPackageId)
+      .eq('telegram_id', telegramId)
+      .eq('product', 'course')
+      .eq('status', 'active')
+      .gt('remaining_lessons', 0)
+      .maybeSingle();
+    if (preferred?.id) return preferred.id as number;
+  }
+
+  const { data: pkg, error } = await admin
+    .from('lesson_packages')
+    .select('id, course_id, remaining_lessons')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .gt('remaining_lessons', 0)
+    .order('purchased_at', { ascending: true });
+  if (error) throw error;
+  const rows = pkg ?? [];
+  const forCourse = rows.filter((row) => {
+    const cid = row.course_id as number | null;
+    return cid == null || cid === courseId;
+  });
+  return (forCourse[0]?.id as number | undefined) ?? null;
+}
+
 /**
  * Открывает следующее занятие по порядку, если текущее ещё не доступно.
- * Кредиты пакета (remaining_lessons) списываются только при новом package-доступе.
+ * Кредиты пакета списываются только при consumePackageCredit (после одобрения ДЗ / завершения платного вебинара).
  * Возвращает 1 если открыли новый урок, 0 если уже был / нет кредита / курс пройден.
  */
 export async function ensureCurrentLessonUnlocked(
@@ -386,21 +564,23 @@ export async function ensureCurrentLessonUnlocked(
   telegramId: number,
   courseId: number,
   content: DistrictCourseContent | null | undefined,
-  packageId?: number | null,
+  options?: EnsureCurrentLessonUnlockedOptions | null,
 ): Promise<number> {
+  const packageId = options?.packageId ?? null;
+  const mayConsume = options?.consumePackageCredit ?? false;
   if (!content) return 0;
 
   const lives = await getEnrollmentLives(admin, telegramId, courseId);
   if (lives?.fully_blocked) return 0;
   if (lives?.access_blocked) return 0;
 
-  const published = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
+  const { buildPublishedLessonSequence } = await import('./active-module');
+  const published = buildPublishedLessonSequence(content);
   if (published.length === 0) return 0;
 
-  // Проверяем сценарий в course_enrollments
   const { data: enrollment } = await admin
     .from('course_enrollments')
-    .select('purchase_scenario, start_lesson_id')
+    .select('purchase_scenario, start_lesson_id, start_module_id')
     .eq('telegram_id', telegramId)
     .eq('course_id', courseId)
     .maybeSingle();
@@ -408,9 +588,21 @@ export async function ensureCurrentLessonUnlocked(
   const scenario = enrollment?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
   const startLessonId = enrollment?.start_lesson_id as number | null;
 
-  // Для join_current: выдаём свободный доступ к урокам до стартового
-  if (scenario === 'join_current' && startLessonId) {
-    await grantArchiveAccessBeforeStart(admin, telegramId, courseId, content, startLessonId);
+  if (scenario === 'join_current') {
+    if (startLessonId) {
+      await grantArchiveAccessBeforeStart(admin, telegramId, courseId, content, startLessonId);
+    } else {
+      const { resolveEnrollmentStartLessonSanityId } = await import('./course-enrollment-start');
+      const startSanityId = await resolveEnrollmentStartLessonSanityId(
+        admin,
+        courseId,
+        content,
+        enrollment,
+      );
+      if (startSanityId) {
+        await grantArchiveAccessBeforeSanityId(admin, telegramId, content, startSanityId);
+      }
+    }
   }
 
   const sanityIds = published.map((l) => l.sanityId);
@@ -428,38 +620,30 @@ export async function ensureCurrentLessonUnlocked(
     (accessRows ?? []).map((r) => [r.sanity_lesson_id as string, r.access_status as string]),
   );
 
-  // Для join_current: начинаем со стартового урока, игнорируя предыдущие
-  let startIndex = 0;
-  if (scenario === 'join_current' && startLessonId) {
-    // Находим sanity_id стартового урока в Supabase
-    const { data: startLessonRow } = await admin
-      .from('course_lessons')
-      .select('sanity_lesson_id')
-      .eq('id', startLessonId)
-      .maybeSingle();
-    
-    if (startLessonRow?.sanity_lesson_id) {
-      const startSanityId = startLessonRow.sanity_lesson_id as string;
-      const startLessonIndex = published.findIndex((l) => l.sanityId === startSanityId);
-      if (startLessonIndex >= 0) {
-        startIndex = startLessonIndex;
-      }
+  let gateStartIndex = 0;
+  if (scenario === 'join_current') {
+    const { loadJoinCurrentGateContext } = await import('./course-enrollment-start');
+    const joinGate = await loadJoinCurrentGateContext(admin, telegramId, courseId, content);
+    if (joinGate?.startValid) {
+      gateStartIndex = joinGate.gateStartIndex;
     }
   }
 
-  const gateStartIndex =
-    scenario === 'join_current' && startIndex > 0 ? startIndex : 0;
+  const hasCourseProduct = await studentHasCourseAccessForCourse(admin, telegramId, courseId);
 
   const current = published.find((lesson, index) => {
-    if (index < startIndex) return false; // Пропускаем уроки до стартового
+    if (index < gateStartIndex) return false;
     if (
       !previousCourseLessonsCleared(published, index, progressMap, {
         gateStartIndex,
+        hasCourseProduct,
       })
     ) {
       return false;
     }
-    return !isCourseLessonCleared(lesson, progressMap.get(lesson.sanityId));
+    return !isCourseLessonCleared(lesson, progressMap.get(lesson.sanityId), {
+      hasCourseProduct,
+    });
   });
   if (!current) return 0;
 
@@ -472,71 +656,55 @@ export async function ensureCurrentLessonUnlocked(
     return 1;
   }
 
+  if (!mayConsume) return 0;
+
   // Уже был доступ (legacy) — не списываем кредит повторно
   if (status === 'revoked') {
-    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', packageId);
+    const linked = await resolveActiveCoursePackageId(admin, telegramId, courseId, packageId);
+    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', linked);
     return 1;
   }
 
-  const consumedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId);
-  if (!consumedPackageId) {
-    // Нет оплаты / кредитов — следующее занятие остаётся закрытым
-    return 0;
-  }
-
-  await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', consumedPackageId);
+  const linkedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId);
+  if (!linkedPackageId) return 0;
 
   const { data: existingGrant } = await admin
     .from('package_lesson_grants')
     .select('package_id')
-    .eq('package_id', consumedPackageId)
+    .eq('package_id', linkedPackageId)
     .eq('sanity_lesson_id', current.sanityId)
     .maybeSingle();
   if (!existingGrant) {
     const { error: grantError } = await admin.from('package_lesson_grants').insert({
-      package_id: consumedPackageId,
+      package_id: linkedPackageId,
       sanity_lesson_id: current.sanityId,
       course_lesson_id: null,
     });
     if (grantError) throw grantError;
   }
+
+  await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', linkedPackageId);
   return 1;
 }
 
 /**
  * Выдаёт свободный доступ к урокам до стартового (для join_current).
- * Эти уроки доступны для просмотра без требования ДЗ и без запуска таймера.
+ * source=enrollment, без списания remaining_lessons и без package_lesson_grants.
  */
-export async function grantArchiveAccessBeforeStart(
+export async function grantArchiveAccessBeforeSanityId(
   admin: SupabaseClient,
   telegramId: number,
-  courseId: number,
   content: DistrictCourseContent,
-  startLessonId: number,
+  startSanityId: string,
 ): Promise<void> {
-  const allLessons = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
-  
-  // Находим sanity_id стартового урока
-  const { data: startLessonRow } = await admin
-    .from('course_lessons')
-    .select('sanity_lesson_id')
-    .eq('id', startLessonId)
-    .maybeSingle();
-  
-  if (!startLessonRow?.sanity_lesson_id) return;
-  
-  const startSanityId = startLessonRow.sanity_lesson_id as string;
+  const { buildPublishedLessonSequence } = await import('./active-module');
+  const allLessons = buildPublishedLessonSequence(content);
   const startIndex = allLessons.findIndex((l) => l.sanityId === startSanityId);
-  
-  if (startIndex <= 0) return; // Нечего выдавать
-  
-  // Выдаём доступ ко всем урокам до стартового
-  const archiveLessons = allLessons.slice(0, startIndex);
-  const archiveSanityIds = archiveLessons.map((l) => l.sanityId);
-  
+  if (startIndex <= 0) return;
+
+  const archiveSanityIds = allLessons.slice(0, startIndex).map((l) => l.sanityId);
   if (archiveSanityIds.length === 0) return;
-  
-  // Пакетная вставка для эффективности
+
   const now = new Date().toISOString();
   const inserts = archiveSanityIds.map((sanityId) => ({
     telegram_id: telegramId,
@@ -547,21 +715,43 @@ export async function grantArchiveAccessBeforeStart(
     package_id: null,
     granted_at: now,
   }));
-  
+
   const { error } = await admin
     .from('course_lesson_access')
     .upsert(inserts, { onConflict: 'telegram_id,sanity_lesson_id' });
-  
+
   if (error) {
-    // Fallback к поочерёдной вставке при ошибке
     for (const sanityId of archiveSanityIds) {
       try {
         await upsertSanityLessonAccess(admin, telegramId, sanityId, 'enrollment');
       } catch (err) {
-        console.error('[grantArchiveAccessBeforeStart] Failed to grant access to lesson:', sanityId, err);
+        console.error('[grantArchiveAccessBeforeSanityId] Failed:', sanityId, err);
       }
     }
   }
+}
+
+export async function grantArchiveAccessBeforeStart(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  content: DistrictCourseContent,
+  startLessonId: number,
+): Promise<void> {
+  const { data: startLessonRow } = await admin
+    .from('course_lessons')
+    .select('sanity_lesson_id')
+    .eq('id', startLessonId)
+    .maybeSingle();
+
+  if (!startLessonRow?.sanity_lesson_id) return;
+
+  await grantArchiveAccessBeforeSanityId(
+    admin,
+    telegramId,
+    content,
+    startLessonRow.sanity_lesson_id as string,
+  );
 }
 
 /** После оплаты join_current: архив + первое полноценное занятие (идемпотентно). */
@@ -583,12 +773,39 @@ export async function syncJoinCurrentEnrollmentAccess(
 
   if (enrollment?.purchase_scenario !== 'join_current') return;
 
-  const startLessonId = enrollment.start_lesson_id as number | null;
+  let startLessonId = enrollment.start_lesson_id as number | null;
+  if (!startLessonId) {
+    const { resolveJoinCurrentStartIds } = await import('./active-module');
+    const { resolveEnrollmentStartLessonSanityId } = await import('./course-enrollment-start');
+    const joinStart = await resolveJoinCurrentStartIds(admin, courseId, content);
+    if (joinStart.startLessonId || joinStart.startModuleId) {
+      await admin
+        .from('course_enrollments')
+        .update({
+          start_module_id: joinStart.startModuleId,
+          start_lesson_id: joinStart.startLessonId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('telegram_id', telegramId)
+        .eq('course_id', courseId);
+      startLessonId = joinStart.startLessonId;
+    } else {
+      const startSanityId = await resolveEnrollmentStartLessonSanityId(
+        admin,
+        courseId,
+        content,
+        enrollment,
+      );
+      if (startSanityId) {
+        await grantArchiveAccessBeforeSanityId(admin, telegramId, content, startSanityId);
+      }
+    }
+  }
+
   if (startLessonId) {
     await grantArchiveAccessBeforeStart(admin, telegramId, courseId, content, startLessonId);
   }
 
-  await ensureCurrentLessonUnlocked(admin, telegramId, courseId, content, packageId ?? null);
 }
 
 /** После одобрения ДЗ / прохождения урока без ДЗ — открыть следующее. */
@@ -598,7 +815,9 @@ export async function unlockNextCourseLessonAfterCleared(
   courseId: number,
   content?: DistrictCourseContent | null,
 ): Promise<number> {
-  return ensureCurrentLessonUnlocked(admin, telegramId, courseId, content ?? null, null);
+  return ensureCurrentLessonUnlocked(admin, telegramId, courseId, content ?? null, {
+    consumePackageCredit: true,
+  });
 }
 
 /** Полный доступ ко всем опубликованным — больше не открывает пачкой; только текущее. */
@@ -620,6 +839,30 @@ export async function grantAllPublishedCourseLessons(
 }
 
 /**
+ * После покупки / продления: пробное (если ещё нет) + одно «ожидающее» платное занятие.
+ * Списывает 1 кредит только если предыдущие закрыты, а следующее ещё без access
+ * (например ДЗ одобрили при remaining=0 — после пополнения пакета).
+ */
+export async function syncCourseAccessAfterPackagePurchase(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  packageId: number,
+  content?: DistrictCourseContent | null,
+): Promise<number> {
+  if (content) {
+    await grantEnrollmentTrialAccess(admin, telegramId, courseId, content);
+    const { ensureTrialHomeworkDeadlineIfEligible } = await import('./homework-deadline');
+    await ensureTrialHomeworkDeadlineIfEligible(admin, telegramId, content, courseId);
+    return ensureCurrentLessonUnlocked(admin, telegramId, courseId, content, {
+      packageId,
+      consumePackageCredit: false,
+    });
+  }
+  return grantPackageLessonAccess(admin, telegramId, courseId, packageId, 1, null);
+}
+
+/**
  * Покупка N занятий: кредиты уже в lesson_packages.remaining_lessons.
  * Открывает только текущее (если ещё не открыто) — не все N сразу.
  */
@@ -632,7 +875,7 @@ export async function grantPackageLessonAccess(
   content?: DistrictCourseContent | null,
 ): Promise<number> {
   if (content) {
-    return ensureCurrentLessonUnlocked(admin, telegramId, courseId, content, packageId);
+    return syncCourseAccessAfterPackagePurchase(admin, telegramId, courseId, packageId, content);
   }
 
   // Legacy Supabase-каталог: открыть один следующий урок
@@ -800,7 +1043,8 @@ export async function canStudentWatchSanityLesson(
     }
   }
 
-  const published = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
+  const { buildPublishedLessonSequence } = await import('./active-module');
+  const published = buildPublishedLessonSequence(content);
   const index = published.findIndex((l) => l.sanityId === sanityLessonId);
   if (index < 0) return { ok: false, reason: 'Занятие не найдено в программе.' };
 
@@ -892,19 +1136,6 @@ export async function canStudentWatchSanityLesson(
         ok: false,
         reason: 'Доступ к новым занятиям приостановлен: закончились жизни. Свяжитесь с куратором.',
       };
-    }
-    try {
-      await ensureCurrentLessonUnlocked(admin, telegramId, courseId, content);
-      const { data: refreshed } = await admin
-        .from('course_lesson_access')
-        .select('access_status')
-        .eq('telegram_id', telegramId)
-        .eq('sanity_lesson_id', lesson.sanityId)
-        .maybeSingle();
-      status = (refreshed?.access_status as string | null) ?? null;
-      if (status === 'available' || status === 'blocked_lives') return { ok: true };
-    } catch (unlockError) {
-      console.error('[canStudentWatch] ensure unlock failed:', unlockError);
     }
   }
 

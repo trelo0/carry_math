@@ -10,49 +10,38 @@ import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { loadStaffCapabilities } from './capabilities';
 import {
   COMBINED_STAFF_MENU_LABELS,
-  COMBINED_STAFF_MENU_LABEL_SET,
+  isStaffMenuLabel,
   resolveStaffBotMode,
-  staffReplyKeyboard,
+  staffGlobalReplyKeyboard,
+  STAFF_COURSE_MANAGEMENT_LABEL,
 } from './staff-menu';
-import {
-  renderCombinedCourseSchedule,
-  renderCombinedHomeworkHub,
-  renderCombinedLessonStudentsHub,
-  renderCombinedMessagesHub,
-  renderCombinedScheduleHub,
-  renderCombinedStudentsHub,
-} from './staff-combined-screens';
+import { renderCombinedLessonStudentsHub } from './staff-combined-screens';
 import { loadTeacherBotSnapshot } from './teacher-data';
 import {
   renderTeacherGroupList,
   renderTeacherIndividualList,
   renderTeacherScheduleHome,
+  renderTeacherStudentsHub,
 } from './teacher-screens';
 import { renderTeacherHomeworkHub, renderTeacherMessagesInbox } from './teacher-messages-screens';
-import { listTeacherThreads, listCuratorThreads } from './messaging';
-import { loadCuratorActivitySnapshot } from './curator-activity-data';
-import { renderCuratorActivityHome, renderCuratorCourseStudentsBotList } from './curator-activity-screens';
-import { renderCuratorHomeworkHub } from './curator-homework-screens';
-import { renderCuratorMessagesInbox } from './curator-messages-screens';
+import { listTeacherThreads } from './messaging';
 import {
-  COMBINED_CURATOR_COURSE_NAV,
-  COMBINED_CURATOR_HW_NAV,
-  COMBINED_CURATOR_MSG_NAV,
   COMBINED_LESSON_STUDENTS_NAV,
   COMBINED_SCHEDULE_NAV,
-  COMBINED_STUDENTS_NAV,
   COMBINED_TEACHER_HW_NAV,
   COMBINED_TEACHER_MSG_NAV,
 } from './staff-screen-nav';
-import { loadCuratorCourseStudents } from '@/lib/curator/students';
+import {
+  loadStaffMyCourseRows,
+  renderMyCourseListForFilter,
+  renderMyCourseListScreen,
+} from './staff-my-course';
 import { teacherCabinetScreen } from '@/lib/bot/teacher/teacherFlow';
 
 export const COMBINED_HOME_TEXT =
   '👋 Добро пожаловать в рабочий кабинет District!\n\n' +
-  '🎓 Курс — онлайн-курс (куратор)\n' +
-  '🏫 Занятия — индивидуальные и мини-группы (преподаватель)\n\n' +
-  'Расписание, ученики, ДЗ и сообщения разделены на эти два контекста.\n' +
-  '«Курс и прогресс» — отдельный обзор курса.\n\n' +
+  '🏫 Расписание, ученики, ДЗ и сообщения — ваши занятия как преподавателя.\n' +
+  `🎓 «${STAFF_COURSE_MANAGEMENT_LABEL.slice(2)}» — онлайн-курсы по назначениям (куратор или проверка ДЗ).\n\n` +
   'Выберите раздел:';
 
 async function combinedCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
@@ -70,14 +59,19 @@ export async function sendCombinedStaffStart(
   testFooter = '',
 ): Promise<void> {
   const caps = await loadStaffCapabilities(admin, telegramId);
+  const mode = resolveStaffBotMode(caps);
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: COMBINED_HOME_TEXT + testFooter,
-    reply_markup: staffReplyKeyboard(caps),
+    reply_markup: staffGlobalReplyKeyboard(caps),
   });
+  if (mode === 'course_staff_only') {
+    const { tryAutoEnterSingleCourseWorkspace } = await import('./staff-course-hub-flow');
+    await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
+  }
 }
 
-/** true, если отправлено combined/ staff start (не вызывать teacher/curator start). */
+/** true, если отправлен staff start (не вызывать отдельный teacher/curator start). */
 export async function sendStaffStart(
   admin: SupabaseClient,
   chatId: number,
@@ -85,9 +79,23 @@ export async function sendStaffStart(
   testFooter = '',
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
-  if (resolveStaffBotMode(caps) !== 'combined') return false;
-  await sendCombinedStaffStart(admin, chatId, telegramId, testFooter);
-  return true;
+  const mode = resolveStaffBotMode(caps);
+  if (!mode || mode === 'teacher_only') return false;
+  if (mode === 'combined' || mode === 'course_staff_only') {
+    await sendCombinedStaffStart(admin, chatId, telegramId, testFooter);
+    return true;
+  }
+  if (mode === 'check_only') {
+    const { sendCheckStart } = await import('@/lib/bot/check/check-flow');
+    await sendCheckStart(admin, chatId, telegramId, testFooter);
+    return true;
+  }
+  if (mode === 'curator_only') {
+    const { sendCuratorStart } = await import('@/lib/bot/curator/curatorFlow');
+    await sendCuratorStart(admin, chatId, telegramId, testFooter);
+    return true;
+  }
+  return false;
 }
 
 export async function handleCombinedStaffMessage(
@@ -97,8 +105,9 @@ export async function handleCombinedStaffMessage(
   text: string,
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
-  if (resolveStaffBotMode(caps) !== 'combined') return false;
-  if (!COMBINED_STAFF_MENU_LABEL_SET.has(text)) return false;
+  const mode = resolveStaffBotMode(caps);
+  if (mode !== 'combined' && mode !== 'course_staff_only') return false;
+  if (!isStaffMenuLabel(text, caps)) return false;
 
   const cabinetUrl = await combinedCabinetUrl(admin, telegramId);
 
@@ -107,30 +116,35 @@ export async function handleCombinedStaffMessage(
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
+  if (mode === 'course_staff_only' && text !== COMBINED_STAFF_MENU_LABELS.myCourse && text !== COMBINED_STAFF_MENU_LABELS.cabinet) {
+    return false;
+  }
   if (text === COMBINED_STAFF_MENU_LABELS.schedule) {
-    const screen = renderCombinedScheduleHub(cabinetUrl);
+    const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+    const screen = renderTeacherScheduleHome(snapshot, COMBINED_SCHEDULE_NAV);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
   if (text === COMBINED_STAFF_MENU_LABELS.students) {
-    const screen = renderCombinedStudentsHub(cabinetUrl);
+    const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+    const screen = renderTeacherStudentsHub(snapshot);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
   if (text === COMBINED_STAFF_MENU_LABELS.homework) {
-    const screen = renderCombinedHomeworkHub(cabinetUrl);
+    const screen = renderTeacherHomeworkHub(cabinetUrl, COMBINED_TEACHER_HW_NAV);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
   if (text === COMBINED_STAFF_MENU_LABELS.messages) {
-    const screen = renderCombinedMessagesHub(cabinetUrl);
+    const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
+    const screen = renderTeacherMessagesInbox(threads, storageEnabled, cabinetUrl, COMBINED_TEACHER_MSG_NAV);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
-  if (text === COMBINED_STAFF_MENU_LABELS.course) {
-    const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
-    const screen = renderCuratorActivityHome(snapshot, cabinetUrl, COMBINED_CURATOR_COURSE_NAV);
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+  if (text === COMBINED_STAFF_MENU_LABELS.myCourse || text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
+    const { sendStaffCourseManagementList } = await import('./staff-course-hub-flow');
+    await sendStaffCourseManagementList(admin, chatId, telegramId);
     return true;
   }
   return false;
@@ -150,7 +164,8 @@ export async function handleCombinedStaffCallback(
 ): Promise<boolean> {
   if (!data.startsWith('s:')) return false;
   const caps = await loadStaffCapabilities(admin, telegramId);
-  if (resolveStaffBotMode(caps) !== 'combined') return false;
+  const mode = resolveStaffBotMode(caps);
+  if (mode !== 'combined' && mode !== 'course_staff_only') return false;
 
   const message: AdminMessage = { chatId, messageId };
   const parts = data.split(':');
@@ -166,33 +181,25 @@ export async function handleCombinedStaffCallback(
     }
     case 'sch': {
       if (sub === 'c') {
-        const snapshot = await loadCuratorActivitySnapshot(admin, telegramId);
-        const screen = renderCombinedCourseSchedule(
-          snapshot.lastLine,
-          snapshot.nextLine,
-          snapshot.nextSanityId,
-          cabinetUrl,
-        );
+        const rows = await loadStaffMyCourseRows(admin, telegramId);
+        const screen = renderMyCourseListForFilter(rows, 'curator-tools');
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
-      if (sub === 't') {
+      if (sub === 't' || !sub) {
         const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
         const screen = renderTeacherScheduleHome(snapshot, COMBINED_SCHEDULE_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
-      const hub = renderCombinedScheduleHub(cabinetUrl);
-      await editCombinedScreen(message, hub.text, hub.keyboard);
-      handled = true;
       break;
     }
     case 'stu': {
       if (sub === 'c') {
-        const { students } = await loadCuratorCourseStudents(admin, telegramId);
-        const screen = renderCuratorCourseStudentsBotList(students, COMBINED_STUDENTS_NAV);
+        const rows = await loadStaffMyCourseRows(admin, telegramId);
+        const screen = renderMyCourseListForFilter(rows, 'curator-tools');
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
@@ -217,47 +224,45 @@ export async function handleCombinedStaffCallback(
         handled = true;
         break;
       }
-      const hub = renderCombinedStudentsHub(cabinetUrl);
-      await editCombinedScreen(message, hub.text, hub.keyboard);
-      handled = true;
+      {
+        const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
+        const screen = renderTeacherStudentsHub(snapshot);
+        await editCombinedScreen(message, screen.text, screen.keyboard);
+        handled = true;
+      }
       break;
     }
     case 'hw': {
-      if (sub === 't') {
+      if (sub === 'c') {
+        const rows = await loadStaffMyCourseRows(admin, telegramId);
+        const screen = renderMyCourseListForFilter(rows, 'homework');
+        await editCombinedScreen(message, screen.text, screen.keyboard);
+        handled = true;
+        break;
+      }
+      if (sub === 't' || !sub) {
         const screen = renderTeacherHomeworkHub(cabinetUrl, COMBINED_TEACHER_HW_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
+      break;
+    }
+    case 'msg': {
       if (sub === 'c') {
-        const screen = renderCuratorHomeworkHub(cabinetUrl, COMBINED_CURATOR_HW_NAV);
+        const rows = await loadStaffMyCourseRows(admin, telegramId);
+        const screen = renderMyCourseListForFilter(rows, 'curator-tools');
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
-      const hub = renderCombinedHomeworkHub(cabinetUrl);
-      await editCombinedScreen(message, hub.text, hub.keyboard);
-      handled = true;
-      break;
-    }
-    case 'msg': {
-      if (sub === 't') {
+      if (sub === 't' || !sub) {
         const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
         const screen = renderTeacherMessagesInbox(threads, storageEnabled, cabinetUrl, COMBINED_TEACHER_MSG_NAV);
         await editCombinedScreen(message, screen.text, screen.keyboard);
         handled = true;
         break;
       }
-      if (sub === 'c') {
-        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
-        const screen = renderCuratorMessagesInbox(threads, storageEnabled, cabinetUrl, COMBINED_CURATOR_MSG_NAV);
-        await editCombinedScreen(message, screen.text, screen.keyboard);
-        handled = true;
-        break;
-      }
-      const hub = renderCombinedMessagesHub(cabinetUrl);
-      await editCombinedScreen(message, hub.text, hub.keyboard);
-      handled = true;
       break;
     }
     default:

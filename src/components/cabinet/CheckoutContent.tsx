@@ -5,14 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PurchaseScenarioModal from './PurchaseScenarioModal';
 import CheckoutPayButton from './CheckoutPayButton';
-import type { CoursePaymentOffer } from '@/lib/studio/courseContent';
-
-function payUrl(courseSlug: string, scenario?: 'start_from_beginning' | 'join_current'): string {
-  const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  if (!username) return 'mailto:district.school.210@gmail.com';
-  const slug = scenario ? `${courseSlug}:${scenario}` : courseSlug;
-  return `https://t.me/${username}?start=pay_course_s_${slug}`;
-}
+import type { CoursePaymentOffer, PurchaseScenarios } from '@/lib/studio/courseContent';
 
 function pluralLessons(n: number): string {
   const mod10 = n % 10;
@@ -25,27 +18,26 @@ function pluralLessons(n: number): string {
 interface CheckoutContentProps {
   offer: CoursePaymentOffer;
   courseSlug: string;
-  purchaseScenarios: { startFromBeginning: any; joinCurrent: any } | null;
+  purchaseScenarios: PurchaseScenarios | null;
 }
 
 export default function CheckoutContent({ offer, courseSlug, purchaseScenarios }: CheckoutContentProps) {
   const router = useRouter();
-  const [showModal, setShowModal] = useState(Boolean(purchaseScenarios));
+  const [showModal, setShowModal] = useState(true);
+  const payMode = purchaseScenarios ? 'first' : 'direct';
 
   const handlePayClick = () => {
-    if (purchaseScenarios) {
-      setShowModal(true);
-    } else {
-      window.location.href = payUrl(courseSlug);
-    }
+    setShowModal(true);
   };
 
-  if (purchaseScenarios && showModal) {
+  if (showModal) {
     return (
       <PurchaseScenarioModal
         scenarios={purchaseScenarios}
+        mode={payMode}
         priceByn={offer.priceByn}
         courseSlug={courseSlug}
+        grantedLessons={offer.grantedLessons}
         onClose={() => {
           setShowModal(false);
           router.push('/cabinet?section=payments');
@@ -72,17 +64,9 @@ export default function CheckoutContent({ offer, courseSlug, purchaseScenarios }
         </p>
         <CheckoutPayButton href="#" onClick={handlePayClick} />
         <p className="cab-checkout-note">
-          Оформление заявки проходит через Telegram-бот школы. Администратор свяжется с вами для
-          подтверждения оплаты.
+          Оплата проходит на защищённой странице bePaid. После успешного платежа пакет занятий
+          появится в кабинете автоматически.
         </p>
-        {showModal && purchaseScenarios && (
-          <PurchaseScenarioModal
-            scenarios={purchaseScenarios}
-            priceByn={offer.priceByn}
-            courseSlug={courseSlug}
-            onClose={() => setShowModal(false)}
-          />
-        )}
       </main>
     </div>
   );

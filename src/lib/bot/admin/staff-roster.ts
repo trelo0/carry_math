@@ -11,7 +11,7 @@ import type { MemberRow } from '@/lib/bot/roles';
 
 export type StaffMemberRow = MemberRow & { extra_roles?: string[] | null };
 
-const STAFF_PRIMARY = ['teacher', 'curator', 'mentor', 'admin'] as const;
+const STAFF_PRIMARY = ['staff', 'teacher', 'curator', 'mentor', 'admin', 'check'] as const;
 
 export function memberRolesSummary(primary: string, extraRoles: string[] | null | undefined): string {
   const roles = combineMemberRoles(primary, extraRoles ?? []);
@@ -21,35 +21,45 @@ export function memberRolesSummary(primary: string, extraRoles: string[] | null 
 
 export function isStaffMember(primary: string, extraRoles: string[] | null | undefined): boolean {
   const roles = combineMemberRoles(primary, extraRoles ?? []);
-  return roles.some((r) => r === 'teacher' || r === 'curator' || r === 'admin');
+  return roles.some(
+    (r) => r === 'staff' || r === 'teacher' || r === 'curator' || r === 'check' || r === 'admin',
+  );
 }
 
 export async function memberCanActAsKind(
   admin: SupabaseClient,
   telegramId: number,
-  kind: 'teacher' | 'curator',
+  kind: 'teacher' | 'curator' | 'check',
 ): Promise<boolean> {
   const roles = await loadMemberRoles(admin, telegramId);
   if (kind === 'teacher') return memberHasRole(roles, 'teacher');
-  return memberHasRole(roles, 'curator');
+  return (
+    memberHasRole(roles, 'staff') ||
+    memberHasRole(roles, 'teacher') ||
+    memberHasRole(roles, 'admin') ||
+    memberHasRole(roles, 'curator') ||
+    memberHasRole(roles, 'check')
+  );
 }
 
 /** Все, кто может быть наставником (primary + extra_roles). */
 export async function listMentorPickerCandidates(
   admin: SupabaseClient,
-  kind: 'teacher' | 'curator',
+  kind: 'teacher' | 'curator' | 'check',
 ): Promise<Array<{ telegram_id: number; full_name: string | null; rolesLine: string }>> {
   const { data, error } = await admin
     .from('bot_members')
     .select('telegram_id, full_name, role, extra_roles')
-    .or('role.in.(teacher,curator,mentor,admin),extra_roles.ov.{teacher},extra_roles.ov.{curator}')
+    .or(
+      'role.in.(staff,teacher,curator,mentor,admin,check),extra_roles.ov.{teacher},extra_roles.ov.{curator},extra_roles.ov.{check}',
+    )
     .order('full_name', { ascending: true })
     .limit(200);
   if (error) {
     const fallback = await admin
       .from('bot_members')
       .select('telegram_id, full_name, role, extra_roles')
-      .in('role', ['teacher', 'curator', 'mentor', 'admin'])
+      .in('role', ['staff', 'teacher', 'curator', 'mentor', 'admin', 'check'])
       .limit(200);
     if (fallback.error) throw fallback.error;
     return filterMentorCandidates((fallback.data ?? []) as StaffMemberRow[], kind);
@@ -59,7 +69,7 @@ export async function listMentorPickerCandidates(
 
 function filterMentorCandidates(
   rows: StaffMemberRow[],
-  kind: 'teacher' | 'curator',
+  kind: 'teacher' | 'curator' | 'check',
 ): Array<{ telegram_id: number; full_name: string | null; rolesLine: string }> {
   const out: Array<{ telegram_id: number; full_name: string | null; rolesLine: string }> = [];
   for (const row of rows) {
@@ -67,7 +77,11 @@ function filterMentorCandidates(
     const ok =
       kind === 'teacher'
         ? memberHasRole(roles, 'teacher')
-        : memberHasRole(roles, 'curator');
+        : memberHasRole(roles, 'staff') ||
+          memberHasRole(roles, 'teacher') ||
+          memberHasRole(roles, 'admin') ||
+          memberHasRole(roles, 'curator') ||
+          memberHasRole(roles, 'check');
     if (!ok) continue;
     out.push({
       telegram_id: row.telegram_id,
@@ -109,7 +123,7 @@ export async function listStaffMembers(
   const { data, error } = await admin
     .from('bot_members')
     .select('telegram_id, role, phone, full_name, chat_id, extra_roles')
-    .or('role.in.(teacher,curator,mentor,admin),extra_roles.ov.{teacher},extra_roles.ov.{curator}')
+    .or('role.in.(staff,teacher,curator,mentor,admin,check),extra_roles.ov.{teacher},extra_roles.ov.{curator}')
     .order('full_name', { ascending: true })
     .limit(400);
   if (error) {
@@ -164,7 +178,7 @@ export async function loadStaffStats(
   };
 }
 
-export const EXTRA_ASSIGNABLE: BotRole[] = ['student', 'teacher', 'curator'];
+export const EXTRA_ASSIGNABLE: BotRole[] = ['student', 'teacher'];
 
 export async function getMemberWithExtras(
   admin: SupabaseClient,

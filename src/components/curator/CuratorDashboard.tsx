@@ -148,7 +148,8 @@ export default function CuratorDashboard({
                   <div>
                     <strong>{s.name}</strong>
                     <p className="curator-muted">
-                      Прогресс {s.progressPercent}% · ❤️ {s.livesCurrent ?? '—'}/{s.livesMax ?? '—'}
+                      Прогресс {s.progressPercent}% · оплачено {s.remainingPaidLessons} · ❤️{' '}
+                      {s.livesCurrent ?? '—'}/{s.livesMax ?? '—'}
                     </p>
                   </div>
                 </li>

@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CabinetCourseStop } from '@/lib/cabinet';
+import { courseSlugFromLessonLocation, markCourseMapStale } from '@/lib/cabinet-course-cache';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { extractYoutubeVideoId } from '@/lib/youtube';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
 import YoutubeLiveChat from '@/components/cabinet/YoutubeLiveChat';
-import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
-
 type LessonFile = {
   title: string;
   fileName: string | null;
@@ -55,8 +54,10 @@ function LessonFileList({ files }: { files: LessonFile[] }) {
         return (
           <li key={`${name}-${f.url ?? 'locked'}`} className="cab-lespage-file">
             <Icon d={ICONS.file} className="cab-lespage-file-ico" />
-            <span className="cab-lespage-file-name">{name}</span>
-            {f.fileSize && <em>{f.fileSize}</em>}
+            <span className="cab-lespage-file-meta">
+              <span className="cab-lespage-file-name">{name}</span>
+              {f.fileSize ? <em>{f.fileSize}</em> : null}
+            </span>
             {f.url ? (
               <a
                 href={f.url}
@@ -191,7 +192,12 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
         `/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}`,
         { method: 'POST' },
       );
-      if (!res.ok) watchedRef.current = false;
+      if (!res.ok) {
+        watchedRef.current = false;
+        return;
+      }
+      const courseSlug = courseSlugFromLessonLocation();
+      if (courseSlug) markCourseMapStale(courseSlug);
     } catch {
       watchedRef.current = false;
     }
@@ -234,22 +240,17 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
 
       <section className="cab-lespage-materials">
         <h2>Материалы к занятию</h2>
-        <LessonFileList files={stop.materials} />
+        <div className="cab-lespage-panel-scroll">
+          <LessonFileList files={stop.materials} />
+        </div>
       </section>
 
       {showHomework ? (
         <section className="cab-lespage-homework">
-          <div className="cab-lespage-homework-head">
-            <h2>Домашнее задание</h2>
-            <HomeworkDeadlineBadge
-              homeworkStatus={stop.homeworkStatus}
-              homeworkDeadlineAt={stop.homeworkDeadlineAt}
-              homeworkRemainingMs={stop.homeworkRemainingMs}
-              homeworkOverdueAt={stop.homeworkOverdueAt}
-              placement="inline"
-            />
+          <h2>Домашнее задание</h2>
+          <div className="cab-lespage-panel-scroll">
+            <LessonFileList files={stop.homeworkFiles} />
           </div>
-          <LessonFileList files={stop.homeworkFiles} />
         </section>
       ) : stop.isTrialFree ? (
         <section className="cab-lespage-homework cab-lespage-homework--trial">

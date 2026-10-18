@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { getCourseLessonDetail } from '@/lib/curator/lesson-detail';
 import { syncSessionAfterScheduleSave } from '@/lib/curator/lesson-session';
@@ -9,13 +10,14 @@ import { patchCourseLesson, type LessonPatchFields } from '@/lib/studio/courseCo
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
 export async function GET(_request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { sanityLessonId } = await params;
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
     const detail = await getCourseLessonDetail(
       auth.admin,
       auth.telegramId,
@@ -39,7 +41,7 @@ type Body = {
 };
 
 export async function PATCH(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -65,6 +67,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (body.lessonDate !== undefined) fields.lessonDate = body.lessonDate?.trim() || null;
 
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
     await patchCourseLesson(sanityLessonId, fields);
 
     const effectiveScheduledAt =

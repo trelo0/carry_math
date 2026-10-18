@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { getCuratorAuth } from '@/lib/cabinet-auth';
+import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
+import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
 import { CABINET_UPLOAD_MAX_BYTES, cabinetUploadTooLargeMessage } from '@/lib/api/read-error';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import {
@@ -18,7 +19,7 @@ function parseField(value: string | null): LessonContentField | null {
 }
 
 export async function POST(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -38,6 +39,7 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
     const buffer = Buffer.from(await file.arrayBuffer());
     await uploadCourseLessonFile(sanityLessonId, field, buffer, file.name);
     revalidatePath('/cabinet');
@@ -50,7 +52,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 }
 
 export async function PATCH(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -70,6 +72,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
     await setCourseLessonFilePublished(sanityLessonId, field, index, body.published);
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');
@@ -81,7 +84,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 }
 
 export async function DELETE(request: Request, { params }: RouteParams) {
-  const auth = await getCuratorAuth();
+  const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -96,6 +99,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
   }
 
   try {
+    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
     await deleteCourseLessonFile(sanityLessonId, field, index);
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');

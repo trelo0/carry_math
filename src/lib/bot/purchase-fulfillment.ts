@@ -207,6 +207,7 @@ export async function fulfillPurchase(
         input.product,
         existing.packageId,
         input.externalId,
+        { courseId: input.courseId },
       );
       return {
         packageId: existing.packageId,
@@ -241,36 +242,17 @@ export async function fulfillPurchase(
 
       // Обработка сценария покупки
       if (input.scenario === 'join_current' && resolvedCourseId) {
-        const { determineActiveModule, findFirstLessonInModule } = await import('@/lib/bot/education/active-module');
-        const activeModuleResult = await determineActiveModule(admin, courseContent);
-
-        if (activeModuleResult.module) {
-          // Находим Supabase ID модуля
-          const { data: moduleRow } = await admin
-            .from('course_modules')
-            .select('id')
-            .eq('course_id', resolvedCourseId)
-            .eq('sort_order', activeModuleResult.module.sortOrder)
-            .maybeSingle();
-
-          if (moduleRow?.id) {
-            startModuleId = moduleRow.id as number;
-
-            // Находим первое занятие модуля
-            const firstLessonSanityId = findFirstLessonInModule(activeModuleResult.module);
-            if (firstLessonSanityId) {
-              const { data: lessonRow } = await admin
-                .from('course_lessons')
-                .select('id')
-                .eq('course_id', resolvedCourseId)
-                .eq('sanity_lesson_id', firstLessonSanityId)
-                .maybeSingle();
-
-              if (lessonRow?.id) {
-                startLessonId = lessonRow.id as number;
-              }
-            }
-          }
+        const { resolveJoinCurrentStartIds } = await import('@/lib/bot/education/active-module');
+        const joinStart = await resolveJoinCurrentStartIds(admin, resolvedCourseId, courseContent);
+        startModuleId = joinStart.startModuleId;
+        startLessonId = joinStart.startLessonId;
+        if (!joinStart.startLessonSanityId) {
+          console.warn('[purchase-fulfillment] join_current: active module / first lesson not resolved');
+        } else if (!startLessonId) {
+          console.warn(
+            '[purchase-fulfillment] join_current: course_lessons row missing for',
+            joinStart.startLessonSanityId,
+          );
         }
       } else if (input.scenario === 'start_from_beginning' && resolvedCourseId) {
         // Первое занятие после пробного
@@ -374,6 +356,7 @@ export async function fulfillPurchase(
     input.product,
     packageId,
     input.externalId,
+    { courseId: resolvedCourseId },
   );
 
   return {

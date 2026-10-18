@@ -265,7 +265,7 @@ export async function submitLessonHomework(
   return row;
 }
 
-export type HomeworkReviewerRole = 'teacher' | 'admin' | 'curator';
+export type HomeworkReviewerRole = 'teacher' | 'admin' | 'curator' | 'check';
 
 function isVersionsTableError(error: unknown): boolean {
   const message = String((error as { message?: string })?.message ?? error);

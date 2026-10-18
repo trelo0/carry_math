@@ -60,10 +60,23 @@ export type CuratorDashboard = {
   liveLessons: CuratorLessonView[];
 };
 
+export type CuratorCourseListItem = {
+  courseId: number;
+  slug: string;
+  title: string;
+  studentCount: number;
+  lessonCount: number;
+  role: 'curator' | 'check';
+};
+
 export type CuratorCabinetData = {
   curatorName: string | null;
   courseTitle: string;
+  courseSlug: string | null;
   courseId: number | null;
+  /** Роль на активном courseId (из course_staff_assignments). */
+  activeCourseRole: 'curator' | 'check' | null;
+  assignedCourses: CuratorCourseListItem[];
   sanityWriteEnabled: boolean;
   dashboard: CuratorDashboard;
   lessons: CuratorLessonView[];
@@ -155,9 +168,32 @@ export async function getCuratorCabinetData(
   admin: SupabaseClient,
   curatorTelegramId: number,
   curatorName: string | null,
+  options?: {
+    courseId?: number | null;
+    courseSlug?: string | null;
+    courseRole?: 'curator' | 'check' | null;
+    fullPreview?: boolean;
+  },
 ): Promise<CuratorCabinetData> {
-  const content = await getDistrictCourseContent();
-  const courseTitle = content?.title ?? 'Курс District';
+  const { listStaffCourseAssignmentOptions, resolveStaffCourseContext } = await import(
+    '@/lib/curator/course-context'
+  );
+  const courseOptions = await listStaffCourseAssignmentOptions(admin, curatorTelegramId, {
+    fullPreview: options?.fullPreview,
+  });
+  const activeCourse = await resolveStaffCourseContext(admin, curatorTelegramId, {
+    courseId: options?.courseId,
+    courseSlug: options?.courseSlug,
+    courseRole: options?.courseRole,
+    fullPreview: options?.fullPreview,
+  });
+  const activeCourseRole = activeCourse?.role ?? null;
+
+  const content = activeCourse
+    ? await getDistrictCourseContent(activeCourse.slug)
+    : await getDistrictCourseContent();
+  const courseTitle = content?.title ?? activeCourse?.title ?? 'Курс District';
+  const courseSlug = activeCourse?.slug ?? content?.slug ?? null;
 
   const lessons: CuratorLessonView[] = [];
   const modules: CuratorCabinetData['modules'] = [];
@@ -198,7 +234,40 @@ export async function getCuratorCabinetData(
     lessons.sort((a, b) => a.lessonNumber - b.lessonNumber);
   }
 
-  const { courseId, students } = await loadCuratorCourseStudents(admin, curatorTelegramId);
+  const courseId = activeCourse?.courseId ?? null;
+  const { students } =
+    courseId && courseSlug
+      ? await loadCuratorCourseStudents(admin, curatorTelegramId, {
+          courseId,
+          courseSlug,
+          skipStaffCheck: options?.fullPreview,
+        })
+      : { students: [] as CuratorStudentView[] };
+
+  const assignedCourses: CuratorCourseListItem[] = [];
+  for (const pick of courseOptions) {
+    const summaryContent = await getDistrictCourseContent(pick.slug).catch(() => null);
+    const lessonCount = summaryContent
+      ? summaryContent.modules.reduce(
+          (n, m) => n + m.lessons.filter((l) => l.publicationStatus !== 'archived').length,
+          0,
+        )
+      : 0;
+    const { students: pickStudents } = await loadCuratorCourseStudents(admin, curatorTelegramId, {
+      courseId: pick.courseId,
+      courseSlug: pick.slug,
+      skipStaffCheck: options?.fullPreview,
+    });
+    assignedCourses.push({
+      courseId: pick.courseId,
+      slug: pick.slug,
+      title: pick.title,
+      studentCount: pickStudents.length,
+      lessonCount,
+      role: pick.role,
+    });
+  }
+
   const hwSummary = summarizeHomework(students);
   const homeworkBoard = buildHomeworkBoard(students, content);
   const liveLessons = lessons.filter((l) => l.sessionStatus === 'live');
@@ -209,7 +278,10 @@ export async function getCuratorCabinetData(
   return {
     curatorName,
     courseTitle,
+    courseSlug,
     courseId,
+    activeCourseRole,
+    assignedCourses,
     sanityWriteEnabled: Boolean(process.env.SANITY_API_WRITE_TOKEN),
     dashboard: {
       studentCount: students.length,
