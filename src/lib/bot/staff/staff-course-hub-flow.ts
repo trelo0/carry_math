@@ -139,6 +139,7 @@ export async function handleStaffWorkspaceMenuMessage(
     const { sendCheckSectionForCourse } = await import('@/lib/bot/check/check-flow');
     const { CHECK_BOT_MENU_LABELS } = await import('./staff-menu');
     const sectionMap = {
+      [CHECK_BOT_MENU_LABELS.home]: 'home' as const,
       [CHECK_BOT_MENU_LABELS.homework]: 'hw' as const,
       [CHECK_BOT_MENU_LABELS.students]: 'stu' as const,
       [CHECK_BOT_MENU_LABELS.messages]: 'msg' as const,

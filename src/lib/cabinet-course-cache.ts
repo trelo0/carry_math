@@ -2,6 +2,7 @@ import type { CabinetCourseViewSlice } from '@/lib/cabinet';
 
 const KEY_PREFIX = 'cabinet:course-slice:';
 const STALE_PREFIX = 'cabinet:map-stale:';
+const LAST_STOP_PREFIX = 'cabinet:last-stop:';
 /** Не refetch карты при возврате с урока, если кеш свежее. */
 export const CABINET_COURSE_SLICE_TTL_MS = 30 * 60_000;
 
@@ -84,4 +85,25 @@ export function clearCourseMapStale(slug: string): void {
 export function courseSlugFromLessonLocation(): string {
   if (typeof window === 'undefined') return '';
   return new URLSearchParams(window.location.search).get('course')?.trim() ?? '';
+}
+
+export function readLastSelectedStop(slug: string): number | null {
+  if (typeof window === 'undefined' || !slug) return null;
+  try {
+    const raw = sessionStorage.getItem(LAST_STOP_PREFIX + slug);
+    if (!raw) return null;
+    const id = Number(raw);
+    return Number.isFinite(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastSelectedStop(slug: string, stopId: number): void {
+  if (typeof window === 'undefined' || !slug) return;
+  try {
+    sessionStorage.setItem(LAST_STOP_PREFIX + slug, String(stopId));
+  } catch {
+    // quota / private mode
+  }
 }

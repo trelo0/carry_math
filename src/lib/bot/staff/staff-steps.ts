@@ -6,6 +6,8 @@ export const STAFF_CHECK_REPLY_STEP = 'staff:check:reply';
 export const CHECK_REJECT_TEXT_STEP = 'check:reject-text';
 export const CHECK_REJECT_VOICE_STEP = 'check:reject-voice';
 export const CHECK_REJECT_PHOTO_STEP = 'check:reject-photo';
+export const CHECK_REJECT_COMMENT_STEP = 'check:reject-comment';
+export const CHECK_REJECT_CONFIRM_STEP = 'check:reject-confirm';
 export const CHECK_HW_COMMENT_STEP = 'check:hw:comment';
 export const CHECK_STU_SEARCH_STEP = 'check:stu:search';
 

@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CabinetCourseStop } from '@/lib/cabinet';
-import { courseSlugFromLessonLocation, markCourseMapStale } from '@/lib/cabinet-course-cache';
+import {
+  courseSlugFromLessonLocation,
+  markCourseMapStale,
+  writeLastSelectedStop,
+} from '@/lib/cabinet-course-cache';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
 import { extractYoutubeVideoId } from '@/lib/youtube';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
@@ -140,8 +144,11 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
 
   useEffect(() => {
     const courseSlug = courseSlugFromLessonLocation();
-    if (courseSlug) markCourseMapStale(courseSlug);
-  }, []);
+    if (courseSlug) {
+      markCourseMapStale(courseSlug);
+      writeLastSelectedStop(courseSlug, stop.id);
+    }
+  }, [stop.id]);
 
   const chips =
     stop.contentChips?.filter(Boolean).length ? stop.contentChips.filter(Boolean) : DEFAULT_LESSON_CONTENT_CHIPS;

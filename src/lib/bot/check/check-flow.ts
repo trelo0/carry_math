@@ -8,11 +8,7 @@ import {
   type AdminMessage,
 } from '@/lib/bot/admin/core';
 import { loadStaffCapabilities } from '@/lib/bot/staff/capabilities';
-import {
-  CHECK_BOT_MENU_LABELS,
-  CHECK_BOT_MENU_LABEL_SET,
-  resolveStaffBotMode,
-} from '@/lib/bot/staff/staff-menu';
+import { CHECK_BOT_MENU_LABELS } from '@/lib/bot/staff/staff-menu';
 import { isStaffMenuLabel } from '@/lib/bot/staff/staff-menu';
 import {
   getStaffCourseWorkspace,
@@ -22,6 +18,7 @@ import {
 } from '@/lib/bot/staff/staff-course-session';
 import {
   CHECK_HW_COMMENT_STEP,
+  CHECK_REJECT_COMMENT_STEP,
   CHECK_REJECT_PHOTO_STEP,
   CHECK_REJECT_TEXT_STEP,
   CHECK_REJECT_VOICE_STEP,
@@ -29,12 +26,11 @@ import {
   STAFF_CHECK_REPLY_STEP,
 } from '@/lib/bot/staff/staff-steps';
 import {
-  rejectCourseHomeworkByCurator,
   addCourseHomeworkReviewComment,
   CourseHomeworkError,
 } from '@/lib/bot/education/course-homework';
 import { getCuratorStudentRecord } from '@/lib/bot/curator/curatorData';
-import { formatTelegramFileRef, notifyStudentHomeworkReviewed } from '@/lib/bot/studentHomeworkFlow';
+import { formatTelegramFileRef } from '@/lib/bot/studentHomeworkFlow';
 import { deliverStaffToStudent } from '@/lib/bot/staff/messaging';
 import { listCheckCourses } from './check-access';
 import {
@@ -43,11 +39,11 @@ import {
   loadCheckStudentViews,
   setCheckStudentSearchQuery,
 } from './check-data';
+import { originFromPayload, sendHomeworkHub, showRejectDraftConfirm } from './check-hw-callbacks';
 import { handleCheckBotCallback } from './check-handlers';
 import { CHECK_LIST_PAGE_SIZE, paginateItems } from './check-homework-meta';
 import { renderCheckStudentsList } from './check-screens';
 import {
-  CHECK_BOT_WELCOME_TEXT,
   renderCheckCoursePicker,
   renderCheckNoCourses,
   type CheckBotSection,
@@ -75,6 +71,7 @@ async function restoreWorkspaceAfterCheckDialog(
 }
 
 const MENU_TO_SECTION: Record<string, CheckBotSection> = {
+  [CHECK_BOT_MENU_LABELS.home]: 'home',
   [CHECK_BOT_MENU_LABELS.homework]: 'hw',
   [CHECK_BOT_MENU_LABELS.students]: 'stu',
   [CHECK_BOT_MENU_LABELS.messages]: 'msg',
@@ -90,6 +87,15 @@ export async function sendCheckSectionForCourse(
 ): Promise<void> {
   const { assertCheckCourseAccess } = await import('./check-access');
   const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
+  await clearStateIfAvailable(admin, telegramId);
+  if (section === 'home') {
+    const { loadCheckHomeStats } = await import('./check-data');
+    const { renderCheckHome } = await import('./check-screens');
+    const stats = await loadCheckHomeStats(admin, telegramId, courseId);
+    const screen = renderCheckHome(courseId, ctx.title, stats);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
+    return;
+  }
   if (section === 'hw') {
     const { renderCheckHomeworkHub } = await import('./check-screens');
     const screen = renderCheckHomeworkHub(courseId, ctx.title);
@@ -97,23 +103,21 @@ export async function sendCheckSectionForCourse(
     return;
   }
   if (section === 'stu') {
-    const { students } = await loadCheckStudentViews(admin, telegramId, courseId);
-    const screen = renderCheckStudentsList(courseId, ctx.title, students);
+    const { renderCheckStudentsHub } = await import('./check-screens');
+    const { clearCheckStudentSearchQuery } = await import('./check-data');
+    clearCheckStudentSearchQuery(courseId, telegramId);
+    const screen = renderCheckStudentsHub(courseId, ctx.title);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return;
   }
   if (section === 'msg') {
     const { listCourseStudentTelegramIds } = await import('@/lib/curator/students');
     const { listCheckThreadsForCourse } = await import('@/lib/bot/staff/messaging');
-    const { renderCheckMessagesInbox } = await import('./check-screens');
+    const { renderCheckMessagesHub } = await import('./check-screens');
     const studentIds = await listCourseStudentTelegramIds(admin, courseId);
-    const { threads, storageEnabled } = await listCheckThreadsForCourse(
-      admin,
-      telegramId,
-      courseId,
-      studentIds,
-    );
-    const screen = renderCheckMessagesInbox(courseId, ctx.title, threads, storageEnabled);
+    const { threads } = await listCheckThreadsForCourse(admin, telegramId, courseId, studentIds);
+    const incoming = threads.filter((t) => t.unreadCount > 0).length;
+    const screen = renderCheckMessagesHub(courseId, ctx.title, incoming);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return;
   }
@@ -187,11 +191,14 @@ export async function handleCheckMessage(
   const step = state?.step as string | undefined;
 
   if (state && step === STAFF_CHECK_REPLY_STEP) {
-    const payload = state.payload as { studentTelegramId?: number; courseId?: number };
+    const payload = state.payload as {
+      studentTelegramId?: number;
+      courseId?: number;
+      returnTo?: string;
+    };
     if (isStaffMenuLabel(text, caps)) {
       await clearStateIfAvailable(admin, telegramId);
-      return false;
-    }
+    } else {
     if (/^отмена$/i.test(text.trim())) {
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, 'Отправка отменена.');
@@ -207,20 +214,34 @@ export async function handleCheckMessage(
       });
       const prevPayload = state.payload as Record<string, unknown> | undefined;
       await clearStateIfAvailable(admin, telegramId);
-      await restoreWorkspaceAfterCheckDialog(admin, telegramId, chatId, prevPayload);
-      await sendAdminMessage(chatId, '✅ Сообщение отправлено ученику.');
+      if (payload.returnTo === 'hw' && payload.courseId) {
+        await sendHomeworkHub(admin, chatId, telegramId, payload.courseId, '✅ Сообщение отправлено ученику.');
+      } else {
+        await restoreWorkspaceAfterCheckDialog(admin, telegramId, chatId, prevPayload);
+        await sendAdminMessage(chatId, '✅ Сообщение отправлено ученику.');
+      }
     } catch (error) {
       await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
     }
     return true;
+    }
   }
 
-  if (state && step === CHECK_REJECT_TEXT_STEP) {
-    const payload = state.payload as { courseId?: number; studentId?: string; hwNumber?: number };
+  if (
+    state &&
+    (step === CHECK_REJECT_COMMENT_STEP ||
+      step === CHECK_REJECT_TEXT_STEP ||
+      step === CHECK_REJECT_VOICE_STEP ||
+      step === CHECK_REJECT_PHOTO_STEP)
+  ) {
+    const payload = state.payload as {
+      courseId?: number;
+      studentId?: string;
+      hwNumber?: number;
+    };
     if (isStaffMenuLabel(text, caps)) {
       await clearStateIfAvailable(admin, telegramId);
-      return false;
-    }
+    } else {
     if (/^отмена$/i.test(text.trim())) {
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, 'Отменено.');
@@ -230,43 +251,28 @@ export async function handleCheckMessage(
     const studentId = payload.studentId;
     const hwNumber = payload.hwNumber;
     if (!courseId || !studentId || hwNumber == null) return false;
-    const { assertCheckCourseAccess } = await import('./check-access');
-    const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
-    const { students } = await loadCheckHomeworkStudents(admin, telegramId, courseId);
-    const student = getCuratorStudentRecord(students, studentId);
-    if (!student) return true;
-    try {
-      const { lesson } = await rejectCourseHomeworkByCurator(
-        admin,
-        telegramId,
-        student.telegramId,
+    await showRejectDraftConfirm(
+      admin,
+      telegramId,
+      chatId,
+      {
+        courseId,
+        studentId,
         hwNumber,
-        text.trim(),
-        { courseId, courseSlug: ctx.slug },
-      );
-      await notifyStudentHomeworkReviewed(admin, student.telegramId, {
-        lessonNumber: lesson.lessonNumber,
-        title: lesson.title,
-        approved: false,
-        note: text.trim(),
-      });
-      const prevPayload = state.payload as Record<string, unknown> | undefined;
-      await clearStateIfAvailable(admin, telegramId);
-      await restoreWorkspaceAfterCheckDialog(admin, telegramId, chatId, prevPayload);
-      await sendAdminMessage(chatId, '🔄 ДЗ отправлено на доработку с комментарием.');
-    } catch (error) {
-      const msg = error instanceof CourseHomeworkError ? error.message : 'Не удалось вернуть на доработку.';
-      await sendAdminMessage(chatId, msg);
-    }
+        draftText: text.trim(),
+        draftFileKind: null,
+      },
+      originFromPayload(state.payload as Record<string, unknown>),
+    );
     return true;
+    }
   }
 
   if (state && step === CHECK_HW_COMMENT_STEP) {
     const payload = state.payload as { courseId?: number; studentId?: string; hwNumber?: number };
     if (isStaffMenuLabel(text, caps)) {
       await clearStateIfAvailable(admin, telegramId);
-      return false;
-    }
+    } else {
     if (/^отмена$/i.test(text.trim())) {
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, 'Отменено.');
@@ -304,15 +310,20 @@ export async function handleCheckMessage(
             text.trim(),
         });
       }
-      const prevPayload = state.payload as Record<string, unknown> | undefined;
       await clearStateIfAvailable(admin, telegramId);
-      await restoreWorkspaceAfterCheckDialog(admin, telegramId, chatId, prevPayload);
-      await sendAdminMessage(chatId, '✅ Комментарий сохранён (статус не изменён).');
+      await sendHomeworkHub(
+        admin,
+        chatId,
+        telegramId,
+        courseId,
+        '✅ Комментарий сохранён (статус не изменён).',
+      );
     } catch (error) {
       const msg = error instanceof CourseHomeworkError ? error.message : 'Не удалось сохранить комментарий.';
       await sendAdminMessage(chatId, msg);
     }
     return true;
+    }
   }
 
   if (state && step === CHECK_STU_SEARCH_STEP) {
@@ -320,37 +331,42 @@ export async function handleCheckMessage(
     if (!courseId) return false;
     if (isStaffMenuLabel(text, caps)) {
       await clearStateIfAvailable(admin, telegramId);
-      return false;
-    }
-    if (/^отмена$/i.test(text.trim())) {
+    } else {
+      if (/^отмена$/i.test(text.trim())) {
+        await clearStateIfAvailable(admin, telegramId);
+        const { renderCheckStudentsHub } = await import('./check-screens');
+        const { assertCheckCourseAccess } = await import('./check-access');
+        const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
+        const screen = renderCheckStudentsHub(courseId, ctx.title);
+        await sendAdminMessage(chatId, screen.text, screen.keyboard);
+        return true;
+      }
+      setCheckStudentSearchQuery(courseId, telegramId, text.trim());
       await clearStateIfAvailable(admin, telegramId);
-      await sendAdminMessage(chatId, 'Поиск отменён.');
+      const { assertCheckCourseAccess } = await import('./check-access');
+      const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
+      const { students: all } = await loadCheckStudentViews(admin, telegramId, courseId);
+      const filtered = filterStudentsByName(all, text.trim());
+      const { pageItems, totalPages } = paginateItems(filtered, 0, CHECK_LIST_PAGE_SIZE);
+      const screen = renderCheckStudentsList(courseId, ctx.title, pageItems, {
+        page: 0,
+        totalPages,
+        searchQuery: text.trim(),
+      });
+      await sendAdminMessage(chatId, screen.text, screen.keyboard);
       return true;
     }
-    setCheckStudentSearchQuery(courseId, telegramId, text.trim());
-    await clearStateIfAvailable(admin, telegramId);
-    const { assertCheckCourseAccess } = await import('./check-access');
-    const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
-    const { students: all } = await loadCheckStudentViews(admin, telegramId, courseId);
-    const filtered = filterStudentsByName(all, text.trim());
-    const { pageItems, totalPages } = paginateItems(filtered, 0, CHECK_LIST_PAGE_SIZE);
-    const screen = renderCheckStudentsList(courseId, ctx.title, pageItems, {
-      page: 0,
-      totalPages,
-      searchQuery: text.trim(),
-    });
-    await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    return true;
   }
 
   const ws = await getStaffCourseWorkspace(admin, telegramId);
   if (ws?.role !== 'check') return false;
 
-  if (!CHECK_BOT_MENU_LABEL_SET.has(text)) return false;
-
   const section = MENU_TO_SECTION[text];
-  if (!section) return false;
-  await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);
+  if (section) {
+    await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);
+    return true;
+  }
+  await sendAdminMessage(chatId, 'Разделы — на кнопках меню под полем ввода.');
   return true;
 }
 
@@ -366,17 +382,27 @@ export async function handleCheckCallback(
   if (!(await canUseCheckBot(admin, telegramId))) return false;
 
   if (data.startsWith('k:pk:')) {
-    const section = data.slice(5) as CheckBotSection;
-    if (!['hw', 'stu', 'msg', 'lib'].includes(section)) return true;
-    const courses = await listCheckCourses(admin, telegramId);
-    if (courses.length === 0) {
-      const screen = renderCheckNoCourses();
-      await sendAdminMessage(chatId, screen.text, screen.keyboard);
-    } else if (courses.length === 1) {
-      await handleCheckBotCallback(admin, { chatId, messageId }, telegramId, `k:sec:${section}:${courses[0]!.courseId}`);
+    const ws = await getStaffCourseWorkspace(admin, telegramId);
+    if (ws?.role === 'check' && ws.courseId) {
+      await handleCheckBotCallback(admin, { chatId, messageId }, telegramId, `k:home:${ws.courseId}`);
     } else {
-      const screen = renderCheckCoursePicker(section, courses);
-      await sendAdminMessage(chatId, screen.text, screen.keyboard);
+      const section = data.slice(5) as CheckBotSection;
+      if (!['home', 'hw', 'stu', 'msg', 'lib'].includes(section)) return true;
+      const courses = await listCheckCourses(admin, telegramId);
+      if (courses.length === 0) {
+        const screen = renderCheckNoCourses();
+        await sendAdminMessage(chatId, screen.text, screen.keyboard);
+      } else if (courses.length === 1) {
+        await handleCheckBotCallback(
+          admin,
+          { chatId, messageId },
+          telegramId,
+          `k:home:${courses[0]!.courseId}`,
+        );
+      } else {
+        const screen = renderCheckCoursePicker(section, courses);
+        await sendAdminMessage(chatId, screen.text, screen.keyboard);
+      }
     }
     if (callbackQueryId) {
       await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
@@ -411,7 +437,11 @@ export async function handleCheckAttachment(
   const step = state?.step as string | undefined;
 
   if (state && step === STAFF_CHECK_REPLY_STEP && (kind === 'photo' || kind === 'document')) {
-    const payload = state.payload as { studentTelegramId?: number; courseId?: number };
+    const payload = state.payload as {
+      studentTelegramId?: number;
+      courseId?: number;
+      returnTo?: string;
+    };
     if (!payload.studentTelegramId) return false;
     try {
       await deliverStaffToStudent(admin, {
@@ -424,20 +454,23 @@ export async function handleCheckAttachment(
         courseId: payload.courseId,
       });
       await clearStateIfAvailable(admin, telegramId);
-      await sendAdminMessage(chatId, '✅ Вложение отправлено ученику.');
+      if (payload.returnTo === 'hw' && payload.courseId) {
+        await sendHomeworkHub(admin, chatId, telegramId, payload.courseId, '✅ Вложение отправлено ученику.');
+      } else {
+        await sendAdminMessage(chatId, '✅ Вложение отправлено ученику.');
+      }
     } catch (error) {
       await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
     }
     return true;
   }
 
-  const expected =
-    kind === 'voice'
-      ? CHECK_REJECT_VOICE_STEP
-      : kind === 'photo' || kind === 'document'
-        ? CHECK_REJECT_PHOTO_STEP
-        : null;
-  if (!expected || !state || step !== expected) return false;
+  const rejectCommentStep =
+    step === CHECK_REJECT_COMMENT_STEP ||
+    step === CHECK_REJECT_VOICE_STEP ||
+    step === CHECK_REJECT_PHOTO_STEP ||
+    step === CHECK_REJECT_TEXT_STEP;
+  if (!state || !rejectCommentStep) return false;
 
   const payload = state.payload as { courseId?: number; studentId?: string; hwNumber?: number };
   const courseId = payload.courseId;
@@ -445,45 +478,24 @@ export async function handleCheckAttachment(
   const hwNumber = payload.hwNumber;
   if (!courseId || !studentId || hwNumber == null) return false;
 
-  await clearStateIfAvailable(admin, telegramId);
-  const { assertCheckCourseAccess } = await import('./check-access');
-  const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
-  const { students } = await loadCheckHomeworkStudents(admin, telegramId, courseId);
-  const student = getCuratorStudentRecord(students, studentId);
-  if (!student) {
-    await sendAdminMessage(chatId, 'Работа не найдена.');
-    return true;
-  }
-  try {
-    const { lesson } = await rejectCourseHomeworkByCurator(
-      admin,
-      telegramId,
-      student.telegramId,
+  await showRejectDraftConfirm(
+    admin,
+    telegramId,
+    chatId,
+    {
+      courseId,
+      studentId,
       hwNumber,
-      kind === 'voice'
-        ? 'Голосовой комментарий — см. сообщение ниже.'
-        : 'Комментарий во вложении.',
-      { courseId, courseSlug: ctx.slug },
-    );
-    await notifyStudentHomeworkReviewed(admin, student.telegramId, {
-      lessonNumber: lesson.lessonNumber,
-      title: lesson.title,
-      approved: false,
-      note:
+      draftText:
         kind === 'voice'
-          ? 'Голосовой комментарий проверяющего.'
-          : 'Комментарий проверяющего во вложении.',
-      reviewFileRef: formatTelegramFileRef(fileId),
-      reviewFileKind: kind === 'voice' ? 'voice' : kind === 'photo' ? 'photo' : 'document',
-    });
-    await sendAdminMessage(chatId, `🔄 ДЗ №${hwNumber} на доработке. Комментарий отправлен ученику.`, {
-      inline_keyboard: [
-        [{ text: '⬅️ К работе', callback_data: `k:hw:${courseId}:i:${studentId}:${hwNumber}` }],
-      ],
-    });
-  } catch (error) {
-    const msg = error instanceof CourseHomeworkError ? error.message : 'Не удалось вернуть на доработку.';
-    await sendAdminMessage(chatId, msg);
-  }
+          ? 'Голосовой комментарий'
+          : kind === 'photo'
+            ? 'Комментарий на фото'
+            : 'Комментарий в файле',
+      draftFileKind: kind,
+      draftFileRef: formatTelegramFileRef(fileId),
+    },
+    originFromPayload(state.payload as Record<string, unknown>),
+  );
   return true;
 }

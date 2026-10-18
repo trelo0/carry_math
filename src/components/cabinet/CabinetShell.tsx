@@ -48,7 +48,6 @@ import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSlider';
 import CabinetAchievementToasts from '@/components/cabinet/CabinetAchievementToasts';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
-import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
 import HomeworkRowChip from '@/components/cabinet/HomeworkRowChip';
 import { homeworkLockedActionHint, homeworkRowState } from '@/lib/cabinet-homework-row';
 import {
@@ -66,8 +65,11 @@ import {
   markCourseMapStale,
   isCourseSliceCacheFresh,
   readCourseSliceCache,
+  readLastSelectedStop,
   writeCourseSliceCache,
+  writeLastSelectedStop,
 } from '@/lib/cabinet-course-cache';
+import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
 
 /* -------------------------------------------------------------------------- */
 /* Типы карты курса (данные из Supabase + Sanity).                             */
@@ -632,12 +634,19 @@ function RoadModuleGaps({
   );
 }
 
+function pickStopId(
+  stops: { id: number; status?: string }[],
+  preferred?: number | null,
+): number {
+  if (preferred != null && stops.some((s) => s.id === preferred)) return preferred;
+  return stops.find((s) => s.status === 'now')?.id ?? stops[0]?.id ?? 0;
+}
+
 function CourseMap({
   selected,
   onSelect,
   locked,
   allowLockedSelect,
-  showHomeworkTimers = false,
   hasCourse = false,
   stops = [],
   modules = [],
@@ -647,7 +656,6 @@ function CourseMap({
   locked?: boolean;
   /** Разрешить выбор закрытых остановок (просмотр структуры без доступа к контенту). */
   allowLockedSelect?: boolean;
-  showHomeworkTimers?: boolean;
   hasCourse?: boolean;
   stops?: CourseStop[];
   modules?: { name: string; color: string; count: number; about?: string }[];
@@ -827,9 +835,10 @@ function CourseMap({
                   </span>
                   <span className="cab-rm-title">{s.title}</span>
                   <span className="cab-rm-label">{label}</span>
-                  {showHomeworkTimers ? (
+                  {hasCourse ? (
                     <HomeworkDeadlineBadge
                       compact
+                      timerOnly
                       placement="inline"
                       homeworkStatus={s.homeworkStatus}
                       homeworkDeadlineAt={s.homeworkDeadlineAt}
@@ -913,18 +922,18 @@ function LivesWidget({
     <div className={`cab-lives${lives.fullyBlocked ? ' is-locked' : ''}`} title="Твои жизни">
       <div className="cab-lives-head">
         <span className="cab-k">Жизни</span>
+        <span className="cab-lives-hearts">
+          {Array.from({ length: total }).map((_, i) => (
+            <Heart key={i} filled={i < full} />
+          ))}
+        </span>
       </div>
-      <span className="cab-lives-hearts">
-        {Array.from({ length: total }).map((_, i) => (
-          <Heart key={i} filled={i < full} />
-        ))}
-      </span>
       {lives.fullyBlocked ? (
-        <span className="cab-lives-timer">Курс заблокирован администратором</span>
+        <span className="cab-lives-timer">Блок администратора</span>
       ) : lives.accessBlocked ? (
-        <span className="cab-lives-timer">Курс заморожен — напишите куратору</span>
+        <span className="cab-lives-timer">Заморозка — куратор</span>
       ) : full < total ? (
-        <span className="cab-lives-timer">Восстановление 1-го числа или через куратора</span>
+        <span className="cab-lives-timer">Восстановление 1-го числа</span>
       ) : null}
     </div>
   );
@@ -1560,7 +1569,11 @@ export default function CabinetShell({
         : courseStopsFromCatalog;
 
   const [stopId, setStopId] = useState<number>(
-    () => baseCourseStops.find((s) => s.status === 'now')?.id ?? baseCourseStops[0]?.id ?? 0,
+    () =>
+      pickStopId(
+        baseCourseStops,
+        data.courseCatalog?.slug ? readLastSelectedStop(data.courseCatalog.slug) : null,
+      ),
   );
   const [courseTab, setCourseTab] = useState<CourseTabId>('program');
   const [activeCourseId, setActiveCourseId] = useState<number | null>(
@@ -1606,9 +1619,7 @@ export default function CabinetShell({
     const cached = courseCacheRef.current.get(slug);
     if (cached) {
       setCourseSlice(cached);
-      setStopId(
-        cached.courseStops.find((s) => s.status === 'now')?.id ?? cached.courseStops[0]?.id ?? 0,
-      );
+      setStopId(pickStopId(cached.courseStops, readLastSelectedStop(slug)));
     }
   }, [data.courseCatalog?.id, data.courseCatalog?.slug, data.enrollment?.courseId]);
   const [pkgHistoryAll, setPkgHistoryAll] = useState(false);
@@ -1692,6 +1703,14 @@ export default function CabinetShell({
     data.courseCatalog;
 
   const activeCourseSlug = activeCatalog?.slug ?? null;
+  const selectMapStop = useCallback(
+    (id: number) => {
+      setStopId(id);
+      const slug = activeCourseSlug ?? data.courseCatalog?.slug;
+      if (slug) writeLastSelectedStop(slug, id);
+    },
+    [activeCourseSlug, data.courseCatalog?.slug],
+  );
   const courseState: CourseCabinetState =
     activeCourseId != null && (activeCourseOwned || hasViewedCourseMap(data))
       ? getCourseCabinetStateForCourse(
@@ -1806,11 +1825,7 @@ export default function CabinetShell({
     if (sessionCached) {
       courseCacheRef.current.set(slug, sessionCached.slice);
       setCourseSlice(sessionCached.slice);
-      setStopId(
-        sessionCached.slice.courseStops.find((s) => s.status === 'now')?.id ??
-          sessionCached.slice.courseStops[0]?.id ??
-          0,
-      );
+      setStopId(pickStopId(sessionCached.slice.courseStops, readLastSelectedStop(slug)));
     }
 
     const cacheUsable = sessionCached && isCourseSliceCacheFresh(sessionCached) && !stale;
@@ -1823,9 +1838,7 @@ export default function CabinetShell({
         const slice = await fetchMapProgress(slug);
         if (cancelled) return;
         setCourseSlice(slice);
-        setStopId(
-          slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0,
-        );
+        setStopId(pickStopId(slice.courseStops, readLastSelectedStop(slug)));
         clearCourseMapStale(slug);
       } catch (error) {
         console.error('[cabinet] map hydrate failed:', error);
@@ -1883,9 +1896,7 @@ export default function CabinetShell({
       const cached = courseCacheRef.current.get(course.slug);
       if (cached) {
         setCourseSlice(cached);
-        const nextStop =
-          cached.courseStops.find((s) => s.status === 'now')?.id ?? cached.courseStops[0]?.id ?? 0;
-        setStopId(nextStop);
+        setStopId(pickStopId(cached.courseStops, readLastSelectedStop(course.slug)));
         return;
       }
 
@@ -1901,9 +1912,7 @@ export default function CabinetShell({
       try {
         const slice = await fetchCourseSlice(course.slug);
         setCourseSlice(slice);
-        const nextStop =
-          slice.courseStops.find((s) => s.status === 'now')?.id ?? slice.courseStops[0]?.id ?? 0;
-        setStopId(nextStop);
+        setStopId(pickStopId(slice.courseStops, readLastSelectedStop(course.slug)));
       } catch (error) {
         console.error('[cabinet] course switch failed:', error);
       } finally {
@@ -2445,9 +2454,8 @@ export default function CabinetShell({
                         </div>
                         <CourseMap
                           selected={stopId}
-                          onSelect={setStopId}
+                          onSelect={selectMapStop}
                           allowLockedSelect={hasCourse || courseState === 'enrolled_locked'}
-                          showHomeworkTimers={hasCourse}
                           hasCourse={hasCourse}
                           stops={mapCourseStops}
                           modules={courseModules}

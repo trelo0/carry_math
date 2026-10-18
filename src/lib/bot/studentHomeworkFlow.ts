@@ -416,18 +416,39 @@ export async function notifyStudentHomeworkReviewed(
   const ref = params.reviewFileRef?.trim();
   if (!ref) return;
   if (ref.startsWith('tg:')) {
-    const fileId = ref.slice(3);
-    const kind = params.reviewFileKind ?? 'document';
-    if (kind === 'voice') {
-      await telegramSend('sendVoice', { chat_id: chatId, voice: fileId });
-    } else if (kind === 'photo') {
-      await telegramSend('sendPhoto', { chat_id: chatId, photo: fileId });
-    } else {
-      await telegramSend('sendDocument', { chat_id: chatId, document: fileId });
+    const sent = await sendTelegramFileById(chatId, ref.slice(3), params.reviewFileKind);
+    if (!sent.ok) {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: sent.description ?? 'Не удалось отправить файл с правками.',
+      });
     }
   } else if (ref.startsWith('http')) {
     await telegramSend('sendMessage', { chat_id: chatId, text: `🔗 Файл с правками: ${ref}` });
   }
+}
+
+export async function sendTelegramFileById(
+  chatId: number,
+  fileId: string,
+  preferred?: 'photo' | 'document' | 'voice' | null,
+): Promise<{ ok: boolean; description?: string }> {
+  if (preferred === 'voice') {
+    return telegramSend('sendVoice', { chat_id: chatId, voice: fileId });
+  }
+  const attempts =
+    preferred === 'document'
+      ? (['sendDocument', 'sendPhoto'] as const)
+      : (['sendPhoto', 'sendDocument'] as const);
+  let last: { ok: boolean; description?: string } = { ok: false, description: 'Не удалось отправить файл.' };
+  for (const method of attempts) {
+    last = await telegramSend(method, {
+      chat_id: chatId,
+      ...(method === 'sendPhoto' ? { photo: fileId } : { document: fileId }),
+    });
+    if (last.ok) return last;
+  }
+  return last;
 }
 
 export async function sendSubmissionToCurator(
@@ -450,30 +471,30 @@ export async function sendSubmissionToCurator(
   const chatId = data?.chat_id as number | undefined;
   if (!chatId) return;
 
-  if (submission.note?.trim()) {
-    await telegramSend('sendMessage', {
-      chat_id: chatId,
-      text:
-        `📎 Работа ученика ${submission.studentName}\n` +
-        `Занятие №${submission.lessonNumber}: ${submission.title}\n\n` +
-        submission.note.trim(),
-    });
-  }
+  const header =
+    `📎 Работа ученика ${submission.studentName}\n` +
+    `Занятие №${submission.lessonNumber}: ${submission.title}`;
+  const note = submission.note?.trim();
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: note ? `${header}\n\n${note}` : header,
+  });
 
-  if (submission.fileUrl?.startsWith('tg:')) {
-    const fileId = submission.fileUrl.slice(3);
-    const asPhoto = submission.fileKind === 'photo';
-    const result = await telegramSend(asPhoto ? 'sendPhoto' : 'sendDocument', {
-      chat_id: chatId,
-      ...(asPhoto ? { photo: fileId } : { document: fileId }),
-    });
+  const fileUrl = submission.fileUrl?.trim() ?? '';
+  if (fileUrl.startsWith('tg:')) {
+    const result = await sendTelegramFileById(chatId, fileUrl.slice(3), submission.fileKind);
     if (!result.ok) {
-      throw new Error(result.description ?? 'Не удалось переслать файл куратору.');
+      throw new Error(result.description ?? 'Не удалось переслать файл. Попросите ученика сдать работу ещё раз.');
     }
-  } else if (submission.fileUrl?.startsWith('http')) {
+  } else if (fileUrl.startsWith('http')) {
     await telegramSend('sendMessage', {
       chat_id: chatId,
-      text: `🔗 Файл: ${submission.fileUrl}`,
+      text: `🔗 Файл: ${fileUrl}`,
+    });
+  } else if (!note) {
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: 'Ученик не приложил файл и не оставил комментарий.',
     });
   }
 }

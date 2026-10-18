@@ -1726,21 +1726,29 @@
 .cab-path-head--map .cab-lives {
   grid-column: 3;
   justify-self: end;
-  width: auto;
-  max-width: none;
+  width: max-content;
+  max-width: 168px;
   min-width: 0;
   margin-left: 0;
-  padding: 8px 12px 10px;
+  padding: 8px 10px;
+  gap: 4px;
   box-sizing: border-box;
   border-color: rgba(0, 210, 255, 0.2);
   background: rgba(10, 20, 40, 0.62);
   overflow: hidden;
 }
 
+.cab-path-head--map .cab-lives-head {
+  width: 100%;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .cab-path-head--map .cab-lives-timer {
   display: block;
-  font-size: 10px;
-  line-height: 1.35;
+  max-width: 148px;
+  font-size: 9px;
+  line-height: 1.25;
   white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -1954,7 +1962,7 @@
   background: rgba(18, 32, 56, 0.55);
 }
 
-.cab-lives-head { display: flex; align-items: center; gap: 8px; }
+.cab-lives-head { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 
 .cab-lives-hearts { display: inline-flex; gap: 5px; }
 .cab-heart { width: 19px; height: 19px; color: rgba(148, 190, 255, 0.14); }
@@ -14710,4 +14718,35 @@ button.cab-course-pick-cta {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Чип ДЗ + таймер на карте: цвет по статусу, поверх базового cyan .is-pill */
+.cab-hw-deadline.is-pill.is-row-review {
+  border-color: rgba(255, 210, 70, 0.55) !important;
+  background: rgba(255, 200, 40, 0.14) !important;
+  color: rgba(255, 228, 140, 0.98) !important;
+}
+.cab-hw-deadline.is-pill.is-row-review .cab-hw-deadline-prefix,
+.cab-hw-deadline.is-pill.is-row-review .cab-hw-deadline-icon,
+.cab-hw-deadline.is-pill.is-row-review .cab-hw-deadline-value {
+  color: rgba(255, 220, 120, 0.98) !important;
+}
+
+.cab-hw-deadline.is-pill.is-row-revision {
+  border-color: rgba(255, 154, 60, 0.55) !important;
+  background: rgba(255, 140, 40, 0.14) !important;
+  color: #ffb86a !important;
+}
+.cab-hw-deadline.is-pill.is-row-revision .cab-hw-deadline-prefix,
+.cab-hw-deadline.is-pill.is-row-revision .cab-hw-deadline-icon,
+.cab-hw-deadline.is-pill.is-row-revision .cab-hw-deadline-value {
+  color: #ffb86a !important;
+}
+.cab-hw-deadline.is-pill.is-row-revision .cab-hw-deadline-sep {
+  background: rgba(255, 154, 60, 0.4) !important;
+}
+
+.cab-rm-plate .cab-hw-deadline.is-pill {
+  margin-top: 4px;
+  align-self: flex-start;
 }

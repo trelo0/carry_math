@@ -16,6 +16,8 @@ export type HomeworkDeadlineBadgeProps = {
   compact?: boolean;
   /** inline — в ряд с текстом/бейджами; corner — правый верх карточки ДЗ; chip — pill в колонке ДЗ; block — под заголовком */
   placement?: 'inline' | 'corner' | 'chip' | 'block';
+  /** Только обратный отсчёт, без статуса (плашка карты). */
+  timerOnly?: boolean;
   className?: string;
 };
 
@@ -89,6 +91,7 @@ export default function HomeworkDeadlineBadge({
   homeworkOverdueAt,
   compact,
   placement = 'block',
+  timerOnly = false,
   className,
 }: HomeworkDeadlineBadgeProps) {
   const [now, setNow] = useState(() => Date.now());
@@ -124,10 +127,27 @@ export default function HomeworkDeadlineBadge({
   if (placement === 'chip' && (phase === 'waiting_review' || phase === 'approved')) return null;
 
   const urgency = resolveUrgency(phase, remainingMs, HOMEWORK_DEADLINE_MS);
-  const isChip = placement === 'chip';
+  const isChip = placement === 'chip' || timerOnly;
   const showCountdownChip =
     isChip && (phase === 'ok' || phase === 'soon' || (phase === 'revision' && remainingMs > 0));
   const showExpiredChip = isChip && phase === 'overdue';
+
+  if (timerOnly && !showCountdownChip && !showExpiredChip) return null;
+
+  const rowTone =
+    homeworkStatus === 'submitted'
+      ? 'review'
+      : homeworkStatus === 'rejected'
+        ? phase === 'overdue'
+          ? 'overdue'
+          : 'revision'
+        : homeworkStatus === 'approved'
+          ? 'done'
+          : phase === 'overdue'
+            ? 'overdue'
+            : urgency === 'half' || urgency === 'day' || urgency === 'critical'
+              ? 'warn'
+              : 'todo';
 
   return (
     <span
@@ -135,9 +155,10 @@ export default function HomeworkDeadlineBadge({
         'cab-hw-deadline',
         `is-${phase}`,
         `is-urgency-${urgency}`,
-        `is-place-${placement}`,
+        `is-place-${timerOnly ? 'inline' : placement}`,
         isChip ? 'is-pill' : '',
         compact ? 'is-compact' : '',
+        `is-row-${rowTone}`,
         className ?? '',
       ]
         .filter(Boolean)
@@ -149,17 +170,31 @@ export default function HomeworkDeadlineBadge({
       }
     >
       {showCountdownChip ? (
-        <>
-          <DeadlineClockIcon />
-          <span className="cab-hw-deadline-prefix">Срок сдачи</span>
-          <span className="cab-hw-deadline-sep" aria-hidden="true" />
-          <span className="cab-hw-deadline-value">{formatRemaining(remainingMs)}</span>
-        </>
+        timerOnly ? (
+          <>
+            <DeadlineClockIcon />
+            <span className="cab-hw-deadline-value">{formatRemaining(remainingMs)}</span>
+          </>
+        ) : (
+          <>
+            <DeadlineClockIcon />
+            <span className="cab-hw-deadline-prefix">Срок сдачи</span>
+            <span className="cab-hw-deadline-sep" aria-hidden="true" />
+            <span className="cab-hw-deadline-value">{formatRemaining(remainingMs)}</span>
+          </>
+        )
       ) : showExpiredChip ? (
-        <>
-          <DeadlineAlarmIcon />
-          <span className="cab-hw-deadline-label">Срок истёк</span>
-        </>
+        timerOnly ? (
+          <>
+            <DeadlineAlarmIcon />
+            <span className="cab-hw-deadline-value">00:00:00</span>
+          </>
+        ) : (
+          <>
+            <DeadlineAlarmIcon />
+            <span className="cab-hw-deadline-label">Срок истёк</span>
+          </>
+        )
       ) : (
         <span className="cab-hw-deadline-label">{label}</span>
       )}

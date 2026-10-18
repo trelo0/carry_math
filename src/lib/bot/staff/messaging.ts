@@ -252,15 +252,23 @@ export async function notifyStaffInboundFromStudent(
         ? `k:msg:${params.courseId ?? 0}:d:${params.studentTelegramId}`
         : `c:msg:d:${params.studentTelegramId}`;
 
+  const isCheck = params.staffRole === 'check';
   await telegramSend('sendMessage', {
     chat_id: staffChatId,
     text: ['💬 Сообщение от ученика', '', `👤 ${label}${courseLine}`, '', params.body.trim() || '📎 Вложение'].join('\n'),
     reply_markup: {
-      inline_keyboard: [[{ text: '↩️ Ответить', callback_data: replyCallback }]],
+      inline_keyboard: isCheck
+        ? [
+            [
+              { text: 'Закрыть', callback_data: 'k:ntf:close' },
+              { text: 'Показать', callback_data: replyCallback },
+            ],
+          ]
+        : [[{ text: '↩️ Ответить', callback_data: replyCallback }]],
     },
   });
 
-  if (params.attachmentRef?.startsWith('tg:') && params.attachmentKind) {
+  if (!isCheck && params.attachmentRef?.startsWith('tg:') && params.attachmentKind) {
     const fileId = params.attachmentRef.slice(3);
     if (params.attachmentKind === 'photo') {
       await telegramSend('sendPhoto', { chat_id: staffChatId, photo: fileId });

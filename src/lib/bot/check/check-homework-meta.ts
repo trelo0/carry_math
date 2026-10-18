@@ -94,10 +94,13 @@ export function attachMetaToQueueItems(
   });
 }
 
+export type CheckArchiveStatusFilter = 'all' | 'approved' | 'revision' | 'overdue';
+
 export type CheckHwListFilters = {
   studentTelegramId?: number;
   moduleIndex?: number;
   lessonNumber?: number;
+  archiveStatus?: CheckArchiveStatusFilter;
 };
 
 export function applyCheckHwFilters(
@@ -116,6 +119,13 @@ export function applyCheckHwFilters(
   if (filters.moduleIndex != null && moduleLessonNumbers) {
     const nums = moduleLessonNumbers.get(filters.moduleIndex);
     if (nums) out = out.filter((i) => nums.has(i.homework.number));
+  }
+  if (filters.archiveStatus && filters.archiveStatus !== 'all') {
+    if (filters.archiveStatus === 'overdue') {
+      out = out.filter((i) => i.meta?.overdue);
+    } else {
+      out = out.filter((i) => i.homework.status === filters.archiveStatus);
+    }
   }
   return out;
 }

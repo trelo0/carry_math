@@ -83,7 +83,27 @@ export function collectCheckPending(students: CuratorStudentRecord[]): CuratorHo
   return collectCheckQueue(students, 'pending');
 }
 
-/** Архив = all non-upcoming */
+/** Архив = только проверенные (одобрено / на доработке), без очереди «на проверке» и «не сдано». */
 export function collectCheckArchive(students: CuratorStudentRecord[]): CuratorHomeworkListItem[] {
-  return collectCheckQueue(students, 'all');
+  return collectCheckQueue(students, 'all').filter(
+    (item) => item.homework.status === 'approved' || item.homework.status === 'revision',
+  );
+}
+
+export async function loadCheckHomeStats(
+  admin: SupabaseClient,
+  checkTelegramId: number,
+  courseId: number,
+): Promise<{ unreadMessages: number; pendingHomework: number }> {
+  const { listCourseStudentTelegramIds } = await import('@/lib/curator/students');
+  const { listCheckThreadsForCourse } = await import('@/lib/bot/staff/messaging');
+  const studentIds = await listCourseStudentTelegramIds(admin, courseId);
+  const [{ threads }, { students }] = await Promise.all([
+    listCheckThreadsForCourse(admin, checkTelegramId, courseId, studentIds),
+    loadCheckHomeworkStudents(admin, checkTelegramId, courseId),
+  ]);
+  return {
+    unreadMessages: threads.reduce((sum, t) => sum + t.unreadCount, 0),
+    pendingHomework: collectCheckPending(students).length,
+  };
 }

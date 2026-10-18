@@ -3,7 +3,6 @@ import {
   findLessonBySanityId,
   type CourseHomeworkSubmitInput,
 } from '@/lib/bot/education/course-homework';
-import { sendSubmissionToCurator } from '@/lib/bot/studentHomeworkFlow';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 
 async function studentDisplayName(admin: SupabaseClient, telegramId: number): Promise<string> {
@@ -86,21 +85,13 @@ export async function notifyCheckHomeworkSubmitted(
     reply_markup: {
       inline_keyboard: [
         [
+          { text: 'Закрыть', callback_data: 'k:ntf:close' },
           {
-            text: '👀 Открыть в боте',
+            text: 'Посмотреть',
             callback_data: `k:hw:${params.courseId}:i:${params.studentTelegramId}:${params.lessonNumber}`,
           },
         ],
       ],
     },
-  });
-
-  await sendSubmissionToCurator(admin, checkId, {
-    studentName: params.studentName,
-    lessonNumber: params.lessonNumber,
-    title: params.lessonTitle,
-    fileUrl: params.fileUrl,
-    fileKind: null,
-    note: null,
   });
 }

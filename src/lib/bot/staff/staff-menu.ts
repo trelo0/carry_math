@@ -29,6 +29,7 @@ export type StaffBotMode =
 
 /** Reply-меню проверяющего ДЗ (только Telegram). */
 export const CHECK_BOT_MENU_LABELS = {
+  home: '🏠 Главная',
   homework: '📝 Домашние задания',
   students: '👥 Ученики',
   messages: '💬 Сообщения',
@@ -84,6 +85,7 @@ export function staffCourseWorkspaceReplyKeyboard(role: 'curator' | 'check'): Re
   }
   return {
     keyboard: [
+      [{ text: CHECK_BOT_MENU_LABELS.home }],
       [
         { text: CHECK_BOT_MENU_LABELS.homework },
         { text: CHECK_BOT_MENU_LABELS.students },

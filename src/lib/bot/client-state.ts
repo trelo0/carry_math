@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUserContext, type AccessProduct } from './accesses';
+import { isPackageTableError } from './packages';
 import type { BotRole } from './roles';
 
 /** Пользовательское состояние меню (не путать с bot_members.role). */
@@ -62,6 +63,8 @@ export async function resolveClientState(
   let hasAccessHistory = false;
   let hasPurchaseHistory = false;
   let activePackageLessons = false;
+  let hasCoursePackage = false;
+  let hasCourseEnrollment = false;
 
   const now = new Date().toISOString();
 
@@ -74,6 +77,8 @@ export async function resolveClientState(
       accessesRes,
       purchaseRes,
       activePkgRes,
+      coursePkgRes,
+      courseEnrollRes,
     ] = await Promise.all([
       admin.from('telegram_links').select('phone').eq('telegram_id', telegramId).maybeSingle(),
       admin
@@ -101,8 +106,20 @@ export async function resolveClientState(
         .from('lesson_packages')
         .select('id', { count: 'exact', head: true })
         .eq('telegram_id', telegramId)
+        .in('product', ['individual', 'group'])
         .eq('status', 'active')
         .gt('remaining_lessons', 0),
+      admin
+        .from('lesson_packages')
+        .select('id', { count: 'exact', head: true })
+        .eq('telegram_id', telegramId)
+        .eq('product', 'course')
+        .eq('status', 'active'),
+      admin
+        .from('course_enrollments')
+        .select('id', { count: 'exact', head: true })
+        .eq('telegram_id', telegramId)
+        .eq('status', 'active'),
     ]);
 
     telegramLinked = Boolean(linkRes.data?.phone);
@@ -112,11 +129,13 @@ export async function resolveClientState(
     hasAccessHistory = (accessesRes.count ?? 0) > 0;
     hasPurchaseHistory = (purchaseRes.count ?? 0) > 0;
     activePackageLessons = (activePkgRes.count ?? 0) > 0;
+    hasCoursePackage = (coursePkgRes.count ?? 0) > 0;
+    hasCourseEnrollment = (courseEnrollRes.count ?? 0) > 0;
   } catch (error) {
-    if (!isCabinetTableError(error)) throw error;
+    if (!isCabinetTableError(error) && !isPackageTableError(error)) throw error;
   }
 
-  const hasActiveCourse = products.course;
+  const hasActiveCourse = products.course || hasCoursePackage || hasCourseEnrollment;
   const hasActiveLessonProduct =
     products.individual || products.group || activePackageLessons;
   const hasActiveProducts = hasActiveCourse || hasActiveLessonProduct;

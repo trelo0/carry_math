@@ -170,16 +170,6 @@ export async function notifyCuratorOverdueOnce(
     `❤️ Жизней: ${lives ? `${lives.lives_current} из ${lives.lives_max}` : '—'}`,
   ].join('\n');
 
-  const lifeButton =
-    courseId != null && hwNum > 0
-      ? [
-          {
-            text: '❤️ Списать жизнь',
-            callback_data: `k:life:${courseId}:ask:${telegramId}:${hwNum}`,
-          },
-        ]
-      : [];
-
   if (courseId != null) {
     const checker = await getStudentCheckStaff(admin, telegramId, courseId);
     const checkChat = checker ? await memberChatId(admin, checker.telegramId) : null;
@@ -190,17 +180,42 @@ export async function notifyCuratorOverdueOnce(
           text: overdueText,
           reply_markup: {
             inline_keyboard: [
-              ...lifeButton,
-              [{ text: '💬 Связаться с учеником', url: `tg://user?id=${telegramId}` }],
+              [{ text: '💬 Связаться', callback_data: `k:msg:${courseId}:w:${telegramId}` }],
+              ...(hwNum > 0
+                ? [
+                    [
+                      {
+                        text: '❤️ Снять жизнь',
+                        callback_data: `k:life:${courseId}:ask:${telegramId}:${hwNum}`,
+                      },
+                    ],
+                  ]
+                : []),
+              [
+                {
+                  text: '📤 Отправить администратору',
+                  callback_data: `k:od:adm:${courseId}:${telegramId}:${hwNum}`,
+                },
+              ],
             ],
           },
         });
+        return true;
       } catch (err) {
         console.error('[hw-deadline] check overdue notify failed:', err);
       }
     }
   }
 
+  await notifyAdminsHomeworkOverdue(admin, telegramId, overdueText);
+  return true;
+}
+
+export async function notifyAdminsHomeworkOverdue(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  overdueText: string,
+): Promise<void> {
   const adminChats = await getAdminNotifyChatIds(admin);
   for (const chatId of adminChats) {
     try {
@@ -211,10 +226,10 @@ export async function notifyCuratorOverdueOnce(
           inline_keyboard: [
             [
               { text: '⏱ Просрочки', callback_data: 'ae:lives:od:0' },
-              { text: '❤️ Жизни', callback_data: `al:m:${telegramId}` },
+              { text: '❤️ Жизни', callback_data: `al:m:${studentTelegramId}` },
             ],
-            [{ text: '👤 Профиль', callback_data: `admin:user:${telegramId}::` }],
-            [{ text: '💬 Ученик', url: `tg://user?id=${telegramId}` }],
+            [{ text: '👤 Профиль', callback_data: `admin:user:${studentTelegramId}::` }],
+            [{ text: '💬 Ученик', url: `tg://user?id=${studentTelegramId}` }],
           ],
         },
       });
@@ -222,8 +237,6 @@ export async function notifyCuratorOverdueOnce(
       console.error('[hw-deadline] admin overdue notify failed:', err);
     }
   }
-
-  return true;
 }
 
 /**

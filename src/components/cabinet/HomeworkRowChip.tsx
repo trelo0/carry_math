@@ -24,6 +24,7 @@ type ChipVariant =
   | 'warn'
   | 'overdue'
   | 'review'
+  | 'revision'
   | 'done'
   | 'archive';
 
@@ -139,7 +140,7 @@ export default function HomeworkRowChip({
   } else if (status === 'rejected') {
     statusText = 'На доработке';
     icon = 'clock';
-    variant = 'review';
+    variant = 'revision';
     if (trackDeadline && phase === 'overdue') {
       timeText = '00:00:00';
       blink = true;
@@ -151,7 +152,7 @@ export default function HomeworkRowChip({
       remainingMs > 0
     ) {
       timeText = formatRemaining(remainingMs);
-      variant = resolveTimeTone(phase, remainingMs);
+      variant = 'revision';
     }
   } else if (trackDeadline && phase === 'overdue') {
     statusText = 'Ожидает сдачи';

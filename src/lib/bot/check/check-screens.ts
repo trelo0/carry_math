@@ -1,15 +1,14 @@
 import type { InlineKeyboard } from '@/lib/bot/admin/core';
 import type { StaffCourseAssignmentOption } from '@/lib/curator/course-context';
-import type { CuratorHomeworkListItem } from '@/lib/bot/staff/curator-homework-screens';
 import {
   formatCheckHwWhen,
+  type CheckArchiveStatusFilter,
   type CheckHomeworkListItem,
   type CheckHwListFilters,
 } from './check-homework-meta';
 import {
   CURATOR_HW_STATUS_LABELS,
   CURATOR_HW_STATUS_SHORT,
-  type CuratorHwStatus,
 } from '@/lib/bot/curator/curator-types';
 import type { CuratorStudentRecord, CuratorHomeworkRecord } from '@/lib/bot/curator/curatorData';
 import type { CuratorStudentView } from '@/lib/curator/students';
@@ -23,13 +22,14 @@ export const CHECK_BOT_WELCOME_TEXT =
 export const CHECK_NO_COURSES_TEXT =
   'Нет курсов с назначением «проверяющий ДЗ».\n\nОбратитесь к администратору, чтобы вас добавили в course_staff_assignments с ролью check.';
 
-export type CheckBotSection = 'hw' | 'stu' | 'msg' | 'lib';
+export type CheckBotSection = 'home' | 'hw' | 'stu' | 'msg' | 'lib';
 
 function back(text: string, data: string) {
   return { text, callback_data: data };
 }
 
 const SECTION_TITLES: Record<CheckBotSection, string> = {
+  home: '🏠 Главная',
   hw: '📝 Домашние задания',
   stu: '👥 Ученики',
   msg: '💬 Сообщения',
@@ -37,6 +37,7 @@ const SECTION_TITLES: Record<CheckBotSection, string> = {
 };
 
 const SECTION_PICK_TITLES: Record<CheckBotSection, string> = {
+  home: '🏠 Выберите курс',
   hw: '📝 Выберите курс — домашние задания',
   stu: '👥 Выберите курс — ученики',
   msg: '💬 Выберите курс — сообщения',
@@ -64,6 +65,42 @@ export function renderCheckCoursePicker(
   };
 }
 
+export function renderCheckHome(
+  courseId: number,
+  courseTitle: string,
+  stats: { unreadMessages: number; pendingHomework: number },
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text:
+      `🏠 Главная\n🎓 ${courseTitle}\n\n` +
+      `💬 Новых сообщений: ${stats.unreadMessages}\n` +
+      `📝 ДЗ на проверку: ${stats.pendingHomework}`,
+    keyboard: {
+      inline_keyboard: [
+        [back('📝 Домашние задания', `k:sec:hw:${courseId}`)],
+        [back('👥 Ученики', `k:sec:stu:${courseId}`)],
+        [back('💬 Сообщения', `k:sec:msg:${courseId}`)],
+      ],
+    },
+  };
+}
+
+export function renderCheckStudentsHub(
+  courseId: number,
+  courseTitle: string,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: `👥 Ученики\n🎓 ${courseTitle}\n\nВыберите действие:`,
+    keyboard: {
+      inline_keyboard: [
+        [back('📋 Список учеников', `k:stu:${courseId}:list`)],
+        [back('🔎 Поиск по имени', `k:stu:${courseId}:find`)],
+        [back('🏠 На главную', `k:home:${courseId}`)],
+      ],
+    },
+  };
+}
+
 export function renderCheckHomeworkHub(
   courseId: number,
   courseTitle: string,
@@ -73,44 +110,42 @@ export function renderCheckHomeworkHub(
     keyboard: {
       inline_keyboard: [
         [back('🔴 На проверку', `k:hw:${courseId}:pend:0`)],
-        [back('📁 Архив', `k:hw:${courseId}:a`)],
-        [back('⬅️ К выбору курса', 'k:pk:hw')],
+        [back('📁 Архив', `k:hw:${courseId}:arch:0`)],
+        [back('🏠 На главную', `k:home:${courseId}`)],
       ],
     },
   };
 }
 
-export type CheckArchiveFilter = 'all' | 'submitted' | 'approved' | 'revision' | 'waiting' | 'overdue';
+export type CheckArchiveFilter = CheckArchiveStatusFilter;
 
-const ARCHIVE_FILTER_LABELS: Record<CheckArchiveFilter, string> = {
+const ARCHIVE_STATUS_LABELS: Record<CheckArchiveStatusFilter, string> = {
   all: 'Все',
-  submitted: 'На проверке',
   approved: 'Одобрено',
   revision: 'На доработке',
-  waiting: 'Не сдано',
   overdue: 'Просрочено',
 };
 
-export function renderCheckArchiveFilters(
-  courseId: number,
-  courseTitle: string,
-): { text: string; keyboard: InlineKeyboard } {
-  const filters: CheckArchiveFilter[] = ['all', 'submitted', 'approved', 'revision', 'waiting', 'overdue'];
-  return {
-    text: `📁 Архив ДЗ\n🎓 ${courseTitle}\n\nФильтр по статусу:`,
-    keyboard: {
-      inline_keyboard: [
-        ...filters.map((f) => [back(ARCHIVE_FILTER_LABELS[f], `k:hw:${courseId}:a:${f}`)]),
-        [back('⬅️ Назад', `k:hw:${courseId}`)],
-      ],
-    },
-  };
+export type CheckHwListMode = 'pending' | 'archive';
+
+export type CheckHwListOrigin = {
+  mode: CheckHwListMode;
+  page: number;
+  filters: CheckHwListFilters;
+};
+
+function filterSuffix(filters: CheckHwListFilters): string {
+  let cb = '';
+  if (filters.studentTelegramId != null) cb += `:s:${filters.studentTelegramId}`;
+  if (filters.moduleIndex != null) cb += `:m:${filters.moduleIndex}`;
+  if (filters.lessonNumber != null) cb += `:n:${filters.lessonNumber}`;
+  if (filters.archiveStatus && filters.archiveStatus !== 'all') cb += `:f:${filters.archiveStatus}`;
+  return cb;
 }
 
-function hwListLabel(item: CheckHomeworkListItem): string {
-  const short = CURATOR_HW_STATUS_SHORT[item.homework.status];
-  const overdue = item.meta?.overdue ? ' ⏱' : '';
-  return `${item.studentName} · №${item.homework.number} — ${short}${overdue}`.slice(0, 60);
+export function encodeListCallback(courseId: number, origin: CheckHwListOrigin): string {
+  const mode = origin.mode === 'archive' ? 'arch' : 'pend';
+  return `k:hw:${courseId}:${mode}:${origin.page}${filterSuffix(origin.filters)}`;
 }
 
 export function encodePendingListCallback(
@@ -118,11 +153,7 @@ export function encodePendingListCallback(
   page: number,
   filters: CheckHwListFilters,
 ): string {
-  let cb = `k:hw:${courseId}:pend:${page}`;
-  if (filters.studentTelegramId != null) cb += `:s:${filters.studentTelegramId}`;
-  if (filters.moduleIndex != null) cb += `:m:${filters.moduleIndex}`;
-  if (filters.lessonNumber != null) cb += `:n:${filters.lessonNumber}`;
-  return cb;
+  return encodeListCallback(courseId, { mode: 'pending', page, filters });
 }
 
 export function parseListFilters(parts: string[], startIndex: number): CheckHwListFilters {
@@ -137,102 +168,186 @@ export function parseListFilters(parts: string[], startIndex: number): CheckHwLi
     } else if (parts[i] === 'n' && parts[i + 1]) {
       filters.lessonNumber = Number(parts[i + 1]);
       i++;
+    } else if (parts[i] === 'f' && parts[i + 1]) {
+      const status = parts[i + 1] as CheckArchiveStatusFilter;
+      if (status === 'all' || status === 'approved' || status === 'revision' || status === 'overdue') {
+        filters.archiveStatus = status;
+      }
+      i++;
     }
   }
   return filters;
+}
+
+export function parseListOrigin(parts: string[], startIndex: number): CheckHwListOrigin {
+  const token = parts[startIndex];
+  if (token === 'pend' || token === 'arch' || token === 'a') {
+    const mode: CheckHwListMode = token === 'pend' ? 'pending' : 'archive';
+    const page = Number(parts[startIndex + 1] ?? 0) || 0;
+    return { mode, page, filters: parseListFilters(parts, startIndex + 2) };
+  }
+  return { mode: 'pending', page: 0, filters: {} };
+}
+
+export function originSuffix(origin: CheckHwListOrigin): string {
+  const mode = origin.mode === 'archive' ? 'arch' : 'pend';
+  return `${mode}:${origin.page}${filterSuffix(origin.filters)}`;
+}
+
+export function parseOriginFromParts(parts: string[], startIndex: number): CheckHwListOrigin {
+  if (!parts[startIndex]) return { mode: 'pending', page: 0, filters: {} };
+  return parseListOrigin(parts, startIndex);
+}
+
+function withOrigin(base: string, origin: CheckHwListOrigin): string {
+  const full = `${base}:${originSuffix(origin)}`;
+  if (full.length <= 64) return full;
+  const short = `${base}:${origin.mode === 'archive' ? 'arch' : 'pend'}:${origin.page}`;
+  return short.length <= 64 ? short : base;
+}
+
+export function encodeHwItemCallback(
+  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd',
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): string {
+  return withOrigin(`k:hw:${courseId}:${action}:${studentId}:${hwNumber}`, origin);
+}
+
+export function encodeRejCallback(
+  action: 'c' | 'skip' | 'go' | 'bare',
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): string {
+  return withOrigin(`k:rej:${courseId}:${action}:${studentId}:${hwNumber}`, origin);
+}
+
+export function encodeLifeCallback(
+  action: 'ask' | 'do',
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): string {
+  return withOrigin(`k:life:${courseId}:${action}:${studentId}:${hwNumber}`, origin);
+}
+
+export function encodeMsgFromHwCallback(
+  courseId: number,
+  telegramId: number,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): string {
+  return withOrigin(`k:msg:${courseId}:wh:${telegramId}:${hwNumber}`, origin);
+}
+
+function hwListLabel(item: CheckHomeworkListItem, mode: CheckHwListMode): string {
+  const overdue = item.meta?.overdue ? '🔴 ' : '';
+  const short = mode === 'archive' ? ` — ${CURATOR_HW_STATUS_SHORT[item.homework.status]}` : '';
+  return `${overdue}${item.studentName} · №${item.homework.number}${short}`.slice(0, 64);
 }
 
 export function renderCheckHomeworkList(
   courseId: number,
   courseTitle: string,
   items: CheckHomeworkListItem[],
-  mode: 'pending' | 'archive',
+  mode: CheckHwListMode,
   options?: {
-    archiveFilter?: CheckArchiveFilter;
     page?: number;
     totalPages?: number;
+    totalCount?: number;
     filters?: CheckHwListFilters;
-    listCallbackBase?: string;
   },
 ): { text: string; keyboard: InlineKeyboard } {
   const page = options?.page ?? 0;
   const totalPages = options?.totalPages ?? 1;
   const filters = options?.filters ?? {};
-  const title =
+  const origin: CheckHwListOrigin = { mode, page, filters };
+  const title = mode === 'pending' ? `🔴 На проверку · ${courseTitle}` : `📁 Архив · ${courseTitle}`;
+  const intro =
     mode === 'pending'
-      ? `🔴 На проверку · ${courseTitle}`
-      : `📁 Архив (${options?.archiveFilter ? ARCHIVE_FILTER_LABELS[options.archiveFilter] : 'все'}) · ${courseTitle}`;
-  const parts = [title, ''];
-  if (mode === 'pending') {
-    parts.push('🔎 Фильтры: ученик / модуль / занятие — кнопка ниже.', '');
-  }
-  if (items.length === 0) {
-    parts.push('Список пуст.');
+      ? 'Все домашние задания, которые ждут проверки.'
+      : 'Проверенные работы: одобрено и на доработке.';
+  const parts = [title, '', intro];
+  const totalCount = options?.totalCount ?? items.length;
+  if (totalCount === 0) {
+    parts.push('', 'Список пуст.');
   } else {
-    parts.push(`Показано: ${items.length} · стр. ${page + 1}/${totalPages}`, '');
-    for (const i of items.slice(0, 8)) {
-      const meta = i.meta;
-      parts.push(
-        `• ${i.studentName} · ДЗ №${i.homework.number}`,
-        meta
-          ? `  ${meta.moduleTitle} · сдача ${formatCheckHwWhen(meta.submittedAt)} · дедлайн ${formatCheckHwWhen(meta.deadlineAt)}${meta.overdue ? ' · ПРОСРОЧКА' : ''}`
-          : '',
-      );
-    }
+    parts.push('', `Всего: ${totalCount} · стр. ${page + 1}/${totalPages}`);
   }
   const keyboard: InlineKeyboard['inline_keyboard'] = items.map((i) => [
-    back(hwListLabel(i), `k:hw:${courseId}:i:${i.studentId}:${i.homework.number}`),
+    back(hwListLabel(i, mode), encodeHwItemCallback('i', courseId, i.studentId, i.homework.number, origin)),
   ]);
   const nav: InlineKeyboard['inline_keyboard'] = [];
-  const listCb =
-    options?.listCallbackBase ??
-    (mode === 'pending' ? encodePendingListCallback(courseId, page, filters) : `k:hw:${courseId}:a`);
-  const archiveFilter = options?.archiveFilter;
   if (page > 0) {
-    nav.push([
-      back(
-        '◀️ Назад',
-        mode === 'pending'
-          ? encodePendingListCallback(courseId, page - 1, filters)
-          : `k:hw:${courseId}:a:${archiveFilter ?? 'all'}:${page - 1}`,
-      ),
-    ]);
+    nav.push([back('◀️ Назад', encodeListCallback(courseId, { ...origin, page: page - 1 }))]);
   }
   if (page + 1 < totalPages) {
-    nav.push([
-      back(
-        '▶️ Далее',
-        mode === 'pending'
-          ? encodePendingListCallback(courseId, page + 1, filters)
-          : `k:hw:${courseId}:a:${archiveFilter ?? 'all'}:${page + 1}`,
-      ),
+    nav.push([back('▶️ Далее', encodeListCallback(courseId, { ...origin, page: page + 1 }))]);
+  }
+  const filterPrefix = mode === 'pending' ? 'fl' : 'afl';
+  keyboard.push([back('🔎 Фильтры', `k:hw:${courseId}:${filterPrefix}:${page}`)]);
+  const hasFilters =
+    filters.studentTelegramId != null ||
+    filters.moduleIndex != null ||
+    filters.lessonNumber != null ||
+    (filters.archiveStatus != null && filters.archiveStatus !== 'all');
+  if (hasFilters) {
+    keyboard.push([
+      back('✖️ Сбросить фильтры', encodeListCallback(courseId, { mode, page: 0, filters: {} })),
     ]);
   }
-  if (mode === 'pending') {
-    keyboard.push([back('🔎 Фильтры', `k:hw:${courseId}:fl:${page}`)]);
-    if (filters.studentTelegramId != null || filters.moduleIndex != null || filters.lessonNumber != null) {
-      keyboard.push([back('✖️ Сбросить фильтры', `k:hw:${courseId}:pend:0`)]);
-    }
-  }
   keyboard.push(...nav);
-  keyboard.push([
-    back('⬅️ Назад', mode === 'pending' ? `k:hw:${courseId}` : `k:hw:${courseId}:a`),
-  ]);
+  keyboard.push([back('⬅️ Назад', `k:hw:${courseId}`)]);
   return { text: parts.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
 
 export function renderCheckHwFilterMenu(
   courseId: number,
   page: number,
+  origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
+  const prefix = origin.mode === 'archive' ? 'afl' : 'fl';
+  const rows: InlineKeyboard['inline_keyboard'] = [
+    [back('👤 По ученику', `k:hw:${courseId}:${prefix}:${page}:s`)],
+    [back('📂 По модулю', `k:hw:${courseId}:${prefix}:${page}:m`)],
+    [back('📚 По занятию (номер)', `k:hw:${courseId}:${prefix}:${page}:n`)],
+  ];
+  if (origin.mode === 'archive') {
+    rows.push([back('📌 По статусу', `k:hw:${courseId}:${prefix}:${page}:st`)]);
+  }
+  rows.push([back('⬅️ К списку', encodeListCallback(courseId, origin))]);
   return {
-    text: '🔎 Фильтры очереди «На проверку»',
+    text: origin.mode === 'archive' ? '🔎 Фильтры архива' : '🔎 Фильтры очереди «На проверку»',
+    keyboard: { inline_keyboard: rows },
+  };
+}
+
+export function renderCheckArchiveStatusFilters(
+  courseId: number,
+  page: number,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  const statuses: CheckArchiveStatusFilter[] = ['all', 'approved', 'revision', 'overdue'];
+  return {
+    text: '📌 Статус в архиве',
     keyboard: {
       inline_keyboard: [
-        [back('👤 По ученику', `k:hw:${courseId}:fl:${page}:s`)],
-        [back('📂 По модулю', `k:hw:${courseId}:fl:${page}:m`)],
-        [back('📚 По занятию (номер)', `k:hw:${courseId}:fl:${page}:n`)],
-        [back('⬅️ К списку', encodePendingListCallback(courseId, page, {}))],
+        ...statuses.map((status) => [
+          back(
+            ARCHIVE_STATUS_LABELS[status],
+            encodeListCallback(courseId, {
+              ...origin,
+              page: 0,
+              filters: { ...origin.filters, archiveStatus: status === 'all' ? undefined : status },
+            }),
+          ),
+        ]),
+        [back('⬅️ Назад', `k:hw:${courseId}:afl:${page}`)],
       ],
     },
   };
@@ -244,14 +359,7 @@ export function filterArchiveItems(
 ): CheckHomeworkListItem[] {
   if (filter === 'all') return items;
   if (filter === 'overdue') return items.filter((i) => i.meta?.overdue);
-  const map: Record<Exclude<CheckArchiveFilter, 'all' | 'overdue'>, CuratorHwStatus> = {
-    submitted: 'submitted',
-    approved: 'approved',
-    revision: 'revision',
-    waiting: 'waiting',
-  };
-  const want = map[filter as Exclude<CheckArchiveFilter, 'all' | 'overdue'>];
-  return items.filter((i) => i.homework.status === want);
+  return items.filter((i) => i.homework.status === filter);
 }
 
 export function renderCheckHomeworkCard(
@@ -259,78 +367,190 @@ export function renderCheckHomeworkCard(
   courseTitle: string,
   student: CuratorStudentRecord,
   homework: CuratorHomeworkRecord,
-  options?: { readOnly?: boolean; meta?: import('./check-homework-meta').CheckHwMeta | null },
+  options?: {
+    meta?: import('./check-homework-meta').CheckHwMeta | null;
+    origin?: CheckHwListOrigin;
+    lifeDeducted?: boolean;
+  },
 ): { text: string; keyboard: InlineKeyboard } {
-  const readOnly = options?.readOnly ?? false;
   const meta = options?.meta;
+  const origin = options?.origin ?? { mode: 'pending' as const, page: 0, filters: {} };
+  const overdue = Boolean(meta?.overdue);
   const parts = [
-    '📝 Домашнее задание',
+    '📝 Проверка ДЗ',
     '',
-    `👨‍🎓 ${student.name}`,
-    `🎓 ${courseTitle}`,
+    `👤 Ученик: ${student.name}`,
+    `🎓 Курс: ${courseTitle}`,
     `📚 ${meta?.moduleTitle ? `${meta.moduleTitle} · ` : ''}Занятие №${homework.number}: ${homework.title}`,
-    `Статус: ${CURATOR_HW_STATUS_LABELS[homework.status]}`,
+    `📌 Статус: ${CURATOR_HW_STATUS_LABELS[homework.status]}`,
   ];
   if (meta) {
     parts.push(
-      `Отправлено: ${formatCheckHwWhen(meta.submittedAt)}`,
-      `Дедлайн: ${formatCheckHwWhen(meta.deadlineAt)}`,
+      `📤 Отправлено: ${formatCheckHwWhen(meta.submittedAt)}`,
+      `⏰ Дедлайн: ${formatCheckHwWhen(meta.deadlineAt)}`,
     );
-    if (meta.overdue) parts.push('⏱ Просрочено');
+  }
+  if (overdue) {
+    parts.push('', '⚠️ СДАНО С ПРОСРОЧКОЙ');
   }
   if (homework.submissionNote?.trim()) {
-    parts.push('', 'Комментарий ученика:', homework.submissionNote.trim());
+    parts.push('', '💬 Комментарий ученика:', homework.submissionNote.trim());
   }
-  parts.push('', '📎 Ответ ученика — кнопка «Посмотреть работу».');
+  parts.push('', 'Откройте работу ученика, чтобы вынести вердикт.');
 
-  const canReview = homework.status === 'submitted' && !readOnly;
-  const canLife =
-    !readOnly &&
-    (homework.status === 'waiting' || homework.status === 'revision' || homework.status === 'submitted');
-
+  const canLife = overdue && !options?.lifeDeducted && homework.status === 'submitted';
   const rows: InlineKeyboard['inline_keyboard'] = [
-    [{ text: '👀 Посмотреть работу', callback_data: `k:hw:${courseId}:v:${student.id}:${homework.number}` }],
+    [
+      {
+        text: '👀 Посмотреть работу',
+        callback_data: encodeHwItemCallback('v', courseId, student.id, homework.number, origin),
+      },
+    ],
+    [
+      {
+        text: '✉️ Связаться с учеником',
+        callback_data: encodeMsgFromHwCallback(courseId, student.telegramId, homework.number, origin),
+      },
+    ],
   ];
-  if (canReview) {
-    rows.push([{ text: '✅ Одобрить ДЗ', callback_data: `k:hw:${courseId}:ok:${student.id}:${homework.number}` }]);
-    rows.push([
-      { text: '🔄 На доработку', callback_data: `k:hw:${courseId}:rej:${student.id}:${homework.number}` },
-    ]);
-  }
-  if (!readOnly) {
-    rows.push([
-      { text: '💬 Комментарий (без смены статуса)', callback_data: `k:hw:${courseId}:cmt:${student.id}:${homework.number}` },
-    ]);
-  }
   if (canLife) {
     rows.push([
       {
         text: '❤️ Снять жизнь',
-        callback_data: `k:life:${courseId}:ask:${student.id}:${homework.number}`,
+        callback_data: encodeLifeCallback('ask', courseId, student.id, homework.number, origin),
+      },
+    ]);
+  }
+  rows.push([back('⬅️ Назад', encodeListCallback(courseId, origin))]);
+  return { text: parts.join('\n'), keyboard: { inline_keyboard: rows } };
+}
+
+export function renderCheckVerdict(
+  courseId: number,
+  student: CuratorStudentRecord,
+  homework: CuratorHomeworkRecord,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  const canReview = homework.status === 'submitted';
+  const rows: InlineKeyboard['inline_keyboard'] = [];
+  if (canReview) {
+    rows.push([
+      {
+        text: '✅ Одобрено',
+        callback_data: encodeHwItemCallback('ok', courseId, student.id, homework.number, origin),
+      },
+    ]);
+    rows.push([
+      {
+        text: '🔄 На доработку',
+        callback_data: encodeHwItemCallback('rej', courseId, student.id, homework.number, origin),
       },
     ]);
   }
   rows.push([
-    { text: '✉️ Связаться с учеником', callback_data: `k:msg:${courseId}:w:${student.telegramId}` },
+    {
+      text: '💬 Комментарий без смены статуса',
+      callback_data: encodeHwItemCallback('cmt', courseId, student.id, homework.number, origin),
+    },
   ]);
-  rows.push([back('⬅️ Назад', `k:hw:${courseId}:pend:0`)]);
-  return { text: parts.join('\n'), keyboard: { inline_keyboard: rows } };
+  rows.push([
+    back('⬅️ Назад', encodeHwItemCallback('i', courseId, student.id, homework.number, origin)),
+  ]);
+  return {
+    text:
+      '⚖️ Ваш вердикт\n\n' +
+      `👤 ${student.name}\n` +
+      `📚 ДЗ №${homework.number}: ${homework.title}\n\n` +
+      (canReview ? 'Выберите решение:' : 'Работа уже проверена. Можно оставить комментарий.'),
+    keyboard: { inline_keyboard: rows },
+  };
 }
 
 export function renderCheckRejectMethod(
   courseId: number,
   studentId: string,
   hwNumber: number,
+  origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: '🔄 Возврат на доработку\n\nВыберите способ комментария:',
+    text: '🔄 На доработку\n\nКак отправить работу ученику?',
     keyboard: {
       inline_keyboard: [
-        [{ text: '✏️ Текст', callback_data: `k:rej:${courseId}:t:${studentId}:${hwNumber}` }],
-        [{ text: '🎤 Голосовое', callback_data: `k:rej:${courseId}:v:${studentId}:${hwNumber}` }],
-        [{ text: '📷 Фото', callback_data: `k:rej:${courseId}:p:${studentId}:${hwNumber}` }],
-        [{ text: '⏭ Без комментария', callback_data: `k:rej:${courseId}:skip:${studentId}:${hwNumber}` }],
-        [back('⬅️ Отмена', `k:hw:${courseId}:i:${studentId}:${hwNumber}`)],
+        [{ text: '💬 Комментарий', callback_data: encodeRejCallback('c', courseId, studentId, hwNumber, origin) }],
+        [{ text: '⏭ Без комментария', callback_data: encodeRejCallback('skip', courseId, studentId, hwNumber, origin) }],
+        [back('⬅️ Назад', encodeHwItemCallback('vd', courseId, studentId, hwNumber, origin))],
+      ],
+    },
+  };
+}
+
+export function renderCheckRejectCommentPrompt(
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text:
+      '💬 Комментарий к доработке\n\n' +
+      'Добавьте комментарий любым способом:\n' +
+      '• текст\n' +
+      '• голосовое\n' +
+      '• фото\n' +
+      '• файл\n\n' +
+      'После этого появится черновик и подтверждение отправки.',
+    keyboard: {
+      inline_keyboard: [
+        [back('⬅️ Назад', encodeHwItemCallback('rej', courseId, studentId, hwNumber, origin))],
+      ],
+    },
+  };
+}
+
+export function renderCheckRejectDraftConfirm(
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+  draft: { text?: string | null; fileKind?: 'photo' | 'voice' | 'document' | null },
+): { text: string; keyboard: InlineKeyboard } {
+  const kindLabel =
+    draft.fileKind === 'photo'
+      ? 'фото'
+      : draft.fileKind === 'voice'
+        ? 'голосовое'
+        : draft.fileKind === 'document'
+          ? 'файл'
+          : 'нет';
+  const note = draft.text?.trim() ? draft.text.trim() : '—';
+  return {
+    text:
+      '📄 Черновик\n\n' +
+      `Текст: ${note}\n` +
+      `Вложение: ${kindLabel}\n\n` +
+      'Отправить работу на доработку?',
+    keyboard: {
+      inline_keyboard: [
+        [{ text: '✅ Подтвердить', callback_data: encodeRejCallback('go', courseId, studentId, hwNumber, origin) }],
+        [back('⬅️ Назад', encodeRejCallback('c', courseId, studentId, hwNumber, origin))],
+        [back('❌ Отмена', encodeHwItemCallback('rej', courseId, studentId, hwNumber, origin))],
+      ],
+    },
+  };
+}
+
+export function renderCheckRejectSkipConfirm(
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: '🔄 Отправить на доработку без комментария?',
+    keyboard: {
+      inline_keyboard: [
+        [{ text: '✅ Подтвердить', callback_data: encodeRejCallback('bare', courseId, studentId, hwNumber, origin) }],
+        [back('⬅️ Назад', encodeHwItemCallback('rej', courseId, studentId, hwNumber, origin))],
       ],
     },
   };
@@ -344,6 +564,7 @@ export function renderCheckLifeConfirm(
   studentId: string,
   livesBefore: number,
   livesMax: number | null,
+  origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
   const after = Math.max(0, livesBefore - 1);
   return {
@@ -353,11 +574,11 @@ export function renderCheckLifeConfirm(
       `Курс: ${courseTitle}\n` +
       `ДЗ №${hwNumber}\n\n` +
       `Жизни: ${livesBefore}${livesMax != null ? `/${livesMax}` : ''} → ${after}${livesMax != null ? `/${livesMax}` : ''}\n\n` +
-      'Подтвердите списание:',
+      'Подтвердите списание. После этого работу всё равно нужно проверить.',
     keyboard: {
       inline_keyboard: [
-        [{ text: '✅ Подтвердить', callback_data: `k:life:${courseId}:do:${studentId}:${hwNumber}` }],
-        [back('⬅️ Отмена', `k:hw:${courseId}:i:${studentId}:${hwNumber}`)],
+        [{ text: '✅ Подтвердить', callback_data: encodeLifeCallback('do', courseId, studentId, hwNumber, origin) }],
+        [back('⬅️ Назад', encodeHwItemCallback('i', courseId, studentId, hwNumber, origin))],
       ],
     },
   };
@@ -369,28 +590,25 @@ export function renderCheckStudentsList(
   students: CuratorStudentView[],
   options?: { page?: number; totalPages?: number; searchQuery?: string | null },
 ): { text: string; keyboard: InlineKeyboard } {
+  const searching = Boolean(options?.searchQuery);
   if (students.length === 0) {
-    const emptyText = options?.searchQuery
-      ? `👥 Ученики\n🎓 ${courseTitle}\n\nПо запросу «${options.searchQuery}» никого не найдено.`
+    const emptyText = searching
+      ? `👥 Поиск\n🎓 ${courseTitle}\n\nПо запросу «${options?.searchQuery}» никого не найдено.`
       : `👥 Ученики\n🎓 ${courseTitle}\n\nНет учеников с доступом к курсу.`;
     return {
       text: emptyText,
       keyboard: {
-        inline_keyboard: [
-          [back('🔎 Поиск', `k:stu:${courseId}:find`)],
-          [back('⬅️ К выбору курса', 'k:pk:stu')],
-        ],
+        inline_keyboard: [[back('⬅️ Назад', `k:stu:${courseId}`)]],
       },
     };
   }
   const page = options?.page ?? 0;
   const totalPages = options?.totalPages ?? 1;
   const lines = [
-    `👥 Ученики`,
+    searching ? `🔎 Совпадения · «${options?.searchQuery}»` : '👥 Список учеников',
     `🎓 ${courseTitle}`,
-    `${students.length} чел.${options?.searchQuery ? ` · поиск: «${options.searchQuery}»` : ''}`,
+    `${students.length} чел.`,
     `Стр. ${page + 1}/${totalPages}`,
-    '',
   ];
   const keyboard: InlineKeyboard['inline_keyboard'] = students.map((s) => [
     back(`${s.name}`.slice(0, 58), `k:stu:${courseId}:s:${s.telegramId}`),
@@ -401,8 +619,7 @@ export function renderCheckStudentsList(
   if (page + 1 < totalPages) {
     keyboard.push([back('▶️ Далее', `k:stu:${courseId}:pg:${page + 1}`)]);
   }
-  keyboard.push([back('🔎 Поиск по имени', `k:stu:${courseId}:find`)]);
-  keyboard.push([back('⬅️ К выбору курса', 'k:pk:stu')]);
+  keyboard.push([back('⬅️ Назад', `k:stu:${courseId}`)]);
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
 
@@ -443,7 +660,26 @@ export function renderCheckStudentCard(
     keyboard: {
       inline_keyboard: [
         [{ text: '✉️ Связаться с учеником', callback_data: `k:msg:${courseId}:w:${student.telegramId}` }],
-        [back('⬅️ К списку', `k:stu:${courseId}`)],
+        [back('⬅️ Назад', `k:stu:${courseId}:list`)],
+      ],
+    },
+  };
+}
+
+export function renderCheckMessagesHub(
+  courseId: number,
+  courseTitle: string,
+  incomingCount: number,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text:
+      `💬 Сообщения\n🎓 ${courseTitle}\n\n` +
+      `Входящие (ждут ответа): ${incomingCount}`,
+    keyboard: {
+      inline_keyboard: [
+        [back('📥 Входящие', `k:msg:${courseId}:in`)],
+        [back('💬 Диалоги', `k:msg:${courseId}:dlg`)],
+        [back('🏠 На главную', `k:home:${courseId}`)],
       ],
     },
   };
@@ -454,13 +690,15 @@ export function renderCheckMessagesInbox(
   courseTitle: string,
   threads: StaffThreadSummary[],
   storageEnabled: boolean,
+  mode: 'incoming' | 'dialogs' = 'dialogs',
 ): { text: string; keyboard: InlineKeyboard } {
-  const parts = [`💬 Сообщения`, `🎓 ${courseTitle}`, ''];
+  const title = mode === 'incoming' ? '📥 Входящие' : '💬 Диалоги';
+  const parts = [title, `🎓 ${courseTitle}`, ''];
   if (!storageEnabled) {
     parts.push('История переписки недоступна (миграция staff_student_messages).', '');
   }
   if (threads.length === 0) {
-    parts.push('Диалогов с учениками этого курса пока нет.');
+    parts.push(mode === 'incoming' ? 'Нет новых сообщений.' : 'Диалогов пока нет.');
   } else {
     parts.push('Выберите диалог:');
   }
@@ -475,7 +713,7 @@ export function renderCheckMessagesInbox(
     keyboard: {
       inline_keyboard: [
         ...buttons,
-        [back('⬅️ К выбору курса', 'k:pk:msg')],
+        [back('⬅️ Назад', `k:msg:${courseId}`)],
       ],
     },
   };
@@ -505,8 +743,9 @@ export function renderCheckMessageThread(
     text: parts.join('\n').slice(0, 3900),
     keyboard: {
       inline_keyboard: [
-        [{ text: '✏️ Написать', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
-        [back('⬅️ К списку', `k:msg:${courseId}`)],
+        [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
+        [back('⬅️ Назад', `k:msg:${courseId}`)],
+        [back('🏠 На главную', `k:home:${courseId}`)],
       ],
     },
   };
@@ -520,7 +759,7 @@ export function renderCheckLibraryModules(
   if (modules.length === 0) {
     return {
       text: `📚 База ДЗ\n🎓 ${courseTitle}\n\nМатериалы домашних заданий не опубликованы.`,
-      keyboard: { inline_keyboard: [[back('⬅️ К выбору курса', 'k:pk:lib')]] },
+      keyboard: { inline_keyboard: [[back('🏠 На главную', `k:home:${courseId}`)]] },
     };
   }
   return {
@@ -528,7 +767,7 @@ export function renderCheckLibraryModules(
     keyboard: {
       inline_keyboard: [
         ...modules.map((m) => [back(`📂 ${m.title}`.slice(0, 58), `k:lib:${courseId}:m:${m.index}`)]),
-        [back('⬅️ К выбору курса', 'k:pk:lib')],
+        [back('🏠 На главную', `k:home:${courseId}`)],
       ],
     },
   };
