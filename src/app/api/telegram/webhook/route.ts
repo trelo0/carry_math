@@ -213,6 +213,10 @@ export async function POST(request: Request) {
         });
         return true;
       }
+      await telegramSend('sendMessage', {
+        chat_id: startMessage.chat.id,
+        text: 'Открываю сдачу домашнего задания…',
+      });
       await ensureMember(
         admin,
         startMessage.from.id,
@@ -869,22 +873,6 @@ export async function POST(request: Request) {
       update.message.chat &&
       update.message.from
     ) {
-      const hwHandled = await handleStudentHomeworkMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (hwHandled) return NextResponse.json({ ok: true });
-
-      const mentorHandled = await handleStudentMentorMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (mentorHandled) return NextResponse.json({ ok: true });
-
       const memberInfoEarly = await ensureMember(
         admin,
         update.message.from.id,
@@ -908,6 +896,22 @@ export async function POST(request: Request) {
         );
         if (menuNavHandled) return NextResponse.json({ ok: true });
       }
+
+      const hwHandled = await handleStudentHomeworkMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (hwHandled) return NextResponse.json({ ok: true });
+
+      const mentorHandled = await handleStudentMentorMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (mentorHandled) return NextResponse.json({ ok: true });
 
       const supportHandled = await handleStudentSupportMessage(
         admin,

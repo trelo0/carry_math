@@ -383,39 +383,31 @@ export async function showClientPackageMenu(
       undefined,
       'package-empty',
       '📦 Остаток пакетов\n\nАктивных пакетов не найдено.',
-      { inline_keyboard: [[clientHomeButton()]] },
+      { inline_keyboard: [[clientBackButton()]] },
       deliver,
     );
     return;
   }
 
-  const blocks = packages.map((pkg) => {
-    const productLabel =
+  const lines = ['📦 Остаток пакетов', ''];
+  for (const pkg of packages) {
+    const kind =
       pkg.product === 'course'
-        ? 'Онлайн-курс'
+        ? '🎓'
         : pkg.product === 'individual'
-          ? 'Индивидуальные занятия'
-          : 'Групповые занятия';
+          ? '👤'
+          : '👥';
     const statusLabel =
-      pkg.status === 'active'
-        ? 'Активен'
-        : pkg.status === 'completed'
-          ? 'Завершён'
-          : pkg.status;
-    return [
-      `📦 ${pkg.title}`,
-      productLabel,
+      pkg.status === 'active' ? 'активен' : pkg.status === 'completed' ? 'завершён' : pkg.status;
+    lines.push(
+      `${kind} ${pkg.title}`,
+      `   ${pkg.remaining}/${pkg.total} занятий · ${statusLabel}`,
       '',
-      `Всего: ${pkg.total}`,
-      `Использовано: ${pkg.used}`,
-      `Осталось: ${pkg.remaining}`,
-      `Статус: ${statusLabel}`,
-    ].join('\n');
-  });
+    );
+  }
 
-  const text = ['📦 Остаток пакетов', '', ...blocks].join('\n\n');
-  await renderHub(admin, telegramId, chatId, undefined, 'package-list', text, {
-    inline_keyboard: [[clientHomeButton()]],
+  await renderHub(admin, telegramId, chatId, undefined, 'package-list', lines.join('\n').trim(), {
+    inline_keyboard: [[clientBackButton()]],
   }, deliver);
 }
 

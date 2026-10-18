@@ -63,8 +63,10 @@ function currentHwBlock(
       return [
         head,
         'Статус: отправлено, ожидает проверки',
-        progress?.homework_submitted_at
-          ? `Отправлено: ${formatDateTimeShort(progress.homework_submitted_at)}`
+        progress?.homework_submitted_at || progress?.updated_at
+          ? `Отправлено: ${formatDateTimeShort(
+              (progress.homework_submitted_at ?? progress.updated_at) as string,
+            )}`
           : null,
       ]
         .filter(Boolean)
@@ -190,7 +192,10 @@ export async function showClientCourseHomeworkHub(
     courseSlug ? `course-hw-hub:${courseSlug}` : 'course-hw-hub',
     lines.join('\n').trim(),
     { inline_keyboard: keyboard },
-    deliver,
+    {
+      ...deliver,
+      hubPayloadExtra: courseSlug ? { activeCourseSlug: courseSlug } : undefined,
+    },
   );
 }
 
@@ -259,12 +264,12 @@ export async function showClientCourseHomeworkHistory(
   const { data: rows, error } = await admin
     .from('course_lesson_student_progress')
     .select(
-      'sanity_lesson_id, homework_status, homework_submitted_at, homework_completed_at, review_note, submission_note, homework_deadline_at',
+      'sanity_lesson_id, homework_status, updated_at, homework_completed_at, review_note, submission_note, homework_deadline_at',
     )
     .eq('telegram_id', telegramId)
     .in('sanity_lesson_id', sanityIds)
     .not('homework_status', 'eq', 'pending')
-    .order('homework_submitted_at', { ascending: false });
+    .order('updated_at', { ascending: false });
   if (error) throw error;
 
   const items = (rows ?? []).filter((r) => r.sanity_lesson_id && lessonMap.has(r.sanity_lesson_id as string));
@@ -291,8 +296,8 @@ export async function showClientCourseHomeworkHistory(
     if (!courseSlug) lines.push(`📚 ${lesson.courseTitle}`);
     lines.push(`№${lesson.lessonNumber} · ${lesson.title}`);
     lines.push(`Статус: ${hwStatusLabel(row.homework_status as string)}`);
-    if (row.homework_submitted_at) {
-      lines.push(`Отправлено: ${formatDateTimeShort(row.homework_submitted_at as string)}`);
+    if (row.updated_at && row.homework_status !== 'pending') {
+      lines.push(`Отправлено: ${formatDateTimeShort(row.updated_at as string)}`);
     }
     if (row.homework_completed_at) {
       lines.push(`Проверено: ${formatDateTimeShort(row.homework_completed_at as string)}`);

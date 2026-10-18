@@ -3,11 +3,24 @@ import type { BotRole } from './roles';
 import { showClientPaymentsHub, showClientMiscHub, showClientContactHub } from './client-shared-hubs';
 import { showClientPurchaseHistory } from './client-purchase-history';
 import { showClientApplicationsHub } from './client-my-leads';
-import { showClientCourseHomeworkHub } from './client-course-homework-hub';
+import {
+  showClientCourseHomeworkHistory,
+  showClientCourseHomeworkHub,
+} from './client-course-homework-hub';
 import { showClientMyCourseHub, showClientCoursePicker } from './client-course-hub';
 import { showClientScheduleMenu, showClientPackageMenu, showClientLessonsMenu } from './client-lessons-flow';
 import { resolveClientState } from './client-state';
-import type { ClientHubState } from './client-nav';
+import { loadClientHubPayload, type ClientHubState } from './client-nav';
+
+function splitHubScreenId(screenId: string): { base: string; param?: string } {
+  if (screenId.startsWith('course-hw-hub:')) {
+    return { base: 'course-hw-hub', param: screenId.slice('course-hw-hub:'.length) };
+  }
+  if (screenId.startsWith('course-hw-hist:')) {
+    return { base: 'course-hw-hist', param: screenId.slice('course-hw-hist:'.length) };
+  }
+  return { base: screenId };
+}
 
 export type ClientScreenNavigateMode =
   | { kind: 'push'; chatId: number }
@@ -34,8 +47,11 @@ export async function renderClientScreenById(
   const deliver = mode.kind === 'push' ? { forcePush: true } : { editAt };
 
   const state = await resolveClientState(admin, telegramId, { memberRole });
+  const hubPayload = await loadClientHubPayload(admin, telegramId);
+  const activeCourseSlug = hubPayload?.payload.activeCourseSlug;
+  const { base, param } = splitHubScreenId(screenId);
 
-  switch (screenId) {
+  switch (base) {
     case 'payments-hub':
       await showClientPaymentsHub(admin, telegramId, chatId, deliver);
       return;
@@ -53,11 +69,35 @@ export async function renderClientScreenById(
       await showClientApplicationsHub(admin, telegramId, chatId, deliver);
       return;
     case 'course-hw-hub':
-      await showClientCourseHomeworkHub(admin, telegramId, chatId, deliver);
+      await showClientCourseHomeworkHub(
+        admin,
+        telegramId,
+        chatId,
+        deliver,
+        param || activeCourseSlug,
+      );
+      return;
+    case 'course-hw-hist':
+      await showClientCourseHomeworkHistory(
+        admin,
+        telegramId,
+        chatId,
+        deliver,
+        param || activeCourseSlug,
+      );
+      return;
+    case 'course-hw-hist-empty':
+      await showClientCourseHomeworkHistory(
+        admin,
+        telegramId,
+        chatId,
+        deliver,
+        param || activeCourseSlug,
+      );
       return;
     case 'my-course':
     case 'my-course-detail':
-      await showClientMyCourseHub(admin, telegramId, chatId, deliver);
+      await showClientMyCourseHub(admin, telegramId, chatId, deliver, activeCourseSlug);
       return;
     case 'my-course-pick':
       await showClientCoursePicker(admin, telegramId, chatId, deliver);

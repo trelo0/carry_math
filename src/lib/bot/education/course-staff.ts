@@ -1,10 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DistrictCourseContent } from '@/lib/studio/courseContent';
 import { loadMemberRoles, memberHasRole, normalizeMemberRole, setRole } from '@/lib/bot/roles';
-import {
-  resolveCheckTelegramIdForCourse,
-  resolveCuratorTelegramIdForCourse,
-} from '@/lib/bot/teacher-mapping';
+import { isRegisteredBotMember } from '@/lib/bot/teacher-mapping';
 
 export type CourseStaffRole = 'teacher' | 'curator' | 'check';
 
@@ -107,24 +104,22 @@ export async function syncCourseStaffFromContent(
 ): Promise<void> {
   if (!courseId || !content) return;
 
-  const slug = options?.courseSlug ?? content.slug;
-  const curatorId = await resolveCuratorTelegramIdForCourse(admin, slug, content.curatorTelegramId);
-  if (curatorId) {
+  const assignFromSanity = async (
+    telegramId: number | null | undefined,
+    role: 'curator' | 'check',
+  ): Promise<void> => {
+    if (telegramId == null || !Number.isFinite(telegramId)) return;
+    const id = Math.floor(telegramId);
+    if (!(await isRegisteredBotMember(admin, id))) return;
     try {
-      await upsertCourseStaffAssignment(admin, courseId, curatorId, 'curator');
+      await upsertCourseStaffAssignment(admin, courseId, id, role);
     } catch (e) {
-      console.warn('[course-staff] curator sync failed:', e);
+      console.warn(`[course-staff] ${role} sync failed:`, e);
     }
-  }
+  };
 
-  const checkId = await resolveCheckTelegramIdForCourse(admin, slug, content.checkTelegramId);
-  if (checkId) {
-    try {
-      await upsertCourseStaffAssignment(admin, courseId, checkId, 'check');
-    } catch (e) {
-      console.warn('[course-staff] check sync failed:', e);
-    }
-  }
+  await assignFromSanity(content.curatorTelegramId, 'curator');
+  await assignFromSanity(content.checkTelegramId, 'check');
 }
 
 /** Назначение из админ-бота (с проверкой роли в bot_members). */

@@ -23,7 +23,11 @@ import {
   computeLessonProgressPercent,
   homeworkRequiredForLesson,
 } from './education/lesson-progress-calc';
-import { studentHasCourseAccessForCourse } from './education/course-access';
+import {
+  studentHasCourseAccessForCourse,
+  sumCoursePackageRemainingLessons,
+} from './education/course-access';
+import { syncCourseStaffFromContent } from './education/course-staff';
 import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
 import { listSubmitTargetLessons } from './education/course-homework';
 import { formatDateTimeShort, formatRemainingMs } from './client-format';
@@ -112,6 +116,9 @@ export async function showClientMyCourseHub(
   const slug = courseSlug ?? purchased[0]!.slug;
   const content = await getDistrictCourseContent(slug).catch(() => null);
   const courseId = content ? await resolveCourseIdForContent(admin, content).catch(() => null) : null;
+  if (courseId && content) {
+    await syncCourseStaffFromContent(admin, courseId, content, { courseSlug: slug }).catch(() => {});
+  }
   const lessons = content
     ? flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published')
     : [];
@@ -227,12 +234,25 @@ export async function showClientMyCourseHub(
   const livesLabel =
     livesCurrent == null ? '—' : `${livesCurrent}${livesMax != null ? `/${livesMax}` : ''}`;
 
+  let packageLine: string | null = null;
+  if (courseId) {
+    try {
+      const pkg = await sumCoursePackageRemainingLessons(admin, telegramId, courseId);
+      if (pkg.total > 0) {
+        packageLine = `📦 Пакет: ${pkg.remaining} из ${pkg.total} занятий`;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   const lines = [
     '🎓 Мой курс',
     content?.title ? `📚 ${content.title}` : null,
     '',
     `📊 Прогресс: ${completed}/${total} (${percent}%)`,
     `❤️ Жизни: ${livesLabel}`,
+    packageLine,
     '',
     nextWebinar
       ? `⏭ Ближайший вебинар: №${nextWebinar.lessonNumber} «${nextWebinar.title}»\n   ${formatDateTimeShort(nextWebinar.scheduledAt)}\n   ${nextAccessLabel}`
@@ -270,7 +290,7 @@ export async function showClientMyCourseHub(
     'my-course-detail',
     lines.join('\n'),
     { inline_keyboard: rows },
-    deliver,
+    { ...deliver, hubPayloadExtra: { activeCourseSlug: slug } },
   );
 }
 

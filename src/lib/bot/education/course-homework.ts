@@ -575,21 +575,34 @@ export async function markHomeworkSubmitted(
     );
   }
 
-  const writeQuery = existing?.id
-    ? admin
-        .from('course_lesson_student_progress')
-        .update(row)
-        .eq('id', existing.id as number)
-    : admin.from('course_lesson_student_progress').insert(row);
+  const payload = { ...row };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const writeQuery = existing?.id
+      ? admin
+          .from('course_lesson_student_progress')
+          .update(payload)
+          .eq('id', existing.id as number)
+      : admin.from('course_lesson_student_progress').insert(payload);
 
-  const { data, error } = await writeQuery.select('*').single();
-  if (error) {
+    const { data, error } = await writeQuery.select('*').single();
+    if (!error) return data as CourseLessonStudentProgress;
+
+    const msg = String(error.message ?? '');
+    const missing = msg.match(/column course_lesson_student_progress\.(\w+) does not exist/);
+    if (missing?.[1] && missing[1] in payload) {
+      delete payload[missing[1]!];
+      continue;
+    }
+    console.error('[course-hw] progress save failed:', error);
     throw new CourseHomeworkError(
       'Не удалось сохранить отправку. Попробуйте ещё раз или сдайте через личный кабинет на сайте.',
       'NOT_READY',
     );
   }
-  return data as CourseLessonStudentProgress;
+  throw new CourseHomeworkError(
+    'Не удалось сохранить отправку. Попробуйте ещё раз или сдайте через личный кабинет на сайте.',
+    'NOT_READY',
+  );
 }
 
 export type CourseHomeworkReviewerRole = import('./course-progress').CourseHomeworkReviewerRole;

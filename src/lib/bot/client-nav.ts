@@ -22,6 +22,8 @@ export type ClientHubPayload = AdminPayload & {
   welcomeMessageId?: number;
   /** Стек экранов для «Назад». */
   clientNavStack?: string[];
+  /** Slug курса на экране «Мой курс» / ДЗ. */
+  activeCourseSlug?: string;
   /** Карточка пошаговой заявки. */
   leadFormMessageId?: number;
 };
@@ -231,6 +233,8 @@ export type ClientHubDeliverOptions = {
   forcePush?: boolean;
   /** Inline «назад» — редактировать сообщение с кнопкой. */
   editAt?: ClientHubState;
+  /** Доп. поля hub payload (slug курса и т.д.). */
+  hubPayloadExtra?: Partial<ClientHubPayload>;
 };
 
 export async function deliverClientHubScreen(
@@ -245,7 +249,14 @@ export async function deliverClientHubScreen(
   if (!options?.forcePush && options?.editAt) {
     const ok = await editHubMessage(options.editAt, text, replyMarkup);
     if (ok) {
-      await saveClientHub(admin, telegramId, options.editAt, screenId);
+      const prev = await loadClientHubPayload(admin, telegramId);
+      const stack = appendClientNavStack(prev?.payload.clientNavStack, screenId);
+      await saveClientHub(admin, telegramId, options.editAt, screenId, {
+        welcomeMessageId: prev?.payload.welcomeMessageId,
+        clientNavStack: stack,
+        activeCourseSlug: prev?.payload.activeCourseSlug,
+        ...options.hubPayloadExtra,
+      });
       return;
     }
   }
@@ -255,7 +266,14 @@ export async function deliverClientHubScreen(
     if (hub) {
       const ok = await editHubMessage(hub, text, replyMarkup);
       if (ok) {
-        await saveClientHub(admin, telegramId, hub, screenId);
+        const prev = await loadClientHubPayload(admin, telegramId);
+        const stack = appendClientNavStack(prev?.payload.clientNavStack, screenId);
+        await saveClientHub(admin, telegramId, hub, screenId, {
+          welcomeMessageId: prev?.payload.welcomeMessageId,
+          clientNavStack: stack,
+          activeCourseSlug: prev?.payload.activeCourseSlug,
+          ...options?.hubPayloadExtra,
+        });
         return;
       }
     }
@@ -270,6 +288,7 @@ export async function deliverClientHubScreen(
   await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {
     welcomeMessageId: prev?.payload.welcomeMessageId,
     clientNavStack: stack,
+    ...options?.hubPayloadExtra,
   });
 }
 
@@ -293,6 +312,12 @@ export function clientHomeButton() {
 
 export function clientBackButton() {
   return { text: '◀️ Назад', callback_data: 'cl:back' };
+}
+
+export function appendClientNavStack(stack: string[] | undefined, screenId: string): string[] {
+  const base = stack?.length ? [...stack] : ['home'];
+  if (base[base.length - 1] === screenId) return base;
+  return [...base, screenId];
 }
 
 /** Новая карточка внизу чата (не трогаем приветствие). */

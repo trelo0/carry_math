@@ -20,7 +20,7 @@ async function isBotMemberWithRole(
   return !!role && allowedRoles.has(role);
 }
 
-async function isRegisteredBotMember(admin: SupabaseClient, telegramId: number): Promise<boolean> {
+export async function isRegisteredBotMember(admin: SupabaseClient, telegramId: number): Promise<boolean> {
   const { data, error } = await admin
     .from('bot_members')
     .select('telegram_id')

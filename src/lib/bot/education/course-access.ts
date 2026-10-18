@@ -261,6 +261,70 @@ export async function sumCoursePackageLessonEntitlement(
   }, 0);
 }
 
+/** Остаток занятий в пакетах курса (active + completed, не cancelled). */
+export async function sumCoursePackageRemainingLessons(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+): Promise<{ remaining: number; total: number }> {
+  const { data, error } = await admin
+    .from('lesson_packages')
+    .select('total_lessons, remaining_lessons, status, course_id, title')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .neq('status', 'cancelled');
+  if (error) throw error;
+  const rows = data ?? [];
+
+  const { data: courseRow } = await admin
+    .from('courses')
+    .select('slug, title')
+    .eq('id', courseId)
+    .maybeSingle();
+  const slug = (courseRow?.slug as string | undefined)?.trim() ?? null;
+  const courseTitle = (courseRow?.title as string | undefined) ?? null;
+  const aliasIds = new Set(await expandCourseIdAliases(admin, courseId));
+  const pkgCourseIds = [
+    ...new Set(
+      rows
+        .map((row) => row.course_id as number | null)
+        .filter((id): id is number => id != null),
+    ),
+  ];
+  const slugByPkgCourseId = new Map<number, string>();
+  if (pkgCourseIds.length > 0) {
+    const { data: courseRows } = await admin
+      .from('courses')
+      .select('id, slug')
+      .in('id', pkgCourseIds);
+    for (const c of courseRows ?? []) {
+      if (c.id != null && c.slug) slugByPkgCourseId.set(c.id as number, c.slug as string);
+    }
+  }
+
+  let remaining = 0;
+  let total = 0;
+  for (const row of rows) {
+    const pkgTitle = (row as { title?: string }).title;
+    if (
+      !coursePackageRowMatchesCourse(
+        row.course_id as number | null,
+        pkgTitle,
+        courseId,
+        slug,
+        courseTitle,
+        aliasIds,
+        slugByPkgCourseId,
+      )
+    ) {
+      continue;
+    }
+    remaining += Math.max(0, row.remaining_lessons as number);
+    total += Math.max(0, row.total_lessons as number);
+  }
+  return { remaining, total };
+}
+
 /** Есть оплаченный пакет / зачисление на конкретный курс. */
 export async function studentHasCourseAccessForCourse(
   admin: SupabaseClient,

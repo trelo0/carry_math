@@ -462,6 +462,8 @@ export async function handleClientReplyMenuNavigation(
   memberRole?: BotRole,
 ): Promise<boolean> {
   if (!isClientReplyLabel(text)) return false;
+  const { clearStateIfAvailable } = await import('./admin/core');
+  await clearStateIfAvailable(admin, telegramId);
   await resetClientDialogToHub(admin, telegramId);
   const loaded = await loadClientHubPayload(admin, telegramId);
   const hub = loaded?.payload.clientHubChatId
@@ -692,7 +694,6 @@ export async function handleClientCallback(
   }
 
   if (data === 'cl:back') {
-    await resetClientDialogToHub(admin, telegramId);
     await navigateClientBack(admin, telegramId, chatId, messageId, memberRole);
     return true;
   }
