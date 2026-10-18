@@ -2529,16 +2529,25 @@ export default function CabinetShell({
                                 homeworkOverdueAt={s.homeworkOverdueAt}
                                 trackDeadline={hasCourse && !(s.isTrialFree && !hasCourse)}
                               />
-                              {hw.action === 'view' ? (
-                                <button
-                                  type="button"
+                              {hw.action === 'view' && s.sanityLessonId ? (
+                                <a
                                   className="cab-hw-action is-active"
-                                  onClick={() => setHwReviewStop(s)}
+                                  href={tgBotUrl(
+                                    buildCourseHomeworkStatusTelegramStart(s.sanityLessonId),
+                                  )}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={markHomeworkMapStale}
                                 >
                                   <Icon d={ICONS.file} />
                                   Посмотреть ответ
                                   <Icon d={ICONS.chevron} />
-                                </button>
+                                </a>
+                              ) : hw.action === 'view' ? (
+                                <span className="cab-hw-action is-locked">
+                                  <Icon d={ICONS.file} />
+                                  Посмотреть ответ
+                                </span>
                               ) : hw.action === 'locked' ? (
                                 <span className="cab-hw-action is-locked">
                                   <Icon d={ICONS.file} />

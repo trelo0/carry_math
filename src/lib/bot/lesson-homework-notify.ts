@@ -96,11 +96,12 @@ export async function notifyStudentLessonHomeworkReviewed(
   if (params.comment) lines.push('', params.comment);
   lines.push('', 'Откройте карточку занятия для деталей.');
 
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: lines.join('\n'),
-    reply_markup: {
-      inline_keyboard: [[{ text: 'Открыть задание', callback_data: `cl:hw:open:${params.lessonId}` }]],
-    },
+    reply_markup: studentNotifyKeyboard([
+      [{ text: 'Открыть задание', callback_data: `cl:hw:open:${params.lessonId}` }],
+    ]),
   });
 }

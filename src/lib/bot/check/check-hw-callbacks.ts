@@ -24,12 +24,14 @@ import {
 import { notifyStudentHomeworkReviewed, sendSubmissionToCurator } from '@/lib/bot/studentHomeworkFlow';
 import { getEnrollmentLives, hasLifeDeductedForLesson } from '@/lib/bot/education/lives';
 import { clearConflictingStaffStates } from '@/lib/bot/staff/staff-reply-state';
-import { mergeWorkspaceIntoPayload } from '@/lib/bot/staff/staff-course-session';
+import { mergeWorkspaceIntoPayload, resetStaffDialogKeepWorkspace } from '@/lib/bot/staff/staff-course-session';
 import {
   CHECK_HW_COMMENT_STEP,
   CHECK_REJECT_COMMENT_STEP,
   CHECK_REJECT_CONFIRM_STEP,
+  CHECK_REJECT_FILE_STEP,
 } from '@/lib/bot/staff/staff-steps';
+import { packHomeworkReviewNote } from '@/lib/bot/education/homework-review-note';
 import { assertCheckCourseAccess } from './check-access';
 import {
   collectCheckArchive,
@@ -57,7 +59,8 @@ import {
   renderCheckLifeConfirm,
   renderCheckRejectCommentPrompt,
   renderCheckRejectDraftConfirm,
-  renderCheckRejectMethod,
+  renderCheckRejectFilePrompt,
+  renderCheckRejectNotePrompt,
   renderCheckRejectSkipConfirm,
   renderCheckVerdict,
   type CheckHwListMode,
@@ -350,8 +353,11 @@ export async function handleCheckHomeworkFamily(
       }
 
       if (parts[3] === 'rej') {
-        const screen = renderCheckRejectMethod(courseId, student.id, hwNum, origin);
-        await editScreen(message, screen.text, screen.keyboard);
+        await promptRejectFileStep(admin, telegramId, chatId, {
+          courseId,
+          studentId: student.id,
+          hwNumber: hwNum,
+        });
         return true;
       }
 
@@ -401,33 +407,78 @@ export async function handleCheckHomeworkFamily(
     if (!student) return true;
     const action = parts[3];
 
-    if (action === 'c' || action === 't' || action === 'v' || action === 'p') {
-      const prompt = renderCheckRejectCommentPrompt(courseId, student.id, hwNum, origin);
+    if (action === 'file' || action === 'c' || action === 't' || action === 'v' || action === 'p') {
+      let state = null;
       try {
-        await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
-        const promptId = await sendAdminMessage(chatId, prompt.text, prompt.keyboard);
-        await saveState(
-          admin,
-          telegramId,
-          { chatId, messageId: promptId ?? 0 },
-          CHECK_REJECT_COMMENT_STEP as never,
-          (await checkDialogPayload(admin, telegramId, {
-            courseId,
-            studentId: student.id,
-            hwNumber: hwNum,
-            ...originToPayload(origin),
-          })) as never,
-        );
+        state = await getState(admin, telegramId);
       } catch (error) {
         if (!isConversationStateTableError(error)) throw error;
-        await sendAdminMessage(chatId, migrationText('bot_conversation_states.sql'));
       }
+      const prev = (state?.payload ?? {}) as {
+        draftFileRef?: string;
+        draftFileKind?: 'photo' | 'voice' | 'document';
+        draftText?: string;
+      };
+      await promptRejectFileStep(admin, telegramId, chatId, {
+        courseId,
+        studentId: student.id,
+        hwNumber: hwNum,
+        draftFileRef: prev.draftFileRef,
+        draftFileKind: prev.draftFileKind,
+        draftText: prev.draftText,
+      });
       return true;
     }
 
-    if (action === 'skip') {
-      const screen = renderCheckRejectSkipConfirm(courseId, student.id, hwNum, origin);
-      await editScreen(message, screen.text, screen.keyboard);
+    if (action === 'fskip' || action === 'note') {
+      let state = null;
+      try {
+        state = await getState(admin, telegramId);
+      } catch (error) {
+        if (!isConversationStateTableError(error)) throw error;
+      }
+      const prev = (state?.payload ?? {}) as {
+        draftFileRef?: string;
+        draftFileKind?: 'photo' | 'voice' | 'document';
+        draftText?: string;
+      };
+      await promptRejectNoteStep(admin, telegramId, chatId, {
+        courseId,
+        studentId: student.id,
+        hwNumber: hwNum,
+        draftFileRef: action === 'fskip' ? undefined : prev.draftFileRef,
+        draftFileKind: action === 'fskip' ? undefined : prev.draftFileKind,
+        draftText: prev.draftText,
+      });
+      return true;
+    }
+
+    if (action === 'nskip' || action === 'skip') {
+      let state = null;
+      try {
+        state = await getState(admin, telegramId);
+      } catch (error) {
+        if (!isConversationStateTableError(error)) throw error;
+      }
+      const prev = (state?.payload ?? {}) as {
+        draftFileRef?: string;
+        draftFileKind?: 'photo' | 'voice' | 'document';
+        draftText?: string;
+      };
+      await showRejectDraftConfirm(
+        admin,
+        telegramId,
+        chatId,
+        {
+          courseId,
+          studentId: student.id,
+          hwNumber: hwNum,
+          draftText: prev.draftText,
+          draftFileRef: prev.draftFileRef,
+          draftFileKind: prev.draftFileKind,
+        },
+        origin,
+      );
       return true;
     }
 
@@ -445,7 +496,9 @@ export async function handleCheckHomeworkFamily(
           lessonNumber: lesson.lessonNumber,
           title: lesson.title,
           approved: false,
+          sanityLessonId: lesson.sanityId,
         });
+        await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
         await sendHomeworkHub(
           admin,
           chatId,
@@ -472,14 +525,24 @@ export async function handleCheckHomeworkFamily(
         draftFileRef?: string;
         draftFileKind?: 'photo' | 'voice' | 'document';
       };
-      const note = payload.draftText?.trim() || undefined;
+      const rawNote = payload.draftText?.trim() || '';
+      const note =
+        rawNote && rawNote !== 'Голосовой комментарий' && rawNote !== 'Комментарий на фото' && rawNote !== 'Комментарий в файле'
+          ? rawNote
+          : undefined;
+      const storedNote = packHomeworkReviewNote(
+        note,
+        payload.draftFileRef
+          ? { kind: payload.draftFileKind ?? 'document', ref: payload.draftFileRef }
+          : null,
+      );
       try {
         const { lesson } = await rejectCourseHomeworkByCurator(
           admin,
           telegramId,
           student.telegramId,
           hwNum,
-          note,
+          storedNote,
           { courseId, courseSlug: ctx.slug },
         );
         await notifyStudentHomeworkReviewed(admin, student.telegramId, {
@@ -489,8 +552,9 @@ export async function handleCheckHomeworkFamily(
           note,
           reviewFileRef: payload.draftFileRef ?? null,
           reviewFileKind: payload.draftFileKind ?? null,
+          sanityLessonId: lesson.sanityId,
         });
-        await clearStateIfAvailable(admin, telegramId);
+        await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
         await sendHomeworkHub(
           admin,
           chatId,
@@ -553,6 +617,14 @@ export async function handleCheckHomeworkFamily(
         : lifeDeduction
           ? 'Жизнь за это ДЗ уже была снята ранее.'
           : 'Не удалось обновить жизни.';
+      if (lifeDeduction?.deducted) {
+        const { notifyStudentLifeDeducted } = await import('@/lib/bot/student-push-notify');
+        void notifyStudentLifeDeducted(admin, student.telegramId, {
+          courseTitle: ctx.title,
+          livesLeft: lifeDeduction.livesCurrent,
+          livesMax: lifeDeduction.livesMax,
+        });
+      }
       await sendHomeworkHub(
         admin,
         chatId,
@@ -568,6 +640,74 @@ export async function handleCheckHomeworkFamily(
   }
 
   return true;
+}
+
+export async function promptRejectFileStep(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  payload: {
+    courseId: number;
+    studentId: string;
+    hwNumber: number;
+    draftFileRef?: string;
+    draftFileKind?: 'photo' | 'voice' | 'document';
+    draftText?: string;
+  },
+): Promise<void> {
+  const origin = originFromPayload(payload as Record<string, unknown>);
+  const prompt = renderCheckRejectFilePrompt(payload.courseId, payload.studentId, payload.hwNumber, origin);
+  try {
+    await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
+    const promptId = await sendAdminMessage(chatId, prompt.text, prompt.keyboard);
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: promptId ?? 0 },
+      CHECK_REJECT_FILE_STEP as never,
+      (await checkDialogPayload(admin, telegramId, {
+        ...payload,
+        ...originToPayload(origin),
+      })) as never,
+    );
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    await sendAdminMessage(chatId, migrationText('bot_conversation_states.sql'));
+  }
+}
+
+export async function promptRejectNoteStep(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  payload: {
+    courseId: number;
+    studentId: string;
+    hwNumber: number;
+    draftFileRef?: string;
+    draftFileKind?: 'photo' | 'voice' | 'document';
+    draftText?: string;
+  },
+): Promise<void> {
+  const origin = originFromPayload(payload as Record<string, unknown>);
+  const prompt = renderCheckRejectNotePrompt(payload.courseId, payload.studentId, payload.hwNumber, origin);
+  try {
+    await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
+    const promptId = await sendAdminMessage(chatId, prompt.text, prompt.keyboard);
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: promptId ?? 0 },
+      CHECK_REJECT_COMMENT_STEP as never,
+      (await checkDialogPayload(admin, telegramId, {
+        ...payload,
+        ...originToPayload(origin),
+      })) as never,
+    );
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+    await sendAdminMessage(chatId, migrationText('bot_conversation_states.sql'));
+  }
 }
 
 export async function showRejectDraftConfirm(

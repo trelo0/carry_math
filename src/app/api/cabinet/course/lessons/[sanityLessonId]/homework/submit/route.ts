@@ -54,6 +54,24 @@ export async function POST(request: Request, { params }: RouteParams) {
     const submitInput = { note: body.note, fileUrl: body.fileUrl };
     const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
     await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
+    try {
+      const { resolveCourseForSanityLesson } = await import(
+        '@/lib/bot/education/student-course-context'
+      );
+      const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
+      const { notifyStudentHomeworkSubmitted } = await import('@/lib/bot/student-push-notify');
+      const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+      const lesson = resolved ? findLessonBySanityId(resolved.content, sanityLessonId) : null;
+      if (lesson) {
+        await notifyStudentHomeworkSubmitted(admin, telegramId, {
+          lessonNumber: lesson.lessonNumber,
+          title: lesson.title,
+          sanityLessonId,
+        });
+      }
+    } catch (pushErr) {
+      console.error('[homework/submit] student push failed:', pushErr);
+    }
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');
     return NextResponse.json({ ok: true, progress });

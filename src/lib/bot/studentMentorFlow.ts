@@ -19,6 +19,7 @@ import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { syncCourseStaffFromContent } from './education/course-staff';
 import { notifyStaffInboundFromStudent, type StaffMessageRole } from './staff/messaging';
 import { notifyAdminsOfSupportMessage } from './studentSupportFlow';
+import { isClientReplyLabel } from './client-menu';
 
 export type StudentMentorContext = 'course' | 'lessons';
 
@@ -62,6 +63,8 @@ type MentorQuestionOptions = {
   context?: StudentMentorContext;
   courseSlug?: string | null;
   courseId?: number | null;
+  homeworkLessonNumber?: number;
+  homeworkSanityLessonId?: string;
 };
 
 async function resolveCourseIdForMentorQuestion(
@@ -105,10 +108,18 @@ async function promptCoursePickerForMentor(
         : 'написать наставнику';
 
   try {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor-pick', {
-      homework: options.homework ?? false,
-      mentorContext: context,
-    });
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: 0 },
+      'student:mentor-pick',
+      {
+        homework: options.homework ?? false,
+        mentorContext: context,
+        homeworkLessonNumber: options.homeworkLessonNumber,
+        homeworkSanityLessonId: options.homeworkSanityLessonId,
+      } as never,
+    );
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
@@ -177,12 +188,20 @@ async function finalizeMentorQuestionStart(
   }
 
   try {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor', {
-      mentorTelegramId: mentor?.telegramId,
-      homework: options.homework ?? false,
-      staffRole,
-      courseId: courseId ?? undefined,
-    });
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: 0 },
+      'student:mentor',
+      {
+        mentorTelegramId: mentor?.telegramId,
+        homework: options.homework ?? false,
+        staffRole,
+        courseId: courseId ?? undefined,
+        homeworkLessonNumber: options.homeworkLessonNumber,
+        homeworkSanityLessonId: options.homeworkSanityLessonId,
+      } as never,
+    );
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
@@ -206,9 +225,14 @@ async function finalizeMentorQuestionStart(
           ? 'преподавателю'
           : 'наставнику';
 
+  const hwQuestion =
+    options.homeworkLessonNumber != null
+      ? `📝 Вопрос по ДЗ №${options.homeworkLessonNumber}\n\n`
+      : '';
   const intro = options.homework
     ? `📝 Сдать домашку${courseId != null ? ' (онлайн-курс)' : ''}\n\nНаставник: ${mentor.fullName ?? roleHint}\n\n`
-    : `💬 Вопрос ${context === 'course' ? 'по курсу' : 'наставнику'}\n\n${mentor.fullName ?? 'Наставник'}\n\n`;
+    : hwQuestion +
+      `💬 Вопрос ${context === 'course' ? 'по курсу' : 'наставнику'}\n\n${mentor.fullName ?? 'Наставник'}\n\n`;
 
   await sendAdminMessage(
     chatId,
@@ -242,9 +266,14 @@ async function dispatchMentorDraft(
   const mentorTelegramId = state.payload.mentorTelegramId as number | undefined;
   const staffRole = state.payload.staffRole as StaffMessageRole | undefined;
   const courseId = state.payload.courseId as number | undefined;
-  const draftText = String(state.payload.draftText ?? '').trim() || 'Сообщение из Telegram';
+  const lessonNum = state.payload.homeworkLessonNumber as number | undefined;
+  const rawDraft = String(state.payload.draftText ?? '').trim() || 'Сообщение из Telegram';
+  const draftText =
+    lessonNum != null
+      ? `ВОПРОС ПО ДЗ №${lessonNum}\n\n${rawDraft}`
+      : rawDraft;
   const draftFileRef = state.payload.draftFileRef as string | undefined;
-  const draftFileKind = state.payload.draftFileKind as 'photo' | 'document' | undefined;
+  const draftFileKind = state.payload.draftFileKind as 'photo' | 'document' | 'voice' | undefined;
 
   const attachment =
     draftFileRef && draftFileRef.startsWith('tg:')
@@ -379,7 +408,7 @@ export async function handleStudentMentorCallback(
     return true;
   }
 
-  const payload = state.payload;
+  const payload = state.payload as Record<string, unknown>;
   await clearStateIfAvailable(admin, telegramId);
   const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
   const courseSlug = enrollments.find((e) => e.courseId === courseId)?.slug;
@@ -388,6 +417,8 @@ export async function handleStudentMentorCallback(
     context: (payload.mentorContext as StudentMentorContext | undefined) ?? 'course',
     courseId,
     courseSlug,
+    homeworkLessonNumber: payload.homeworkLessonNumber as number | undefined,
+    homeworkSanityLessonId: payload.homeworkSanityLessonId as string | undefined,
   });
   return true;
 }
@@ -411,7 +442,7 @@ async function forwardToMentor(
   mentorTelegramId: number | undefined,
   body: string,
   staffRoleOverride?: StaffMessageRole,
-  attachment?: { ref: string; kind: 'photo' | 'document' },
+  attachment?: { ref: string; kind: 'photo' | 'document' | 'voice' },
   courseId?: number,
 ): Promise<'mentor' | 'support'> {
   if (!mentorTelegramId) return 'support';
@@ -440,6 +471,8 @@ export async function handleStudentMentorMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
+  if (isClientReplyLabel(text)) return false;
+
   let state = null;
   try {
     state = await getState(admin, telegramId);
@@ -485,7 +518,7 @@ export async function handleStudentMentorAttachment(
   telegramId: number,
   chatId: number,
   caption: string,
-  attachment: { fileId: string; kind: 'photo' | 'document' },
+  attachment: { fileId: string; kind: 'photo' | 'document' | 'voice' },
 ): Promise<boolean> {
   let state = null;
   try {
@@ -505,13 +538,23 @@ export async function handleStudentMentorAttachment(
 
   if (!state || state.step !== 'student:mentor') return false;
 
-  const body = caption.trim() ? caption.trim() : 'Вложение';
-  await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor-confirm', {
-    ...state.payload,
-    draftText: body,
-    draftFileRef: `tg:${attachment.fileId}`,
-    draftFileKind: attachment.kind,
-  });
+  const body = caption.trim()
+    ? caption.trim()
+    : attachment.kind === 'voice'
+      ? 'Голосовое сообщение'
+      : 'Вложение';
+  await saveState(
+    admin,
+    telegramId,
+    { chatId, messageId: 0 },
+    'student:mentor-confirm',
+    {
+      ...state.payload,
+      draftText: body,
+      draftFileRef: `tg:${attachment.fileId}`,
+      draftFileKind: attachment.kind,
+    } as never,
+  );
   await showMentorMessagePreview(chatId, body, true);
   return true;
 }

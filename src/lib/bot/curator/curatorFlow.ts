@@ -812,6 +812,10 @@ export async function handleCuratorMessage(
   const { getStaffCourseWorkspace } = await import('../staff/staff-course-session');
   const ws = await getStaffCourseWorkspace(admin, telegramId);
   if (ws?.role === 'curator') return false;
+  if (ws?.role === 'check') return false;
+
+  const { CHECK_BOT_MENU_LABEL_SET } = await import('../staff/staff-menu');
+  if (CHECK_BOT_MENU_LABEL_SET.has(text)) return false;
 
   const menuHandled = await handleCuratorBotReplyMenu(admin, telegramId, chatId, text, 'curator_only');
   if (menuHandled) return true;
@@ -1474,6 +1478,13 @@ async function routeCuratorCallback(
           : lifeDeduction
             ? `Жизнь за это ДЗ уже была снята ранее.`
             : 'Не удалось обновить жизни.';
+        if (lifeDeduction?.deducted) {
+          const { notifyStudentLifeDeducted } = await import('@/lib/bot/student-push-notify');
+          void notifyStudentLifeDeducted(admin, student.telegramId, {
+            livesLeft: lifeDeduction.livesCurrent,
+            livesMax: lifeDeduction.livesMax,
+          });
+        }
         const tail = lifeDeduction
           ? `\n\nОсталось: ${lifeDeduction.livesCurrent} из ${lifeDeduction.livesMax}.` +
             (lifeDeduction.accessBlocked

@@ -8,6 +8,7 @@ import { resetClientDialogToHub, saveClientDialogState, clientBackButton } from 
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { createInquiryLead, type InquiryKind } from './inquiry-leads';
 import { getMember } from './roles';
+import { studentNotifyKeyboard } from './student-push-notify';
 
 const SUPPORT_INTRO =
   '❓ ЗАДАЙТЕ СВОЙ ВОПРОС\n\n' +
@@ -164,7 +165,12 @@ async function deliverSupportToAdmin(
   if (lead?.id) {
     await enterSupportThread(admin, telegramId, chatId, lead.id);
   }
-  await sendAdminMessage(chatId, `${ack}\n\n${SUPPORT_THREAD_HINT}`, supportIntroKeyboard());
+  await sendAdminMessage(chatId, `${ack}\n\n${SUPPORT_THREAD_HINT}`, {
+    inline_keyboard: [
+      ...supportIntroKeyboard().inline_keyboard,
+      ...studentNotifyKeyboard().inline_keyboard,
+    ],
+  });
 }
 
 export async function handleStudentSupportMessage(

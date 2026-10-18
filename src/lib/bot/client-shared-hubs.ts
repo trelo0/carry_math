@@ -21,7 +21,7 @@ export async function showClientPaymentsHub(
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
   const lines = [
-    '💳 Оплаты',
+    '💳 Финансы',
     '',
     state.hasActiveLessonProduct
       ? 'Здесь остаток пакета занятий и продление / покупка другого формата.'
@@ -61,7 +61,7 @@ export async function showClientMiscHub(
     telegramId,
     chatId,
     'misc-hub',
-    '⋯ Прочее\n\nЗаявки и связь с администратором.',
+    '🆘 Получить помощь\n\nЗаявки к администратору и поддержка.',
     {
       inline_keyboard: [
         [{ text: '📨 История обращений', callback_data: 'cl:misc:apps' }],

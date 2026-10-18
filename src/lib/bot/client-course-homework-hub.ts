@@ -11,7 +11,9 @@ import {
 import { deadlineUiState } from '@/lib/bot/education/homework-deadline';
 import type { CourseLessonStudentProgress } from '@/lib/bot/education/course-progress';
 import { listStudentPurchasedVisibleCourseContexts } from '@/lib/bot/education/student-course-context';
-import { beginCourseHomeworkSubmit } from './studentHomeworkFlow';
+import { beginCourseHomeworkSubmit, sendTelegramFileById } from './studentHomeworkFlow';
+import { unpackHomeworkReviewNote } from '@/lib/bot/education/homework-review-note';
+import { beginStudentMentorQuestion } from './studentMentorFlow';
 import {
   clientBackButton,
   deliverClientHubScreen,
@@ -167,27 +169,48 @@ export async function showClientCourseHomeworkHub(
 
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   if (targets.length === 1) {
-    keyboard.push([
-      {
-        text: '📤 Отправить ДЗ',
-        callback_data: courseSlug ? `cl:chw:submit:${courseSlug}` : 'cl:chw:submit',
-      },
-    ]);
+    const t = targets[0]!;
+    const phase = deadlineUiState(t.progress);
+    if (phase === 'revision') {
+      keyboard.push([
+        {
+          text: '📄 Посмотреть пояснение',
+          callback_data: `cl:chw:rev:${t.lesson.sanityId}`,
+        },
+      ]);
+    } else {
+      keyboard.push([
+        {
+          text: '📤 Отправить ДЗ',
+          callback_data: courseSlug ? `cl:chw:submit:${courseSlug}` : 'cl:chw:submit',
+        },
+      ]);
+    }
   } else if (targets.length > 1) {
     for (const t of targets) {
       const slug = t.courseSlug ?? courseSlug ?? '_default';
-      const label = t.courseTitle ? `📤 Сдать · ${t.courseTitle}` : '📤 Отправить ДЗ';
-      keyboard.push([
-        {
-          text: label.length > 64 ? '📤 Сдать ДЗ' : label,
-          callback_data: `cl:chw:go:${slug === '_default' ? (t.courseSlug ?? slug) : slug}`,
-        },
-      ]);
+      const phase = deadlineUiState(t.progress);
+      if (phase === 'revision') {
+        keyboard.push([
+          {
+            text: `📄 Пояснение · №${t.lesson.lessonNumber}`.slice(0, 64),
+            callback_data: `cl:chw:rev:${t.lesson.sanityId}`,
+          },
+        ]);
+      } else {
+        const label = t.courseTitle ? `📤 Сдать · ${t.courseTitle}` : '📤 Отправить ДЗ';
+        keyboard.push([
+          {
+            text: label.length > 64 ? '📤 Сдать ДЗ' : label,
+            callback_data: `cl:chw:go:${slug === '_default' ? (t.courseSlug ?? slug) : slug}`,
+          },
+        ]);
+      }
     }
   }
 
   const histCb = courseSlug ? `cl:chw:hist:${courseSlug}` : 'cl:chw:hist';
-  keyboard.push([{ text: '📋 История сдач', callback_data: histCb }], [clientBackButton()]);
+  keyboard.push([{ text: '📋 Архив ДЗ', callback_data: histCb }], [clientBackButton()]);
 
   await deliverClientHubScreen(
     admin,
@@ -248,7 +271,7 @@ export async function showClientCourseHomeworkHistory(
       telegramId,
       chatId,
       'course-hw-hist-empty',
-      '📋 История ДЗ курса\n\nПока нет отправленных работ.',
+      '📋 Архив ДЗ\n\nПока нет отправленных работ.',
       {
         inline_keyboard: [
           [
@@ -284,7 +307,7 @@ export async function showClientCourseHomeworkHistory(
       telegramId,
       chatId,
       'course-hw-hist-empty',
-      '📋 История ДЗ курса\n\nПока нет отправленных работ.',
+      '📋 Архив ДЗ\n\nПока нет отправленных работ.',
       {
         inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }]],
       },
@@ -293,7 +316,7 @@ export async function showClientCourseHomeworkHistory(
     return;
   }
 
-  const lines = ['📋 История ДЗ', ''];
+  const lines = ['📋 Архив ДЗ', ''];
   for (const row of items.slice(0, 15)) {
     const lesson = lessonMap.get(row.sanity_lesson_id as string)!;
     if (!courseSlug) lines.push(`📚 ${lesson.courseTitle}`);
@@ -366,6 +389,10 @@ export async function showClientCourseHomeworkLessonStatus(
     return false;
   }
 
+  if (status === 'rejected') {
+    return showClientCourseHomeworkRevision(admin, telegramId, chatId, sanityLessonId, deliver);
+  }
+
   const courseSlug = resolved.slug;
   const courseTitle = resolved.content.title?.trim();
   const submittedAt =
@@ -399,10 +426,16 @@ export async function showClientCourseHomeworkLessonStatus(
 
   const hubCb = `cl:chw:hub:${courseSlug}`;
   const histCb = `cl:chw:hist:${courseSlug}`;
-  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [
-    [{ text: '📋 История сдач курса', callback_data: histCb }],
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (status === 'rejected') {
+    keyboard.push([
+      { text: '📄 Посмотреть пояснение', callback_data: `cl:chw:rev:${sanityLessonId}` },
+    ]);
+  }
+  keyboard.push(
+    [{ text: '📋 Архив ДЗ', callback_data: histCb }],
     [{ text: '◀️ К ДЗ', callback_data: hubCb }],
-  ];
+  );
 
   await deliverClientHubScreen(
     admin,
@@ -416,6 +449,85 @@ export async function showClientCourseHomeworkLessonStatus(
       hubPayloadExtra: { activeCourseSlug: courseSlug },
     },
   );
+  return true;
+}
+
+/** Пояснение к доработке: комментарий проверяющего + действия. */
+export async function showClientCourseHomeworkRevision(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  sanityLessonId: string,
+  deliver?: ClientHubDeliverOptions,
+): Promise<boolean> {
+  const { resolveCourseForSanityLesson } = await import(
+    '@/lib/bot/education/student-course-context'
+  );
+  const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
+
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+  if (!resolved) return false;
+  const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
+  if (!lesson) return false;
+
+  const { data: progress, error } = await admin
+    .from('course_lesson_student_progress')
+    .select('homework_status, review_note, homework_deadline_at, homework_remaining_ms')
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (error) throw error;
+
+  const status = (progress?.homework_status as string | undefined) ?? 'pending';
+  if (status !== 'rejected') {
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: 'Пояснение доступно только для работ на доработке.',
+    });
+    return true;
+  }
+
+  const unpacked = unpackHomeworkReviewNote(progress?.review_note as string | null);
+  const remaining =
+    typeof progress?.homework_remaining_ms === 'number'
+      ? progress.homework_remaining_ms
+      : progress?.homework_deadline_at
+        ? Math.max(0, Date.parse(progress.homework_deadline_at as string) - Date.now())
+        : null;
+
+  const courseTitle = resolved.content.title?.trim();
+  const lines = [
+    '📄 Пояснение к доработке',
+    '',
+    courseTitle ? `📚 ${courseTitle}` : null,
+    `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
+    remaining != null ? `Осталось: ${formatRemainingMs(remaining)}` : null,
+    unpacked.text.trim() ? `Комментарий:\n${unpacked.text.trim()}` : 'Комментарий без текста.',
+  ].filter((x): x is string => x != null);
+
+  const courseSlug = resolved.slug;
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '❓ Задать вопрос по ДЗ', callback_data: `cl:chw:ask:${sanityLessonId}` }],
+      [{ text: '📤 Отправить ДЗ', callback_data: `cl:chw:submit:${courseSlug}` }],
+      [{ text: '◀️ К ДЗ', callback_data: `cl:chw:hub:${courseSlug}` }],
+    ],
+  };
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    `course-hw-rev:${sanityLessonId}`,
+    lines.join('\n').trim().slice(0, 3900),
+    keyboard,
+    { ...deliver, hubPayloadExtra: { activeCourseSlug: courseSlug } },
+  );
+
+  if (unpacked.fileRef?.startsWith('tg:')) {
+    await sendTelegramFileById(chatId, unpacked.fileRef.slice(3), unpacked.fileKind);
+  }
+
   return true;
 }
 
@@ -511,6 +623,44 @@ export async function handleClientCourseHomeworkCallback(
   if (data.startsWith('cl:chw:go:')) {
     const slug = data.slice('cl:chw:go:'.length);
     await beginClientCourseHomeworkFromHub(admin, telegramId, chatId, slug || undefined);
+    return true;
+  }
+  if (data.startsWith('cl:chw:stat:')) {
+    const sanityLessonId = data.slice('cl:chw:stat:'.length);
+    if (sanityLessonId) {
+      await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
+        editAt,
+      });
+    }
+    return true;
+  }
+  if (data.startsWith('cl:chw:rev:')) {
+    const sanityLessonId = data.slice('cl:chw:rev:'.length);
+    if (sanityLessonId) {
+      await showClientCourseHomeworkRevision(admin, telegramId, chatId, sanityLessonId, { editAt });
+    }
+    return true;
+  }
+  if (data.startsWith('cl:chw:ask:')) {
+    const sanityLessonId = data.slice('cl:chw:ask:'.length);
+    const { resolveCourseForSanityLesson } = await import(
+      '@/lib/bot/education/student-course-context'
+    );
+    const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
+    const resolved = sanityLessonId
+      ? await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId)
+      : null;
+    const lesson =
+      resolved && sanityLessonId
+        ? findLessonBySanityId(resolved.content, sanityLessonId)
+        : null;
+    await beginStudentMentorQuestion(admin, telegramId, chatId, {
+      context: 'course',
+      courseSlug: resolved?.slug,
+      courseId: resolved?.courseId,
+      homeworkLessonNumber: lesson?.lessonNumber,
+      homeworkSanityLessonId: sanityLessonId || undefined,
+    });
     return true;
   }
   return false;

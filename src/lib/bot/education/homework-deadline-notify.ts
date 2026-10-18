@@ -99,6 +99,7 @@ async function sendStudentReminder(
           : '⏰ До дедлайна ДЗ осталось ~12 часов';
 
   try {
+    const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
     await telegramSend('sendMessage', {
       chat_id: chatId,
       text: [
@@ -110,6 +111,7 @@ async function sendStudentReminder(
         '',
         `Открыть: ${url}`,
       ].join('\n'),
+      reply_markup: studentNotifyKeyboard(),
     });
   } catch (err) {
     console.error('[hw-deadline] student remind failed:', err);

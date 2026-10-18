@@ -55,16 +55,28 @@ export const COMBINED_STAFF_MENU_LABEL_SET = new Set<string>(
 );
 
 export function resolveStaffBotMode(caps: StaffCapabilities): StaffBotMode {
-  if (caps.effectiveRole === 'staff' && caps.canCourseManagementBot) {
-    return 'course_staff_only';
-  }
-  if (caps.canTeacherBot && caps.canCourseManagementBot) {
+  if (
+    caps.canTeacherBot &&
+    (caps.canCourseManagementBot || caps.canCourseStaffBot || caps.canCuratorBot)
+  ) {
     return 'combined';
   }
   if (caps.canTeacherBot) {
     return 'teacher_only';
   }
-  if (caps.canCourseManagementBot || caps.canCourseStaffBot) {
+  if (caps.canCuratorBot && caps.canCourseManagementBot) {
+    return 'course_staff_only';
+  }
+  if (caps.canCourseStaffBot && !caps.canCuratorBot) {
+    return 'check_only';
+  }
+  if (caps.canCuratorBot) {
+    return 'curator_only';
+  }
+  if (caps.effectiveRole === 'staff' && caps.canCourseManagementBot) {
+    return 'course_staff_only';
+  }
+  if (caps.canCourseManagementBot) {
     return 'course_staff_only';
   }
   return null;
@@ -135,7 +147,7 @@ export function staffGlobalReplyKeyboard(caps: StaffCapabilities): ReplyKeyboard
       resize_keyboard: true,
     };
   }
-  if (mode === 'course_staff_only') {
+  if (mode === 'course_staff_only' || mode === 'check_only' || mode === 'curator_only') {
     return {
       keyboard: [[{ text: STAFF_COURSE_MANAGEMENT_LABEL }]],
       resize_keyboard: true,
@@ -159,7 +171,7 @@ export function isStaffGlobalMenuLabel(text: string, caps: StaffCapabilities): b
   if (mode === 'teacher_only') {
     return new Set<string>(Object.values(TEACHER_BOT_MENU_LABELS)).has(text);
   }
-  if (mode === 'course_staff_only') {
+  if (mode === 'course_staff_only' || mode === 'check_only' || mode === 'curator_only') {
     return text === STAFF_COURSE_MANAGEMENT_LABEL || STAFF_GLOBAL_LABEL_ALIASES.has(text);
   }
   return false;

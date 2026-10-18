@@ -66,22 +66,17 @@ export function renderCheckCoursePicker(
 }
 
 export function renderCheckHome(
-  courseId: number,
+  _courseId: number,
   courseTitle: string,
   stats: { unreadMessages: number; pendingHomework: number },
 ): { text: string; keyboard: InlineKeyboard } {
   return {
     text:
-      `🏠 Главная\n🎓 ${courseTitle}\n\n` +
+      `🏠 Главная · проверка ДЗ\n🎓 ${courseTitle}\n\n` +
       `💬 Новых сообщений: ${stats.unreadMessages}\n` +
-      `📝 ДЗ на проверку: ${stats.pendingHomework}`,
-    keyboard: {
-      inline_keyboard: [
-        [back('📝 Домашние задания', `k:sec:hw:${courseId}`)],
-        [back('👥 Ученики', `k:sec:stu:${courseId}`)],
-        [back('💬 Сообщения', `k:sec:msg:${courseId}`)],
-      ],
-    },
+      `📝 ДЗ на проверку: ${stats.pendingHomework}\n\n` +
+      'Разделы — кнопки меню под полем ввода.',
+    keyboard: { inline_keyboard: [] },
   };
 }
 
@@ -217,7 +212,7 @@ export function encodeHwItemCallback(
 }
 
 export function encodeRejCallback(
-  action: 'c' | 'skip' | 'go' | 'bare',
+  action: 'file' | 'fskip' | 'note' | 'nskip' | 'go' | 'c' | 'skip' | 'bare',
   courseId: number,
   studentId: string,
   hwNumber: number,
@@ -466,22 +461,56 @@ export function renderCheckVerdict(
   };
 }
 
-export function renderCheckRejectMethod(
+export function renderCheckRejectFilePrompt(
   courseId: number,
   studentId: string,
   hwNumber: number,
   origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
   return {
-    text: '🔄 На доработку\n\nКак отправить работу ученику?',
+    text:
+      '🔄 Пояснение к доработке · шаг 1/2\n\n' +
+      'Приложите файл или фото (необязательно).\n' +
+      'Можно пропустить и сразу добавить комментарий.',
     keyboard: {
       inline_keyboard: [
-        [{ text: '💬 Комментарий', callback_data: encodeRejCallback('c', courseId, studentId, hwNumber, origin) }],
-        [{ text: '⏭ Без комментария', callback_data: encodeRejCallback('skip', courseId, studentId, hwNumber, origin) }],
+        [{ text: '⏭ Пропустить', callback_data: encodeRejCallback('fskip', courseId, studentId, hwNumber, origin) }],
         [back('⬅️ Назад', encodeHwItemCallback('vd', courseId, studentId, hwNumber, origin))],
+        [back('❌ Отмена', encodeHwItemCallback('vd', courseId, studentId, hwNumber, origin))],
       ],
     },
   };
+}
+
+export function renderCheckRejectNotePrompt(
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text:
+      '🔄 Пояснение к доработке · шаг 2/2\n\n' +
+      'Добавьте комментарий: текст или голосовое (необязательно).\n' +
+      'Можно пропустить и сразу открыть черновик.',
+    keyboard: {
+      inline_keyboard: [
+        [{ text: '⏭ Пропустить', callback_data: encodeRejCallback('nskip', courseId, studentId, hwNumber, origin) }],
+        [back('⬅️ Назад', encodeRejCallback('file', courseId, studentId, hwNumber, origin))],
+        [back('❌ Отмена', encodeHwItemCallback('vd', courseId, studentId, hwNumber, origin))],
+      ],
+    },
+  };
+}
+
+/** @deprecated старый экран метода — оставлен для совместимости callback. */
+export function renderCheckRejectMethod(
+  courseId: number,
+  studentId: string,
+  hwNumber: number,
+  origin: CheckHwListOrigin,
+): { text: string; keyboard: InlineKeyboard } {
+  return renderCheckRejectFilePrompt(courseId, studentId, hwNumber, origin);
 }
 
 export function renderCheckRejectCommentPrompt(
@@ -490,21 +519,7 @@ export function renderCheckRejectCommentPrompt(
   hwNumber: number,
   origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
-  return {
-    text:
-      '💬 Комментарий к доработке\n\n' +
-      'Добавьте комментарий любым способом:\n' +
-      '• текст\n' +
-      '• голосовое\n' +
-      '• фото\n' +
-      '• файл\n\n' +
-      'После этого появится черновик и подтверждение отправки.',
-    keyboard: {
-      inline_keyboard: [
-        [back('⬅️ Назад', encodeHwItemCallback('rej', courseId, studentId, hwNumber, origin))],
-      ],
-    },
-  };
+  return renderCheckRejectNotePrompt(courseId, studentId, hwNumber, origin);
 }
 
 export function renderCheckRejectDraftConfirm(
@@ -532,8 +547,8 @@ export function renderCheckRejectDraftConfirm(
     keyboard: {
       inline_keyboard: [
         [{ text: '✅ Подтвердить', callback_data: encodeRejCallback('go', courseId, studentId, hwNumber, origin) }],
-        [back('⬅️ Назад', encodeRejCallback('c', courseId, studentId, hwNumber, origin))],
-        [back('❌ Отмена', encodeHwItemCallback('rej', courseId, studentId, hwNumber, origin))],
+        [back('⬅️ Назад', encodeRejCallback('note', courseId, studentId, hwNumber, origin))],
+        [back('❌ Отмена', encodeHwItemCallback('vd', courseId, studentId, hwNumber, origin))],
       ],
     },
   };

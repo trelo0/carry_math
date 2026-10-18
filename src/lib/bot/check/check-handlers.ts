@@ -19,7 +19,7 @@ import {
   staffStudentLabel,
 } from '@/lib/bot/staff/messaging';
 import { clearConflictingStaffStates } from '@/lib/bot/staff/staff-reply-state';
-import { mergeWorkspaceIntoPayload } from '@/lib/bot/staff/staff-course-session';
+import { mergeWorkspaceIntoPayload, resetStaffDialogKeepWorkspace } from '@/lib/bot/staff/staff-course-session';
 import { CHECK_STU_SEARCH_STEP, STAFF_CHECK_REPLY_STEP } from '@/lib/bot/staff/staff-steps';
 import { assertCheckCourseAccess, CheckAccessError } from './check-access';
 import { handleCheckHomeworkFamily, originToPayload } from './check-hw-callbacks';
@@ -75,7 +75,7 @@ async function openSection(
   courseId: number,
 ): Promise<void> {
   const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
-  await clearStateIfAvailable(admin, telegramId);
+  await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
   if (section === 'home') {
     const stats = await loadCheckHomeStats(admin, telegramId, courseId);
     const screen = renderCheckHome(courseId, ctx.title, stats);
@@ -177,7 +177,7 @@ export async function handleCheckBotCallback(
       const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
       if (parts[3] === undefined) {
         clearCheckStudentSearchQuery(courseId, telegramId);
-        await clearStateIfAvailable(admin, telegramId);
+        await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
         const screen = renderCheckStudentsHub(courseId, ctx.title);
         await editScreen(message, screen.text, screen.keyboard);
         return true;

@@ -530,7 +530,10 @@ export async function handleClientMessage(
         });
         return true;
       }
-      await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'course' });
+      {
+        const { openCuratorContactFlow } = await import('./client-curator-contact');
+        await openCuratorContactFlow(admin, telegramId, chatId, { forcePush: true });
+      }
       return true;
     case CLIENT_LABELS.contact:
       await showClientContactHub(admin, telegramId, chatId, { forcePush: true });
@@ -586,6 +589,32 @@ export async function handleClientCallback(
   memberRole?: BotRole,
 ): Promise<boolean> {
   if (!isClientCallback(data)) return false;
+
+  if (data === 'cl:ntf:close') {
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    try {
+      await telegramSend('deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch {
+      /* message already gone */
+    }
+    return true;
+  }
+
+  const { isClientCuratorContactCallback, handleClientCuratorContactCallback } = await import(
+    './client-curator-contact'
+  );
+  if (isClientCuratorContactCallback(data)) {
+    return handleClientCuratorContactCallback(
+      admin,
+      data,
+      chatId,
+      messageId,
+      telegramId,
+      callbackQueryId,
+    );
+  }
 
   if (data === 'cl:support:back' || data === 'cl:support:cancel') {
     if (callbackQueryId) {

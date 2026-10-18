@@ -122,6 +122,18 @@ export async function enterStaffCourseWorkspace(
   });
 }
 
+/** Сброс диалога (поиск/доработка/ответ) без выхода из курса. */
+export async function resetStaffDialogKeepWorkspace(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+): Promise<StaffCourseWorkspace | null> {
+  const ws = await getStaffCourseWorkspace(admin, telegramId);
+  await clearStateIfAvailable(admin, telegramId);
+  if (ws) await restoreStaffCourseWorkspace(admin, telegramId, chatId, ws);
+  return ws;
+}
+
 export async function restoreStaffCourseWorkspace(
   admin: SupabaseClient,
   telegramId: number,

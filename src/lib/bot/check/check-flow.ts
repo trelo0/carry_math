@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import {
-  clearStateIfAvailable,
   getState,
   isConversationStateTableError,
   sendAdminMessage,
@@ -12,6 +11,7 @@ import { CHECK_BOT_MENU_LABELS } from '@/lib/bot/staff/staff-menu';
 import { isStaffMenuLabel } from '@/lib/bot/staff/staff-menu';
 import {
   getStaffCourseWorkspace,
+  resetStaffDialogKeepWorkspace,
   restoreStaffCourseWorkspace,
   STAFF_WORKSPACE_PAYLOAD_KEY,
   type StaffCourseWorkspace,
@@ -19,6 +19,7 @@ import {
 import {
   CHECK_HW_COMMENT_STEP,
   CHECK_REJECT_COMMENT_STEP,
+  CHECK_REJECT_FILE_STEP,
   CHECK_REJECT_PHOTO_STEP,
   CHECK_REJECT_TEXT_STEP,
   CHECK_REJECT_VOICE_STEP,
@@ -87,7 +88,7 @@ export async function sendCheckSectionForCourse(
 ): Promise<void> {
   const { assertCheckCourseAccess } = await import('./check-access');
   const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
-  await clearStateIfAvailable(admin, telegramId);
+  await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
   if (section === 'home') {
     const { loadCheckHomeStats } = await import('./check-data');
     const { renderCheckHome } = await import('./check-screens');
@@ -197,10 +198,10 @@ export async function handleCheckMessage(
       returnTo?: string;
     };
     if (isStaffMenuLabel(text, caps)) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
     } else {
     if (/^отмена$/i.test(text.trim())) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       await sendAdminMessage(chatId, 'Отправка отменена.');
       return true;
     }
@@ -213,7 +214,7 @@ export async function handleCheckMessage(
         courseId: payload.courseId,
       });
       const prevPayload = state.payload as Record<string, unknown> | undefined;
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       if (payload.returnTo === 'hw' && payload.courseId) {
         await sendHomeworkHub(admin, chatId, telegramId, payload.courseId, '✅ Сообщение отправлено ученику.');
       } else {
@@ -230,6 +231,7 @@ export async function handleCheckMessage(
   if (
     state &&
     (step === CHECK_REJECT_COMMENT_STEP ||
+      step === CHECK_REJECT_FILE_STEP ||
       step === CHECK_REJECT_TEXT_STEP ||
       step === CHECK_REJECT_VOICE_STEP ||
       step === CHECK_REJECT_PHOTO_STEP)
@@ -240,10 +242,10 @@ export async function handleCheckMessage(
       hwNumber?: number;
     };
     if (isStaffMenuLabel(text, caps)) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
     } else {
     if (/^отмена$/i.test(text.trim())) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       await sendAdminMessage(chatId, 'Отменено.');
       return true;
     }
@@ -251,6 +253,10 @@ export async function handleCheckMessage(
     const studentId = payload.studentId;
     const hwNumber = payload.hwNumber;
     if (!courseId || !studentId || hwNumber == null) return false;
+    const prev = state.payload as {
+      draftFileRef?: string;
+      draftFileKind?: 'photo' | 'voice' | 'document';
+    };
     await showRejectDraftConfirm(
       admin,
       telegramId,
@@ -260,7 +266,8 @@ export async function handleCheckMessage(
         studentId,
         hwNumber,
         draftText: text.trim(),
-        draftFileKind: null,
+        draftFileRef: prev.draftFileRef,
+        draftFileKind: prev.draftFileKind ?? null,
       },
       originFromPayload(state.payload as Record<string, unknown>),
     );
@@ -271,10 +278,10 @@ export async function handleCheckMessage(
   if (state && step === CHECK_HW_COMMENT_STEP) {
     const payload = state.payload as { courseId?: number; studentId?: string; hwNumber?: number };
     if (isStaffMenuLabel(text, caps)) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
     } else {
     if (/^отмена$/i.test(text.trim())) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       await sendAdminMessage(chatId, 'Отменено.');
       return true;
     }
@@ -310,7 +317,7 @@ export async function handleCheckMessage(
             text.trim(),
         });
       }
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       await sendHomeworkHub(
         admin,
         chatId,
@@ -330,10 +337,10 @@ export async function handleCheckMessage(
     const courseId = state.payload.courseId as number | undefined;
     if (!courseId) return false;
     if (isStaffMenuLabel(text, caps)) {
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
     } else {
       if (/^отмена$/i.test(text.trim())) {
-        await clearStateIfAvailable(admin, telegramId);
+        await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
         const { renderCheckStudentsHub } = await import('./check-screens');
         const { assertCheckCourseAccess } = await import('./check-access');
         const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
@@ -342,7 +349,7 @@ export async function handleCheckMessage(
         return true;
       }
       setCheckStudentSearchQuery(courseId, telegramId, text.trim());
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       const { assertCheckCourseAccess } = await import('./check-access');
       const ctx = await assertCheckCourseAccess(admin, telegramId, courseId);
       const { students: all } = await loadCheckStudentViews(admin, telegramId, courseId);
@@ -358,14 +365,19 @@ export async function handleCheckMessage(
     }
   }
 
-  const ws = await getStaffCourseWorkspace(admin, telegramId);
-  if (ws?.role !== 'check') return false;
-
   const section = MENU_TO_SECTION[text];
   if (section) {
-    await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);
+    const ws = await getStaffCourseWorkspace(admin, telegramId);
+    if (ws?.role === 'check') {
+      await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);
+    } else {
+      await sendCheckSection(admin, chatId, telegramId, section);
+    }
     return true;
   }
+
+  const ws = await getStaffCourseWorkspace(admin, telegramId);
+  if (ws?.role !== 'check') return false;
   await sendAdminMessage(chatId, 'Разделы — на кнопках меню под полем ввода.');
   return true;
 }
@@ -436,7 +448,7 @@ export async function handleCheckAttachment(
   }
   const step = state?.step as string | undefined;
 
-  if (state && step === STAFF_CHECK_REPLY_STEP && (kind === 'photo' || kind === 'document')) {
+  if (state && step === STAFF_CHECK_REPLY_STEP) {
     const payload = state.payload as {
       studentTelegramId?: number;
       courseId?: number;
@@ -453,7 +465,7 @@ export async function handleCheckAttachment(
         attachmentKind: kind,
         courseId: payload.courseId,
       });
-      await clearStateIfAvailable(admin, telegramId);
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
       if (payload.returnTo === 'hw' && payload.courseId) {
         await sendHomeworkHub(admin, chatId, telegramId, payload.courseId, '✅ Вложение отправлено ученику.');
       } else {
@@ -465,18 +477,38 @@ export async function handleCheckAttachment(
     return true;
   }
 
+  const rejectFileStep = step === CHECK_REJECT_FILE_STEP;
   const rejectCommentStep =
     step === CHECK_REJECT_COMMENT_STEP ||
     step === CHECK_REJECT_VOICE_STEP ||
     step === CHECK_REJECT_PHOTO_STEP ||
     step === CHECK_REJECT_TEXT_STEP;
-  if (!state || !rejectCommentStep) return false;
+  if (!state || (!rejectFileStep && !rejectCommentStep)) return false;
 
-  const payload = state.payload as { courseId?: number; studentId?: string; hwNumber?: number };
+  const payload = state.payload as {
+    courseId?: number;
+    studentId?: string;
+    hwNumber?: number;
+    draftFileRef?: string;
+    draftFileKind?: 'photo' | 'voice' | 'document';
+    draftText?: string;
+  };
   const courseId = payload.courseId;
   const studentId = payload.studentId;
   const hwNumber = payload.hwNumber;
   if (!courseId || !studentId || hwNumber == null) return false;
+
+  if (rejectFileStep && (kind === 'photo' || kind === 'document')) {
+    const { promptRejectNoteStep } = await import('./check-hw-callbacks');
+    await promptRejectNoteStep(admin, telegramId, chatId, {
+      courseId,
+      studentId,
+      hwNumber,
+      draftFileRef: formatTelegramFileRef(fileId),
+      draftFileKind: kind,
+    });
+    return true;
+  }
 
   await showRejectDraftConfirm(
     admin,
@@ -488,11 +520,10 @@ export async function handleCheckAttachment(
       hwNumber,
       draftText:
         kind === 'voice'
-          ? 'Голосовой комментарий'
-          : kind === 'photo'
-            ? 'Комментарий на фото'
-            : 'Комментарий в файле',
-      draftFileKind: kind,
+          ? (payload.draftText ?? 'Голосовой комментарий')
+          : payload.draftText ??
+            (kind === 'photo' ? 'Комментарий на фото' : 'Комментарий в файле'),
+      draftFileKind: kind === 'voice' ? 'voice' : payload.draftFileKind ?? kind,
       draftFileRef: formatTelegramFileRef(fileId),
     },
     originFromPayload(state.payload as Record<string, unknown>),

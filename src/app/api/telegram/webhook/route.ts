@@ -820,6 +820,24 @@ export async function POST(request: Request) {
     }
 
     if (update.message?.voice?.file_id && update.message.chat && update.message.from) {
+      const checkVoiceHandled = await handleCheckAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        'voice',
+        update.message.voice.file_id,
+      );
+      if (checkVoiceHandled) return NextResponse.json({ ok: true });
+
+      const mentorVoiceHandled = await handleStudentMentorAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        '',
+        { fileId: update.message.voice.file_id, kind: 'voice' },
+      );
+      if (mentorVoiceHandled) return NextResponse.json({ ok: true });
+
       const leadVoice = await recordInboundClientMedia(admin, update.message.from.id, {
         messageType: 'voice',
         telegramMessageId: update.message.message_id,
@@ -915,13 +933,20 @@ export async function POST(request: Request) {
       update.message.from &&
       ADMIN_REPLY_LABEL_SET.has(update.message.text)
     ) {
-      const adminMenuHandled = await handleAdminMessage(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        update.message.text,
-      );
-      if (adminMenuHandled) return NextResponse.json({ ok: true });
+      const { getStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
+      const { CHECK_BOT_MENU_LABEL_SET } = await import('@/lib/bot/staff/staff-menu');
+      const ws = await getStaffCourseWorkspace(admin, update.message.from.id);
+      const deferToCheckStaff =
+        ws?.role === 'check' && CHECK_BOT_MENU_LABEL_SET.has(update.message.text);
+      if (!deferToCheckStaff) {
+        const adminMenuHandled = await handleAdminMessage(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.text,
+        );
+        if (adminMenuHandled) return NextResponse.json({ ok: true });
+      }
     }
 
     // Кнопки Reply Keyboard ученика: обрабатываются до контроля переписки,

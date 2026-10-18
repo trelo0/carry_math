@@ -50,7 +50,7 @@ export async function tryAutoEnterSingleCourseWorkspace(
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
-  if (mode !== 'course_staff_only') {
+  if (mode !== 'course_staff_only' && mode !== 'check_only' && mode !== 'curator_only') {
     return false;
   }
   const rows = await loadStaffMyCourseRows(admin, telegramId);

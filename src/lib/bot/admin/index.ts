@@ -279,6 +279,12 @@ export async function handleAdminMessage(
       if (usesClientBotUi(effectiveRole)) return false;
     }
 
+    if (text === ADMIN_REPLY_LABELS.home) {
+      const { getStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
+      const ws = await getStaffCourseWorkspace(admin, telegramId);
+      if (ws?.role === 'check') return false;
+    }
+
     await clearStateIfAvailable(admin, telegramId);
     if (text === ADMIN_REPLY_LABELS.home) await openHomeSection(admin, chatId, telegramId);
     else if (text === ADMIN_REPLY_LABELS.people || text === ADMIN_LEGACY_REPLY_LABELS.users) {

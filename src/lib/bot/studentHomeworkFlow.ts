@@ -161,9 +161,13 @@ async function finishSubmit(
     console.error('[course-hw] curator notify failed:', error);
   }
   await clearStateIfAvailable(admin, telegramId);
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
   await sendAdminMessage(
     chatId,
     '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.',
+    studentNotifyKeyboard([
+      [{ text: 'Проверить статус', callback_data: `cl:chw:stat:${sanityLessonId}` }],
+    ]),
   );
   const { showClientCourseHomeworkLessonStatus } = await import('./client-course-homework-hub');
   await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
@@ -186,6 +190,9 @@ export async function handleStudentHomeworkMessage(
   chatId: number,
   text: string,
 ): Promise<boolean> {
+  const { isClientReplyLabel } = await import('./client-menu');
+  if (isClientReplyLabel(text)) return false;
+
   const state = await loadHwState(admin, telegramId);
   if (!state) return false;
 
@@ -397,8 +404,14 @@ export async function notifyStudentHomeworkReviewed(
     /** tg:fileId или http(s) — файл с правками от куратора */
     reviewFileRef?: string | null;
     reviewFileKind?: 'photo' | 'document' | 'voice' | null;
+    sanityLessonId?: string;
   },
 ): Promise<void> {
+  const { unpackHomeworkReviewNote } = await import('./education/homework-review-note');
+  const { homeworkReviewNotifyKeyboard, studentNotifyKeyboard } = await import(
+    './student-push-notify'
+  );
+
   const { data } = await admin
     .from('bot_members')
     .select('chat_id')
@@ -407,16 +420,38 @@ export async function notifyStudentHomeworkReviewed(
   const chatId = data?.chat_id as number | undefined;
   if (!chatId) return;
 
+  let noteText = params.note?.trim() ?? '';
+  let fileRef = params.reviewFileRef?.trim() ?? null;
+  let fileKind = params.reviewFileKind ?? null;
+  if (noteText.includes('[[file:')) {
+    const unpacked = unpackHomeworkReviewNote(noteText);
+    noteText = unpacked.text.trim();
+    if (!fileRef && unpacked.fileRef) {
+      fileRef = unpacked.fileRef;
+      fileKind = unpacked.fileKind;
+    }
+  }
+
   const base = params.approved
     ? `✅ Домашка по занятию №${params.lessonNumber} «${params.title}» одобрена.`
     : `❌ Домашка по занятию №${params.lessonNumber} «${params.title}» отправлена на доработку.`;
-  const text = params.note?.trim() ? `${base}\n\nКомментарий:\n${params.note.trim()}` : base;
-  await telegramSend('sendMessage', { chat_id: chatId, text });
+  const text = noteText ? `${base}\n\nКомментарий:\n${noteText}` : base;
 
-  const ref = params.reviewFileRef?.trim();
+  const replyMarkup =
+    !params.approved && params.sanityLessonId
+      ? homeworkReviewNotifyKeyboard(params.sanityLessonId)
+      : studentNotifyKeyboard();
+
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text,
+    reply_markup: replyMarkup,
+  });
+
+  const ref = fileRef;
   if (!ref) return;
   if (ref.startsWith('tg:')) {
-    const sent = await sendTelegramFileById(chatId, ref.slice(3), params.reviewFileKind);
+    const sent = await sendTelegramFileById(chatId, ref.slice(3), fileKind);
     if (!sent.ok) {
       await telegramSend('sendMessage', {
         chat_id: chatId,

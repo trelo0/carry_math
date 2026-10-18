@@ -15,13 +15,13 @@ export const CLIENT_LABELS = {
   contactTeacher: '💬 Связаться с преподавателем',
   contactCurator: '💬 Связаться с куратором',
   contact: '💬 Связь',
-  payments: '💳 Оплаты',
-  misc: '⋯ Прочее',
+  payments: '💳 Финансы',
+  misc: '🆘 Получить помощь',
   buyEducation: '🎓 Купить обучение',
   schedule: '🗓 Расписание',
   myPackage: '📦 Мой пакет',
-  purchaseHistory: '🧾 История',
-  myApplications: '📨 История обращений',
+  purchaseHistory: '🧾 Мои оплаты',
+  myApplications: '📨 Мои заявки',
 } as const;
 
 export type ClientReplyLabel = (typeof CLIENT_LABELS)[keyof typeof CLIENT_LABELS];

@@ -95,7 +95,7 @@ export async function sendStaffStart(
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
   if (!mode || mode === 'teacher_only') return false;
-  if (mode === 'course_staff_only') {
+  if (mode === 'course_staff_only' || mode === 'check_only' || mode === 'curator_only') {
     await sendStaffCourseOnlyStart(admin, chatId, telegramId, testFooter);
     return true;
   }
@@ -114,7 +114,7 @@ export async function handleCombinedStaffMessage(
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
-  if (mode === 'course_staff_only') {
+  if (mode === 'course_staff_only' || mode === 'check_only' || mode === 'curator_only') {
     if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
       const { sendStaffCourseManagementList } = await import('./staff-course-hub-flow');
       await sendStaffCourseManagementList(admin, chatId, telegramId);

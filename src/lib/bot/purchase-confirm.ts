@@ -45,7 +45,12 @@ async function notifyStudentPurchaseConfirmed(
 
   lines.push('', cabinetUrl);
 
-  await telegramSend('sendMessage', { chat_id: chatId, text: lines.join('\n') });
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: lines.join('\n'),
+    reply_markup: studentNotifyKeyboard(),
+  });
 }
 
 async function notifyStudentPurchaseRejected(
@@ -60,12 +65,14 @@ async function notifyStudentPurchaseRejected(
   const chatId = data?.chat_id as number | undefined;
   if (!chatId) return;
 
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text:
       `❌ Заявка отклонена\n\n` +
       `${request.title}\n\n` +
       `Если это ошибка — напишите администратору или оформите заявку заново в боте.`,
+    reply_markup: studentNotifyKeyboard(),
   });
 }
 

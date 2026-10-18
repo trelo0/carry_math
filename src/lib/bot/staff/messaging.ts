@@ -178,10 +178,12 @@ export async function deliverStaffToStudent(
         ? 'проверяющего'
         : 'куратора';
   const header = `💬 Сообщение от ${roleLabel} District`;
+  const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
   if (params.body.trim()) {
     await telegramSend('sendMessage', {
       chat_id: chatId,
       text: `${header}\n\n${params.body.trim()}`,
+      reply_markup: studentNotifyKeyboard(),
     });
   }
 
@@ -567,4 +569,72 @@ export async function markCheckThreadRead(
   } catch (error) {
     if (!isMessagesTableError(error)) throw error;
   }
+}
+
+export type StudentStaffThreadSummary = {
+  staffTelegramId: number;
+  staffRole: StaffMessageRole;
+  lastBody: string;
+  lastAt: string;
+  lastDirection: 'student_to_staff' | 'staff_to_student';
+  waitingReply: boolean;
+};
+
+export async function listStudentCourseStaffThreads(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  courseId: number,
+  limit = 15,
+): Promise<{ threads: StudentStaffThreadSummary[]; storageEnabled: boolean }> {
+  try {
+    const { data, error } = await admin
+      .from('staff_student_messages')
+      .select('staff_telegram_id, staff_role, body, created_at, direction')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('course_id', courseId)
+      .in('staff_role', ['check', 'curator'])
+      .order('created_at', { ascending: false })
+      .limit(400);
+    if (error && isCourseIdColumnError(error)) {
+      const fallback = await admin
+        .from('staff_student_messages')
+        .select('staff_telegram_id, staff_role, body, created_at, direction')
+        .eq('student_telegram_id', studentTelegramId)
+        .in('staff_role', ['check', 'curator'])
+        .order('created_at', { ascending: false })
+        .limit(400);
+      if (fallback.error) throw fallback.error;
+      return summarizeStudentThreads(fallback.data ?? [], limit);
+    }
+    if (error) throw error;
+    return summarizeStudentThreads(data ?? [], limit);
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { threads: [], storageEnabled: false };
+  }
+}
+
+function summarizeStudentThreads(
+  rows: Array<Record<string, unknown>>,
+  limit: number,
+): { threads: StudentStaffThreadSummary[]; storageEnabled: true } {
+  const byStaff = new Map<string, StudentStaffThreadSummary>();
+  for (const row of rows) {
+    const staffTelegramId = row.staff_telegram_id as number;
+    const staffRole = row.staff_role as StaffMessageRole;
+    const key = `${staffRole}:${staffTelegramId}`;
+    if (byStaff.has(key)) continue;
+    const direction = row.direction as 'student_to_staff' | 'staff_to_student';
+    byStaff.set(key, {
+      staffTelegramId,
+      staffRole,
+      lastBody: String(row.body ?? ''),
+      lastAt: row.created_at as string,
+      lastDirection: direction,
+      waitingReply: direction === 'student_to_staff',
+    });
+    if (byStaff.size >= limit) break;
+  }
+  const threads = [...byStaff.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+  return { threads, storageEnabled: true };
 }
