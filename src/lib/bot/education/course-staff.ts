@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DistrictCourseContent } from '@/lib/studio/courseContent';
-import { loadMemberRoles, memberHasRole, normalizeMemberRole, setRole } from '@/lib/bot/roles';
+import { addMemberExtraRole, loadMemberRoles, memberHasRole, normalizeMemberRole } from '@/lib/bot/roles';
 import { isRegisteredBotMember } from '@/lib/bot/teacher-mapping';
 
 export type CourseStaffRole = 'teacher' | 'curator' | 'check';
@@ -30,19 +30,16 @@ async function assertEligibleForCourseStaffAssignment(
   const ok =
     memberHasRole(roles, 'staff') ||
     memberHasRole(roles, 'teacher') ||
-    memberHasRole(roles, 'admin') ||
-    memberHasRole(roles, 'curator') ||
-    memberHasRole(roles, 'check') ||
-    memberHasRole(roles, 'guest');
+    memberHasRole(roles, 'admin');
   if (!ok) {
     throw new Error(
-      `Нельзя назначить ${role} для staff ${staffTelegramId} (роли: ${roles.join(', ')})`,
+      `Нельзя назначить ${role}: нужна роль teacher, admin или extra staff (сейчас: ${roles.join(', ')}).`,
     );
   }
 }
 
-/** guest/student → staff при назначении на курс (куратор/check). */
-export async function ensureStaffPrimaryRole(
+/** teacher/admin → extra staff; primary staff уже ок. guest/student — нельзя. */
+export async function ensureStaffExtraForCourseAssignment(
   admin: SupabaseClient,
   staffTelegramId: number,
 ): Promise<void> {
@@ -52,12 +49,18 @@ export async function ensureStaffPrimaryRole(
     .eq('telegram_id', staffTelegramId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return;
+  if (!data) throw new Error(`Участник ${staffTelegramId} не найден в боте.`);
   const primary = normalizeMemberRole(String(data.role ?? 'guest'));
   if (primary === 'guest' || primary === 'student') {
-    await setRole(admin, staffTelegramId, 'staff');
+    throw new Error('Нельзя назначить на курс: пользователь guest/student. Сначала teacher/admin или staff.');
+  }
+  if (primary === 'teacher' || primary === 'admin') {
+    await addMemberExtraRole(admin, staffTelegramId, 'staff');
   }
 }
+
+/** @deprecated используй ensureStaffExtraForCourseAssignment */
+export const ensureStaffPrimaryRole = ensureStaffExtraForCourseAssignment;
 
 /** Куратор/преподаватель курса в каталоге (не привязка к ученику). */
 export async function upsertCourseStaffAssignment(
@@ -68,7 +71,7 @@ export async function upsertCourseStaffAssignment(
 ): Promise<void> {
   await assertEligibleForCourseStaffAssignment(admin, staffTelegramId, role);
   if (role === 'curator' || role === 'check') {
-    await ensureStaffPrimaryRole(admin, staffTelegramId);
+    await ensureStaffExtraForCourseAssignment(admin, staffTelegramId);
   }
   const now = new Date().toISOString();
 

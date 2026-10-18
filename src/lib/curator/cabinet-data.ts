@@ -181,12 +181,20 @@ export async function getCuratorCabinetData(
   const courseOptions = await listStaffCourseAssignmentOptions(admin, curatorTelegramId, {
     fullPreview: options?.fullPreview,
   });
-  const activeCourse = await resolveStaffCourseContext(admin, curatorTelegramId, {
+  let activeCourse = await resolveStaffCourseContext(admin, curatorTelegramId, {
     courseId: options?.courseId,
     courseSlug: options?.courseSlug,
     courseRole: options?.courseRole,
     fullPreview: options?.fullPreview,
   });
+  if (!options?.fullPreview && activeCourse?.role === 'check') {
+    activeCourse = await resolveStaffCourseContext(admin, curatorTelegramId, {
+      courseId: options?.courseId ?? activeCourse.courseId,
+      courseSlug: options?.courseSlug ?? activeCourse.slug,
+      courseRole: 'curator',
+      fullPreview: false,
+    });
+  }
   const activeCourseRole = activeCourse?.role ?? null;
 
   const content = activeCourse
@@ -246,6 +254,7 @@ export async function getCuratorCabinetData(
 
   const assignedCourses: CuratorCourseListItem[] = [];
   for (const pick of courseOptions) {
+    if (!options?.fullPreview && pick.role === 'check') continue;
     const summaryContent = await getDistrictCourseContent(pick.slug).catch(() => null);
     const lessonCount = summaryContent
       ? summaryContent.modules.reduce(

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import { getStudentCurator } from '@/lib/bot/education/assignments';
+import { getStudentCheckStaff } from '@/lib/bot/education/assignments';
 import type { CourseEnrollmentState } from './lives';
 
 async function memberChatId(admin: SupabaseClient, telegramId: number): Promise<number | null> {
@@ -26,7 +26,7 @@ async function courseTitle(admin: SupabaseClient, courseId: number): Promise<str
   return (data?.title as string | null)?.trim() || 'Курс';
 }
 
-async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
+export async function getAdminNotifyChatIds(admin: SupabaseClient): Promise<number[]> {
   const envIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
     .split(',')
     .map((value) => value.trim())
@@ -52,7 +52,7 @@ async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
 
 /**
  * Один раз на эпизод исчерпания жизней (живёт в lives_zero_notified_at).
- * Ученик + куратор + админы.
+ * Ученик + проверяющий (check) + админы.
  */
 export async function notifyLivesExhaustedOnce(
   admin: SupabaseClient,
@@ -77,11 +77,11 @@ export async function notifyLivesExhaustedOnce(
   if (claimError) throw claimError;
   if (!claimed) return; // уже уведомили
 
-  const [name, title, studentChat, curator] = await Promise.all([
+  const [name, title, studentChat, checker] = await Promise.all([
     memberName(admin, params.telegramId),
     courseTitle(admin, params.courseId),
     memberChatId(admin, params.telegramId),
-    getStudentCurator(admin, params.telegramId),
+    getStudentCheckStaff(admin, params.telegramId, params.courseId),
   ]);
 
   const when = new Date().toLocaleString('ru-RU', {
@@ -103,18 +103,18 @@ export async function notifyLivesExhaustedOnce(
         'Причина: закончились жизни (0 из 3).',
         '',
         'Ранее открытые занятия и текущее ДЗ остаются доступны.',
-        'Новые занятия откроются после восстановления жизней (+1 от куратора или в начале месяца).',
+        'Новые занятия откроются после восстановления жизней (+1 от проверяющего или в начале месяца).',
         '',
-        'Свяжитесь с куратором.',
+        'Свяжитесь с проверяющим курса.',
       ].join('\n'),
     });
   }
 
-  if (curator) {
-    const curatorChat = await memberChatId(admin, curator.telegramId);
-    if (curatorChat) {
+  if (checker) {
+    const checkChat = await memberChatId(admin, checker.telegramId);
+    if (checkChat) {
       await telegramSend('sendMessage', {
-        chat_id: curatorChat,
+        chat_id: checkChat,
         text: [
           '❤️ У ученика закончились жизни — курс заморожен',
           '',
@@ -123,13 +123,13 @@ export async function notifyLivesExhaustedOnce(
           'Жизней: 0 из 3',
           'Новые занятия закрыты, пока жизни не восстановят (+1 или начало месяца).',
           '',
-          'Откройте карточку ученика в кабинете куратора.',
+          'Кабинет staff или бот проверяющего → ученик → жизни.',
         ].join('\n'),
       });
     }
   }
 
-  const adminChats = await getAdminChatIds(admin);
+  const adminChats = await getAdminNotifyChatIds(admin);
   for (const chatId of adminChats) {
     await telegramSend('sendMessage', {
       chat_id: chatId,

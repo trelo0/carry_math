@@ -412,11 +412,10 @@ export async function getStaffCabinetData(
   },
 ): Promise<StaffCabinetData> {
   const fullStaffPreview = hasFullStaffPreview(roles, telegramId);
-  const { staffHasAnyCourseAssignment } = await import('@/lib/bot/education/course-staff');
-  const loadCurator =
-    fullStaffPreview ||
-    (await staffHasAnyCourseAssignment(admin, telegramId, 'curator')) ||
-    (await staffHasAnyCourseAssignment(admin, telegramId, 'check'));
+  const { listCoursesForStaff } = await import('@/lib/bot/education/course-staff');
+  const assignments = await listCoursesForStaff(admin, telegramId);
+  const hasCuratorAssignment = assignments.some((a) => a.role === 'curator');
+  const loadCurator = fullStaffPreview || hasCuratorAssignment;
   const loadTeacher = fullStaffPreview || memberHasRole(roles, 'teacher');
 
   const [curator, teacher] = await Promise.all([

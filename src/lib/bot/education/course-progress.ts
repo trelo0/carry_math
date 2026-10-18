@@ -22,6 +22,7 @@ import {
 } from '@/lib/bot/education/course-access';
 import {
   computeLessonProgressPercent,
+  homeworkWebinarOpened,
   isLessonProgressCompleted,
   homeworkRequiredForLesson,
   lessonHasHomework,
@@ -140,6 +141,8 @@ export type CourseMapStop = {
   homeworkDeadlineAt: string | null;
   homeworkRemainingMs: number | null;
   homeworkOverdueAt: string | null;
+  /** Play live/записи — таймер ДЗ и кнопка сдачи. */
+  webinarOpened: boolean;
   /** 0–100 вычисляемый прогресс урока (материал 60% + ДЗ 40%) */
   lessonProgressPercent: number;
   isTrialFree: boolean;
@@ -670,6 +673,7 @@ export async function buildCourseMapStopsFromContent(
         isJoinArchive || hideTrialHomeworkPreview
           ? null
           : (progress?.homework_overdue_at ?? null),
+      webinarOpened: isJoinArchive ? false : homeworkWebinarOpened(progress),
       lessonProgressPercent: computeLessonProgressPercent({
         recordingWatchedAt: progress?.recording_watched_at,
         liveAttendedAt: progress?.live_attended_at,
@@ -748,6 +752,7 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
         homeworkDeadlineAt: null,
         homeworkRemainingMs: null,
         homeworkOverdueAt: null,
+        webinarOpened: false,
         lessonProgressPercent: 0,
         isTrialFree: lesson.isTrialFree,
         contentChips:
@@ -903,6 +908,7 @@ export async function buildCourseMapStops(
       homeworkRemainingMs:
         typeof progress?.homework_remaining_ms === 'number' ? progress.homework_remaining_ms : null,
       homeworkOverdueAt: progress?.homework_overdue_at ?? null,
+      webinarOpened: homeworkWebinarOpened(progress),
       lessonProgressPercent: 0,
       isTrialFree: Boolean(lesson.is_trial_free),
       contentChips: [...DEFAULT_LESSON_CONTENT_CHIPS],

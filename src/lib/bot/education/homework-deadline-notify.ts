@@ -1,9 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import { getStudentCurator } from '@/lib/bot/education/assignments';
+import { getStudentCheckStaff } from '@/lib/bot/education/assignments';
+import { getAdminNotifyChatIds } from './lives-notify';
 import { flattenCourseLessons, getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { getEnrollmentLives } from './lives';
-import { resolveCourseIdForContent } from './course-record';
 import {
   claimDeadlineReminder,
   ensureOverdueMarked,
@@ -117,6 +117,7 @@ async function sendStudentReminder(
   return true;
 }
 
+/** Просрочка ДЗ: проверяющий курса + админы (колонка hw_overdue_curator_at — историческое имя). */
 export async function notifyCuratorOverdueOnce(
   admin: SupabaseClient,
   telegramId: number,
@@ -131,19 +132,16 @@ export async function notifyCuratorOverdueOnce(
   );
   if (!claimed) return false;
 
-  const curator = await getStudentCurator(admin, telegramId);
-  if (!curator) return true;
+  const { resolveCourseForSanityLesson } = await import('./student-course-context');
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId).catch(() => null);
+  const courseId = resolved?.courseId ?? null;
 
-  const curatorChat = await memberChatId(admin, curator.telegramId);
-  if (!curatorChat) return true;
-
-  const [name, meta, content] = await Promise.all([
+  const [name, meta] = await Promise.all([
     memberName(admin, telegramId),
     resolveLessonTitle(sanityLessonId),
-    getDistrictCourseContent().catch(() => null),
   ]);
-  const courseId = content ? await resolveCourseIdForContent(admin, content).catch(() => null) : null;
-  const lives = courseId ? await getEnrollmentLives(admin, telegramId, courseId).catch(() => null) : null;
+  const lives =
+    courseId != null ? await getEnrollmentLives(admin, telegramId, courseId).catch(() => null) : null;
 
   const { data: progress } = await admin
     .from('course_lesson_student_progress')
@@ -160,34 +158,71 @@ export async function notifyCuratorOverdueOnce(
       ? formatDeadlineRu(deadlineIso)
       : '—';
 
-  try {
-    await telegramSend('sendMessage', {
-      chat_id: curatorChat,
-      text: [
-        '⏰ Просрочено домашнее задание',
-        '',
-        `👤 ${name}`,
-        `📚 ${meta.title}`,
-        `📝 ${meta.hwTitle}`,
-        `🕐 Дедлайн: ${deadlineIso ? formatDeadlineRu(deadlineIso) : '—'} (МСК)`,
-        `⏱ Просрочено: ${overdueLabel}`,
-        `❤️ Жизней: ${lives ? `${lives.lives_current} из ${lives.lives_max}` : '—'}`,
-      ].join('\n'),
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '❤️ Списать жизнь',
-              callback_data: `c:lded:${telegramId}:${meta.lessonNumber ?? 0}`,
-            },
-          ],
-          [{ text: '💬 Связаться с учеником', url: `tg://user?id=${telegramId}` }],
-        ],
-      },
-    });
-  } catch (err) {
-    console.error('[hw-deadline] curator overdue notify failed:', err);
+  const hwNum = meta.lessonNumber ?? 0;
+  const overdueText = [
+    '⏰ Просрочено домашнее задание',
+    '',
+    `👤 ${name}`,
+    `📚 ${meta.title}`,
+    `📝 ${meta.hwTitle}`,
+    `🕐 Дедлайн: ${deadlineIso ? formatDeadlineRu(deadlineIso) : '—'} (МСК)`,
+    `⏱ Просрочено: ${overdueLabel}`,
+    `❤️ Жизней: ${lives ? `${lives.lives_current} из ${lives.lives_max}` : '—'}`,
+  ].join('\n');
+
+  const lifeButton =
+    courseId != null && hwNum > 0
+      ? [
+          {
+            text: '❤️ Списать жизнь',
+            callback_data: `k:life:${courseId}:ask:${telegramId}:${hwNum}`,
+          },
+        ]
+      : [];
+
+  if (courseId != null) {
+    const checker = await getStudentCheckStaff(admin, telegramId, courseId);
+    const checkChat = checker ? await memberChatId(admin, checker.telegramId) : null;
+    if (checkChat) {
+      try {
+        await telegramSend('sendMessage', {
+          chat_id: checkChat,
+          text: overdueText,
+          reply_markup: {
+            inline_keyboard: [
+              ...lifeButton,
+              [{ text: '💬 Связаться с учеником', url: `tg://user?id=${telegramId}` }],
+            ],
+          },
+        });
+      } catch (err) {
+        console.error('[hw-deadline] check overdue notify failed:', err);
+      }
+    }
   }
+
+  const adminChats = await getAdminNotifyChatIds(admin);
+  for (const chatId of adminChats) {
+    try {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: overdueText,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '⏱ Просрочки', callback_data: 'ae:lives:od:0' },
+              { text: '❤️ Жизни', callback_data: `al:m:${telegramId}` },
+            ],
+            [{ text: '👤 Профиль', callback_data: `admin:user:${telegramId}::` }],
+            [{ text: '💬 Ученик', url: `tg://user?id=${telegramId}` }],
+          ],
+        },
+      });
+    } catch (err) {
+      console.error('[hw-deadline] admin overdue notify failed:', err);
+    }
+  }
+
   return true;
 }
 

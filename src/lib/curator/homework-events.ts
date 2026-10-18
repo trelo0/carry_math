@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getStudentCurator } from '@/lib/bot/education/assignments';
 import {
   findLessonBySanityId,
   type CourseHomeworkSubmitInput,
@@ -19,7 +18,7 @@ async function studentDisplayName(admin: SupabaseClient, telegramId: number): Pr
   );
 }
 
-/** Push куратору после сдачи ДЗ (сайт или бот). */
+/** Push проверяющему после сдачи ДЗ (сайт или бот). */
 export async function notifyCuratorHomeworkSubmitted(
   admin: SupabaseClient,
   studentTelegramId: number,
@@ -27,7 +26,6 @@ export async function notifyCuratorHomeworkSubmitted(
   input: CourseHomeworkSubmitInput,
 ): Promise<void> {
   const { resolveCourseForSanityLesson } = await import('@/lib/bot/education/student-course-context');
-  const { resolveCourseCuratorStaffTelegramId } = await import('@/lib/bot/education/course-staff');
   const resolved = await resolveCourseForSanityLesson(admin, studentTelegramId, sanityLessonId);
   const content = resolved?.content ?? (await getDistrictCourseContent().catch(() => null));
   if (!content) return;
@@ -35,40 +33,18 @@ export async function notifyCuratorHomeworkSubmitted(
   if (!lesson) return;
 
   const courseId = resolved?.courseId ?? null;
-  let recipientTelegramId: number | null = null;
-  if (courseId != null) {
-    recipientTelegramId = await resolveCourseCuratorStaffTelegramId(admin, courseId);
-  }
-  if (recipientTelegramId == null) {
-    recipientTelegramId = content.curatorTelegramId ?? null;
-  }
-  if (recipientTelegramId == null) {
-    const curator = await getStudentCurator(admin, studentTelegramId, { courseId: courseId ?? undefined });
-    recipientTelegramId = curator?.telegramId ?? null;
-  }
-  if (!recipientTelegramId) return;
+  if (courseId == null) return;
 
   const studentName = await studentDisplayName(admin, studentTelegramId);
-  await sendSubmissionToCurator(admin, recipientTelegramId, {
+  await notifyCheckHomeworkSubmitted(admin, {
+    courseId,
+    studentTelegramId,
     studentName,
     lessonNumber: lesson.lessonNumber,
-    title: lesson.title,
+    lessonTitle: lesson.title,
     fileUrl: input.fileUrl?.trim() || null,
-    fileKind: input.fileKind ?? null,
     note: input.note?.trim() || null,
   });
-
-  if (courseId != null) {
-    await notifyCheckHomeworkSubmitted(admin, {
-      courseId,
-      studentTelegramId,
-      studentName,
-      lessonNumber: lesson.lessonNumber,
-      lessonTitle: lesson.title,
-      fileUrl: input.fileUrl?.trim() || null,
-      note: input.note?.trim() || null,
-    });
-  }
 }
 
 /** Уведомление проверяющему о новой сдаче ДЗ. */

@@ -133,7 +133,7 @@ export default function HomeworkRowChip({
     icon = 'check';
     variant = 'done';
   } else if (status === 'submitted') {
-    statusText = 'На проверке';
+      statusText = 'Ожидает проверки';
     icon = 'clock';
     variant = 'review';
   } else if (status === 'rejected') {

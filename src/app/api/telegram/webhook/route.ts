@@ -19,6 +19,7 @@ import {
   handleStudentHomeworkAttachment,
   handleStudentHomeworkMessage,
 } from '@/lib/bot/studentHomeworkFlow';
+import { showClientCourseHomeworkLessonStatus } from '@/lib/bot/client-course-homework-hub';
 import {
   beginStudentMentorQuestion,
   handleStudentMentorAttachment,
@@ -99,7 +100,9 @@ import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
 import {
   extractBotStartPayload,
   isCourseHomeworkStartPayload,
+  isCourseHomeworkStatusStartPayload,
   isPlainBotStartCommand,
+  parseCourseHomeworkStatusTelegramStart,
   parseCourseHomeworkTelegramStart,
 } from '@/lib/bot/course-homework-deeplink';
 
@@ -196,6 +199,52 @@ export async function POST(request: Request) {
     const startMessage = update.message;
     const startSource = startMessage?.text ? extractBotStartPayload(startMessage.text) : null;
 
+    async function runCourseHomeworkStatusDeepLink(): Promise<boolean> {
+      if (
+        startSource == null ||
+        !isCourseHomeworkStatusStartPayload(startSource) ||
+        !startMessage?.chat ||
+        !startMessage.from
+      ) {
+        return false;
+      }
+      const sanityLessonId = parseCourseHomeworkStatusTelegramStart(startSource);
+      if (!sanityLessonId) {
+        await telegramSend('sendMessage', {
+          chat_id: startMessage.chat.id,
+          text: 'Не удалось открыть статус ДЗ. Вернитесь в кабинет и нажмите «Проверить статус» ещё раз.',
+        });
+        return true;
+      }
+      await ensureMember(
+        admin,
+        startMessage.from.id,
+        memberPatch(startMessage.from, startMessage.chat.id),
+      );
+      try {
+        const opened = await showClientCourseHomeworkLessonStatus(
+          admin,
+          startMessage.from.id,
+          startMessage.chat.id,
+          sanityLessonId,
+          { forcePush: true },
+        );
+        if (!opened) {
+          await telegramSend('sendMessage', {
+            chat_id: startMessage.chat.id,
+            text: 'Не удалось открыть статус ДЗ по этому вебинару.',
+          });
+        }
+      } catch (error) {
+        const text =
+          error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : 'Не удалось открыть статус ДЗ. Попробуйте из меню «Домашние задания».';
+        await telegramSend('sendMessage', { chat_id: startMessage.chat.id, text });
+      }
+      return true;
+    }
+
     async function runCourseHomeworkDeepLink(): Promise<boolean> {
       if (
         startSource == null ||
@@ -272,6 +321,11 @@ export async function POST(request: Request) {
         memberPatch(update.message.from, update.message.chat.id),
       );
       await beginCourseApplication(admin, update.message.from.id, update.message.chat.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start hws_<lesson> | hwsb_<base64> — статус/история ДЗ из кабинета.
+    if (await runCourseHomeworkStatusDeepLink()) {
       return NextResponse.json({ ok: true });
     }
 
@@ -396,6 +450,7 @@ export async function POST(request: Request) {
         token.startsWith('lead_') ||
         token.startsWith('pay_') ||
         isCourseHomeworkStartPayload(token) ||
+        isCourseHomeworkStatusStartPayload(token) ||
         token.startsWith('course_') ||
         token === 'course_apply' ||
         token === 'support' ||
@@ -405,6 +460,10 @@ export async function POST(request: Request) {
         AD_START_SOURCES.includes(token);
 
       if (knownDeepLink) {
+        if (isCourseHomeworkStatusStartPayload(token)) {
+          await runCourseHomeworkStatusDeepLink();
+          return NextResponse.json({ ok: true });
+        }
         if (isCourseHomeworkStartPayload(token)) {
           await runCourseHomeworkDeepLink();
           return NextResponse.json({ ok: true });

@@ -46,10 +46,29 @@ export const COMBINED_HOME_TEXT =
 
 async function combinedCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {
-    return await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+    const { resolveStaffCabinetLoginPath } = await import('@/lib/staff/staff-cabinet-access');
+    const path = await resolveStaffCabinetLoginPath(admin, telegramId);
+    return await createCabinetLoginUrl(admin, telegramId, path);
   } catch {
     return null;
   }
+}
+
+export async function sendStaffCourseOnlyStart(
+  admin: SupabaseClient,
+  chatId: number,
+  telegramId: number,
+  testFooter = '',
+): Promise<void> {
+  const caps = await loadStaffCapabilities(admin, telegramId);
+  const { STAFF_COURSE_HOME_TEXT } = await import('./staff-course-hub-flow');
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: STAFF_COURSE_HOME_TEXT + testFooter,
+    reply_markup: staffGlobalReplyKeyboard(caps),
+  });
+  const { tryAutoEnterSingleCourseWorkspace } = await import('./staff-course-hub-flow');
+  await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
 }
 
 export async function sendCombinedStaffStart(
@@ -59,16 +78,11 @@ export async function sendCombinedStaffStart(
   testFooter = '',
 ): Promise<void> {
   const caps = await loadStaffCapabilities(admin, telegramId);
-  const mode = resolveStaffBotMode(caps);
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: COMBINED_HOME_TEXT + testFooter,
     reply_markup: staffGlobalReplyKeyboard(caps),
   });
-  if (mode === 'course_staff_only') {
-    const { tryAutoEnterSingleCourseWorkspace } = await import('./staff-course-hub-flow');
-    await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
-  }
 }
 
 /** true, если отправлен staff start (не вызывать отдельный teacher/curator start). */
@@ -81,18 +95,12 @@ export async function sendStaffStart(
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
   if (!mode || mode === 'teacher_only') return false;
-  if (mode === 'combined' || mode === 'course_staff_only') {
+  if (mode === 'course_staff_only') {
+    await sendStaffCourseOnlyStart(admin, chatId, telegramId, testFooter);
+    return true;
+  }
+  if (mode === 'combined') {
     await sendCombinedStaffStart(admin, chatId, telegramId, testFooter);
-    return true;
-  }
-  if (mode === 'check_only') {
-    const { sendCheckStart } = await import('@/lib/bot/check/check-flow');
-    await sendCheckStart(admin, chatId, telegramId, testFooter);
-    return true;
-  }
-  if (mode === 'curator_only') {
-    const { sendCuratorStart } = await import('@/lib/bot/curator/curatorFlow');
-    await sendCuratorStart(admin, chatId, telegramId, testFooter);
     return true;
   }
   return false;
@@ -106,7 +114,15 @@ export async function handleCombinedStaffMessage(
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
-  if (mode !== 'combined' && mode !== 'course_staff_only') return false;
+  if (mode === 'course_staff_only') {
+    if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
+      const { sendStaffCourseManagementList } = await import('./staff-course-hub-flow');
+      await sendStaffCourseManagementList(admin, chatId, telegramId);
+      return true;
+    }
+    return false;
+  }
+  if (mode !== 'combined') return false;
   if (!isStaffMenuLabel(text, caps)) return false;
 
   const cabinetUrl = await combinedCabinetUrl(admin, telegramId);
@@ -115,9 +131,6 @@ export async function handleCombinedStaffMessage(
     const screen = await teacherCabinetScreen(admin, telegramId);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
-  }
-  if (mode === 'course_staff_only' && text !== COMBINED_STAFF_MENU_LABELS.myCourse && text !== COMBINED_STAFF_MENU_LABELS.cabinet) {
-    return false;
   }
   if (text === COMBINED_STAFF_MENU_LABELS.schedule) {
     const snapshot = await loadTeacherBotSnapshot(admin, telegramId);
@@ -165,7 +178,7 @@ export async function handleCombinedStaffCallback(
   if (!data.startsWith('s:')) return false;
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
-  if (mode !== 'combined' && mode !== 'course_staff_only') return false;
+  if (mode !== 'combined') return false;
 
   const message: AdminMessage = { chatId, messageId };
   const parts = data.split(':');

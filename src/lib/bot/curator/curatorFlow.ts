@@ -158,9 +158,13 @@ async function curatorCabinetScreen(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+  const { resolveCuratorWebCabinetPath } = await import('@/lib/staff/staff-cabinet-access');
+  const { getStaffCourseWorkspace } = await import('../staff/staff-course-session');
+  const ws = await getStaffCourseWorkspace(admin, telegramId);
+  const path = await resolveCuratorWebCabinetPath(admin, telegramId, ws?.courseId ?? null);
+  const url = await createCabinetLoginUrl(admin, telegramId, path);
   return {
-    text: '🌐 Кабинет куратора\n\nЗанятия, материалы, эфиры и проверка ДЗ — на сайте:',
+    text: '🌐 Кабинет куратора\n\nЗанятия, материалы и эфиры — на сайте:',
     keyboard: {
       inline_keyboard: [
         [{ text: '🌐 Открыть кабинет куратора', url }],
@@ -203,7 +207,11 @@ async function canUseCuratorBot(admin: SupabaseClient, telegramId: number): Prom
 
 async function curatorCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {
-    return await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+    const { resolveCuratorWebCabinetPath } = await import('@/lib/staff/staff-cabinet-access');
+    const { getStaffCourseWorkspace } = await import('../staff/staff-course-session');
+    const ws = await getStaffCourseWorkspace(admin, telegramId);
+    const path = await resolveCuratorWebCabinetPath(admin, telegramId, ws?.courseId ?? null);
+    return await createCabinetLoginUrl(admin, telegramId, path);
   } catch {
     return null;
   }

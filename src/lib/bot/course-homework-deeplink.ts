@@ -2,6 +2,9 @@
 
 const HW_PREFIX = 'hw_';
 const HWB_PREFIX = 'hwb_';
+/** Статус / история сдачи ДЗ по вебинару (не hw_ — иначе пересечётся с сдачей). */
+const HWS_PREFIX = 'hws_';
+const HWSB_PREFIX = 'hwsb_';
 
 function toBase64Url(value: string): string {
   if (typeof Buffer !== 'undefined') {
@@ -36,23 +39,41 @@ function telegramStartAllowsRaw(payload: string): boolean {
   return payload.length <= 64 && /^[A-Za-z0-9_-]+$/.test(payload);
 }
 
-/** Параметр для https://t.me/bot?start=… */
-export function buildCourseHomeworkTelegramStart(sanityLessonId: string): string {
-  const raw = `${HW_PREFIX}${sanityLessonId}`;
+function encodeLessonStart(prefix: string, b64Prefix: string, sanityLessonId: string): string {
+  const raw = `${prefix}${sanityLessonId}`;
   if (telegramStartAllowsRaw(raw)) return raw;
-  return `${HWB_PREFIX}${toBase64Url(sanityLessonId)}`;
+  return `${b64Prefix}${toBase64Url(sanityLessonId)}`;
 }
 
-/** Sanity lesson id из /start или null. */
-export function parseCourseHomeworkTelegramStart(source: string): string | null {
+function parseLessonStart(source: string, prefix: string, b64Prefix: string): string | null {
   const token = source.trim();
-  if (token.startsWith(HWB_PREFIX)) {
-    return fromBase64Url(token.slice(HWB_PREFIX.length));
+  if (token.startsWith(b64Prefix)) {
+    return fromBase64Url(token.slice(b64Prefix.length));
   }
-  if (token.startsWith(HW_PREFIX)) {
-    return token.slice(HW_PREFIX.length);
+  if (token.startsWith(prefix)) {
+    return token.slice(prefix.length);
   }
   return null;
+}
+
+/** Параметр для https://t.me/bot?start=… */
+export function buildCourseHomeworkTelegramStart(sanityLessonId: string): string {
+  return encodeLessonStart(HW_PREFIX, HWB_PREFIX, sanityLessonId);
+}
+
+/** Deep-link статуса/истории сдачи ДЗ по вебинару. */
+export function buildCourseHomeworkStatusTelegramStart(sanityLessonId: string): string {
+  return encodeLessonStart(HWS_PREFIX, HWSB_PREFIX, sanityLessonId);
+}
+
+/** Sanity lesson id из /start сдачи или null. */
+export function parseCourseHomeworkTelegramStart(source: string): string | null {
+  return parseLessonStart(source, HW_PREFIX, HWB_PREFIX);
+}
+
+/** Sanity lesson id из /start статуса ДЗ или null. */
+export function parseCourseHomeworkStatusTelegramStart(source: string): string | null {
+  return parseLessonStart(source, HWS_PREFIX, HWSB_PREFIX);
 }
 
 /** Payload после /start (все форматы Telegram). null — не /start. */
@@ -83,6 +104,11 @@ export function extractBotStartPayload(text: string | undefined): string | null 
 export function isCourseHomeworkStartPayload(source: string): boolean {
   const t = source.trim();
   return t.startsWith(HW_PREFIX) || t.startsWith(HWB_PREFIX);
+}
+
+export function isCourseHomeworkStatusStartPayload(source: string): boolean {
+  const t = source.trim();
+  return t.startsWith(HWS_PREFIX) || t.startsWith(HWSB_PREFIX);
 }
 
 /** /start или /start@bot без параметра — не OTP-токен привязки. */

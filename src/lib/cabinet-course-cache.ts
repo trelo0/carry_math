@@ -57,6 +57,7 @@ export function markCourseMapStale(slug: string): void {
   if (typeof window === 'undefined' || !slug) return;
   try {
     sessionStorage.setItem(STALE_PREFIX + slug, '1');
+    sessionStorage.removeItem(KEY_PREFIX + slug);
   } catch {
     // ignore
   }

@@ -51,6 +51,23 @@ export function homeworkRequiredForLesson(
   return lessonHasHomework(lesson);
 }
 
+/** Вебинар открыт (Play live/запись) — тогда стартует таймер ДЗ и можно сдавать. */
+export function homeworkWebinarOpened(
+  progress:
+    | {
+        live_attended_at?: string | null;
+        recording_watched_at?: string | null;
+        homework_deadline_at?: string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!progress) return false;
+  return Boolean(
+    progress.live_attended_at || progress.recording_watched_at || progress.homework_deadline_at,
+  );
+}
+
 /** Вариант A: Play (recording/live) → 60%, иначе 0. */
 export function computeMaterialPercent(input: LessonProgressInput): number {
   if (input.recordingWatchedAt || input.liveAttendedAt) return 60;

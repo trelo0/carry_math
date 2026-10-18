@@ -138,6 +138,11 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
     router.prefetch('/cabinet?section=course');
   }, [router]);
 
+  useEffect(() => {
+    const courseSlug = courseSlugFromLessonLocation();
+    if (courseSlug) markCourseMapStale(courseSlug);
+  }, []);
+
   const chips =
     stop.contentChips?.filter(Boolean).length ? stop.contentChips.filter(Boolean) : DEFAULT_LESSON_CONTENT_CHIPS;
 

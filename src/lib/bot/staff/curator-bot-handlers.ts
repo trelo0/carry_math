@@ -406,7 +406,11 @@ export async function handleCuratorBotReplyMenu(
   }
   if (text === CURATOR_BOT_MENU_LABELS.cabinet) {
     try {
-      const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+      const { resolveCuratorWebCabinetPath } = await import('@/lib/staff/staff-cabinet-access');
+      const { getStaffCourseWorkspace } = await import('./staff-course-session');
+      const ws = await getStaffCourseWorkspace(admin, telegramId);
+      const path = await resolveCuratorWebCabinetPath(admin, telegramId, ws?.courseId ?? null);
+      const url = await createCabinetLoginUrl(admin, telegramId, path);
       await sendAdminMessage(chatId, '🌐 Кабинет на сайте:', {
         inline_keyboard: [[{ text: '🌐 Открыть кабинет', url }]],
       });

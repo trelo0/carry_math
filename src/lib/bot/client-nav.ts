@@ -331,7 +331,11 @@ export function navStackForCourseHomeworkHub(
 ): string[] {
   const hubScreen = courseSlug ? `course-hw-hub:${courseSlug}` : 'course-hw-hub';
   const copy = [...(stack?.length ? stack : ['home'])];
-  while (copy.length > 0 && copy[copy.length - 1]!.startsWith('course-hw-hist')) {
+  while (
+    copy.length > 0 &&
+    (copy[copy.length - 1]!.startsWith('course-hw-hist') ||
+      copy[copy.length - 1]!.startsWith('course-hw-lesson'))
+  ) {
     copy.pop();
   }
   if (copy[copy.length - 1] === hubScreen) return copy;

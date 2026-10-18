@@ -39,7 +39,10 @@ import {
   shouldShowCourseCabinetGate,
 } from '@/lib/cabinet';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
-import { buildCourseHomeworkTelegramStart } from '@/lib/bot/course-homework-deeplink';
+import {
+  buildCourseHomeworkStatusTelegramStart,
+  buildCourseHomeworkTelegramStart,
+} from '@/lib/bot/course-homework-deeplink';
 import { aggregateCourseProgress } from '@/lib/bot/education/lesson-progress-calc';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSlider';
@@ -91,6 +94,7 @@ type CourseStop = {
   homeworkDeadlineAt?: string | null;
   homeworkRemainingMs?: number | null;
   homeworkOverdueAt?: string | null;
+  webinarOpened?: boolean;
   lessonProgressPercent?: number;
   isTrialFree?: boolean;
   mapAccessState?: CourseMapAccessState;
@@ -124,6 +128,7 @@ function mapCabinetStopToCourseStop(s: CabinetCourseStop): CourseStop {
     homeworkDeadlineAt: s.homeworkDeadlineAt,
     homeworkRemainingMs: s.homeworkRemainingMs,
     homeworkOverdueAt: s.homeworkOverdueAt,
+    webinarOpened: s.webinarOpened,
     lessonProgressPercent: s.lessonProgressPercent,
     isTrialFree: s.isTrialFree,
     mapAccessState: s.mapAccessState,
@@ -1775,6 +1780,12 @@ export default function CabinetShell({
     return slice;
   }, []);
 
+  const markHomeworkMapStale = useCallback(() => {
+    if (!activeCourseSlug) return;
+    markCourseMapStale(activeCourseSlug);
+    courseCacheRef.current.delete(activeCourseSlug);
+  }, [activeCourseSlug]);
+
   const fetchCourseSlice = fetchMapProgress;
 
   useEffect(() => {
@@ -1803,12 +1814,9 @@ export default function CabinetShell({
     }
 
     const cacheUsable = sessionCached && isCourseSliceCacheFresh(sessionCached) && !stale;
-    if (cacheUsable) {
-      return;
-    }
 
     let cancelled = false;
-    const silent = Boolean(sessionCached);
+    const silent = Boolean(cacheUsable);
     if (!silent) setMapHydrating(true);
     void (async () => {
       try {
@@ -1836,6 +1844,34 @@ export default function CabinetShell({
     data.packages,
     fetchMapProgress,
   ]);
+
+  useEffect(() => {
+    const slug = activeCourseSlug ?? data.courseCatalog?.slug;
+    if (!slug) return;
+    let lastAt = 0;
+
+    const refreshIfStale = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastAt < 4000) return;
+      lastAt = now;
+      void fetchMapProgress(slug)
+        .then((slice) => {
+          setCourseSlice(slice);
+          clearCourseMapStale(slug);
+        })
+        .catch((error) => console.error('[cabinet] map refresh after homework failed:', error));
+    };
+
+    document.addEventListener('visibilitychange', refreshIfStale);
+    window.addEventListener('focus', refreshIfStale);
+    window.addEventListener('pageshow', refreshIfStale);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshIfStale);
+      window.removeEventListener('focus', refreshIfStale);
+      window.removeEventListener('pageshow', refreshIfStale);
+    };
+  }, [activeCourseSlug, data.courseCatalog?.slug, fetchMapProgress]);
 
   const selectCourse = useCallback(
     async (course: SwitcherCourse | { id: number; slug: string; title: string }) => {
@@ -2503,9 +2539,12 @@ export default function CabinetShell({
                               ) : hw.action === 'check_status' && s.sanityLessonId ? (
                                 <a
                                   className="cab-hw-action is-active"
-                                  href={tgBotUrl(buildCourseHomeworkTelegramStart(s.sanityLessonId))}
+                                  href={tgBotUrl(
+                                    buildCourseHomeworkStatusTelegramStart(s.sanityLessonId),
+                                  )}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={markHomeworkMapStale}
                                 >
                                   <Icon d={ICONS.homework} />
                                   Проверить статус
@@ -2517,6 +2556,7 @@ export default function CabinetShell({
                                   href={tgBotUrl(buildCourseHomeworkTelegramStart(s.sanityLessonId))}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={markHomeworkMapStale}
                                 >
                                   <Icon d={ICONS.homework} />
                                   Сдать ДЗ в Telegram

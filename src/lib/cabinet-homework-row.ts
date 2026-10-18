@@ -26,16 +26,7 @@ export function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean): H
     };
   }
 
-  const hwNotReady =
-    stop.kind === 'webinar' &&
-    stop.webinarSessionStatus !== 'completed' &&
-    stop.status !== 'watched' &&
-    stop.status !== 'done';
-
   const status: HomeworkProgressStatus = stop.homeworkStatus ?? 'pending';
-  if (hwNotReady && (status === 'pending' || !stop.homeworkStatus)) {
-    return { tone: 'locked', label: 'Ожидает открытия', action: 'locked' };
-  }
   if (status === 'approved') {
     return { tone: 'done', label: 'Одобрено', action: 'none' };
   }
@@ -45,6 +36,9 @@ export function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean): H
   if (status === 'rejected') {
     return { tone: 'pending', label: 'На доработке', action: 'view' };
   }
+  if (stop.kind === 'webinar' && !stop.webinarOpened) {
+    return { tone: 'locked', label: 'Посмотрите вебинар', action: 'locked' };
+  }
   if (stop.isTrialFree && !hasCourse) {
     return { tone: 'locked', label: 'Сдача после покупки курса', action: 'locked' };
   }
@@ -53,6 +47,7 @@ export function homeworkRowState(stop: CabinetCourseStop, hasCourse: boolean): H
 
 export function homeworkLockedActionHint(label: string, stop?: CabinetCourseStop): string {
   if (label.includes('покупки')) return 'Сдача после покупки курса';
+  if (label.includes('вебинар')) return 'Посмотрите вебинар';
   if (label.includes('открытия')) {
     const webinarDone =
       stop?.webinarSessionStatus === 'completed' ||

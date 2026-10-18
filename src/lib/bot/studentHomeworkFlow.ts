@@ -60,7 +60,7 @@ async function assertCanSubmitCourseHw(
     return {
       ok: false,
       message:
-        'Сейчас нет домашних заданий, которые можно сдать.\n\nПосмотрите запись занятия в личном кабинете — после этого здесь появится возможность отправить работу.',
+        'Сначала откройте вебинар в личном кабинете на сайте.\n\nПосле просмотра появится таймер сдачи и можно будет отправить ДЗ.',
     };
   }
   const paidForCourse = target.hasCourseProduct ?? hasCourse;
@@ -82,6 +82,20 @@ export async function beginCourseHomeworkSubmit(
 ): Promise<boolean> {
   const gate = await assertCanSubmitCourseHw(admin, telegramId, preferredSanityLessonId);
   if (!gate.ok) {
+    if (preferredSanityLessonId) {
+      const { showClientCourseHomeworkLessonStatus } = await import(
+        './client-course-homework-hub'
+      );
+      const opened = await showClientCourseHomeworkLessonStatus(
+        admin,
+        telegramId,
+        chatId,
+        preferredSanityLessonId,
+        { forcePush: true },
+        { requireSubmitted: true },
+      );
+      if (opened) return true;
+    }
     await sendAdminMessage(chatId, gate.message);
     return true;
   }
@@ -149,8 +163,12 @@ async function finishSubmit(
   await clearStateIfAvailable(admin, telegramId);
   await sendAdminMessage(
     chatId,
-    '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.\nПосмотреть можно в личном кабинете в разделе «Домашние задания».',
+    '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.',
   );
+  const { showClientCourseHomeworkLessonStatus } = await import('./client-course-homework-hub');
+  await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
+    forcePush: true,
+  });
 }
 
 async function loadHwState(admin: SupabaseClient, telegramId: number) {

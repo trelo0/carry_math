@@ -6,6 +6,7 @@ import { showClientApplicationsHub } from './client-my-leads';
 import {
   showClientCourseHomeworkHistory,
   showClientCourseHomeworkHub,
+  showClientCourseHomeworkLessonStatus,
 } from './client-course-homework-hub';
 import { showClientMyCourseHub, showClientCoursePicker } from './client-course-hub';
 import { showClientScheduleMenu, showClientPackageMenu, showClientLessonsMenu } from './client-lessons-flow';
@@ -18,6 +19,9 @@ function splitHubScreenId(screenId: string): { base: string; param?: string } {
   }
   if (screenId.startsWith('course-hw-hist:')) {
     return { base: 'course-hw-hist', param: screenId.slice('course-hw-hist:'.length) };
+  }
+  if (screenId.startsWith('course-hw-lesson:')) {
+    return { base: 'course-hw-lesson', param: screenId.slice('course-hw-lesson:'.length) };
   }
   return { base: screenId };
 }
@@ -94,6 +98,19 @@ export async function renderClientScreenById(
         deliver,
         param || activeCourseSlug,
       );
+      return;
+    case 'course-hw-lesson':
+      if (param) {
+        await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, param, deliver);
+      } else {
+        await showClientCourseHomeworkHistory(
+          admin,
+          telegramId,
+          chatId,
+          deliver,
+          activeCourseSlug,
+        );
+      }
       return;
     case 'my-course':
     case 'my-course-detail':

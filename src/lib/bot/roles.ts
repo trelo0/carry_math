@@ -155,14 +155,13 @@ export function isStaffOnlyMember(roles: BotRole[]): boolean {
   return isStaff && !memberHasRole(roles, 'student');
 }
 
+/** Синхронная эвристика (OTP redirect). Точная проверка — memberCanAccessStaffCabinetWeb. */
 export function memberCanAccessStaffCabinet(roles: BotRole[], telegramId: number): boolean {
   return (
-    memberHasRole(roles, 'staff') ||
-    memberHasRole(roles, 'curator') ||
-    memberHasRole(roles, 'check') ||
-    memberHasRole(roles, 'teacher') ||
+    isCreatorTelegramId(telegramId) ||
     memberHasRole(roles, 'admin') ||
-    isCreatorTelegramId(telegramId)
+    memberHasRole(roles, 'teacher') ||
+    memberHasRole(roles, 'staff')
   );
 }
 

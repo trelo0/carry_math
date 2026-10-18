@@ -161,25 +161,16 @@ async function finalizeMentorQuestionStart(
   }
 
   const mentorCourseOpts = courseId != null ? { courseId } : undefined;
-  const teacher = await getStudentTeacher(admin, telegramId, mentorCourseOpts);
-  const curator = await getStudentCurator(admin, telegramId, mentorCourseOpts);
-  const checker =
-    courseId != null ? await getStudentCheckStaff(admin, telegramId, courseId) : null;
-
-  let mentor = teacher;
+  let mentor: Awaited<ReturnType<typeof getStudentTeacher>> | null = null;
   let staffRole: StaffMessageRole | undefined;
 
-  const preferCheck = context === 'course' || options.homework;
-
-  if (preferCheck && checker) {
+  if (courseId != null) {
+    const checker = await getStudentCheckStaff(admin, telegramId, courseId);
     mentor = checker;
-    staffRole = 'check';
-  } else   if (context === 'course') {
-    mentor = checker ?? curator ?? teacher;
     if (checker) staffRole = 'check';
-    else if (curator) staffRole = 'curator';
-    else if (teacher) staffRole = 'teacher';
   } else {
+    const teacher = await getStudentTeacher(admin, telegramId, mentorCourseOpts);
+    const curator = await getStudentCurator(admin, telegramId, mentorCourseOpts);
     mentor = teacher ?? curator;
     if (teacher) staffRole = 'teacher';
     else if (curator) staffRole = 'curator';

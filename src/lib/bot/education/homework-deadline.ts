@@ -172,8 +172,10 @@ export async function ensureHomeworkDeadlineStarted(
     const { data, error } = await admin
       .from('course_lesson_student_progress')
       .update({
-        lesson_first_opened_at: nowIso,
+        lesson_first_opened_at: existing.lesson_first_opened_at ?? nowIso,
         homework_deadline_at: deadlineIso,
+        homework_remaining_ms: HOMEWORK_DEADLINE_MS,
+        homework_overdue_at: null,
         updated_at: nowIso,
       })
       .eq('telegram_id', telegramId)
@@ -213,6 +215,8 @@ export async function ensureHomeworkDeadlineStarted(
         .update({
           lesson_first_opened_at: again.lesson_first_opened_at ?? nowIso,
           homework_deadline_at: deadlineIso,
+          homework_remaining_ms: HOMEWORK_DEADLINE_MS,
+          homework_overdue_at: null,
           updated_at: nowIso,
         })
         .eq('telegram_id', telegramId)
@@ -239,6 +243,11 @@ export async function pauseDeadlineOnSubmit(
 ): Promise<{ remainingMs: number; wasOverdue: boolean }> {
   const row = await loadDeadlineRow(admin, telegramId, sanityLessonId);
   const deadlineMs = row?.homework_deadline_at ? Date.parse(row.homework_deadline_at) : NaN;
+  const hasTimer =
+    Number.isFinite(deadlineMs) || typeof row?.homework_remaining_ms === 'number';
+  if (!hasTimer) {
+    return { remainingMs: HOMEWORK_DEADLINE_MS, wasOverdue: false };
+  }
   let remainingMs = 0;
   if (Number.isFinite(deadlineMs)) {
     remainingMs = Math.max(0, deadlineMs - now.getTime());

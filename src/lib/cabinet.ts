@@ -37,6 +37,7 @@ import {
   DISTRICT_COURSE_SLUG,
   getDistrictCourseContent,
   filterCourseSummariesForCabinetAccess,
+  isDistrictCoursePublicInCatalog,
   listCoursePaymentOffers,
   listDistrictCourseSummaries,
   mapLessonKind,
@@ -235,6 +236,8 @@ export type CabinetCourseStop = {
   homeworkDeadlineAt: string | null;
   homeworkRemainingMs: number | null;
   homeworkOverdueAt: string | null;
+  /** Play live/записи — таймер и кнопка сдачи ДЗ. */
+  webinarOpened: boolean;
   /** 0-100: material 60% + HW 40% */
   lessonProgressPercent: number;
   isTrialFree: boolean;
@@ -760,6 +763,7 @@ function mapStopToCabinet(stop: CourseMapStop): CabinetCourseStop {
     homeworkDeadlineAt: stop.homeworkDeadlineAt,
     homeworkRemainingMs: stop.homeworkRemainingMs,
     homeworkOverdueAt: stop.homeworkOverdueAt,
+    webinarOpened: stop.webinarOpened,
     lessonProgressPercent: stop.lessonProgressPercent,
     isTrialFree: stop.isTrialFree,
     contentChips: stop.contentChips,
@@ -868,6 +872,7 @@ export function buildStopsFromCatalogPreviews(catalog: CabinetCourseCatalog | nu
         homeworkDeadlineAt: null,
         homeworkRemainingMs: null,
         homeworkOverdueAt: null,
+        webinarOpened: false,
         lessonProgressPercent: 0,
         isTrialFree: false,
         contentChips: [],
@@ -1708,9 +1713,25 @@ export async function getCabinetData(
   }
 
   const courseIdBySlug = new Map(courseCatalogs.map((c) => [c.slug, c.id] as const));
+  const summaryByCourseId = new Map<number, DistrictCourseSummary>();
+  for (const s of courseSummaries) {
+    const id = courseIdBySlug.get(s.slug);
+    if (id != null) summaryByCourseId.set(id, s);
+  }
   const ownedCourseIds = new Set<number>();
   for (const e of courseEnrollments) {
-    if (e.courseId != null) ownedCourseIds.add(e.courseId);
+    if (e.courseId == null) continue;
+    const summary = summaryByCourseId.get(e.courseId);
+    if (summary && !isDistrictCoursePublicInCatalog(summary.showInCatalog)) {
+      const cat = courseCatalogs.find((c) => c.id === e.courseId);
+      if (
+        !cat ||
+        !hasCoursePaymentForCourse(packages, e.courseId, cat.slug, cat.title)
+      ) {
+        continue;
+      }
+    }
+    ownedCourseIds.add(e.courseId);
   }
   for (const c of courseCatalogs) {
     if (hasCoursePaymentForCourse(packages, c.id, c.slug, c.title)) {
@@ -1735,7 +1756,11 @@ export async function getCabinetData(
     courseCatalog != null
       ? courseCatalogs.map((c) => (c.slug === courseCatalog.slug ? courseCatalog : c))
       : courseCatalogs;
-  if (courseCatalog && !catalogsSynced.some((c) => c.slug === courseCatalog.slug)) {
+  if (
+    courseCatalog &&
+    visibleCatalogSlugs.has(courseCatalog.slug) &&
+    !catalogsSynced.some((c) => c.slug === courseCatalog.slug)
+  ) {
     catalogsSynced.unshift(courseCatalog);
   }
 

@@ -93,6 +93,14 @@ export default async function StaffCabinetPage({
     );
   }
 
+  const hasTeacher = Boolean(data.teacher);
+  const hasCuratorWeb = Boolean(
+    data.curator && data.curator.assignedCourses.some((c) => c.role === 'curator'),
+  );
+  if (!hasTeacher && !hasCuratorWeb && !data.fullStaffPreview) {
+    redirect('/cabinet');
+  }
+
   return (
     <StaffShell
       data={data}

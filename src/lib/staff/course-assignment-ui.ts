@@ -50,6 +50,25 @@ export function staffCourseRowsFromOptions(
   }));
 }
 
+export type StaffCoursePickerGroup = {
+  courseId: number;
+  title: string;
+  roles: StaffCourseAssignmentRole[];
+};
+
+export function groupStaffCourseRows(rows: StaffCourseAssignmentRow[]): StaffCoursePickerGroup[] {
+  const map = new Map<number, StaffCoursePickerGroup>();
+  for (const row of rows) {
+    const existing = map.get(row.courseId);
+    if (!existing) {
+      map.set(row.courseId, { courseId: row.courseId, title: row.title, roles: [row.role] });
+      continue;
+    }
+    if (!existing.roles.includes(row.role)) existing.roles.push(row.role);
+  }
+  return [...map.values()];
+}
+
 export type StaffWebCourseSection =
   | 'course-overview'
   | 'course-students'

@@ -262,16 +262,27 @@ export async function getStudentOrdinaryTeacherIds(
   return ids;
 }
 
-// «Мой куратор»: сначала персональное назначение
-// (mentor_assignments.kind = 'curator', status = 'active'),
-// иначе — куратор активной группы ученика.
+// Онлайн-курс: только куратор курса (course_staff_assignments).
+// Индив/группа: mentor_assignments, затем куратор группы.
 export async function getStudentCurator(
   admin: SupabaseClient,
   telegramId: number,
   options?: { courseId?: number | null },
 ): Promise<StudentMentor | null> {
   const courseId = options?.courseId;
-  const assignments = await getStudentAssignments(admin, telegramId, 'curator', { courseId });
+
+  if (courseId != null) {
+    const { resolveCourseCuratorStaffTelegramId } = await import('./course-staff');
+    const staffCurator = await resolveCourseCuratorStaffTelegramId(admin, courseId);
+    if (!staffCurator) return null;
+    return {
+      telegramId: staffCurator,
+      fullName: await memberName(admin, staffCurator),
+      source: 'personal',
+    };
+  }
+
+  const assignments = await getStudentAssignments(admin, telegramId, 'curator');
   const personal = assignments[0];
   if (personal) {
     return {
@@ -279,19 +290,6 @@ export async function getStudentCurator(
       fullName: await memberName(admin, personal.mentor_telegram_id),
       source: 'personal',
     };
-  }
-
-  if (courseId != null) {
-    const { resolveCourseCuratorStaffTelegramId } = await import('./course-staff');
-    const staffCurator = await resolveCourseCuratorStaffTelegramId(admin, courseId);
-    if (staffCurator) {
-      return {
-        telegramId: staffCurator,
-        fullName: await memberName(admin, staffCurator),
-        source: 'personal',
-      };
-    }
-    return null;
   }
 
   for (const group of await getStudentGroups(admin, telegramId)) {

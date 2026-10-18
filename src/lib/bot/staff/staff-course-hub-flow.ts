@@ -50,7 +50,7 @@ export async function tryAutoEnterSingleCourseWorkspace(
 ): Promise<boolean> {
   const caps = await loadStaffCapabilities(admin, telegramId);
   const mode = resolveStaffBotMode(caps);
-  if (mode !== 'curator_only' && mode !== 'check_only' && mode !== 'course_staff_only') {
+  if (mode !== 'course_staff_only') {
     return false;
   }
   const rows = await loadStaffMyCourseRows(admin, telegramId);
@@ -90,21 +90,6 @@ export async function handleStaffGlobalMenuMessage(
     return true;
   }
 
-  const mode = resolveStaffBotMode(caps);
-  if (
-    (mode === 'curator_only' || mode === 'course_staff_only') &&
-    text === '🌐 Панель управления'
-  ) {
-    try {
-      const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
-      await sendAdminMessage(chatId, '🌐 Кабинет на сайте:', {
-        inline_keyboard: [[{ text: '🌐 Открыть кабинет', url }]],
-      });
-    } catch {
-      await sendAdminMessage(chatId, 'Не удалось открыть ссылку на кабинет.');
-    }
-    return true;
-  }
   return false;
 }
 
@@ -137,7 +122,9 @@ export async function handleStaffWorkspaceMenuMessage(
     }
     if (text === '🌐 Панель управления') {
       try {
-        const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+        const { resolveCuratorWebCabinetPath } = await import('@/lib/staff/staff-cabinet-access');
+        const path = await resolveCuratorWebCabinetPath(admin, telegramId, ws.courseId);
+        const url = await createCabinetLoginUrl(admin, telegramId, path);
         await sendAdminMessage(chatId, '🌐 Кабинет на сайте:', {
           inline_keyboard: [[{ text: '🌐 Открыть кабинет', url }]],
         });

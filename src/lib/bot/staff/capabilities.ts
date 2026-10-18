@@ -19,11 +19,23 @@ export type StaffCapabilities = {
   viewRole: BotRole | null;
   effectiveRole: BotRole;
   canTeacherBot: boolean;
-  /** Кураторские разделы бота (назначение curator на курс). */
+  /** Куратор курса (назначение curator на курс). */
   canCuratorBot: boolean;
-  /** «Мой курс» и check-меню (любое назначение curator/check). */
+  /** Проверяющий / любое назначение на курс. */
   canCourseStaffBot: boolean;
+  /** Reply «Управление курсами» (extra staff + назначение или primary staff/admin). */
+  canCourseManagementBot: boolean;
 };
+
+function courseAssignmentFlags(assignments: { role: string }[]) {
+  const hasCuratorAssignment = assignments.some((a) => a.role === 'curator');
+  const hasCheckAssignment = assignments.some((a) => a.role === 'check');
+  return {
+    hasCuratorAssignment,
+    hasCheckAssignment,
+    hasCourseStaffAssignment: hasCuratorAssignment || hasCheckAssignment,
+  };
+}
 
 /** Роли staff для Telegram: primary + extra_roles + view_role (/as). */
 export async function loadStaffCapabilities(
@@ -46,80 +58,78 @@ export async function loadStaffCapabilities(
   const effectiveRole = resolveEffectiveRole(member, telegramId);
 
   const assignments = await listCoursesForStaff(admin, telegramId).catch(() => []);
-  const hasCuratorAssignment = assignments.some((a) => a.role === 'curator');
-  const hasCheckAssignment = assignments.some((a) => a.role === 'check');
-  const hasCourseStaffAssignment = hasCuratorAssignment || hasCheckAssignment;
-
+  const { hasCuratorAssignment, hasCourseStaffAssignment } = courseAssignmentFlags(assignments);
   const fullPreview = hasFullStaffPreview(roles, telegramId);
-  const legacyCurator = memberHasRole(roles, 'curator');
-  const canCuratorBot =
-    fullPreview || legacyCurator || hasCuratorAssignment;
-  const canCourseStaffBot =
-    fullPreview || legacyCurator || memberHasRole(roles, 'check') || hasCourseStaffAssignment;
+  const hasStaffExtra = memberHasRole(roles, 'staff');
 
-  // Маска /as guest|student или role=guest — клиентский UI, не staff (в т.ч. для создателя).
+  const canCuratorBot = fullPreview || hasCuratorAssignment;
+  const canCourseStaffBot = fullPreview || hasCourseStaffAssignment;
+  const canCourseManagementBot =
+    fullPreview ||
+    (hasCourseStaffAssignment &&
+      (primaryRole === 'staff' || primaryRole === 'admin' || hasStaffExtra));
+
+  const emptyStaff: StaffCapabilities = {
+    telegramId,
+    roles,
+    primaryRole,
+    viewRole,
+    effectiveRole,
+    canTeacherBot: false,
+    canCuratorBot: false,
+    canCourseStaffBot: false,
+    canCourseManagementBot: false,
+  };
+
   if (usesClientBotUi(effectiveRole)) {
-    return {
-      telegramId,
-      roles,
-      primaryRole,
-      viewRole,
-      effectiveRole,
-      canTeacherBot: false,
-      canCuratorBot: false,
-      canCourseStaffBot: false,
-    };
+    return emptyStaff;
   }
 
-  // /as teacher|curator — чистый UI этой роли (не combined и не «чужое» меню).
   if (viewRole === 'teacher') {
     return {
-      telegramId,
-      roles,
-      primaryRole,
-      viewRole,
+      ...emptyStaff,
       effectiveRole,
       canTeacherBot: true,
-      canCuratorBot: false,
-      canCourseStaffBot: canCourseStaffBot,
+      canCuratorBot,
+      canCourseStaffBot,
+      canCourseManagementBot,
     };
   }
   if (viewRole === 'curator') {
     return {
-      telegramId,
-      roles,
-      primaryRole,
-      viewRole,
+      ...emptyStaff,
       effectiveRole,
-      canTeacherBot: false,
       canCuratorBot: true,
       canCourseStaffBot: true,
+      canCourseManagementBot: true,
     };
   }
 
-  // Реальная роль teacher/curator в БД (в т.ч. /role me … у creator).
-  if (effectiveRole === 'teacher') {
+  if (effectiveRole === 'staff') {
     return {
-      telegramId,
-      roles,
-      primaryRole,
-      viewRole,
-      effectiveRole,
-      canTeacherBot: true,
-      canCuratorBot: canCuratorBot,
+      ...emptyStaff,
+      canCuratorBot,
       canCourseStaffBot,
+      canCourseManagementBot,
     };
   }
-  if (effectiveRole === 'curator') {
+
+  if (effectiveRole === 'teacher') {
     return {
-      telegramId,
-      roles,
-      primaryRole,
-      viewRole,
-      effectiveRole,
-      canTeacherBot: memberHasRole(roles, 'teacher'),
-      canCuratorBot: true,
-      canCourseStaffBot: true,
+      ...emptyStaff,
+      canTeacherBot: true,
+      canCuratorBot,
+      canCourseStaffBot,
+      canCourseManagementBot,
+    };
+  }
+
+  if (effectiveRole === 'curator' || effectiveRole === 'check') {
+    return {
+      ...emptyStaff,
+      canCuratorBot: effectiveRole === 'curator' ? hasCuratorAssignment || fullPreview : canCuratorBot,
+      canCourseStaffBot,
+      canCourseManagementBot,
     };
   }
 
@@ -134,5 +144,6 @@ export async function loadStaffCapabilities(
     canTeacherBot,
     canCuratorBot,
     canCourseStaffBot,
+    canCourseManagementBot,
   };
 }

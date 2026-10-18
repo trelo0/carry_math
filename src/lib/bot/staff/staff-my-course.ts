@@ -6,8 +6,7 @@ import {
   filterStaffCourseRows,
   STAFF_COURSE_LIST_INTRO,
   STAFF_COURSE_LIST_TITLE,
-  staffCoursePickerCallback,
-  staffCoursePickerLabel,
+  groupStaffCourseRows,
   staffCourseRowsFromOptions,
   type StaffCourseAssignmentRow,
   type StaffCourseListFilter,
@@ -48,8 +47,18 @@ export function renderMyCourseListScreen(
   const lines = [STAFF_COURSE_LIST_TITLE, '', STAFF_COURSE_LIST_INTRO, ''];
 
   const keyboard: InlineKeyboard['inline_keyboard'] = [];
-  for (const row of rows) {
-    keyboard.push([back(staffCoursePickerLabel(row), staffCoursePickerCallback(row))]);
+  for (const group of groupStaffCourseRows(rows)) {
+    if (group.roles.length === 1) {
+      const role = group.roles[0]!;
+      keyboard.push([
+        back(`${group.title} · ${courseRoleBadge(role)}`, `c:mc:${group.courseId}:${role}`),
+      ]);
+      continue;
+    }
+    keyboard.push([
+      { text: `📡 ${group.title} · вебинары`, callback_data: `c:mc:${group.courseId}:curator` },
+      { text: '📝 ДЗ', callback_data: `c:mc:${group.courseId}:check` },
+    ]);
   }
   keyboard.push([back(backLabel, backCb)]);
 

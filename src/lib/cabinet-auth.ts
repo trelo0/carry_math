@@ -12,6 +12,7 @@ import {
   type BotRole,
 } from '@/lib/bot/roles';
 import { staffHasAnyCourseAssignment } from '@/lib/bot/education/course-staff';
+import { memberCanAccessStaffCabinetWeb } from '@/lib/staff/staff-cabinet-access';
 
 export type CabinetAuthContext = {
   phone: string;
@@ -154,7 +155,7 @@ async function loadStaffMember(
   base: CabinetAuthContext,
 ): Promise<Omit<StaffAuthContext, keyof CabinetAuthContext> | null> {
   const roles = await loadMemberRoles(base.admin, base.telegramId);
-  if (!memberCanAccessStaffCabinet(roles, base.telegramId)) return null;
+  if (!(await memberCanAccessStaffCabinetWeb(base.admin, base.telegramId, roles))) return null;
 
   const { data: member } = await base.admin
     .from('bot_members')

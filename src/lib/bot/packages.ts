@@ -8,8 +8,8 @@ import {
 import { resolveCourseIdForContent } from './education/course-record';
 import { enrollStudent, getActiveCourses } from './education/courses';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
-import { assignCurator, assignTeacher } from './education/assignments';
-import { resolveCuratorTelegramIdForCourse, resolveTeacherTelegramId } from './teacher-mapping';
+import { assignTeacher } from './education/assignments';
+import { resolveTeacherTelegramId } from './teacher-mapping';
 import { getEnrollmentLives, initEnrollmentLives, isLivesTableError } from './education/lives';
 
 export function isPackageTableError(error: unknown): boolean {
@@ -197,61 +197,8 @@ async function resolveCourseId(admin: SupabaseClient, courseId?: number): Promis
   return courses[0]?.id ?? null;
 }
 
-async function ensureCuratorOnCoursePurchase(
-  admin: SupabaseClient,
-  telegramId: number,
-  options?: { curatorTelegramId?: number; courseSlug?: string; courseId?: number },
-): Promise<boolean> {
-  const targetId = await resolveCuratorTelegramIdForCourse(
-    admin,
-    options?.courseSlug,
-    options?.curatorTelegramId,
-  );
-  if (!targetId) return false;
-
-  let courseId = options?.courseId ?? null;
-  if (courseId == null && options?.courseSlug) {
-    const { data: row } = await admin
-      .from('courses')
-      .select('id')
-      .eq('slug', options.courseSlug)
-      .maybeSingle();
-    courseId = (row?.id as number | undefined) ?? null;
-  }
-
-  if (courseId != null) {
-    const { data: existingForCourse } = await admin
-      .from('mentor_assignments')
-      .select('id')
-      .eq('telegram_id', telegramId)
-      .eq('kind', 'curator')
-      .eq('course_id', courseId)
-      .eq('status', 'active')
-      .maybeSingle();
-    if (existingForCourse) return true;
-  } else {
-    const { data: existing } = await admin
-      .from('mentor_assignments')
-      .select('id')
-      .eq('telegram_id', telegramId)
-      .eq('kind', 'curator')
-      .eq('status', 'active')
-      .is('course_id', null)
-      .maybeSingle();
-    if (existing) return true;
-  }
-
-  try {
-    await assignCurator(admin, telegramId, targetId, { courseId: courseId ?? undefined });
-    return true;
-  } catch (error) {
-    console.error('[purchase] curator assignment failed:', error);
-    return false;
-  }
-}
-
 /**
- * После fulfill_purchase_full (bePaid): жизни, куратор, открытие текущего урока.
+ * После fulfill_purchase_full (bePaid): жизни, открытие текущего урока.
  * user_accesses / lesson_packages / enrollment уже созданы в RPC.
  */
 export async function completeCoursePurchaseSideEffects(
@@ -277,12 +224,6 @@ export async function completeCoursePurchaseSideEffects(
 
   await ensureCourseEnrollmentOnPurchase(admin, telegramId, options.courseId, {
     courseSlug,
-  });
-
-  await ensureCuratorOnCoursePurchase(admin, telegramId, {
-    curatorTelegramId: options.curatorTelegramId,
-    courseSlug,
-    courseId: options.courseId,
   });
 
   try {
@@ -346,11 +287,6 @@ export async function completeProductPurchase(
         .maybeSingle();
       courseSlug = (courseRow?.slug as string | undefined) ?? undefined;
     }
-    curatorAssigned = await ensureCuratorOnCoursePurchase(admin, telegramId, {
-      curatorTelegramId: options.curatorTelegramId,
-      courseSlug,
-      courseId: resolvedCourseId ?? undefined,
-    });
   }
 
   if ((product === 'individual' || product === 'group') && options.teacherSanityId) {

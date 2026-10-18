@@ -29,7 +29,7 @@ function hwStatusLabel(status: string): string {
     case 'pending':
       return 'ожидает сдачи';
     case 'submitted':
-      return 'на проверке';
+      return 'ожидает проверки';
     case 'approved':
       return 'одобрено';
     case 'rejected':
@@ -148,7 +148,9 @@ export async function showClientCourseHomeworkHub(
   );
 
   if (targets.length === 0) {
-    lines.push('Сейчас ДЗ не ждём.\nКогда откроется сдача после вебинара — статус появится здесь.');
+    lines.push(
+      'Сейчас ДЗ не ждём.\nСначала откройте вебинар в личном кабинете на сайте — после просмотра появится сдача и таймер.',
+    );
   } else {
     for (const t of targets) {
       lines.push(
@@ -323,6 +325,98 @@ export async function showClientCourseHomeworkHistory(
     },
     deliver,
   );
+}
+
+/** Статус и история сдачи ДЗ по одному вебинару (кнопка «Проверить статус» с сайта). */
+export async function showClientCourseHomeworkLessonStatus(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  sanityLessonId: string,
+  deliver?: ClientHubDeliverOptions,
+  options?: { requireSubmitted?: boolean },
+): Promise<boolean> {
+  const { resolveCourseForSanityLesson } = await import(
+    '@/lib/bot/education/student-course-context'
+  );
+  const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
+
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+  if (!resolved) return false;
+  const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
+  if (!lesson) return false;
+
+  const { data: progress, error } = await admin
+    .from('course_lesson_student_progress')
+    .select(
+      'homework_status, updated_at, homework_submitted_at, homework_completed_at, review_note, submission_note, submission_file_url, homework_deadline_at',
+    )
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (error) throw error;
+
+  const status = (progress?.homework_status as string | undefined) ?? 'pending';
+  if (
+    options?.requireSubmitted &&
+    status !== 'submitted' &&
+    status !== 'approved' &&
+    status !== 'rejected'
+  ) {
+    return false;
+  }
+
+  const courseSlug = resolved.slug;
+  const courseTitle = resolved.content.title?.trim();
+  const submittedAt =
+    (progress?.homework_submitted_at as string | null) ??
+    (status !== 'pending' ? (progress?.updated_at as string | null) : null);
+  const lines = [
+    '📋 Сдача ДЗ по вебинару',
+    '',
+    courseTitle ? `📚 ${courseTitle}` : null,
+    `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
+    `Статус: ${hwStatusLabel(status)}`,
+    submittedAt ? `Отправлено: ${formatDateTimeShort(submittedAt)}` : null,
+    progress?.homework_completed_at
+      ? `Проверено: ${formatDateTimeShort(progress.homework_completed_at as string)}`
+      : null,
+    (progress?.submission_note as string | null)?.trim()
+      ? `Комментарий: ${(progress?.submission_note as string).trim()}`
+      : null,
+    (progress?.submission_file_url as string | null)?.trim() ? '📎 Файл приложен' : null,
+  ].filter((x): x is string => x != null);
+
+  if (status === 'rejected' && (progress?.review_note as string | null)?.trim()) {
+    lines.push(`Почему на доработке: ${(progress?.review_note as string).trim()}`);
+  }
+  if (status === 'approved') {
+    lines.push('Результат: одобрено');
+  }
+  if (status === 'pending') {
+    lines.push('', 'Пока нет отправленных работ по этому вебинару.');
+  }
+
+  const hubCb = `cl:chw:hub:${courseSlug}`;
+  const histCb = `cl:chw:hist:${courseSlug}`;
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [
+    [{ text: '📋 История сдач курса', callback_data: histCb }],
+    [{ text: '◀️ К ДЗ', callback_data: hubCb }],
+  ];
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    `course-hw-lesson:${sanityLessonId}`,
+    lines.join('\n').trim().slice(0, 3900),
+    { inline_keyboard: keyboard },
+    {
+      ...deliver,
+      hubPayloadExtra: { activeCourseSlug: courseSlug },
+    },
+  );
+  return true;
 }
 
 export async function beginClientCourseHomeworkFromHub(

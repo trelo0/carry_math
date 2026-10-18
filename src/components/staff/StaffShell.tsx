@@ -89,7 +89,9 @@ function canShowTeacher(data: StaffCabinetData): boolean {
 }
 
 function hasCourseAssignments(data: StaffCabinetData): boolean {
-  return Boolean(data.curator && data.curator.assignedCourses.length > 0);
+  return Boolean(
+    data.curator && data.curator.assignedCourses.some((c) => c.role === 'curator'),
+  );
 }
 
 /** Кураторские инструменты на активном курсе (расписание, модули, жизни). */

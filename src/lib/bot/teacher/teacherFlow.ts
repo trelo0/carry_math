@@ -138,7 +138,9 @@ async function canUseTeacherBot(admin: SupabaseClient, telegramId: number): Prom
 
 async function teacherCabinetUrl(admin: SupabaseClient, telegramId: number): Promise<string | null> {
   try {
-    return await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+    const { resolveStaffCabinetLoginPath } = await import('@/lib/staff/staff-cabinet-access');
+    const path = await resolveStaffCabinetLoginPath(admin, telegramId);
+    return await createCabinetLoginUrl(admin, telegramId, path);
   } catch {
     return null;
   }

@@ -17,7 +17,11 @@ import {
   type HomeworkProgressStatus,
 } from './course-progress';
 import { studentHasCourseProductAccess, unlockNextCourseLessonAfterCleared } from './course-access';
-import { collectLessonMaterialKeys, lessonHasHomework } from './lesson-progress-calc';
+import {
+  collectLessonMaterialKeys,
+  homeworkWebinarOpened,
+  lessonHasHomework,
+} from './lesson-progress-calc';
 import { lookupCourseIdsBySlugs, resolveCourseIdForContent } from './course-record';
 import {
   deductLifeForHomeworkFailure,
@@ -103,10 +107,10 @@ function lessonReadyForSubmit(
   sessionStatus?: SanityWebinarSessionStatus,
 ): boolean {
   if (!lesson.mandatoryHomework && !lesson.homework) return false;
-  const effective =
-    lesson.lessonType === 'webinar'
-      ? (sessionStatus ?? resolveWebinarSessionStatus(lesson.scheduledAt, null))
-      : 'completed';
+  if (lesson.lessonType === 'webinar') {
+    return homeworkWebinarOpened(progress);
+  }
+  const effective = sessionStatus ?? resolveWebinarSessionStatus(lesson.scheduledAt, null);
   if (effective !== 'completed' && !hasWatchedProgress(progress)) return false;
   return true;
 }
@@ -191,18 +195,7 @@ export async function assertCuratorAssigned(
     if (await staffHasCourseAccess(admin, curatorTelegramId, courseId, 'curator')) {
       return;
     }
-    const { data, error } = await admin
-      .from('mentor_assignments')
-      .select('id')
-      .eq('telegram_id', studentTelegramId)
-      .eq('mentor_telegram_id', curatorTelegramId)
-      .eq('kind', 'curator')
-      .eq('course_id', courseId)
-      .eq('status', 'active')
-      .maybeSingle();
-    if (error) throw error;
-    if (data) return;
-    throw new CourseHomeworkError('Ученик не закреплён за этим куратором.', 'NOT_ASSIGNED');
+    throw new CourseHomeworkError('Нет назначения куратором на этот курс.', 'NOT_ASSIGNED');
   }
 
   const { data, error } = await admin
@@ -457,6 +450,16 @@ export async function resolveSubmitLessonForSanityId(
   return { lesson, progress };
 }
 
+async function revalidateCabinetAfterHomework(): Promise<void> {
+  try {
+    const { revalidatePath } = await import('next/cache');
+    revalidatePath('/cabinet');
+    revalidatePath('/cabinet/staff');
+  } catch (error) {
+    console.error('[course-hw] cabinet revalidate failed:', error);
+  }
+}
+
 export async function markHomeworkSubmitted(
   admin: SupabaseClient,
   telegramId: number,
@@ -531,7 +534,10 @@ export async function markHomeworkSubmitted(
   const sessionRow = await getSanityLessonSession(admin, sanityLessonId);
   const sessionStatus = resolveWebinarSessionStatus(lesson.scheduledAt, sessionRow);
   if (!lessonReadyForSubmit(lesson, progress ?? undefined, sessionStatus)) {
-    throw new CourseHomeworkError('Сначала посмотрите запись или посетите вебинар.', 'NOT_READY');
+    throw new CourseHomeworkError(
+      'Сначала откройте вебинар в личном кабинете на сайте. После просмотра появится таймер и кнопка сдачи ДЗ.',
+      'NOT_READY',
+    );
   }
 
   const status = progress?.homework_status ?? 'pending';
@@ -590,7 +596,10 @@ export async function markHomeworkSubmitted(
       : admin.from('course_lesson_student_progress').insert(payload);
 
     const { data, error } = await writeQuery.select('*').single();
-    if (!error) return data as CourseLessonStudentProgress;
+    if (!error) {
+      await revalidateCabinetAfterHomework();
+      return data as CourseLessonStudentProgress;
+    }
 
     const msg = String(error.message ?? '');
     const missing = msg.match(/column course_lesson_student_progress\.(\w+) does not exist/);
@@ -774,6 +783,7 @@ export async function approveCourseHomeworkByCurator(
     console.error('[courseHomework] unlock next after approve failed:', error);
   }
 
+  await revalidateCabinetAfterHomework();
   return { lesson, progress: updated };
 }
 
@@ -822,6 +832,7 @@ export async function rejectCourseHomeworkByCurator(
     telegramId: curatorTelegramId,
     role: reviewerRole,
   });
+  await revalidateCabinetAfterHomework();
   return { lesson, progress: updated, lifeDeduction: null };
 }
 
