@@ -39,6 +39,7 @@ import {
   shouldShowCourseCabinetGate,
 } from '@/lib/cabinet';
 import { DEFAULT_LESSON_CONTENT_CHIPS } from '@/lib/studio/courseContent';
+import { buildCourseHomeworkTelegramStart } from '@/lib/bot/course-homework-deeplink';
 import { aggregateCourseProgress } from '@/lib/bot/education/lesson-progress-calc';
 import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSlider';
@@ -342,7 +343,9 @@ const SUPPORT_EMAIL = 'district.school.210@gmail.com';
 /* Ссылка на ТГ-бота: открывает чат с ботом и стартовым сообщением. */
 function tgBotUrl(start: string): string {
   const username = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
-  return username ? `https://t.me/${username}?start=${start}` : `mailto:${SUPPORT_EMAIL}`;
+  return username
+    ? `https://t.me/${username}?start=${encodeURIComponent(start)}`
+    : `mailto:${SUPPORT_EMAIL}`;
 }
 
 function formatDate(iso: string | null): string {
@@ -2500,7 +2503,7 @@ export default function CabinetShell({
                               ) : hw.action === 'check_status' && s.sanityLessonId ? (
                                 <a
                                   className="cab-hw-action is-active"
-                                  href={tgBotUrl(`hw_${s.sanityLessonId}`)}
+                                  href={tgBotUrl(buildCourseHomeworkTelegramStart(s.sanityLessonId))}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                 >
@@ -2511,7 +2514,7 @@ export default function CabinetShell({
                               ) : hw.action === 'submit' && s.sanityLessonId ? (
                                 <a
                                   className="cab-hw-action is-active"
-                                  href={tgBotUrl(`hw_${s.sanityLessonId}`)}
+                                  href={tgBotUrl(buildCourseHomeworkTelegramStart(s.sanityLessonId))}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                 >

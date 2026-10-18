@@ -43,27 +43,40 @@ export async function showClientApplicationsHub(
   const apps = await listClientInquiryLeads(admin, telegramId, ['application']);
   const questions = await listClientInquiryLeads(admin, telegramId, ['student_question', 'guest_question']);
 
-  const lines = ['📨 Мои заявки', ''];
+  const lines = ['📨 История заявок', ''];
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
 
   if (apps.length === 0 && questions.length === 0) {
     lines.push('Пока нет заявок и обращений.');
     keyboard.push([{ text: '🎓 Купить обучение', callback_data: 'cl:buy:hub' }]);
   } else {
-    for (const lead of apps) {
-      const preview = await lastMessagePreview(admin, lead.id);
-      lines.push(
-        `📚 ${lead.service ?? 'Заявка'}`,
-        `${statusEmoji(lead.status)} ${statusLabel(lead.status)}`,
-        `Последнее сообщение: ${preview}`,
-        '',
-      );
-      keyboard.push([{ text: `${lead.service ?? 'Заявка'} · ${statusLabel(lead.status)}`, callback_data: `cl:my:app:${lead.id}` }]);
+    if (apps.length) {
+      lines.push('📚 Заявки на обучение', '');
+      for (const lead of apps) {
+        const preview = await lastMessagePreview(admin, lead.id);
+        lines.push(
+          `${lead.service ?? 'Заявка'}`,
+          `${statusEmoji(lead.status)} ${statusLabel(lead.status)} · ${preview}`,
+          '',
+        );
+        keyboard.push([
+          { text: `${lead.service ?? 'Заявка'} · ${statusLabel(lead.status)}`, callback_data: `cl:my:app:${lead.id}` },
+        ]);
+      }
     }
-    for (const lead of questions) {
-      const preview = await lastMessagePreview(admin, lead.id);
-      lines.push('💬 Обращение', `${statusEmoji(lead.status)} ${statusLabel(lead.status)}`, preview, '');
-      keyboard.push([{ text: `💬 Обращение · ${preview}`, callback_data: `cl:my:q:${lead.id}` }]);
+    if (questions.length) {
+      lines.push('💬 Сообщения сотрудникам и админу', '');
+      for (const lead of questions) {
+        const preview = await lastMessagePreview(admin, lead.id);
+        const channel =
+          lead.service?.toLowerCase().includes('куратор') || lead.comment?.toLowerCase().includes('курс')
+            ? 'Куратор / проверяющий'
+            : lead.service?.toLowerCase().includes('препод') || lead.service?.toLowerCase().includes('учит')
+              ? 'Преподаватель'
+              : 'Администратор';
+        lines.push(`${channel}`, `${statusEmoji(lead.status)} ${statusLabel(lead.status)} · ${preview}`, '');
+        keyboard.push([{ text: `${channel} · ${preview}`, callback_data: `cl:my:q:${lead.id}` }]);
+      }
     }
   }
 

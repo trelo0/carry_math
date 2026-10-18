@@ -3,7 +3,7 @@ import { telegramSend } from '@/lib/telegram';
 import { beginStudentSupport } from './studentSupportFlow';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
 import {
-  clientHomeButton,
+  clientBackButton,
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
@@ -41,7 +41,7 @@ export async function showClientPaymentsHub(
           : []),
         [{ text: '🎓 Купить / продлить обучение', callback_data: 'cl:buy:hub' }],
         [{ text: '🧾 История оплат', callback_data: 'cl:pay:hist' }],
-        [clientHomeButton()],
+        [clientBackButton()],
       ],
     },
     deliver,
@@ -59,13 +59,12 @@ export async function showClientMiscHub(
     telegramId,
     chatId,
     'misc-hub',
-    '⋯ Прочее\n\nИстория, заявки и связь с администратором.',
+    '⋯ Прочее\n\nЗаявки и связь с администратором.',
     {
       inline_keyboard: [
-        [{ text: '🧾 История оплат', callback_data: 'cl:misc:hist' }],
         [{ text: '📨 История заявок', callback_data: 'cl:misc:apps' }],
         [{ text: '💬 Связаться с администратором', callback_data: 'cl:misc:admin' }],
-        [clientHomeButton()],
+        [clientBackButton()],
       ],
     },
     deliver,
@@ -86,7 +85,7 @@ export async function showClientContactHub(
   if (state.hasActiveCourse) {
     rows.push([{ text: '🎓 Связаться с куратором курса', callback_data: 'cl:contact:curator' }]);
   }
-  rows.push([clientHomeButton()]);
+  rows.push([clientBackButton()]);
 
   await deliverClientHubScreen(
     admin,
@@ -128,6 +127,7 @@ export async function handleClientSharedHubCallback(
     return true;
   }
   if (data === 'cl:pay:hist' || data === 'cl:misc:hist') {
+    // cl:misc:hist — совместимость со старыми кнопками
     await showClientPurchaseHistory(admin, telegramId, chatId, { editAt });
     return true;
   }

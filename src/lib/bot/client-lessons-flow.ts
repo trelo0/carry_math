@@ -3,6 +3,7 @@ import { telegramSend } from '@/lib/telegram';
 import { resolveLessonFileDownloadUrl } from '@/lib/lesson-file-download';
 import { formatLessonDateTime } from '@/lib/teacher/format';
 import {
+  clientBackButton,
   clientHomeButton,
   deliverClientHubScreen,
   editHubMessage,
@@ -242,13 +243,16 @@ export async function showClientLessonsMenu(
   );
 }
 
-async function formatNextCourseWebinarLine(
+async function formatCourseWebinarLines(
   admin: SupabaseClient,
   telegramId: number,
-): Promise<string | null> {
+): Promise<string[]> {
   const state = await resolveClientState(admin, telegramId);
-  if (!state.hasActiveCourse) return null;
+  if (!state.hasActiveCourse) return [];
   try {
+    const { listStudentPurchasedVisibleCourseContexts } = await import(
+      './education/student-course-context'
+    );
     const { flattenCourseLessons, getDistrictCourseContent } = await import(
       '@/lib/studio/courseContent'
     );
@@ -256,26 +260,39 @@ async function formatNextCourseWebinarLine(
       '@/lib/curator/lesson-session'
     );
     const { formatDateTimeShort } = await import('./client-format');
-    const content = await getDistrictCourseContent();
-    if (!content) return null;
-    const lessons = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
+    const courses = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
     const now = Date.now();
-    const sessionMap = await loadSanityLessonSessionMap(
-      admin,
-      lessons.map((l) => l.sanityId),
-    );
-    const next = lessons
-      .filter((l) => {
-        const at = l.scheduledAt ? Date.parse(l.scheduledAt) : NaN;
-        if (!Number.isFinite(at) || at < now) return false;
-        const status = resolveWebinarSessionStatus(l.scheduledAt, sessionMap.get(l.sanityId));
-        return status !== 'completed' && status !== 'cancelled';
-      })
-      .sort((a, b) => Date.parse(a.scheduledAt!) - Date.parse(b.scheduledAt!))[0];
-    if (!next) return '🎓 Ближайший вебинар курса: не запланирован';
-    return `🎓 Вебинар курса: №${next.lessonNumber} «${next.title}»\n   ${formatDateTimeShort(next.scheduledAt)}`;
+    const lines: string[] = ['🎓 Вебинары ваших курсов', ''];
+    let any = false;
+    for (const ctx of courses) {
+      const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
+      if (!content) continue;
+      const lessons = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
+      const sessionMap = await loadSanityLessonSessionMap(
+        admin,
+        lessons.map((l) => l.sanityId),
+      );
+      const next = lessons
+        .filter((l) => {
+          const at = l.scheduledAt ? Date.parse(l.scheduledAt) : NaN;
+          if (!Number.isFinite(at) || at < now) return false;
+          const status = resolveWebinarSessionStatus(l.scheduledAt, sessionMap.get(l.sanityId));
+          return status !== 'completed' && status !== 'cancelled';
+        })
+        .sort((a, b) => Date.parse(a.scheduledAt!) - Date.parse(b.scheduledAt!))[0];
+      lines.push(`📚 ${ctx.title}`);
+      if (next) {
+        lines.push(`   №${next.lessonNumber} «${next.title}» · ${formatDateTimeShort(next.scheduledAt)}`);
+        any = true;
+      } else {
+        lines.push('   Ближайший эфир пока не назначен');
+      }
+      lines.push('');
+    }
+    if (!any && courses.length === 0) return [];
+    return lines;
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -285,19 +302,19 @@ export async function showClientScheduleMenu(
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const [lessons, webinarLine] = await Promise.all([
+  const [lessons, webinarLines] = await Promise.all([
     fetchFutureClientLessons(admin, telegramId, 25),
-    formatNextCourseWebinarLine(admin, telegramId),
+    formatCourseWebinarLines(admin, telegramId),
   ]);
 
   if (lessons.length === 0) {
     const emptyLines = [
       '🗓 Расписание',
       '',
-      webinarLine ?? 'Ближайших занятий пока нет.',
-      webinarLine ? '' : null,
-      webinarLine ? 'Обычных занятий с преподавателем пока нет.' : null,
-    ].filter((x): x is string => x != null);
+      ...(webinarLines.length ? webinarLines : ['Пока нет запланированных вебинаров и занятий с преподавателем.']),
+      '',
+      'Когда появятся даты — они отобразятся здесь.',
+    ];
 
     await renderHub(
       admin,
@@ -305,8 +322,8 @@ export async function showClientScheduleMenu(
       chatId,
       undefined,
       'schedule-empty',
-      emptyLines.join('\n'),
-      { inline_keyboard: [[clientHomeButton()]] },
+      emptyLines.join('\n').trim(),
+      { inline_keyboard: [[clientBackButton()]] },
       deliver,
     );
     return;
@@ -321,10 +338,10 @@ export async function showClientScheduleMenu(
   }
 
   const lines = ['🗓 Расписание', ''];
-  if (webinarLine) {
-    lines.push(webinarLine, '');
+  if (webinarLines.length) {
+    lines.push(...webinarLines);
   }
-  lines.push('Занятия с преподавателем:', '');
+  lines.push('👨‍🏫 Занятия с преподавателем', '');
 
   const keyboardRows: Array<Array<Record<string, string>>> = [];
 
@@ -345,7 +362,7 @@ export async function showClientScheduleMenu(
     }
   }
 
-  keyboardRows.push([clientHomeButton()]);
+  keyboardRows.push([clientBackButton()]);
   await renderHub(admin, telegramId, chatId, undefined, 'schedule-list', lines.join('\n').trim(), {
     inline_keyboard: keyboardRows,
   }, deliver);

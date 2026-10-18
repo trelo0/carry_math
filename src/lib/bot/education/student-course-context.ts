@@ -47,6 +47,28 @@ export async function listStudentActiveCourseContexts(
   return out;
 }
 
+/** Купленные курсы для бота: есть пакет/зачисление, курс не «закрыт для всех». */
+export async function listStudentPurchasedVisibleCourseContexts(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<StudentCourseEnrollmentOption[]> {
+  const { studentHasCourseAccessForCourse } = await import('./course-access');
+  const { isDistrictCourseFullyClosed } = await import('@/lib/studio/courseContent');
+  const enrollments = await listStudentActiveCourseContexts(admin, telegramId);
+  const out: StudentCourseEnrollmentOption[] = [];
+  for (const ctx of enrollments) {
+    const hasAccess = await studentHasCourseAccessForCourse(admin, telegramId, ctx.courseId);
+    if (!hasAccess) continue;
+    const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
+    if (content && isDistrictCourseFullyClosed(content.courseClosed)) continue;
+    out.push({
+      ...ctx,
+      title: content?.title?.trim() || ctx.title,
+    });
+  }
+  return out;
+}
+
 /** Курс для действий ученика (контакт куратора, ДЗ): явный slug или последнее активное зачисление. */
 export async function resolveStudentCourseContext(
   admin: SupabaseClient,

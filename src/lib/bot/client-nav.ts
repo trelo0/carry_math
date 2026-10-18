@@ -37,6 +37,7 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   'student:course-hw-confirm',
   'student:mentor',
   'student:mentor-pick',
+  'student:mentor-confirm',
 ]);
 
 export type ClientHubState = {

@@ -18,7 +18,7 @@ import {
 } from './course-progress';
 import { studentHasCourseProductAccess, unlockNextCourseLessonAfterCleared } from './course-access';
 import { collectLessonMaterialKeys, lessonHasHomework } from './lesson-progress-calc';
-import { resolveCourseIdForContent } from './course-record';
+import { lookupCourseIdsBySlugs, resolveCourseIdForContent } from './course-record';
 import {
   deductLifeForHomeworkFailure,
   formatLifeDeductionNote,
@@ -35,6 +35,16 @@ import {
 export type CourseHomeworkSubmitInput = {
   note?: string;
   fileUrl?: string;
+  fileKind?: 'photo' | 'document';
+};
+
+export type SubmitTargetLesson = {
+  lesson: CourseLessonContent;
+  progress: CourseLessonStudentProgress | null;
+  courseId?: number;
+  courseSlug?: string;
+  courseTitle?: string;
+  hasCourseProduct?: boolean;
 };
 
 export class CourseHomeworkError extends Error {
@@ -209,22 +219,20 @@ export async function assertCuratorAssigned(
   throw new CourseHomeworkError('Ученик не закреплён за этим куратором.', 'NOT_ASSIGNED');
 }
 
-export async function resolveSubmitTargetLesson(
+async function collectSubmitCandidatesForContent(
   admin: SupabaseClient,
   telegramId: number,
-  preferredSanityLessonId?: string,
-): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null } | null> {
-  const content = await getDistrictCourseContent();
-  if (!content) return null;
-
-  const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-
+  content: DistrictCourseContent,
+  hasCourseProduct: boolean,
+): Promise<Array<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null }>> {
   const lessons = flattenCourseLessons(content)
     .filter((l) => l.publicationStatus === 'published')
     .filter((l) => !(l.isTrialFree && !hasCourseProduct))
     .sort((a, b) => a.lessonNumber - b.lessonNumber);
 
   const sanityIds = lessons.map((l) => l.sanityId);
+  if (sanityIds.length === 0) return [];
+
   const sessionMap = await loadSanityLessonSessionMap(admin, sanityIds);
   const [{ data: accessRows }, { data: progressRows }] = await Promise.all([
     admin
@@ -246,36 +254,130 @@ export async function resolveSubmitTargetLesson(
     (progressRows ?? []).map((r) => [r.sanity_lesson_id as string, r as CourseLessonStudentProgress]),
   );
 
-  const candidates = lessons.filter((lesson) => {
-    const access = accessMap.get(lesson.sanityId);
-    if (!access || access === 'revoked') return false;
-    const progress = progressMap.get(lesson.sanityId);
-    const sessionStatus = resolveWebinarSessionStatus(
-      lesson.scheduledAt,
-      sessionMap.get(lesson.sanityId),
-    );
-    if (!lessonReadyForSubmit(lesson, progress, sessionStatus)) return false;
-    const status = progress?.homework_status ?? 'pending';
-    return status === 'pending' || status === 'rejected';
-  });
+  return lessons
+    .filter((lesson) => {
+      const access = accessMap.get(lesson.sanityId);
+      if (!access || access === 'revoked') return false;
+      const progress = progressMap.get(lesson.sanityId);
+      const sessionStatus = resolveWebinarSessionStatus(
+        lesson.scheduledAt,
+        sessionMap.get(lesson.sanityId),
+      );
+      if (!lessonReadyForSubmit(lesson, progress, sessionStatus)) return false;
+      const status = progress?.homework_status ?? 'pending';
+      return status === 'pending' || status === 'rejected';
+    })
+    .map((lesson) => ({
+      lesson,
+      progress: progressMap.get(lesson.sanityId) ?? null,
+    }));
+}
 
-  if (preferredSanityLessonId) {
-    const preferred = candidates.find((l) => l.sanityId === preferredSanityLessonId);
-    if (preferred) {
-      return { lesson: preferred, progress: progressMap.get(preferred.sanityId) ?? null };
-    }
-    const direct = await resolveSubmitLessonForSanityId(
+/** Все занятия, по которым сейчас можно сдать ДЗ (по каждому активному курсу). */
+export async function listSubmitTargetLessons(
+  admin: SupabaseClient,
+  telegramId: number,
+): Promise<SubmitTargetLesson[]> {
+  const { listStudentActiveCourseContexts } = await import('./student-course-context');
+  const { studentHasCourseAccessForCourse } = await import('./course-access');
+
+  const out: SubmitTargetLesson[] = [];
+  const contexts = await listStudentActiveCourseContexts(admin, telegramId);
+
+  for (const ctx of contexts) {
+    const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
+    if (!content) continue;
+    const hasCourseProduct = await studentHasCourseAccessForCourse(
       admin,
       telegramId,
-      preferredSanityLessonId,
-      { content, hasCourseProduct, accessMap, progressMap, sessionMap },
+      ctx.courseId,
     );
-    if (direct) return direct;
+    const candidates = await collectSubmitCandidatesForContent(
+      admin,
+      telegramId,
+      content,
+      hasCourseProduct,
+    );
+    for (const item of candidates) {
+      out.push({
+        ...item,
+        courseId: ctx.courseId,
+        courseSlug: ctx.slug,
+        courseTitle: ctx.title,
+        hasCourseProduct,
+      });
+    }
   }
 
-  const first = candidates[0];
-  if (!first) return null;
-  return { lesson: first, progress: progressMap.get(first.sanityId) ?? null };
+  if (out.length === 0) {
+    const content = await getDistrictCourseContent();
+    if (content) {
+      const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+      const candidates = await collectSubmitCandidatesForContent(
+        admin,
+        telegramId,
+        content,
+        hasCourseProduct,
+      );
+      const map = await lookupCourseIdsBySlugs(admin, [content.slug]);
+      const courseId = map.get(content.slug);
+      for (const item of candidates) {
+        out.push({
+          ...item,
+          courseId: courseId ?? undefined,
+          courseSlug: content.slug,
+          courseTitle: content.title,
+          hasCourseProduct,
+        });
+      }
+    }
+  }
+
+  return out.sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
+}
+
+export async function resolveSubmitTargetLesson(
+  admin: SupabaseClient,
+  telegramId: number,
+  preferredSanityLessonId?: string,
+  preferredCourseSlug?: string,
+): Promise<SubmitTargetLesson | null> {
+  if (preferredSanityLessonId) {
+    const { resolveCourseForSanityLesson } = await import('./student-course-context');
+    const { studentHasCourseAccessForCourse } = await import('./course-access');
+    const courseCtx = await resolveCourseForSanityLesson(admin, telegramId, preferredSanityLessonId);
+    if (courseCtx) {
+      const hasCourseProduct = await studentHasCourseAccessForCourse(
+        admin,
+        telegramId,
+        courseCtx.courseId,
+      );
+      const direct = await resolveSubmitLessonForSanityId(admin, telegramId, preferredSanityLessonId, {
+        content: courseCtx.content,
+        hasCourseProduct,
+      });
+      if (direct) {
+        return {
+          ...direct,
+          courseId: courseCtx.courseId,
+          courseSlug: courseCtx.slug,
+          courseTitle: courseCtx.content.title,
+          hasCourseProduct,
+        };
+      }
+    }
+  }
+
+  const all = await listSubmitTargetLessons(admin, telegramId);
+  if (preferredSanityLessonId) {
+    const match = all.find((t) => t.lesson.sanityId === preferredSanityLessonId);
+    if (match) return match;
+  }
+  if (preferredCourseSlug) {
+    const match = all.find((t) => t.courseSlug === preferredCourseSlug);
+    if (match) return match;
+  }
+  return all[0] ?? null;
 }
 
 /** Сдача по deep-link из кабинета: конкретное занятие, если оно готово к отправке. */
@@ -285,16 +387,36 @@ export async function resolveSubmitLessonForSanityId(
   sanityLessonId: string,
   cached?: {
     content: DistrictCourseContent;
-    hasCourseProduct: boolean;
-    accessMap: Map<string, string>;
-    progressMap: Map<string, CourseLessonStudentProgress>;
-    sessionMap: Map<string, import('@/lib/curator/lesson-session').SanityLessonSessionRow>;
+    hasCourseProduct?: boolean;
+    accessMap?: Map<string, string>;
+    progressMap?: Map<string, CourseLessonStudentProgress>;
+    sessionMap?: Map<string, import('@/lib/curator/lesson-session').SanityLessonSessionRow>;
   },
 ): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null } | null> {
-  const content = cached?.content ?? (await getDistrictCourseContent());
+  let content = cached?.content ?? null;
+  if (!content || !findLessonBySanityId(content, sanityLessonId)) {
+    const { resolveCourseForSanityLesson } = await import('./student-course-context');
+    const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+    if (resolved) content = resolved.content;
+  }
+  if (!content) content = await getDistrictCourseContent();
   if (!content) return null;
-  const hasCourseProduct =
-    cached?.hasCourseProduct ?? (await studentHasCourseProductAccess(admin, telegramId));
+
+  let hasCourseProduct = cached?.hasCourseProduct;
+  if (hasCourseProduct === undefined) {
+    const { resolveCourseForSanityLesson } = await import('./student-course-context');
+    const { studentHasCourseAccessForCourse } = await import('./course-access');
+    const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+    if (resolved) {
+      hasCourseProduct = await studentHasCourseAccessForCourse(
+        admin,
+        telegramId,
+        resolved.courseId,
+      );
+    } else {
+      hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
+    }
+  }
 
   const lesson = findLessonBySanityId(content, sanityLessonId);
   if (!lesson || lesson.publicationStatus !== 'published') return null;
@@ -315,7 +437,7 @@ export async function resolveSubmitLessonForSanityId(
   if (!access || access === 'revoked') return null;
 
   const progress =
-    cached?.progressMap.get(sanityLessonId) ??
+    cached?.progressMap?.get(sanityLessonId) ??
     ((await loadProgress(admin, telegramId, sanityLessonId)) as CourseLessonStudentProgress | null);
   const sessionMap =
     cached?.sessionMap ?? (await loadSanityLessonSessionMap(admin, [sanityLessonId]));
@@ -445,7 +567,12 @@ export async function markHomeworkSubmitted(
     .upsert(row, { onConflict: 'telegram_id,sanity_lesson_id' })
     .select('*')
     .single();
-  if (error) throw error;
+  if (error) {
+    throw new CourseHomeworkError(
+      'Не удалось сохранить отправку. Попробуйте ещё раз или сдайте через личный кабинет на сайте.',
+      'NOT_READY',
+    );
+  }
   return data as CourseLessonStudentProgress;
 }
 

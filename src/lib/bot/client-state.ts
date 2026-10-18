@@ -133,9 +133,12 @@ export async function resolveClientState(
     hasPurchaseHistory;
 
   let phase: ClientUiPhase = 'guest';
-  if (hasActiveProducts) phase = 'client_active';
+  /** Маска guest (/role me guest) — всегда гостевой сценарий, даже при активных пакетах. */
+  if (memberRole === 'guest') {
+    phase = 'guest';
+  } else if (hasActiveProducts) phase = 'client_active';
   else if (isRegisteredStudent) phase = 'client_idle';
-  else if (memberRole !== 'guest' && isIdentifiedClient) phase = 'client_idle';
+  else if (isIdentifiedClient) phase = 'client_idle';
 
   return {
     phase,

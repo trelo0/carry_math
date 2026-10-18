@@ -54,6 +54,7 @@ export async function notifyCuratorHomeworkSubmitted(
     lessonNumber: lesson.lessonNumber,
     title: lesson.title,
     fileUrl: input.fileUrl?.trim() || null,
+    fileKind: input.fileKind ?? null,
     note: input.note?.trim() || null,
   });
 
@@ -123,6 +124,7 @@ export async function notifyCheckHomeworkSubmitted(
     lessonNumber: params.lessonNumber,
     title: params.lessonTitle,
     fileUrl: params.fileUrl,
+    fileKind: null,
     note: null,
   });
 }

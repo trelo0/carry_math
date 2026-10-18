@@ -96,6 +96,11 @@ import { handleClientLegacyReply } from '@/lib/bot/client-legacy-reply';
 import { bridgeGuestCallbackForClient } from '@/lib/bot/client-guest-bridge';
 import { getState } from '@/lib/bot/admin/core';
 import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
+import {
+  extractBotStartPayload,
+  isCourseHomeworkStartPayload,
+  parseCourseHomeworkTelegramStart,
+} from '@/lib/bot/course-homework-deeplink';
 
 type TgFrom = {
   id: number;
@@ -187,9 +192,39 @@ export async function POST(request: Request) {
     // Параметры зарезервированы, никогда не проверяются как токен привязки
     // и открывают гостевое главное меню.
     const AD_START_SOURCES = ['webinar', 'insta', 'ads', 'vk'];
-    const startSource = update.message?.text?.startsWith('/start ')
-      ? update.message.text.slice('/start '.length).trim()
-      : null;
+    const startMessage = update.message;
+    const startSource = startMessage?.text ? extractBotStartPayload(startMessage.text) : null;
+
+    async function runCourseHomeworkDeepLink(): Promise<boolean> {
+      if (
+        startSource == null ||
+        !isCourseHomeworkStartPayload(startSource) ||
+        !startMessage?.chat ||
+        !startMessage.from
+      ) {
+        return false;
+      }
+      const sanityLessonId = parseCourseHomeworkTelegramStart(startSource);
+      if (!sanityLessonId) {
+        await telegramSend('sendMessage', {
+          chat_id: startMessage.chat.id,
+          text: 'Не удалось открыть сдачу ДЗ. Вернитесь в кабинет и нажмите «Сдать ДЗ в Telegram» ещё раз.',
+        });
+        return true;
+      }
+      await ensureMember(
+        admin,
+        startMessage.from.id,
+        memberPatch(startMessage.from, startMessage.chat.id),
+      );
+      await beginCourseHomeworkSubmit(
+        admin,
+        startMessage.from.id,
+        startMessage.chat.id,
+        sanityLessonId,
+      );
+      return true;
+    }
     if (
       startSource !== null &&
       AD_START_SOURCES.includes(startSource) &&
@@ -331,38 +366,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // /start hw_<sanityLessonId> — сдача домашки из личного кабинета.
-    if (
-      startSource?.startsWith('hw_') &&
-      update.message?.chat &&
-      update.message.from
-    ) {
-      const member = await ensureMember(
-        admin,
-        update.message.from.id,
-        memberPatch(update.message.from, update.message.chat.id),
-      );
-      const hwRole = resolveEffectiveRoleWithFooter(member, update.message.from.id).role;
-      await beginCourseHomeworkSubmit(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        startSource.slice('hw_'.length),
-      );
-      if (usesClientBotUi(hwRole)) {
-        await refreshClientMenu(admin, update.message.from.id, update.message.chat.id, member.role);
-      }
+    // /start hw_<lesson> | hwb_<base64> — сдача домашки из личного кабинета.
+    if (await runCourseHomeworkDeepLink()) {
       return NextResponse.json({ ok: true });
     }
 
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     // Не перехватываем известные deep-link префиксы (lead_/pay_/course_/… уже обработаны выше).
-    if (update.message?.text?.startsWith('/start ') && update.message.chat) {
-      const token = update.message.text.slice('/start '.length).trim();
+    if (startSource !== null && update.message?.text?.startsWith('/start') && update.message.chat) {
+      const token = startSource;
       const knownDeepLink =
         token.startsWith('lead_') ||
         token.startsWith('pay_') ||
-        token.startsWith('hw_') ||
+        isCourseHomeworkStartPayload(token) ||
         token.startsWith('course_') ||
         token === 'course_apply' ||
         token === 'support' ||
@@ -372,6 +388,11 @@ export async function POST(request: Request) {
         AD_START_SOURCES.includes(token);
 
       if (knownDeepLink) {
+        if (isCourseHomeworkStartPayload(token)) {
+          if (await runCourseHomeworkDeepLink()) {
+            return NextResponse.json({ ok: true });
+          }
+        }
         if (update.message.from) {
           const member = await ensureMember(
             admin,
@@ -541,7 +562,7 @@ export async function POST(request: Request) {
       } else if (usesClientBotUi(role)) {
         await sendClientStart(admin, from.id, update.message.chat.id, {
           testFooter: footer,
-          memberRole: role,
+          memberRole: member.role,
         });
       } else {
         await renderMainMenu(update.message.chat.id, footer);

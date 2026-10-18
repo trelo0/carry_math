@@ -69,6 +69,9 @@ export type AdminPayload = {
   targetGroupId?: number;
   sanityLessonId?: string;
   draftFileUrl?: string;
+  draftFileKind?: 'photo' | 'document';
+  draftFileRef?: string;
+  draftText?: string;
   draftNote?: string;
   lessonTitle?: string;
   lessonNumber?: number;
@@ -178,6 +181,7 @@ export type ConversationStep =
   | 'student:support-thread'
   | 'student:mentor'
   | 'student:mentor-pick'
+  | 'student:mentor-confirm'
   | 'student:course-hw-submit'
   | 'student:course-hw-comment'
   | 'student:course-hw-confirm'

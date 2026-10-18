@@ -6,7 +6,7 @@ import {
   type PurchaseRequestStatus,
 } from './purchase-requests';
 import {
-  clientHomeButton,
+  clientBackButton,
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
@@ -48,7 +48,7 @@ export async function showClientPurchaseHistory(
     if (!isPurchaseRequestTableError(error)) throw error;
   }
 
-  const keyboard = { inline_keyboard: [[clientHomeButton()]] };
+  const keyboard = { inline_keyboard: [[clientBackButton()]] };
 
   if (rows.length === 0) {
     const text =

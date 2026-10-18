@@ -3,12 +3,17 @@ import {
   flattenCourseLessons,
   getDistrictCourseContent,
 } from '@/lib/studio/courseContent';
-import { resolveSubmitTargetLesson } from '@/lib/bot/education/course-homework';
+import {
+  listSubmitTargetLessons,
+  resolveSubmitTargetLesson,
+  type SubmitTargetLesson,
+} from '@/lib/bot/education/course-homework';
 import { deadlineUiState } from '@/lib/bot/education/homework-deadline';
 import type { CourseLessonStudentProgress } from '@/lib/bot/education/course-progress';
+import { listStudentPurchasedVisibleCourseContexts } from '@/lib/bot/education/student-course-context';
 import { beginCourseHomeworkSubmit } from './studentHomeworkFlow';
 import {
-  clientHomeButton,
+  clientBackButton,
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
@@ -33,6 +38,7 @@ function hwStatusLabel(status: string): string {
 }
 
 function currentHwBlock(
+  courseTitle: string | undefined,
   lessonTitle: string,
   lessonNumber: number,
   progress: CourseLessonStudentProgress | null,
@@ -45,7 +51,13 @@ function currentHwBlock(
         ? Math.max(0, Date.parse(progress.homework_deadline_at) - Date.now())
         : null;
 
-  const head = `Сейчас: ДЗ №${lessonNumber} «${lessonTitle}»`;
+  const head = [
+    courseTitle ? `📚 ${courseTitle}` : null,
+    `Сейчас: ДЗ №${lessonNumber} «${lessonTitle}»`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   switch (phase) {
     case 'waiting_review':
       return [
@@ -84,6 +96,21 @@ function currentHwBlock(
   }
 }
 
+function groupTargetsByCourse(targets: SubmitTargetLesson[]): Map<string, SubmitTargetLesson[]> {
+  const map = new Map<string, SubmitTargetLesson[]>();
+  for (const t of targets) {
+    const key = t.courseSlug ?? '_default';
+    const list = map.get(key) ?? [];
+    list.push(t);
+    map.set(key, list);
+  }
+  return map;
+}
+
+function submitCallbackForSlug(slug: string): string {
+  return `cl:chw:go:${slug}`;
+}
+
 export async function showClientCourseHomeworkHub(
   admin: SupabaseClient,
   telegramId: number,
@@ -100,26 +127,59 @@ export async function showClientCourseHomeworkHub(
     return;
   }
 
-  const target = await resolveSubmitTargetLesson(admin, telegramId);
-  const currentBlock = target
-    ? currentHwBlock(target.lesson.title, target.lesson.lessonNumber, target.progress)
-    : 'Сейчас ДЗ не ждём.\nКогда откроется сдача после вебинара — статус появится здесь.';
+  const targets = await listSubmitTargetLessons(admin, telegramId);
+  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
 
-  const text = ['📝 Домашние задания курса', '', currentBlock].join('\n');
+  const lines = ['📝 Домашние задания', ''];
+  if (enrollments.length > 1) {
+    lines.push(`Ваши курсы: ${enrollments.map((e) => e.title).join(' · ')}`, '');
+  }
+
+  if (targets.length === 0) {
+    lines.push('Сейчас ДЗ не ждём.\nКогда откроется сдача после вебинара — статус появится здесь.');
+  } else {
+    const byCourse = groupTargetsByCourse(targets);
+    for (const [, items] of byCourse) {
+      const first = items[0]!;
+      lines.push(
+        currentHwBlock(first.courseTitle, first.lesson.title, first.lesson.lessonNumber, first.progress),
+      );
+      lines.push('');
+    }
+  }
+
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (targets.length === 1) {
+    keyboard.push([{ text: '📤 Отправить ДЗ', callback_data: 'cl:chw:submit' }]);
+  } else if (targets.length > 1) {
+    const byCourse = groupTargetsByCourse(targets);
+    for (const [slug, items] of byCourse) {
+      const first = items[0]!;
+      const label = first.courseTitle
+        ? `📤 Сдать · ${first.courseTitle}`
+        : '📤 Отправить ДЗ';
+      keyboard.push([
+        {
+          text: label.length > 64 ? '📤 Сдать ДЗ' : label,
+          callback_data: submitCallbackForSlug(slug === '_default' ? (first.courseSlug ?? slug) : slug),
+        },
+      ]);
+    }
+  }
+
+  keyboard.push(
+    [{ text: '📋 История сдач', callback_data: 'cl:chw:hist' }],
+        [{ text: '◀️ К курсу', callback_data: 'cl:course:pick' }],
+    [clientBackButton()],
+  );
+
   await deliverClientHubScreen(
     admin,
     telegramId,
     chatId,
     'course-hw-hub',
-    text,
-    {
-      inline_keyboard: [
-        [{ text: '📤 Отправить ДЗ', callback_data: 'cl:chw:submit' }],
-        [{ text: '📋 История сдач', callback_data: 'cl:chw:hist' }],
-        [{ text: '◀️ К курсу', callback_data: 'cl:course:mine' }],
-        [clientHomeButton()],
-      ],
-    },
+    lines.join('\n').trim(),
+    { inline_keyboard: keyboard },
     deliver,
   );
 }
@@ -130,13 +190,32 @@ export async function showClientCourseHomeworkHistory(
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const content = await getDistrictCourseContent().catch(() => null);
-  const lessons = content
-    ? flattenCourseLessons(content)
-        .filter((l) => l.publicationStatus === 'published')
-        .sort((a, b) => a.lessonNumber - b.lessonNumber)
-    : [];
-  const lessonMap = new Map(lessons.map((l) => [l.sanityId, l]));
+  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  const lessonMap = new Map<
+    string,
+    { lessonNumber: number; title: string; courseTitle: string }
+  >();
+
+  const contexts =
+    enrollments.length > 0
+      ? enrollments
+      : [{ slug: (await getDistrictCourseContent().catch(() => null))?.slug ?? '', title: 'Курс' }].filter(
+          (c) => c.slug,
+        );
+
+  for (const ctx of contexts) {
+    const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
+    if (!content) continue;
+    const courseTitle = 'title' in ctx && ctx.title ? ctx.title : content.title;
+    for (const lesson of flattenCourseLessons(content)) {
+      if (lesson.publicationStatus !== 'published') continue;
+      lessonMap.set(lesson.sanityId, {
+        lessonNumber: lesson.lessonNumber,
+        title: lesson.title,
+        courseTitle,
+      });
+    }
+  }
 
   const { data: rows, error } = await admin
     .from('course_lesson_student_progress')
@@ -159,7 +238,7 @@ export async function showClientCourseHomeworkHistory(
       {
         inline_keyboard: [
           [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
-          [clientHomeButton()],
+          [clientBackButton()],
         ],
       },
       deliver,
@@ -167,9 +246,10 @@ export async function showClientCourseHomeworkHistory(
     return;
   }
 
-  const lines = ['📋 История ДЗ курса', ''];
+  const lines = ['📋 История ДЗ', ''];
   for (const row of items.slice(0, 15)) {
     const lesson = lessonMap.get(row.sanity_lesson_id as string)!;
+    lines.push(`📚 ${lesson.courseTitle}`);
     lines.push(`№${lesson.lessonNumber} · ${lesson.title}`);
     lines.push(`Статус: ${hwStatusLabel(row.homework_status as string)}`);
     if (row.homework_submitted_at) {
@@ -196,7 +276,7 @@ export async function showClientCourseHomeworkHistory(
     {
       inline_keyboard: [
         [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
-        [clientHomeButton()],
+        [clientBackButton()],
       ],
     },
     deliver,
@@ -207,8 +287,9 @@ export async function beginClientCourseHomeworkFromHub(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  courseSlug?: string,
 ): Promise<void> {
-  const target = await resolveSubmitTargetLesson(admin, telegramId);
+  const target = await resolveSubmitTargetLesson(admin, telegramId, undefined, courseSlug);
   if (!target) {
     await deliverClientHubScreen(
       admin,
@@ -219,7 +300,7 @@ export async function beginClientCourseHomeworkFromHub(
       {
         inline_keyboard: [
           [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
-          [clientHomeButton()],
+          [clientBackButton()],
         ],
       },
       { forcePush: true },
@@ -233,15 +314,19 @@ export async function beginClientCourseHomeworkFromHub(
       : target.progress?.homework_deadline_at
         ? Math.max(0, Date.parse(target.progress.homework_deadline_at) - Date.now())
         : null;
-  const intro =
-    `Вебинар №${target.lesson.lessonNumber}: ${target.lesson.title}` +
-    (remaining != null ? `\nОсталось на сдачу: ${formatRemainingMs(remaining)}` : '');
+  const intro = [
+    target.courseTitle ? `Курс: ${target.courseTitle}` : null,
+    `Вебинар №${target.lesson.lessonNumber}: ${target.lesson.title}`,
+    remaining != null ? `Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
   await telegramSend('sendMessage', { chat_id: chatId, text: intro });
   await beginCourseHomeworkSubmit(admin, telegramId, chatId, target.lesson.sanityId);
 }
 
 export function isClientCourseHomeworkCallback(data: string): boolean {
-  return data.startsWith('cl:chw:') || data === 'cl:course:mine';
+  return data.startsWith('cl:chw:');
 }
 
 export async function handleClientCourseHomeworkCallback(
@@ -259,12 +344,7 @@ export async function handleClientCourseHomeworkCallback(
 
   const editAt = { chatId, messageId };
 
-  if (data === 'cl:course:mine') {
-    const { showClientMyCourseHub } = await import('./client-course-hub');
-    await showClientMyCourseHub(admin, telegramId, chatId, { editAt });
-    return true;
-  }
-  if (data === 'cl:chw:hub') {
+  if (data === 'cl:chw:hub' || data.startsWith('cl:chw:hub:')) {
     await showClientCourseHomeworkHub(admin, telegramId, chatId, { editAt });
     return true;
   }
@@ -274,6 +354,11 @@ export async function handleClientCourseHomeworkCallback(
   }
   if (data === 'cl:chw:submit') {
     await beginClientCourseHomeworkFromHub(admin, telegramId, chatId);
+    return true;
+  }
+  if (data.startsWith('cl:chw:go:')) {
+    const slug = data.slice('cl:chw:go:'.length);
+    await beginClientCourseHomeworkFromHub(admin, telegramId, chatId, slug || undefined);
     return true;
   }
   return false;

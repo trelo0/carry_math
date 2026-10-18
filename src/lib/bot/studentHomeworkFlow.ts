@@ -24,10 +24,19 @@ export const COURSE_HW_CONFIRM_STEP = 'student:course-hw-confirm' as const;
 type SubmitPayload = AdminPayload & {
   sanityLessonId?: string;
   draftFileUrl?: string;
+  draftFileKind?: 'photo' | 'document';
   draftNote?: string;
   lessonTitle?: string;
   lessonNumber?: number;
+  courseSlug?: string;
+  courseTitle?: string;
 };
+
+function formatSubmitError(error: unknown): string {
+  if (error instanceof CourseHomeworkError) return error.message;
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  return 'Не удалось отправить домашку.';
+}
 
 export function formatTelegramFileRef(fileId: string): string {
   return `tg:${fileId}`;
@@ -54,7 +63,8 @@ async function assertCanSubmitCourseHw(
         'Сейчас нет домашних заданий, которые можно сдать.\n\nПосмотрите запись занятия в личном кабинете — после этого здесь появится возможность отправить работу.',
     };
   }
-  if (target.lesson.isTrialFree && !hasCourse) {
+  const paidForCourse = target.hasCourseProduct ?? hasCourse;
+  if (target.lesson.isTrialFree && !paidForCourse) {
     return {
       ok: false,
       message:
@@ -87,6 +97,7 @@ export async function beginCourseHomeworkSubmit(
   const text = [
     '📝 Сдача домашнего задания',
     '',
+    gate.target.courseTitle ? `Курс: ${gate.target.courseTitle}` : null,
     `Занятие №${lesson.lessonNumber}: ${lesson.title}`,
     remaining != null ? `⏱ Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
     '',
@@ -104,6 +115,8 @@ export async function beginCourseHomeworkSubmit(
       sanityLessonId: lesson.sanityId,
       lessonTitle: lesson.title,
       lessonNumber: lesson.lessonNumber,
+      courseSlug: gate.target.courseSlug,
+      courseTitle: gate.target.courseTitle,
     });
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
@@ -118,10 +131,21 @@ async function finishSubmit(
   telegramId: number,
   chatId: number,
   sanityLessonId: string,
-  input: { note?: string; fileUrl?: string },
+  input: {
+    note?: string;
+    fileUrl?: string;
+    fileKind?: 'photo' | 'document';
+    courseSlug?: string;
+  },
 ): Promise<void> {
-  await markHomeworkSubmitted(admin, telegramId, sanityLessonId, input);
-  await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, input);
+  await markHomeworkSubmitted(admin, telegramId, sanityLessonId, input, {
+    courseSlug: input.courseSlug ?? null,
+  });
+  try {
+    await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, input);
+  } catch (error) {
+    console.error('[course-hw] curator notify failed:', error);
+  }
   await clearStateIfAvailable(admin, telegramId);
   await sendAdminMessage(
     chatId,
@@ -204,11 +228,11 @@ export async function handleStudentHomeworkMessage(
         await finishSubmit(admin, telegramId, chatId, sanityLessonId, {
           note: payload.draftNote,
           fileUrl: payload.draftFileUrl,
+          fileKind: payload.draftFileKind,
+          courseSlug: payload.courseSlug,
         });
       } catch (error) {
-        const message =
-          error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
-        await sendAdminMessage(chatId, message);
+        await sendAdminMessage(chatId, formatSubmitError(error));
       }
       return true;
     }
@@ -260,6 +284,7 @@ export async function handleStudentHomeworkAttachment(
   await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_COMMENT_STEP, {
     ...payload,
     draftFileUrl: fileUrl,
+    draftFileKind: attachment.kind,
   });
 
   await sendAdminMessage(
@@ -331,11 +356,11 @@ export async function handleCourseHomeworkCallback(
       await finishSubmit(admin, telegramId, chatId, sanityLessonId, {
         note: payload.draftNote,
         fileUrl: payload.draftFileUrl,
+        fileKind: payload.draftFileKind,
+        courseSlug: payload.courseSlug,
       });
     } catch (error) {
-      const message =
-        error instanceof CourseHomeworkError ? error.message : 'Не удалось отправить домашку.';
-      await sendAdminMessage(chatId, message);
+      await sendAdminMessage(chatId, formatSubmitError(error));
     }
     return true;
   }
@@ -392,6 +417,7 @@ export async function sendSubmissionToCurator(
   curatorTelegramId: number,
   submission: {
     fileUrl: string | null;
+    fileKind?: 'photo' | 'document' | null;
     note: string | null;
     lessonNumber: number;
     title: string;
@@ -418,7 +444,14 @@ export async function sendSubmissionToCurator(
 
   if (submission.fileUrl?.startsWith('tg:')) {
     const fileId = submission.fileUrl.slice(3);
-    await telegramSend('sendDocument', { chat_id: chatId, document: fileId });
+    const asPhoto = submission.fileKind === 'photo';
+    const result = await telegramSend(asPhoto ? 'sendPhoto' : 'sendDocument', {
+      chat_id: chatId,
+      ...(asPhoto ? { photo: fileId } : { document: fileId }),
+    });
+    if (!result.ok) {
+      throw new Error(result.description ?? 'Не удалось переслать файл куратору.');
+    }
   } else if (submission.fileUrl?.startsWith('http')) {
     await telegramSend('sendMessage', {
       chat_id: chatId,

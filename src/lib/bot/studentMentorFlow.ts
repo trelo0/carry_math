@@ -12,7 +12,7 @@ import { memberHasRole, loadMemberRoles } from './roles';
 import { getStudentCheckStaff, getStudentCurator, getStudentTeacher } from './education/assignments';
 import {
   isStudentOnCourse,
-  listStudentActiveCourseContexts,
+  listStudentPurchasedVisibleCourseContexts,
   resolveStudentCourseContext,
 } from './education/student-course-context';
 import { notifyStaffInboundFromStudent, type StaffMessageRole } from './staff/messaging';
@@ -21,6 +21,25 @@ import { notifyAdminsOfSupportMessage } from './studentSupportFlow';
 export type StudentMentorContext = 'course' | 'lessons';
 
 const MENTOR_COURSE_PICK_PREFIX = 'm:cr:';
+const MENTOR_CONFIRM_PREFIX = 'm:mentor:';
+
+function mentorCancelKeyboard() {
+  return {
+    inline_keyboard: [[{ text: '❌ Отменить', callback_data: `${MENTOR_CONFIRM_PREFIX}cancel` }]],
+  };
+}
+
+function mentorPreviewKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '✅ Отправить', callback_data: `${MENTOR_CONFIRM_PREFIX}send` }],
+      [
+        { text: '✏️ Изменить', callback_data: `${MENTOR_CONFIRM_PREFIX}edit` },
+        { text: '❌ Отменить', callback_data: `${MENTOR_CONFIRM_PREFIX}cancel` },
+      ],
+    ],
+  };
+}
 
 async function resolveMentorChatId(
   admin: SupabaseClient,
@@ -59,7 +78,7 @@ async function resolveCourseIdForMentorQuestion(
     return ctx?.courseId ?? null;
   }
 
-  const enrollments = await listStudentActiveCourseContexts(admin, telegramId);
+  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
   if (enrollments.length === 1) return enrollments[0]!.courseId;
   if (enrollments.length === 0) {
     const ctx = await resolveStudentCourseContext(admin, telegramId, null);
@@ -74,7 +93,7 @@ async function promptCoursePickerForMentor(
   chatId: number,
   options: MentorQuestionOptions,
 ): Promise<void> {
-  const enrollments = await listStudentActiveCourseContexts(admin, telegramId);
+  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
   const context = options.context ?? 'lessons';
   const purpose =
     options.homework
@@ -135,9 +154,10 @@ async function finalizeMentorQuestionStart(
   if (preferCheck && checker) {
     mentor = checker;
     staffRole = 'check';
-  } else if (context === 'course') {
-    mentor = curator ?? teacher;
-    if (curator) staffRole = 'curator';
+  } else   if (context === 'course') {
+    mentor = checker ?? curator ?? teacher;
+    if (checker) staffRole = 'check';
+    else if (curator) staffRole = 'curator';
     else if (teacher) staffRole = 'teacher';
   } else {
     mentor = teacher ?? curator;
@@ -160,8 +180,8 @@ async function finalizeMentorQuestionStart(
     await sendAdminMessage(
       chatId,
       '💬 Наставник пока не назначен.\n\n' +
-        'Напишите вопрос одним сообщением — мы передадим его в поддержку и свяжем с наставником.\n\n' +
-        '⬅️ Отмена — «Отмена».',
+        'Напишите сообщение — мы передадим его администратору и свяжем с наставником.',
+      mentorCancelKeyboard(),
     );
     return;
   }
@@ -181,9 +201,63 @@ async function finalizeMentorQuestionStart(
 
   await sendAdminMessage(
     chatId,
-    intro +
-      'Отправьте текст, фото или документ одним сообщением.\n\n' +
-      '⬅️ Отмена — «Отмена».',
+    intro + 'Напишите сообщение одним текстом или приложите файл.',
+    mentorCancelKeyboard(),
+  );
+}
+
+async function showMentorMessagePreview(
+  chatId: number,
+  draftText: string,
+  hasAttachment: boolean,
+): Promise<void> {
+  const lines = [
+    '📋 Предпросмотр сообщения',
+    '',
+    draftText.trim() || '(без текста)',
+    hasAttachment ? '\n📎 Вложение будет отправлено' : '',
+    '',
+    'Отправить наставнику?',
+  ].filter(Boolean);
+  await sendAdminMessage(chatId, lines.join('\n'), mentorPreviewKeyboard());
+}
+
+async function dispatchMentorDraft(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  state: { payload: Record<string, unknown> },
+): Promise<void> {
+  const mentorTelegramId = state.payload.mentorTelegramId as number | undefined;
+  const staffRole = state.payload.staffRole as StaffMessageRole | undefined;
+  const courseId = state.payload.courseId as number | undefined;
+  const draftText = String(state.payload.draftText ?? '').trim() || 'Сообщение из Telegram';
+  const draftFileRef = state.payload.draftFileRef as string | undefined;
+  const draftFileKind = state.payload.draftFileKind as 'photo' | 'document' | undefined;
+
+  const attachment =
+    draftFileRef && draftFileRef.startsWith('tg:')
+      ? { ref: draftFileRef, kind: draftFileKind ?? ('document' as const) }
+      : undefined;
+
+  const target = await forwardToMentor(
+    admin,
+    telegramId,
+    mentorTelegramId,
+    draftText,
+    staffRole,
+    attachment,
+    courseId,
+  );
+  if (target === 'support') {
+    await notifyAdminsOfSupportMessage(admin, telegramId, draftText);
+  }
+  await clearStateIfAvailable(admin, telegramId);
+  await sendAdminMessage(
+    chatId,
+    target === 'mentor'
+      ? '✅ Сообщение отправлено.\n\nОтвет придёт в Telegram.'
+      : '✅ Сообщение отправлено администратору.\n\nМы свяжем вас с наставником.',
   );
 }
 
@@ -197,7 +271,7 @@ export async function beginStudentMentorQuestion(
   const needsCourse = context === 'course' || options.homework;
 
   if (needsCourse && options.courseId == null && !options.courseSlug) {
-    const enrollments = await listStudentActiveCourseContexts(admin, telegramId);
+    const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
     if (enrollments.length > 1) {
       await promptCoursePickerForMentor(admin, telegramId, chatId, options);
       return;
@@ -215,6 +289,47 @@ export async function handleStudentMentorCallback(
   telegramId: number,
   callbackQueryId?: string,
 ): Promise<boolean> {
+  if (data.startsWith(MENTOR_CONFIRM_PREFIX)) {
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    let state = null;
+    try {
+      state = await getState(admin, telegramId);
+    } catch (error) {
+      if (!isConversationStateTableError(error)) throw error;
+      return true;
+    }
+    if (!state || state.step !== 'student:mentor-confirm') {
+      await sendAdminMessage(chatId, 'Сессия устарела. Откройте «Связь» снова.');
+      return true;
+    }
+    if (data === `${MENTOR_CONFIRM_PREFIX}cancel`) {
+      await clearStateIfAvailable(admin, telegramId);
+      await sendAdminMessage(chatId, 'Сообщение отменено.');
+      return true;
+    }
+    if (data === `${MENTOR_CONFIRM_PREFIX}edit`) {
+      await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor', {
+        ...state.payload,
+        draftText: undefined,
+        draftFileRef: undefined,
+        draftFileKind: undefined,
+      });
+      await sendAdminMessage(
+        chatId,
+        'Напишите сообщение заново или приложите файл.',
+        mentorCancelKeyboard(),
+      );
+      return true;
+    }
+    if (data === `${MENTOR_CONFIRM_PREFIX}send`) {
+      await dispatchMentorDraft(admin, telegramId, chatId, state);
+      return true;
+    }
+    return true;
+  }
+
   if (!data.startsWith(MENTOR_COURSE_PICK_PREFIX)) return false;
 
   if (callbackQueryId) {
@@ -325,40 +440,24 @@ export async function handleStudentMentorMessage(
     return true;
   }
 
+  if (state?.step === 'student:mentor-confirm') {
+    await sendAdminMessage(chatId, 'Используйте кнопки «Отправить», «Изменить» или «Отменить».');
+    return true;
+  }
+
   if (!state || state.step !== 'student:mentor') return false;
 
   const trimmed = text.trim();
-  if (!trimmed || /^отмена$/i.test(trimmed)) {
-    await clearStateIfAvailable(admin, telegramId);
-    await sendAdminMessage(chatId, 'Обращение отменено.');
+  if (!trimmed) {
+    await sendAdminMessage(chatId, 'Напишите текст или отправьте файл.');
     return true;
   }
 
-  const mentorTelegramId = state.payload.mentorTelegramId as number | undefined;
-  const staffRole = state.payload.staffRole as StaffMessageRole | undefined;
-  const courseId = state.payload.courseId as number | undefined;
-
-  if (staffRole === 'check' && courseId == null) {
-    await sendAdminMessage(
-      chatId,
-      'Не удалось определить курс для сообщения. Начните снова из раздела курса.',
-    );
-    await clearStateIfAvailable(admin, telegramId);
-    return true;
-  }
-
-  const target = await forwardToMentor(admin, telegramId, mentorTelegramId, trimmed, staffRole, undefined, courseId);
-  if (target === 'support') {
-    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
-  }
-  await clearStateIfAvailable(admin, telegramId);
-
-  await sendAdminMessage(
-    chatId,
-    target === 'mentor'
-      ? '✅ Сообщение отправлено наставнику.\n\nОтвет придёт в Telegram.'
-      : '✅ Сообщение отправлено в поддержку.\n\nМы свяжем вас с наставником.',
-  );
+  await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor-confirm', {
+    ...state.payload,
+    draftText: trimmed,
+  });
+  await showMentorMessagePreview(chatId, trimmed, Boolean(state.payload.draftFileRef));
   return true;
 }
 
@@ -380,33 +479,20 @@ export async function handleStudentMentorAttachment(
     await sendAdminMessage(chatId, 'Сначала выберите курс кнопкой выше.');
     return true;
   }
-  if (!state || state.step !== 'student:mentor') return false;
-
-  const mentorTelegramId = state.payload.mentorTelegramId as number | undefined;
-  const staffRole = state.payload.staffRole as StaffMessageRole | undefined;
-  const courseId = state.payload.courseId as number | undefined;
-  const body = caption.trim() ? caption.trim() : 'Вложение';
-
-  if (staffRole === 'check' && courseId == null) {
-    await clearStateIfAvailable(admin, telegramId);
-    await sendAdminMessage(chatId, 'Не удалось определить курс. Начните снова.');
+  if (state?.step === 'student:mentor-confirm') {
+    await sendAdminMessage(chatId, 'Используйте кнопки под предпросмотром.');
     return true;
   }
 
-  const target = await forwardToMentor(admin, telegramId, mentorTelegramId, body, staffRole, {
-    ref: `tg:${attachment.fileId}`,
-    kind: attachment.kind,
-  }, courseId);
-  if (target === 'support') {
-    await notifyAdminsOfSupportMessage(admin, telegramId, body);
-  }
-  await clearStateIfAvailable(admin, telegramId);
+  if (!state || state.step !== 'student:mentor') return false;
 
-  await sendAdminMessage(
-    chatId,
-    target === 'mentor'
-      ? '✅ Вложение отправлено наставнику.'
-      : '✅ Вложение отправлено в поддержку.',
-  );
+  const body = caption.trim() ? caption.trim() : 'Вложение';
+  await saveState(admin, telegramId, { chatId, messageId: 0 }, 'student:mentor-confirm', {
+    ...state.payload,
+    draftText: body,
+    draftFileRef: `tg:${attachment.fileId}`,
+    draftFileKind: attachment.kind,
+  });
+  await showMentorMessagePreview(chatId, body, true);
   return true;
 }

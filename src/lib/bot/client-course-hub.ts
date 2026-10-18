@@ -13,10 +13,12 @@ import {
   resolveWebinarSessionStatus,
 } from '@/lib/curator/lesson-session';
 import {
-  clientHomeButton,
+  clientBackButton,
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
+import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
+import { listSubmitTargetLessons } from './education/course-homework';
 import { formatDateTimeShort, formatRemainingMs } from './client-format';
 import { getClientProductMode, resolveClientState } from './client-state';
 
@@ -41,27 +43,67 @@ function courseHwStatusLine(
   }
 }
 
-export async function showClientMyCourseHub(
+export async function showClientCoursePicker(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
+  const courses = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  if (courses.length <= 1) {
+    await showClientMyCourseHub(admin, telegramId, chatId, deliver, courses[0]?.slug);
+    return;
+  }
+
+  const lines = ['🎓 Мои курсы', '', 'Выберите курс:'];
+  const keyboard = {
+    inline_keyboard: [
+      ...courses.map((c) => [
+        { text: c.title.slice(0, 58), callback_data: `cl:course:open:${c.slug}` },
+      ]),
+      [clientBackButton()],
+    ],
+  };
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'my-course-pick',
+    lines.join('\n'),
+    keyboard,
+    deliver,
+  );
+}
+
+export async function showClientMyCourseHub(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  deliver?: ClientHubDeliverOptions,
+  courseSlug?: string,
+): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
-  if (!state.hasActiveCourse) {
+  const purchased = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  if (!state.hasActiveCourse || purchased.length === 0) {
     await deliverClientHubScreen(
       admin,
       telegramId,
       chatId,
       'my-course-denied',
       '🎓 Мой курс\n\nРаздел доступен после подключения онлайн-курса.',
-      { inline_keyboard: [[clientHomeButton()]] },
+      { inline_keyboard: [[clientBackButton()]] },
       deliver,
     );
     return;
   }
 
-  const content = await getDistrictCourseContent().catch(() => null);
+  if (purchased.length > 1 && !courseSlug) {
+    await showClientCoursePicker(admin, telegramId, chatId, deliver);
+    return;
+  }
+
+  const slug = courseSlug ?? purchased[0]!.slug;
+  const content = await getDistrictCourseContent(slug).catch(() => null);
   const courseId = content ? await resolveCourseIdForContent(admin, content).catch(() => null) : null;
   const lessons = content
     ? flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published')
@@ -121,9 +163,16 @@ export async function showClientMyCourseHub(
           ? 'доступ ограничен (жизни)'
           : 'доступ пока закрыт (нужно одобренное ДЗ предыдущего занятия)';
 
-  const target = await resolveSubmitTargetLesson(admin, telegramId);
-  let hwLine = '📝 Текущее ДЗ: не ожидается';
-  if (target) {
+  const courseTargets = (await listSubmitTargetLessons(admin, telegramId)).filter(
+    (t) => t.courseSlug === slug,
+  );
+  let hwLine = '📝 Домашние задания: всё сдано или сдача пока не открыта';
+  if (courseTargets.length > 1) {
+    hwLine = ['📝 Нужно сдать ДЗ:', ...courseTargets.map(
+      (t) => `• №${t.lesson.lessonNumber} «${t.lesson.title}»`,
+    )].join('\n');
+  } else if (courseTargets.length === 1) {
+    const target = courseTargets[0]!;
     const progress = target.progress;
     const phase = deadlineUiState(progress);
     const remaining =
@@ -133,7 +182,7 @@ export async function showClientMyCourseHub(
           ? Math.max(0, Date.parse(progress.homework_deadline_at) - now)
           : null;
     hwLine = `📝 ДЗ №${target.lesson.lessonNumber} «${target.lesson.title}»\n${courseHwStatusLine(phase, remaining)}`;
-  } else {
+  } else if (courseTargets.length === 0) {
     const latestSubmitted = (progressRows ?? [])
       .filter((r) => r.homework_status === 'submitted' || r.homework_status === 'approved')
       .sort((a, b) => String(b.sanity_lesson_id).localeCompare(String(a.sanity_lesson_id)))[0];
@@ -161,28 +210,62 @@ export async function showClientMyCourseHub(
     hwLine,
   ].filter((x): x is string => x != null);
 
-  const cabinetUrl = await createCabinetLoginUrl(admin, telegramId, '/cabinet?section=course').catch(
-    () => null,
-  );
+  const cabinetUrl = await createCabinetLoginUrl(
+    admin,
+    telegramId,
+    `/cabinet?section=course&course=${encodeURIComponent(slug)}`,
+  ).catch(() => null);
 
   const rows: Array<Array<Record<string, string>>> = [
-    [{ text: '📝 Домашние задания курса', callback_data: 'cl:chw:hub' }],
+    [{ text: '📝 Домашние задания курса', callback_data: `cl:chw:hub:${slug}` }],
   ];
+  if (purchased.length > 1) {
+    rows.push([{ text: '◀️ К списку курсов', callback_data: 'cl:course:pick' }]);
+  }
   if (cabinetUrl) {
     rows.push([{ text: '🌐 Открыть кабинет курса', url: cabinetUrl }]);
   }
   if (getClientProductMode(state) !== 'both') {
     rows.push([{ text: '💬 Связаться с куратором', callback_data: 'cl:course:ask' }]);
   }
-  rows.push([clientHomeButton()]);
+  rows.push([clientBackButton()]);
 
   await deliverClientHubScreen(
     admin,
     telegramId,
     chatId,
-    'my-course',
+    'my-course-detail',
     lines.join('\n'),
     { inline_keyboard: rows },
     deliver,
   );
+}
+
+export function isClientCourseHubCallback(data: string): boolean {
+  return (
+    data === 'cl:course:pick' ||
+    data === 'cl:course:mine' ||
+    data.startsWith('cl:course:open:')
+  );
+}
+
+export async function handleClientCourseHubCallback(
+  admin: SupabaseClient,
+  data: string,
+  chatId: number,
+  messageId: number,
+  telegramId: number,
+): Promise<boolean> {
+  if (!isClientCourseHubCallback(data)) return false;
+  const editAt = { chatId, messageId };
+  if (data === 'cl:course:pick' || data === 'cl:course:mine') {
+    await showClientCoursePicker(admin, telegramId, chatId, { editAt });
+    return true;
+  }
+  if (data.startsWith('cl:course:open:')) {
+    const slug = data.slice('cl:course:open:'.length);
+    await showClientMyCourseHub(admin, telegramId, chatId, { editAt }, slug || undefined);
+    return true;
+  }
+  return false;
 }
