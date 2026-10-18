@@ -80,3 +80,10 @@ export function isCourseHomeworkStartPayload(source: string): boolean {
   const t = source.trim();
   return t.startsWith(HW_PREFIX) || t.startsWith(HWB_PREFIX);
 }
+
+/** /start или /start@bot без параметра — не OTP-токен привязки. */
+export function isPlainBotStartCommand(text: string | undefined): boolean {
+  if (!text?.startsWith('/start')) return false;
+  const payload = extractBotStartPayload(text);
+  return payload !== null && payload === '';
+}

@@ -99,6 +99,7 @@ import { CLIENT_DIALOG_STEPS } from '@/lib/bot/client-nav';
 import {
   extractBotStartPayload,
   isCourseHomeworkStartPayload,
+  isPlainBotStartCommand,
   parseCourseHomeworkTelegramStart,
 } from '@/lib/bot/course-homework-deeplink';
 
@@ -373,7 +374,11 @@ export async function POST(request: Request) {
 
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     // Не перехватываем известные deep-link префиксы (lead_/pay_/course_/… уже обработаны выше).
-    if (startSource !== null && update.message?.text?.startsWith('/start') && update.message.chat) {
+    if (
+      startSource &&
+      update.message?.text?.startsWith('/start') &&
+      update.message.chat
+    ) {
       const token = startSource;
       const knownDeepLink =
         token.startsWith('lead_') ||
@@ -512,18 +517,20 @@ export async function POST(request: Request) {
 
         // /start, /menu и /admin — регистрация/обновление участника и актуальное
     // главное меню по роли (с Reply Keyboard у админа).
+    const menuMessage = update.message;
     if (
-      (update.message?.text === '/start' ||
-        update.message?.text === '/menu' ||
-        update.message?.text === '/admin') &&
-      update.message.chat &&
-      update.message.from
+      menuMessage?.chat &&
+      menuMessage.from &&
+      (menuMessage.text === '/start' ||
+        isPlainBotStartCommand(menuMessage.text) ||
+        menuMessage.text === '/menu' ||
+        menuMessage.text === '/admin')
     ) {
-      const from = update.message.from;
+      const from = menuMessage.from;
       const member = await ensureMember(
         admin,
         from.id,
-        memberPatch(from, update.message.chat.id),
+        memberPatch(from, menuMessage.chat.id),
       );
 
       await clearBotWizardStateOnMenuStart(admin, from.id);
@@ -536,14 +543,14 @@ export async function POST(request: Request) {
           ? '\n\n🛠 /as <роль> — UI другой роли · /role me <роль> — сменить себе роль'
           : '';
       const footer = testFooter + creatorHint;
-      if (isAdminEnv(from.id) && update.message.text === '/admin') {
-        await sendAdminStart(update.message.chat.id, footer, admin, from.id);
+      if (isAdminEnv(from.id) && menuMessage.text === '/admin') {
+        await sendAdminStart(menuMessage.chat.id, footer, admin, from.id);
       } else if (role === 'admin') {
         if (member.role === 'admin' || isAdminEnv(from.id)) {
-          await sendAdminStart(update.message.chat.id, footer, admin, from.id);
+          await sendAdminStart(menuMessage.chat.id, footer, admin, from.id);
         } else {
           await telegramSend('sendMessage', {
-            chat_id: update.message.chat.id,
+            chat_id: menuMessage.chat.id,
             text:
               '👋 Привет! Ты админ бота District.\n\n' +
               '/users — список участников\n' +
@@ -553,19 +560,19 @@ export async function POST(request: Request) {
               footer,
           });
         }
-      } else if (await sendStaffStart(admin, update.message.chat.id, from.id, footer)) {
+      } else if (await sendStaffStart(admin, menuMessage.chat.id, from.id, footer)) {
         /* combined staff menu */
       } else if (role === 'curator') {
-        await sendCuratorStart(admin, update.message.chat.id, from.id, footer);
+        await sendCuratorStart(admin, menuMessage.chat.id, from.id, footer);
       } else if (role === 'teacher') {
-        await sendTeacherStart(admin, update.message.chat.id, from.id, footer);
+        await sendTeacherStart(admin, menuMessage.chat.id, from.id, footer);
       } else if (usesClientBotUi(role)) {
-        await sendClientStart(admin, from.id, update.message.chat.id, {
+        await sendClientStart(admin, from.id, menuMessage.chat.id, {
           testFooter: footer,
           memberRole: member.role,
         });
       } else {
-        await renderMainMenu(update.message.chat.id, footer);
+        await renderMainMenu(menuMessage.chat.id, footer);
       }
 
       return NextResponse.json({ ok: true });
