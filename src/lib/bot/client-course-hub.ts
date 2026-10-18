@@ -8,6 +8,7 @@ import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
 import { resolveSubmitTargetLesson } from '@/lib/bot/education/course-homework';
 import { deadlineUiState } from '@/lib/bot/education/homework-deadline';
+import type { HomeworkProgressStatus } from '@/lib/bot/education/course-progress';
 import {
   loadSanityLessonSessionMap,
   resolveWebinarSessionStatus,
@@ -17,6 +18,12 @@ import {
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
+import {
+  aggregateCourseProgress,
+  computeLessonProgressPercent,
+  homeworkRequiredForLesson,
+} from './education/lesson-progress-calc';
+import { studentHasCourseAccessForCourse } from './education/course-access';
 import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
 import { listSubmitTargetLessons } from './education/course-homework';
 import { formatDateTimeShort, formatRemainingMs } from './client-format';
@@ -121,14 +128,38 @@ export async function showClientMyCourseHub(
     }
   }
 
-  const { data: progressRows } = await admin
-    .from('course_lesson_student_progress')
-    .select('sanity_lesson_id, completed_at, homework_status, homework_remaining_ms, homework_deadline_at, homework_overdue_at')
-    .eq('telegram_id', telegramId);
+  const sanityIdsForCourse = lessons.map((l) => l.sanityId);
+  const { data: progressRows } = sanityIdsForCourse.length
+    ? await admin
+        .from('course_lesson_student_progress')
+        .select(
+          'sanity_lesson_id, completed_at, homework_status, homework_remaining_ms, homework_deadline_at, homework_overdue_at, live_attended_at, recording_watched_at, watch_percent, materials_opened',
+        )
+        .eq('telegram_id', telegramId)
+        .in('sanity_lesson_id', sanityIdsForCourse)
+    : { data: [] as Array<Record<string, unknown>> };
 
-  const completed = (progressRows ?? []).filter((r) => r.completed_at).length;
-  const total = lessons.length;
-  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const progressBySanity = new Map(
+    (progressRows ?? []).map((r) => [r.sanity_lesson_id as string, r]),
+  );
+  const hasCourseProduct =
+    courseId != null ? await studentHasCourseAccessForCourse(admin, telegramId, courseId) : false;
+
+  const lessonPercents = lessons.map((lesson) => {
+    const p = progressBySanity.get(lesson.sanityId);
+    const hasHw = homeworkRequiredForLesson(lesson, hasCourseProduct);
+    return computeLessonProgressPercent({
+      recordingWatchedAt: (p?.recording_watched_at as string | null) ?? null,
+      liveAttendedAt: (p?.live_attended_at as string | null) ?? null,
+      materialsOpened: (p?.materials_opened as string[] | null) ?? null,
+      homeworkStatus: (p?.homework_status as HomeworkProgressStatus | null) ?? null,
+      hasHomework: hasHw,
+    });
+  });
+  const { coursePercent, completedCount, totalLessons } = aggregateCourseProgress(lessonPercents);
+  const total = totalLessons || lessons.length;
+  const percent = coursePercent;
+  const completed = completedCount;
 
   const now = Date.now();
   const sanityIds = lessons.map((l) => l.sanityId);
@@ -183,7 +214,7 @@ export async function showClientMyCourseHub(
           : null;
     hwLine = `📝 ДЗ №${target.lesson.lessonNumber} «${target.lesson.title}»\n${courseHwStatusLine(phase, remaining)}`;
   } else if (courseTargets.length === 0) {
-    const latestSubmitted = (progressRows ?? [])
+    const latestSubmitted = [...progressBySanity.values()]
       .filter((r) => r.homework_status === 'submitted' || r.homework_status === 'approved')
       .sort((a, b) => String(b.sanity_lesson_id).localeCompare(String(a.sanity_lesson_id)))[0];
     if (latestSubmitted?.homework_status === 'submitted') {
@@ -226,9 +257,11 @@ export async function showClientMyCourseHub(
     rows.push([{ text: '🌐 Открыть кабинет курса', url: cabinetUrl }]);
   }
   if (getClientProductMode(state) !== 'both') {
-    rows.push([{ text: '💬 Связаться с куратором', callback_data: 'cl:course:ask' }]);
+    rows.push([{ text: '💬 Связаться с куратором', callback_data: `cl:course:ask:${slug}` }]);
   }
-  rows.push([clientBackButton()]);
+  if (purchased.length <= 1) {
+    rows.push([{ text: '🏠 Главное меню', callback_data: 'cl:home' }]);
+  }
 
   await deliverClientHubScreen(
     admin,

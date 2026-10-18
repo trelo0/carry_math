@@ -30,7 +30,10 @@ import {
   showClientCourseHomeworkHub,
 } from './client-course-homework-hub';
 import { handleClientCourseHubCallback, isClientCourseHubCallback, showClientMyCourseHub } from './client-course-hub';
-import { listCoursePaymentOffers } from '@/lib/studio/courseContent';
+import {
+  getCoursePaymentOfferBySlug,
+  listCoursePaymentOffers,
+} from '@/lib/studio/courseContent';
 import { renderClientScreenById, type ClientScreenNavigateMode } from './client-screen-router';
 import {
   handleClientSharedHubCallback,
@@ -48,6 +51,7 @@ import {
 } from './client-menu';
 import {
   clientBackButton,
+  clientHomeButton,
   editClientCard,
   loadClientHubPayload,
   popNavStack,
@@ -90,7 +94,10 @@ async function applyCard(
   mode: CardMode,
 ): Promise<void> {
   if (mode.kind === 'push') {
-    await pushClientCard(admin, telegramId, mode.chatId, screenId, text, keyboard);
+    await pushClientCard(admin, telegramId, mode.chatId, screenId, text, keyboard, [
+      'home',
+      screenId,
+    ]);
     return;
   }
   await editClientCard(admin, telegramId, mode.hub, screenId, text, keyboard, mode.navStack);
@@ -107,17 +114,92 @@ async function showOnlineCourseScreen(
     inline_keyboard: [],
   };
 
-  if (state.hasActiveCourse) {
+  const isGuestCatalog = state.phase === 'guest' || !state.hasActiveCourse;
+
+  if (state.hasActiveCourse && state.phase !== 'guest') {
     const cabinetUrl = await createCabinetLoginUrl(admin, state.telegramId, '/cabinet?section=course');
     keyboard.inline_keyboard.push([{ text: '🌐 Открыть курс в кабинете', url: cabinetUrl }]);
     keyboard.inline_keyboard.push([{ text: '💬 Вопрос куратору по курсу', callback_data: 'cl:course:ask' }]);
+  } else if (isGuestCatalog) {
+    const offers = await listCoursePaymentOffers();
+    lines.push('');
+    if (offers.length === 0) {
+      lines.push('Сейчас нет курсов, доступных для записи.');
+    } else {
+      lines.push('Доступные курсы:', '');
+      for (const offer of offers) {
+        lines.push(`📚 ${offer.title}`);
+        lines.push(`${offer.priceByn} BYN · ${offer.grantedLessons} занятий`);
+        if (offer.cardText?.trim()) lines.push(offer.cardText.trim());
+        lines.push('');
+      }
+      for (const offer of offers) {
+        keyboard.inline_keyboard.push([
+          {
+            text: `Подробнее · ${offer.title.slice(0, 40)}`,
+            callback_data: `cl:guest:course:open:${offer.slug}`,
+          },
+        ]);
+      }
+    }
+    keyboard.inline_keyboard.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
+    keyboard.inline_keyboard.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
   } else {
     keyboard.inline_keyboard.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
     keyboard.inline_keyboard.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
   }
-  keyboard.inline_keyboard.push([clientBackButton()]);
+  keyboard.inline_keyboard.push([clientHomeButton()]);
 
-  await applyCard(admin, state.telegramId, 'course', lines.join('\n'), keyboard, mode);
+  await applyCard(admin, state.telegramId, 'course', lines.join('\n').trim(), keyboard, mode);
+}
+
+async function showGuestCourseOfferScreen(
+  admin: SupabaseClient,
+  state: ClientStateSnapshot,
+  slug: string,
+  mode: CardMode,
+): Promise<void> {
+  const offer = await getCoursePaymentOfferBySlug(slug);
+  if (!offer) {
+    await showOnlineCourseScreen(admin, state, mode);
+    return;
+  }
+
+  const lines = [
+    `📚 ${offer.title}`,
+    '',
+    `${offer.priceByn} BYN · ${offer.grantedLessons} занятий`,
+    offer.description?.trim() || null,
+    offer.cardText?.trim() || null,
+    '',
+    'Оплата и доступ — в личном кабинете на сайте.',
+  ].filter((x): x is string => Boolean(x));
+
+  const cabinetUrl = await createCabinetLoginUrl(
+    admin,
+    state.telegramId,
+    `/cabinet?section=course&course=${encodeURIComponent(offer.slug)}`,
+  ).catch(() => null);
+
+  const keyboardRows: Array<Array<Record<string, string>>> = [];
+  if (cabinetUrl) {
+    keyboardRows.push([{ text: '🛒 Купить на сайте', url: cabinetUrl }]);
+  }
+  keyboardRows.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
+  const allOffers = await listCoursePaymentOffers();
+  if (allOffers.length > 1) {
+    keyboardRows.push([{ text: '◀️ К списку курсов', callback_data: 'cl:guest:course:list' }]);
+  }
+  keyboardRows.push([clientHomeButton()]);
+
+  await applyCard(
+    admin,
+    state.telegramId,
+    'guest-course-detail',
+    lines.join('\n'),
+    { inline_keyboard: keyboardRows },
+    mode,
+  );
 }
 
 async function showBuyEducationHub(
@@ -381,6 +463,17 @@ export async function handleClientReplyMenuNavigation(
 ): Promise<boolean> {
   if (!isClientReplyLabel(text)) return false;
   await resetClientDialogToHub(admin, telegramId);
+  const loaded = await loadClientHubPayload(admin, telegramId);
+  const hub = loaded?.payload.clientHubChatId
+    ? {
+        chatId: loaded.payload.clientHubChatId,
+        messageId: loaded.payload.clientHubMessageId ?? 0,
+      }
+    : { chatId, messageId: 0 };
+  await saveClientHub(admin, telegramId, hub, 'home', {
+    welcomeMessageId: loaded?.payload.welcomeMessageId,
+    clientNavStack: ['home'],
+  });
   return handleClientMessage(admin, telegramId, chatId, text, memberRole);
 }
 
@@ -397,10 +490,10 @@ export async function handleClientMessage(
 
   switch (text) {
     case CLIENT_LABELS.onlineCourse:
-      if (state.hasActiveCourse) {
-        await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true });
-      } else {
+      if (state.phase === 'guest' || !state.hasActiveCourse) {
         await showOnlineCourseScreen(admin, state, { kind: 'push', chatId });
+      } else {
+        await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true });
       }
       return true;
     case CLIENT_LABELS.myCourse:
@@ -510,7 +603,11 @@ export async function handleClientCallback(
 
   if (data === 'cl:buy:hub') {
     const state = await resolveClientState(admin, telegramId, { memberRole });
-    await showBuyEducationHub(admin, state, { kind: 'push', chatId });
+    await showBuyEducationHub(admin, state, {
+      kind: 'edit',
+      hub: { chatId, messageId },
+      navStack: ['home', 'payments-hub', 'buy-education'],
+    });
     return true;
   }
 
@@ -544,6 +641,8 @@ export async function handleClientCallback(
   const known =
     data === 'cl:home' ||
     data === 'cl:back' ||
+    data === 'cl:guest:course:list' ||
+    data.startsWith('cl:guest:course:open:') ||
     data === 'cl:course:site' ||
     data === 'cl:buy:course' ||
     data === 'cl:buy:lessons' ||
@@ -551,7 +650,8 @@ export async function handleClientCallback(
     data === 'cl:buy:group' ||
     data === 'cl:lessons:individual' ||
     data === 'cl:lessons:group' ||
-    data === 'cl:course:ask';
+    data === 'cl:course:ask' ||
+    data.startsWith('cl:course:ask:');
 
   if (callbackQueryId) {
     await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
@@ -608,10 +708,23 @@ export async function handleClientCallback(
     return true;
   }
 
-  if (data === 'cl:course:site') {
-    const loaded = await loadClientHubPayload(admin, telegramId);
-    const stack = [...(loaded?.payload.clientNavStack ?? ['home']), 'course'];
+  if (data === 'cl:course:site' || data === 'cl:guest:course:list') {
     await showOnlineCourseScreen(admin, state, {
+      kind: 'edit',
+      hub: { chatId, messageId },
+      navStack: ['home', 'course'],
+    });
+    return true;
+  }
+
+  if (data.startsWith('cl:guest:course:open:')) {
+    const slug = data.slice('cl:guest:course:open:'.length);
+    const loaded = await loadClientHubPayload(admin, telegramId);
+    const stack = [
+      ...(loaded?.payload.clientNavStack ?? ['home', 'course']),
+      'guest-course-detail',
+    ];
+    await showGuestCourseOfferScreen(admin, state, slug, {
       kind: 'edit',
       hub: { chatId, messageId },
       navStack: stack,
@@ -654,7 +767,7 @@ export async function handleClientCallback(
     return true;
   }
 
-  if (data === 'cl:course:ask') {
+  if (data === 'cl:course:ask' || data.startsWith('cl:course:ask:')) {
     if (!state.hasActiveCourse) {
       await telegramSend('sendMessage', {
         chat_id: chatId,
@@ -663,7 +776,11 @@ export async function handleClientCallback(
       });
       return true;
     }
-    await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'course' });
+    const slug = data.startsWith('cl:course:ask:') ? data.slice('cl:course:ask:'.length) : undefined;
+    await beginStudentMentorQuestion(admin, telegramId, chatId, {
+      context: 'course',
+      courseSlug: slug || undefined,
+    });
     return true;
   }
 

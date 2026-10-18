@@ -562,11 +562,27 @@ export async function markHomeworkSubmitted(
   };
   if (wasOverdue) row.homework_overdue_at = now;
 
-  const { data, error } = await admin
+  const { data: existing, error: findError } = await admin
     .from('course_lesson_student_progress')
-    .upsert(row, { onConflict: 'telegram_id,sanity_lesson_id' })
-    .select('*')
-    .single();
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (findError) {
+    throw new CourseHomeworkError(
+      'Не удалось сохранить отправку. Попробуйте ещё раз или сдайте через личный кабинет на сайте.',
+      'NOT_READY',
+    );
+  }
+
+  const writeQuery = existing?.id
+    ? admin
+        .from('course_lesson_student_progress')
+        .update(row)
+        .eq('id', existing.id as number)
+    : admin.from('course_lesson_student_progress').insert(row);
+
+  const { data, error } = await writeQuery.select('*').single();
   if (error) {
     throw new CourseHomeworkError(
       'Не удалось сохранить отправку. Попробуйте ещё раз или сдайте через личный кабинет на сайте.',

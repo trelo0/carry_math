@@ -262,7 +262,9 @@ export async function deliverClientHubScreen(
   }
 
   const prev = await loadClientHubPayload(admin, telegramId);
-  const stack = [...(prev?.payload.clientNavStack ?? ['home']), screenId];
+  const stack = options?.forcePush
+    ? ['home', screenId]
+    : [...(prev?.payload.clientNavStack ?? ['home']), screenId];
   const messageId = await sendHubMessage(chatId, text, replyMarkup);
   if (!messageId) return;
   await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {
@@ -301,9 +303,10 @@ export async function pushClientCard(
   screenId: string,
   text: string,
   keyboard: InlineKeyboard,
+  navStack?: string[],
 ): Promise<number | null> {
   const prev = await loadClientHubPayload(admin, telegramId);
-  const stack = [...(prev?.payload.clientNavStack ?? ['home']), screenId];
+  const stack = navStack ?? [...(prev?.payload.clientNavStack ?? ['home']), screenId];
   const messageId = await sendHubMessage(chatId, text, keyboard);
   if (!messageId) return null;
   await saveClientHub(admin, telegramId, { chatId, messageId }, screenId, {

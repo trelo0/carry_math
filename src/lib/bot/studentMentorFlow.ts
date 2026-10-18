@@ -15,6 +15,8 @@ import {
   listStudentPurchasedVisibleCourseContexts,
   resolveStudentCourseContext,
 } from './education/student-course-context';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
+import { syncCourseStaffFromContent } from './education/course-staff';
 import { notifyStaffInboundFromStudent, type StaffMessageRole } from './staff/messaging';
 import { notifyAdminsOfSupportMessage } from './studentSupportFlow';
 
@@ -131,6 +133,20 @@ async function promptCoursePickerForMentor(
   );
 }
 
+async function ensureCourseStaffSynced(
+  admin: SupabaseClient,
+  courseId: number,
+  courseSlug?: string | null,
+): Promise<void> {
+  const slug = courseSlug?.trim();
+  const content = slug
+    ? await getDistrictCourseContent(slug).catch(() => null)
+    : null;
+  if (content) {
+    await syncCourseStaffFromContent(admin, courseId, content, { courseSlug: slug ?? content.slug });
+  }
+}
+
 async function finalizeMentorQuestionStart(
   admin: SupabaseClient,
   telegramId: number,
@@ -139,6 +155,10 @@ async function finalizeMentorQuestionStart(
 ): Promise<void> {
   const context = options.context ?? 'lessons';
   const courseId = options.courseId;
+
+  if (courseId != null) {
+    await ensureCourseStaffSynced(admin, courseId, options.courseSlug);
+  }
 
   const mentorCourseOpts = courseId != null ? { courseId } : undefined;
   const teacher = await getStudentTeacher(admin, telegramId, mentorCourseOpts);
@@ -279,7 +299,12 @@ export async function beginStudentMentorQuestion(
   }
 
   const courseId = await resolveCourseIdForMentorQuestion(admin, telegramId, options);
-  await finalizeMentorQuestionStart(admin, telegramId, chatId, { ...options, courseId });
+  let courseSlug = options.courseSlug ?? null;
+  if (courseId != null && !courseSlug) {
+    const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+    courseSlug = enrollments.find((e) => e.courseId === courseId)?.slug ?? null;
+  }
+  await finalizeMentorQuestionStart(admin, telegramId, chatId, { ...options, courseId, courseSlug });
 }
 
 export async function handleStudentMentorCallback(
@@ -300,13 +325,13 @@ export async function handleStudentMentorCallback(
       if (!isConversationStateTableError(error)) throw error;
       return true;
     }
-    if (!state || state.step !== 'student:mentor-confirm') {
-      await sendAdminMessage(chatId, 'Сессия устарела. Откройте «Связь» снова.');
-      return true;
-    }
     if (data === `${MENTOR_CONFIRM_PREFIX}cancel`) {
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, 'Сообщение отменено.');
+      return true;
+    }
+    if (!state || state.step !== 'student:mentor-confirm') {
+      await sendAdminMessage(chatId, 'Сессия устарела. Откройте «Связь» снова.');
       return true;
     }
     if (data === `${MENTOR_CONFIRM_PREFIX}edit`) {
@@ -365,10 +390,13 @@ export async function handleStudentMentorCallback(
 
   const payload = state.payload;
   await clearStateIfAvailable(admin, telegramId);
+  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  const courseSlug = enrollments.find((e) => e.courseId === courseId)?.slug;
   await finalizeMentorQuestionStart(admin, telegramId, chatId, {
     homework: Boolean(payload.homework),
     context: (payload.mentorContext as StudentMentorContext | undefined) ?? 'course',
     courseId,
+    courseSlug,
   });
   return true;
 }

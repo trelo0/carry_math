@@ -83,6 +83,7 @@ export async function renderClientScreenById(
       await extras?.showBuyCourseOffers?.(mode);
       return;
     case 'course':
+    case 'guest-course-detail':
       await extras?.showOnlineCourse?.(mode);
       return;
     case 'lessons':

@@ -36,8 +36,10 @@ export async function showClientPaymentsHub(
     lines.join('\n'),
     {
       inline_keyboard: [
-        ...(state.hasActiveLessonProduct || state.hasLessonHistory
-          ? [[{ text: '📦 Остаток пакета занятий', callback_data: 'cl:pay:pkg' }]]
+        ...(state.hasActiveLessonProduct ||
+        state.hasActiveCourse ||
+        state.hasLessonHistory
+          ? [[{ text: '📦 Остаток пакетов', callback_data: 'cl:pay:pkg' }]]
           : []),
         [{ text: '🎓 Купить / продлить обучение', callback_data: 'cl:buy:hub' }],
         [{ text: '🧾 История оплат', callback_data: 'cl:pay:hist' }],
@@ -62,7 +64,7 @@ export async function showClientMiscHub(
     '⋯ Прочее\n\nЗаявки и связь с администратором.',
     {
       inline_keyboard: [
-        [{ text: '📨 История заявок', callback_data: 'cl:misc:apps' }],
+        [{ text: '📨 История обращений', callback_data: 'cl:misc:apps' }],
         [{ text: '💬 Связаться с администратором', callback_data: 'cl:misc:admin' }],
         [clientBackButton()],
       ],

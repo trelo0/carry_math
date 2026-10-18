@@ -228,7 +228,7 @@ export { kindLabel };
 
 export type ClientPackageView = {
   id: number;
-  product: 'individual' | 'group';
+  product: 'individual' | 'group' | 'course';
   title: string;
   total: number;
   used: number;
@@ -242,19 +242,29 @@ export async function fetchClientPackages(
 ): Promise<ClientPackageView[]> {
   const { data, error } = await admin
     .from('lesson_packages')
-    .select('id, product, title, total_lessons, used_lessons, remaining_lessons, status')
+    .select(
+      'id, product, title, total_lessons, used_lessons, remaining_lessons, status, course_id, courses ( title, slug )',
+    )
     .eq('telegram_id', telegramId)
-    .in('product', ['individual', 'group'])
+    .in('product', ['individual', 'group', 'course'])
     .order('purchased_at', { ascending: false })
-    .limit(10);
+    .limit(15);
   if (error) throw error;
-  return (data ?? []).map((row) => ({
-    id: row.id as number,
-    product: row.product as 'individual' | 'group',
-    title: row.title as string,
-    total: row.total_lessons as number,
-    used: row.used_lessons as number,
-    remaining: row.remaining_lessons as number,
-    status: row.status as string,
-  }));
+  return (data ?? []).map((row) => {
+    const product = row.product as 'individual' | 'group' | 'course';
+    const course = row.courses as { title?: string; slug?: string } | null;
+    const title =
+      product === 'course' && course?.title?.trim()
+        ? course.title.trim()
+        : (row.title as string);
+    return {
+      id: row.id as number,
+      product,
+      title,
+      total: row.total_lessons as number,
+      used: row.used_lessons as number,
+      remaining: row.remaining_lessons as number,
+      status: row.status as string,
+    };
+  });
 }

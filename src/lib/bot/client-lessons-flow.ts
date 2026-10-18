@@ -382,7 +382,7 @@ export async function showClientPackageMenu(
       chatId,
       undefined,
       'package-empty',
-      '📦 Мой пакет\n\nАктивных пакетов занятий не найдено.',
+      '📦 Остаток пакетов\n\nАктивных пакетов не найдено.',
       { inline_keyboard: [[clientHomeButton()]] },
       deliver,
     );
@@ -390,7 +390,12 @@ export async function showClientPackageMenu(
   }
 
   const blocks = packages.map((pkg) => {
-    const productLabel = pkg.product === 'individual' ? 'Индивидуальные занятия' : 'Групповые занятия';
+    const productLabel =
+      pkg.product === 'course'
+        ? 'Онлайн-курс'
+        : pkg.product === 'individual'
+          ? 'Индивидуальные занятия'
+          : 'Групповые занятия';
     const statusLabel =
       pkg.status === 'active'
         ? 'Активен'
@@ -408,7 +413,7 @@ export async function showClientPackageMenu(
     ].join('\n');
   });
 
-  const text = ['📦 Мой пакет занятий', '', ...blocks].join('\n\n');
+  const text = ['📦 Остаток пакетов', '', ...blocks].join('\n\n');
   await renderHub(admin, telegramId, chatId, undefined, 'package-list', text, {
     inline_keyboard: [[clientHomeButton()]],
   }, deliver);

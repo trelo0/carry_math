@@ -218,12 +218,20 @@ export async function POST(request: Request) {
         startMessage.from.id,
         memberPatch(startMessage.from, startMessage.chat.id),
       );
-      await beginCourseHomeworkSubmit(
-        admin,
-        startMessage.from.id,
-        startMessage.chat.id,
-        sanityLessonId,
-      );
+      try {
+        await beginCourseHomeworkSubmit(
+          admin,
+          startMessage.from.id,
+          startMessage.chat.id,
+          sanityLessonId,
+        );
+      } catch (error) {
+        const text =
+          error instanceof Error && error.message.trim()
+            ? error.message.trim()
+            : 'Не удалось начать сдачу ДЗ. Попробуйте из меню «Домашние задания» или из кабинета на сайте.';
+        await telegramSend('sendMessage', { chat_id: startMessage.chat.id, text });
+      }
       return true;
     }
     if (
@@ -260,6 +268,11 @@ export async function POST(request: Request) {
         memberPatch(update.message.from, update.message.chat.id),
       );
       await beginCourseApplication(admin, update.message.from.id, update.message.chat.id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // /start hw_<lesson> | hwb_<base64> — сдача ДЗ из кабинета (до OTP и прочих /start).
+    if (await runCourseHomeworkDeepLink()) {
       return NextResponse.json({ ok: true });
     }
 
@@ -367,11 +380,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // /start hw_<lesson> | hwb_<base64> — сдача домашки из личного кабинета.
-    if (await runCourseHomeworkDeepLink()) {
-      return NextResponse.json({ ok: true });
-    }
-
     // /start <token> — пользователь пришёл с сайта по кнопке «Подключить Telegram».
     // Не перехватываем известные deep-link префиксы (lead_/pay_/course_/… уже обработаны выше).
     if (
@@ -394,9 +402,8 @@ export async function POST(request: Request) {
 
       if (knownDeepLink) {
         if (isCourseHomeworkStartPayload(token)) {
-          if (await runCourseHomeworkDeepLink()) {
-            return NextResponse.json({ ok: true });
-          }
+          await runCourseHomeworkDeepLink();
+          return NextResponse.json({ ok: true });
         }
         if (update.message.from) {
           const member = await ensureMember(

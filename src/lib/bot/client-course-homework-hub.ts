@@ -96,19 +96,21 @@ function currentHwBlock(
   }
 }
 
-function groupTargetsByCourse(targets: SubmitTargetLesson[]): Map<string, SubmitTargetLesson[]> {
-  const map = new Map<string, SubmitTargetLesson[]>();
-  for (const t of targets) {
-    const key = t.courseSlug ?? '_default';
-    const list = map.get(key) ?? [];
-    list.push(t);
-    map.set(key, list);
-  }
-  return map;
+function parseCourseHomeworkHubSlug(data: string): string | undefined {
+  if (data === 'cl:chw:hub') return undefined;
+  if (data.startsWith('cl:chw:hub:')) return data.slice('cl:chw:hub:'.length) || undefined;
+  return undefined;
 }
 
-function submitCallbackForSlug(slug: string): string {
-  return `cl:chw:go:${slug}`;
+function parseCourseHomeworkHistSlug(data: string): string | undefined {
+  if (data === 'cl:chw:hist') return undefined;
+  if (data.startsWith('cl:chw:hist:')) return data.slice('cl:chw:hist:'.length) || undefined;
+  return undefined;
+}
+
+function filterTargetsBySlug(targets: SubmitTargetLesson[], courseSlug?: string): SubmitTargetLesson[] {
+  if (!courseSlug) return targets;
+  return targets.filter((t) => t.courseSlug === courseSlug);
 }
 
 export async function showClientCourseHomeworkHub(
@@ -116,6 +118,7 @@ export async function showClientCourseHomeworkHub(
   telegramId: number,
   chatId: number,
   deliver?: ClientHubDeliverOptions,
+  courseSlug?: string,
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
   if (!state.hasActiveCourse) {
@@ -127,22 +130,30 @@ export async function showClientCourseHomeworkHub(
     return;
   }
 
-  const targets = await listSubmitTargetLessons(admin, telegramId);
-  const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  const allTargets = await listSubmitTargetLessons(admin, telegramId);
+  const targets = filterTargetsBySlug(allTargets, courseSlug);
 
-  const lines = ['📝 Домашние задания', ''];
-  if (enrollments.length > 1) {
-    lines.push(`Ваши курсы: ${enrollments.map((e) => e.title).join(' · ')}`, '');
+  let courseTitle: string | undefined;
+  if (courseSlug) {
+    const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+    courseTitle = content?.title?.trim();
   }
+
+  const lines = ['📝 Домашние задания', courseTitle ? `📚 ${courseTitle}` : null, ''].filter(
+    (x): x is string => x != null,
+  );
 
   if (targets.length === 0) {
     lines.push('Сейчас ДЗ не ждём.\nКогда откроется сдача после вебинара — статус появится здесь.');
   } else {
-    const byCourse = groupTargetsByCourse(targets);
-    for (const [, items] of byCourse) {
-      const first = items[0]!;
+    for (const t of targets) {
       lines.push(
-        currentHwBlock(first.courseTitle, first.lesson.title, first.lesson.lessonNumber, first.progress),
+        currentHwBlock(
+          courseSlug ? courseTitle : t.courseTitle,
+          t.lesson.title,
+          t.lesson.lessonNumber,
+          t.progress,
+        ),
       );
       lines.push('');
     }
@@ -150,34 +161,33 @@ export async function showClientCourseHomeworkHub(
 
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   if (targets.length === 1) {
-    keyboard.push([{ text: '📤 Отправить ДЗ', callback_data: 'cl:chw:submit' }]);
+    keyboard.push([
+      {
+        text: '📤 Отправить ДЗ',
+        callback_data: courseSlug ? `cl:chw:submit:${courseSlug}` : 'cl:chw:submit',
+      },
+    ]);
   } else if (targets.length > 1) {
-    const byCourse = groupTargetsByCourse(targets);
-    for (const [slug, items] of byCourse) {
-      const first = items[0]!;
-      const label = first.courseTitle
-        ? `📤 Сдать · ${first.courseTitle}`
-        : '📤 Отправить ДЗ';
+    for (const t of targets) {
+      const slug = t.courseSlug ?? courseSlug ?? '_default';
+      const label = t.courseTitle ? `📤 Сдать · ${t.courseTitle}` : '📤 Отправить ДЗ';
       keyboard.push([
         {
           text: label.length > 64 ? '📤 Сдать ДЗ' : label,
-          callback_data: submitCallbackForSlug(slug === '_default' ? (first.courseSlug ?? slug) : slug),
+          callback_data: `cl:chw:go:${slug === '_default' ? (t.courseSlug ?? slug) : slug}`,
         },
       ]);
     }
   }
 
-  keyboard.push(
-    [{ text: '📋 История сдач', callback_data: 'cl:chw:hist' }],
-        [{ text: '◀️ К курсу', callback_data: 'cl:course:pick' }],
-    [clientBackButton()],
-  );
+  const histCb = courseSlug ? `cl:chw:hist:${courseSlug}` : 'cl:chw:hist';
+  keyboard.push([{ text: '📋 История сдач', callback_data: histCb }], [clientBackButton()]);
 
   await deliverClientHubScreen(
     admin,
     telegramId,
     chatId,
-    'course-hw-hub',
+    courseSlug ? `course-hw-hub:${courseSlug}` : 'course-hw-hub',
     lines.join('\n').trim(),
     { inline_keyboard: keyboard },
     deliver,
@@ -189,24 +199,29 @@ export async function showClientCourseHomeworkHistory(
   telegramId: number,
   chatId: number,
   deliver?: ClientHubDeliverOptions,
+  courseSlug?: string,
 ): Promise<void> {
   const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  const contexts = courseSlug
+    ? enrollments.filter((c) => c.slug === courseSlug)
+    : enrollments;
+
+  if (contexts.length === 0 && courseSlug) {
+    const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+    if (content) {
+      contexts.push({ slug: courseSlug, courseId: 0, title: content.title });
+    }
+  }
+
   const lessonMap = new Map<
     string,
     { lessonNumber: number; title: string; courseTitle: string }
   >();
 
-  const contexts =
-    enrollments.length > 0
-      ? enrollments
-      : [{ slug: (await getDistrictCourseContent().catch(() => null))?.slug ?? '', title: 'Курс' }].filter(
-          (c) => c.slug,
-        );
-
   for (const ctx of contexts) {
     const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
     if (!content) continue;
-    const courseTitle = 'title' in ctx && ctx.title ? ctx.title : content.title;
+    const courseTitle = ctx.title?.trim() || content.title;
     for (const lesson of flattenCourseLessons(content)) {
       if (lesson.publicationStatus !== 'published') continue;
       lessonMap.set(lesson.sanityId, {
@@ -217,18 +232,8 @@ export async function showClientCourseHomeworkHistory(
     }
   }
 
-  const { data: rows, error } = await admin
-    .from('course_lesson_student_progress')
-    .select(
-      'sanity_lesson_id, homework_status, homework_submitted_at, homework_completed_at, review_note, submission_note, homework_deadline_at',
-    )
-    .eq('telegram_id', telegramId)
-    .not('homework_status', 'eq', 'pending')
-    .order('homework_submitted_at', { ascending: false });
-  if (error) throw error;
-
-  const items = (rows ?? []).filter((r) => r.sanity_lesson_id && lessonMap.has(r.sanity_lesson_id as string));
-  if (items.length === 0) {
+  const sanityIds = [...lessonMap.keys()];
+  if (sanityIds.length === 0) {
     await deliverClientHubScreen(
       admin,
       telegramId,
@@ -237,9 +242,43 @@ export async function showClientCourseHomeworkHistory(
       '📋 История ДЗ курса\n\nПока нет отправленных работ.',
       {
         inline_keyboard: [
-          [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
+          [
+            {
+              text: '◀️ К ДЗ',
+              callback_data: courseSlug ? `cl:chw:hub:${courseSlug}` : 'cl:chw:hub',
+            },
+          ],
           [clientBackButton()],
         ],
+      },
+      deliver,
+    );
+    return;
+  }
+
+  const { data: rows, error } = await admin
+    .from('course_lesson_student_progress')
+    .select(
+      'sanity_lesson_id, homework_status, homework_submitted_at, homework_completed_at, review_note, submission_note, homework_deadline_at',
+    )
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', sanityIds)
+    .not('homework_status', 'eq', 'pending')
+    .order('homework_submitted_at', { ascending: false });
+  if (error) throw error;
+
+  const items = (rows ?? []).filter((r) => r.sanity_lesson_id && lessonMap.has(r.sanity_lesson_id as string));
+  const hubCb = courseSlug ? `cl:chw:hub:${courseSlug}` : 'cl:chw:hub';
+
+  if (items.length === 0) {
+    await deliverClientHubScreen(
+      admin,
+      telegramId,
+      chatId,
+      'course-hw-hist-empty',
+      '📋 История ДЗ курса\n\nПока нет отправленных работ.',
+      {
+        inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }], [clientBackButton()]],
       },
       deliver,
     );
@@ -249,7 +288,7 @@ export async function showClientCourseHomeworkHistory(
   const lines = ['📋 История ДЗ', ''];
   for (const row of items.slice(0, 15)) {
     const lesson = lessonMap.get(row.sanity_lesson_id as string)!;
-    lines.push(`📚 ${lesson.courseTitle}`);
+    if (!courseSlug) lines.push(`📚 ${lesson.courseTitle}`);
     lines.push(`№${lesson.lessonNumber} · ${lesson.title}`);
     lines.push(`Статус: ${hwStatusLabel(row.homework_status as string)}`);
     if (row.homework_submitted_at) {
@@ -271,13 +310,10 @@ export async function showClientCourseHomeworkHistory(
     admin,
     telegramId,
     chatId,
-    'course-hw-hist',
+    courseSlug ? `course-hw-hist:${courseSlug}` : 'course-hw-hist',
     lines.join('\n').trim().slice(0, 3900),
     {
-      inline_keyboard: [
-        [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
-        [clientBackButton()],
-      ],
+      inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }], [clientBackButton()]],
     },
     deliver,
   );
@@ -299,7 +335,12 @@ export async function beginClientCourseHomeworkFromHub(
       '📤 Отправить ДЗ\n\nСейчас ДЗ не ждём — нет занятия, по которому ожидается сдача.',
       {
         inline_keyboard: [
-          [{ text: '◀️ К ДЗ', callback_data: 'cl:chw:hub' }],
+          [
+            {
+              text: '◀️ К ДЗ',
+              callback_data: courseSlug ? `cl:chw:hub:${courseSlug}` : 'cl:chw:hub',
+            },
+          ],
           [clientBackButton()],
         ],
       },
@@ -345,15 +386,18 @@ export async function handleClientCourseHomeworkCallback(
   const editAt = { chatId, messageId };
 
   if (data === 'cl:chw:hub' || data.startsWith('cl:chw:hub:')) {
-    await showClientCourseHomeworkHub(admin, telegramId, chatId, { editAt });
+    const slug = parseCourseHomeworkHubSlug(data);
+    await showClientCourseHomeworkHub(admin, telegramId, chatId, { editAt }, slug);
     return true;
   }
-  if (data === 'cl:chw:hist') {
-    await showClientCourseHomeworkHistory(admin, telegramId, chatId, { editAt });
+  if (data === 'cl:chw:hist' || data.startsWith('cl:chw:hist:')) {
+    const slug = parseCourseHomeworkHistSlug(data);
+    await showClientCourseHomeworkHistory(admin, telegramId, chatId, { editAt }, slug);
     return true;
   }
-  if (data === 'cl:chw:submit') {
-    await beginClientCourseHomeworkFromHub(admin, telegramId, chatId);
+  if (data === 'cl:chw:submit' || data.startsWith('cl:chw:submit:')) {
+    const slug = data.startsWith('cl:chw:submit:') ? data.slice('cl:chw:submit:'.length) : undefined;
+    await beginClientCourseHomeworkFromHub(admin, telegramId, chatId, slug || undefined);
     return true;
   }
   if (data.startsWith('cl:chw:go:')) {

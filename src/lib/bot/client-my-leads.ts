@@ -43,7 +43,7 @@ export async function showClientApplicationsHub(
   const apps = await listClientInquiryLeads(admin, telegramId, ['application']);
   const questions = await listClientInquiryLeads(admin, telegramId, ['student_question', 'guest_question']);
 
-  const lines = ['📨 История заявок', ''];
+  const lines = ['📨 История обращений', ''];
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
 
   if (apps.length === 0 && questions.length === 0) {
@@ -99,6 +99,7 @@ export async function showClientLeadThread(
   chatId: number,
   leadId: string,
   kind: InquiryKind | 'application',
+  deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const leads = await listClientInquiryLeads(
     admin,
@@ -107,7 +108,20 @@ export async function showClientLeadThread(
   );
   const lead = leads.find((l) => l.id === leadId);
   if (!lead) {
-    await sendHubMessage(chatId, 'Заявка не найдена.', { inline_keyboard: [[clientBackButton()]] });
+    const keyboard = { inline_keyboard: [[clientBackButton()]] };
+    if (deliver?.editAt) {
+      await deliverClientHubScreen(
+        admin,
+        telegramId,
+        chatId,
+        'my-leads',
+        'Обращение не найдено.',
+        keyboard,
+        deliver,
+      );
+      return;
+    }
+    await sendHubMessage(chatId, 'Обращение не найдено.', keyboard);
     return;
   }
 
@@ -148,7 +162,7 @@ export async function showClientLeadThread(
     `my-lead-${leadId}`,
     lines.join('\n'),
     { inline_keyboard: keyboard },
-    { forcePush: true },
+    deliver?.editAt ? deliver : { forcePush: true },
   );
 }
 
@@ -169,14 +183,15 @@ export async function handleClientMyLeadsCallback(
     });
     return true;
   }
+  const editAt = { chatId, messageId };
   const app = data.match(/^cl:my:app:([^:]+)$/);
   if (app) {
-    await showClientLeadThread(admin, telegramId, chatId, app[1], 'application');
+    await showClientLeadThread(admin, telegramId, chatId, app[1], 'application', { editAt });
     return true;
   }
   const q = data.match(/^cl:my:q:([^:]+)$/);
   if (q) {
-    await showClientLeadThread(admin, telegramId, chatId, q[1], 'student_question');
+    await showClientLeadThread(admin, telegramId, chatId, q[1], 'student_question', { editAt });
     return true;
   }
   const write = data.match(/^cl:my:write:([^:]+)$/);
