@@ -484,54 +484,68 @@ async function upsertSanityLessonAccess(
   if (error) throw error;
 }
 
+async function deductOnePackageCreditFallback(
+  admin: SupabaseClient,
+  telegramId: number,
+  packageId: number,
+): Promise<number | null> {
+  const now = new Date().toISOString();
+  const { data: pkg, error: selectError } = await admin
+    .from('lesson_packages')
+    .select('id, remaining_lessons, used_lessons')
+    .eq('id', packageId)
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .eq('status', 'active')
+    .maybeSingle();
+  if (selectError) throw selectError;
+  if (!pkg || (pkg.remaining_lessons as number) <= 0) return null;
+
+  const { data: updated, error: updateError } = await admin
+    .from('lesson_packages')
+    .update({
+      remaining_lessons: (pkg.remaining_lessons as number) - 1,
+      used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
+      updated_at: now,
+    })
+    .eq('id', pkg.id)
+    .gt('remaining_lessons', 0)
+    .select('id')
+    .maybeSingle();
+  if (updateError) throw updateError;
+  return updated ? (updated.id as number) : null;
+}
+
 async function consumeCoursePackageCredit(
   admin: SupabaseClient,
   telegramId: number,
   preferredPackageId?: number | null,
+  courseId?: number | null,
 ): Promise<number | null> {
-  // Сначала пробуем использовать SQL-функцию для атомарности
+  let packageToUse = preferredPackageId ?? null;
+  if (courseId != null) {
+    packageToUse = await resolveActiveCoursePackageId(admin, telegramId, courseId, packageToUse);
+    if (!packageToUse) return null;
+  }
+
   try {
     const { data, error } = await admin.rpc('deduct_course_package_credit', {
       p_telegram_id: telegramId,
-      p_package_id: preferredPackageId ?? null,
+      p_package_id: packageToUse,
     });
     if (error) throw error;
     return data as number | null;
   } catch (rpcError) {
-    // Fallback на обычный метод, если функция ещё не создана
     console.warn('[consumeCoursePackageCredit] RPC not available, using fallback:', rpcError);
-    const now = new Date().toISOString();
 
-    if (preferredPackageId) {
-      const { data: pkg, error: selectError } = await admin
-        .from('lesson_packages')
-        .select('id, remaining_lessons, used_lessons')
-        .eq('id', preferredPackageId)
-        .eq('telegram_id', telegramId)
-        .eq('product', 'course')
-        .eq('status', 'active')
-        .maybeSingle();
-      if (selectError) throw selectError;
-      if (pkg && (pkg.remaining_lessons as number) > 0) {
-        const { data: updated, error: updateError } = await admin
-          .from('lesson_packages')
-          .update({
-            remaining_lessons: (pkg.remaining_lessons as number) - 1,
-            used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
-            updated_at: now,
-          })
-          .eq('id', pkg.id)
-          .gt('remaining_lessons', 0)
-          .select('id')
-          .maybeSingle();
-        if (updateError) throw updateError;
-        if (updated) return updated.id as number;
-      }
+    if (packageToUse) {
+      return deductOnePackageCreditFallback(admin, telegramId, packageToUse);
     }
+    if (courseId != null) return null;
 
     const { data: pkg, error: selectError2 } = await admin
       .from('lesson_packages')
-      .select('id, remaining_lessons, used_lessons')
+      .select('id')
       .eq('telegram_id', telegramId)
       .eq('product', 'course')
       .eq('status', 'active')
@@ -540,22 +554,8 @@ async function consumeCoursePackageCredit(
       .limit(1)
       .maybeSingle();
     if (selectError2) throw selectError2;
-    if (!pkg) return null;
-
-    const { data: updated, error: updError } = await admin
-      .from('lesson_packages')
-      .update({
-        remaining_lessons: (pkg.remaining_lessons as number) - 1,
-        used_lessons: ((pkg.used_lessons as number) ?? 0) + 1,
-        updated_at: now,
-      })
-      .eq('id', pkg.id)
-      .gt('remaining_lessons', 0)
-      .select('id')
-      .maybeSingle();
-    if (updError) throw updError;
-    if (!updated) return null;
-    return updated.id as number;
+    if (!pkg?.id) return null;
+    return deductOnePackageCreditFallback(admin, telegramId, pkg.id as number);
   }
 }
 
@@ -588,34 +588,58 @@ async function resolveActiveCoursePackageId(
   courseId: number,
   preferredPackageId?: number | null,
 ): Promise<number | null> {
-  if (preferredPackageId) {
-    const { data: preferred } = await admin
-      .from('lesson_packages')
-      .select('id')
-      .eq('id', preferredPackageId)
-      .eq('telegram_id', telegramId)
-      .eq('product', 'course')
-      .eq('status', 'active')
-      .gt('remaining_lessons', 0)
-      .maybeSingle();
-    if (preferred?.id) return preferred.id as number;
-  }
-
-  const { data: pkg, error } = await admin
+  const { data, error } = await admin
     .from('lesson_packages')
-    .select('id, course_id, remaining_lessons')
+    .select('id, course_id, remaining_lessons, title, purchased_at')
     .eq('telegram_id', telegramId)
     .eq('product', 'course')
     .eq('status', 'active')
     .gt('remaining_lessons', 0)
     .order('purchased_at', { ascending: true });
   if (error) throw error;
-  const rows = pkg ?? [];
-  const forCourse = rows.filter((row) => {
-    const cid = row.course_id as number | null;
-    return cid == null || cid === courseId;
-  });
-  return (forCourse[0]?.id as number | undefined) ?? null;
+  const rows = data ?? [];
+
+  const { data: courseRow } = await admin
+    .from('courses')
+    .select('slug, title')
+    .eq('id', courseId)
+    .maybeSingle();
+  const slug = (courseRow?.slug as string | undefined)?.trim() ?? null;
+  const courseTitle = (courseRow?.title as string | undefined) ?? null;
+  const aliasIds = new Set(await expandCourseIdAliases(admin, courseId));
+  const pkgCourseIds = [
+    ...new Set(
+      rows.map((row) => row.course_id as number | null).filter((id): id is number => id != null),
+    ),
+  ];
+  const slugByPkgCourseId = new Map<number, string>();
+  if (pkgCourseIds.length > 0) {
+    const { data: courseRows } = await admin
+      .from('courses')
+      .select('id, slug')
+      .in('id', pkgCourseIds);
+    for (const c of courseRows ?? []) {
+      if (c.id != null && c.slug) slugByPkgCourseId.set(c.id as number, c.slug as string);
+    }
+  }
+
+  const matching = rows.filter((row) =>
+    coursePackageRowMatchesCourse(
+      row.course_id as number | null,
+      (row as { title?: string }).title,
+      courseId,
+      slug,
+      courseTitle,
+      aliasIds,
+      slugByPkgCourseId,
+    ),
+  );
+
+  if (preferredPackageId) {
+    const preferred = matching.find((row) => row.id === preferredPackageId);
+    if (preferred?.id) return preferred.id as number;
+  }
+  return (matching[0]?.id as number | undefined) ?? null;
 }
 
 /**
@@ -729,7 +753,7 @@ export async function ensureCurrentLessonUnlocked(
     return 1;
   }
 
-  const linkedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId);
+  const linkedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId, courseId);
   if (!linkedPackageId) return 0;
 
   const { data: existingGrant } = await admin
@@ -976,7 +1000,7 @@ export async function grantPackageLessonAccess(
   );
   if (!next) return 0;
 
-  const consumedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId);
+  const consumedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId, courseId);
   if (!consumedPackageId) return 0;
 
   const { error: accessError } = await admin.from('course_lesson_access').upsert(

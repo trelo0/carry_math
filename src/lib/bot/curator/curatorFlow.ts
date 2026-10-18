@@ -123,6 +123,16 @@ import {
 } from '../staff/curator-schedule-bot';
 import { formatLessonDateTimeRu } from '@/lib/teacher/format';
 
+async function curatorHomeworkCourseOptions(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+): Promise<{ courseId: number; courseSlug: string } | null> {
+  const { resolveCuratorCourseContext } = await import('@/lib/curator/course-context');
+  const ctx = await resolveCuratorCourseContext(admin, curatorTelegramId);
+  if (!ctx) return null;
+  return { courseId: ctx.courseId, courseSlug: ctx.slug };
+}
+
 // ---------------------------------------------------------------------------
 // Кабинет куратора курса (role = curator). Данные — Supabase + Sanity.
 //
@@ -756,12 +766,17 @@ export async function handleCuratorMessage(
       return true;
     }
     try {
+      const courseOpts = await curatorHomeworkCourseOptions(admin, telegramId);
       const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
         admin,
         telegramId,
         student.telegramId,
         hwNumber,
         text,
+        {
+          courseId: courseOpts?.courseId ?? null,
+          courseSlug: courseOpts?.courseSlug ?? null,
+        },
       );
       await notifyStudentHomeworkReviewed(admin, student.telegramId, {
         lessonNumber: lesson.lessonNumber,
@@ -874,11 +889,17 @@ export async function handleCuratorAttachment(
     return true;
   }
   try {
+    const courseOpts = await curatorHomeworkCourseOptions(admin, telegramId);
     const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
       admin,
       telegramId,
       student.telegramId,
       hwNumber,
+      undefined,
+      {
+        courseId: courseOpts?.courseId ?? null,
+        courseSlug: courseOpts?.courseSlug ?? null,
+      },
     );
     const mediaNote =
       kind === 'voice'
@@ -1309,11 +1330,16 @@ async function routeCuratorCallback(
         return true;
       }
       try {
+        const courseOpts = await curatorHomeworkCourseOptions(admin, telegramId);
         const { lesson } = await approveCourseHomeworkByCurator(
           admin,
           telegramId,
           student.telegramId,
           hwNumber,
+          {
+            courseId: courseOpts?.courseId ?? null,
+            courseSlug: courseOpts?.courseSlug ?? null,
+          },
         );
         await notifyStudentHomeworkReviewed(admin, student.telegramId, {
           lessonNumber: lesson.lessonNumber,
@@ -1382,11 +1408,17 @@ async function routeCuratorCallback(
         return true;
       }
       try {
+        const courseOpts = await curatorHomeworkCourseOptions(admin, telegramId);
         const { lesson, lifeDeduction } = await rejectCourseHomeworkByCurator(
           admin,
           telegramId,
           student.telegramId,
           hwNumber,
+          undefined,
+          {
+            courseId: courseOpts?.courseId ?? null,
+            courseSlug: courseOpts?.courseSlug ?? null,
+          },
         );
         await notifyStudentHomeworkReviewed(admin, student.telegramId, {
           lessonNumber: lesson.lessonNumber,

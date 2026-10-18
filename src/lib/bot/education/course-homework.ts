@@ -333,7 +333,11 @@ export async function listSubmitTargetLessons(
     }
   }
 
-  return out.sort((a, b) => a.lesson.lessonNumber - b.lesson.lessonNumber);
+  return out.sort((a, b) => {
+    const byCourse = (a.courseSlug ?? '').localeCompare(b.courseSlug ?? '');
+    if (byCourse !== 0) return byCourse;
+    return a.lesson.lessonNumber - b.lesson.lessonNumber;
+  });
 }
 
 export async function resolveSubmitTargetLesson(
@@ -366,16 +370,17 @@ export async function resolveSubmitTargetLesson(
         };
       }
     }
+
+    const allForLesson = await listSubmitTargetLessons(admin, telegramId);
+    const match = allForLesson.find((t) => t.lesson.sanityId === preferredSanityLessonId);
+    if (match) return match;
+    return null;
   }
 
   const all = await listSubmitTargetLessons(admin, telegramId);
-  if (preferredSanityLessonId) {
-    const match = all.find((t) => t.lesson.sanityId === preferredSanityLessonId);
-    if (match) return match;
-  }
   if (preferredCourseSlug) {
-    const match = all.find((t) => t.courseSlug === preferredCourseSlug);
-    if (match) return match;
+    const forCourse = all.filter((t) => t.courseSlug === preferredCourseSlug);
+    return forCourse[0] ?? null;
   }
   return all[0] ?? null;
 }
@@ -667,6 +672,54 @@ export async function markHomeworkRejected(
   return (resumed.progress as CourseLessonStudentProgress | null) ?? (data as CourseLessonStudentProgress);
 }
 
+async function resolveContentForHomeworkReview(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  lessonNumber: number,
+  options?: { courseId?: number | null; courseSlug?: string | null },
+): Promise<{ content: DistrictCourseContent; courseId: number | null }> {
+  const slugOpt = options?.courseSlug?.trim();
+  if (slugOpt) {
+    const content = await getDistrictCourseContent(slugOpt);
+    if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+    const courseId =
+      options?.courseId ??
+      (await resolveCourseIdForContent(admin, content).catch(() => null));
+    return { content, courseId };
+  }
+
+  if (options?.courseId != null) {
+    const { data: row } = await admin
+      .from('courses')
+      .select('slug')
+      .eq('id', options.courseId)
+      .maybeSingle();
+    const slug = (row?.slug as string | undefined)?.trim();
+    if (slug) {
+      const content = await getDistrictCourseContent(slug);
+      if (content) return { content, courseId: options.courseId };
+    }
+  }
+
+  const { listStudentActiveCourseContexts } = await import('./student-course-context');
+  const contexts = await listStudentActiveCourseContexts(admin, studentTelegramId);
+  for (const ctx of contexts) {
+    const content = await getDistrictCourseContent(ctx.slug).catch(() => null);
+    if (!content) continue;
+    const lesson = findLessonByNumber(content, lessonNumber);
+    if (!lesson) continue;
+    const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
+    if (progress?.homework_status === 'submitted') {
+      return { content, courseId: ctx.courseId };
+    }
+  }
+
+  const content = await getDistrictCourseContent();
+  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const courseId = await resolveCourseIdForContent(admin, content).catch(() => null);
+  return { content, courseId };
+}
+
 export async function approveCourseHomeworkByCurator(
   admin: SupabaseClient,
   curatorTelegramId: number,
@@ -674,25 +727,26 @@ export async function approveCourseHomeworkByCurator(
   lessonNumber: number,
   options?: { courseId?: number | null; courseSlug?: string | null },
 ): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress }> {
-  const slug = options?.courseSlug ?? undefined;
-  const content = await getDistrictCourseContent(slug);
-  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const { content, courseId: resolvedFromContent } = await resolveContentForHomeworkReview(
+    admin,
+    studentTelegramId,
+    lessonNumber,
+    options,
+  );
   const lesson = findLessonByNumber(content, lessonNumber);
   if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
 
   const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
   const roles = await loadMemberRoles(admin, curatorTelegramId);
+  const resolvedCourseId = options?.courseId ?? resolvedFromContent;
   await assertHomeworkCheckerAssigned(admin, curatorTelegramId, studentTelegramId, {
-    courseId: options?.courseId,
+    courseId: resolvedCourseId,
     allowAdminPreview: hasFullStaffPreview(roles, curatorTelegramId),
   });
   const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
   if (!progress || progress.homework_status !== 'submitted') {
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
-
-  const resolvedCourseId =
-    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
   const reviewerRole = await resolveCourseHomeworkReviewerRole(
     admin,
     curatorTelegramId,
@@ -713,9 +767,8 @@ export async function approveCourseHomeworkByCurator(
   await finalizeDeadlineOnApprove(admin, studentTelegramId, lesson.sanityId);
 
   try {
-    const courseId = resolvedCourseId;
-    if (courseId) {
-      await unlockNextCourseLessonAfterCleared(admin, studentTelegramId, courseId, content);
+    if (resolvedCourseId) {
+      await unlockNextCourseLessonAfterCleared(admin, studentTelegramId, resolvedCourseId, content);
     }
   } catch (error) {
     console.error('[courseHomework] unlock next after approve failed:', error);
@@ -743,21 +796,23 @@ export async function rejectCourseHomeworkByCurator(
   progress: CourseLessonStudentProgress;
   lifeDeduction: HomeworkLifeDeductionResult | null;
 }> {
-  const slug = options?.courseSlug ?? undefined;
-  const content = await getDistrictCourseContent(slug);
-  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  const { content, courseId: resolvedFromContent } = await resolveContentForHomeworkReview(
+    admin,
+    studentTelegramId,
+    lessonNumber,
+    options,
+  );
   const lesson = findLessonByNumber(content, lessonNumber);
   if (!lesson) throw new CourseHomeworkError(`Занятие №${lessonNumber} не найдено.`, 'LESSON_NOT_FOUND');
 
   const { loadMemberRoles, hasFullStaffPreview } = await import('@/lib/bot/roles');
   const roles = await loadMemberRoles(admin, curatorTelegramId);
+  const resolvedCourseId = options?.courseId ?? resolvedFromContent;
   await assertHomeworkCheckerAssigned(admin, curatorTelegramId, studentTelegramId, {
-    courseId: options?.courseId,
+    courseId: resolvedCourseId,
     allowAdminPreview: hasFullStaffPreview(roles, curatorTelegramId),
   });
   // Reject только возобновляет таймер; жизнь за просрочку — вручную.
-  const resolvedCourseId =
-    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
   const reviewerRole = await resolveCourseHomeworkReviewerRole(
     admin,
     curatorTelegramId,
