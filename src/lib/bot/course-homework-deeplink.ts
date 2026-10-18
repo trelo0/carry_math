@@ -5,7 +5,11 @@ const HWB_PREFIX = 'hwb_';
 
 function toBase64Url(value: string): string {
   if (typeof Buffer !== 'undefined') {
-    return Buffer.from(value, 'utf8').toString('base64url');
+    return Buffer.from(value, 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
   }
   const bytes = new TextEncoder().encode(value);
   let binary = '';
@@ -15,11 +19,11 @@ function toBase64Url(value: string): string {
 
 function fromBase64Url(value: string): string | null {
   try {
-    if (typeof Buffer !== 'undefined') {
-      return Buffer.from(value, 'base64url').toString('utf8');
-    }
     const padded = value.replace(/-/g, '+').replace(/_/g, '/');
     const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4));
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(padded + pad, 'base64').toString('utf8');
+    }
     const binary = atob(padded + pad);
     const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
     return new TextDecoder().decode(bytes);

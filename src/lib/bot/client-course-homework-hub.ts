@@ -15,6 +15,8 @@ import { beginCourseHomeworkSubmit } from './studentHomeworkFlow';
 import {
   clientBackButton,
   deliverClientHubScreen,
+  loadClientHubPayload,
+  navStackForCourseHomeworkHub,
   type ClientHubDeliverOptions,
 } from './client-nav';
 import { formatDateTimeShort, formatRemainingMs } from './client-format';
@@ -253,7 +255,6 @@ export async function showClientCourseHomeworkHistory(
               callback_data: courseSlug ? `cl:chw:hub:${courseSlug}` : 'cl:chw:hub',
             },
           ],
-          [clientBackButton()],
         ],
       },
       deliver,
@@ -283,7 +284,7 @@ export async function showClientCourseHomeworkHistory(
       'course-hw-hist-empty',
       '📋 История ДЗ курса\n\nПока нет отправленных работ.',
       {
-        inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }], [clientBackButton()]],
+        inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }]],
       },
       deliver,
     );
@@ -318,7 +319,7 @@ export async function showClientCourseHomeworkHistory(
     courseSlug ? `course-hw-hist:${courseSlug}` : 'course-hw-hist',
     lines.join('\n').trim().slice(0, 3900),
     {
-      inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }], [clientBackButton()]],
+      inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }]],
     },
     deliver,
   );
@@ -392,7 +393,15 @@ export async function handleClientCourseHomeworkCallback(
 
   if (data === 'cl:chw:hub' || data.startsWith('cl:chw:hub:')) {
     const slug = parseCourseHomeworkHubSlug(data);
-    await showClientCourseHomeworkHub(admin, telegramId, chatId, { editAt }, slug);
+    const loaded = await loadClientHubPayload(admin, telegramId);
+    const navStack = navStackForCourseHomeworkHub(loaded?.payload.clientNavStack, slug);
+    await showClientCourseHomeworkHub(
+      admin,
+      telegramId,
+      chatId,
+      { editAt, navStack, hubPayloadExtra: slug ? { activeCourseSlug: slug } : undefined },
+      slug,
+    );
     return true;
   }
   if (data === 'cl:chw:hist' || data.startsWith('cl:chw:hist:')) {

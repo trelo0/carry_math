@@ -235,6 +235,8 @@ export type ClientHubDeliverOptions = {
   editAt?: ClientHubState;
   /** Доп. поля hub payload (slug курса и т.д.). */
   hubPayloadExtra?: Partial<ClientHubPayload>;
+  /** Явный стек «Назад» (вместо append). */
+  navStack?: string[];
 };
 
 export async function deliverClientHubScreen(
@@ -250,7 +252,8 @@ export async function deliverClientHubScreen(
     const ok = await editHubMessage(options.editAt, text, replyMarkup);
     if (ok) {
       const prev = await loadClientHubPayload(admin, telegramId);
-      const stack = appendClientNavStack(prev?.payload.clientNavStack, screenId);
+      const stack =
+        options.navStack ?? appendClientNavStack(prev?.payload.clientNavStack, screenId);
       await saveClientHub(admin, telegramId, options.editAt, screenId, {
         welcomeMessageId: prev?.payload.welcomeMessageId,
         clientNavStack: stack,
@@ -267,7 +270,8 @@ export async function deliverClientHubScreen(
       const ok = await editHubMessage(hub, text, replyMarkup);
       if (ok) {
         const prev = await loadClientHubPayload(admin, telegramId);
-        const stack = appendClientNavStack(prev?.payload.clientNavStack, screenId);
+        const stack =
+          options?.navStack ?? appendClientNavStack(prev?.payload.clientNavStack, screenId);
         await saveClientHub(admin, telegramId, hub, screenId, {
           welcomeMessageId: prev?.payload.welcomeMessageId,
           clientNavStack: stack,
@@ -318,6 +322,25 @@ export function appendClientNavStack(stack: string[] | undefined, screenId: stri
   const base = stack?.length ? [...stack] : ['home'];
   if (base[base.length - 1] === screenId) return base;
   return [...base, screenId];
+}
+
+/** Вернуться на экран ДЗ курса из истории (без лишнего шага «назад в историю»). */
+export function navStackForCourseHomeworkHub(
+  stack: string[] | undefined,
+  courseSlug?: string,
+): string[] {
+  const hubScreen = courseSlug ? `course-hw-hub:${courseSlug}` : 'course-hw-hub';
+  const copy = [...(stack?.length ? stack : ['home'])];
+  while (copy.length > 0 && copy[copy.length - 1]!.startsWith('course-hw-hist')) {
+    copy.pop();
+  }
+  if (copy[copy.length - 1] === hubScreen) return copy;
+  const last = copy[copy.length - 1];
+  if (last?.startsWith('course-hw-hub')) {
+    copy[copy.length - 1] = hubScreen;
+    return copy;
+  }
+  return appendClientNavStack(copy, hubScreen);
 }
 
 /** Новая карточка внизу чата (не трогаем приветствие). */
