@@ -28,6 +28,7 @@ import {
   handleClientCourseHomeworkCallback,
   isClientCourseHomeworkCallback,
   showClientCourseHomeworkHub,
+  showClientHomeworkMenu,
 } from './client-course-homework-hub';
 import { handleClientCourseHubCallback, isClientCourseHubCallback, showClientMyCourseHub } from './client-course-hub';
 import {
@@ -503,8 +504,8 @@ export async function handleClientMessage(
       return true;
     case CLIENT_LABELS.homework: {
       const mode = getClientProductMode(state);
-      if (mode === 'course') {
-        await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      if (mode === 'course' || mode === 'both') {
+        await showClientHomeworkMenu(admin, telegramId, chatId, { forcePush: true });
       } else {
         await showClientLessonHomeworkHub(admin, telegramId, chatId, { forcePush: true });
       }
@@ -531,8 +532,8 @@ export async function handleClientMessage(
         return true;
       }
       {
-        const { openCuratorContactFlow } = await import('./client-curator-contact');
-        await openCuratorContactFlow(admin, telegramId, chatId, { forcePush: true });
+        const { showStudentAppealsRoot } = await import('./client-appeals-hub');
+        await showStudentAppealsRoot(admin, telegramId, chatId, { forcePush: true });
       }
       return true;
     case CLIENT_LABELS.contact:
@@ -602,11 +603,11 @@ export async function handleClientCallback(
     return true;
   }
 
-  const { isClientCuratorContactCallback, handleClientCuratorContactCallback } = await import(
-    './client-curator-contact'
+  const { isClientAppealsCallback, handleClientAppealsCallback } = await import(
+    './client-appeals-hub'
   );
-  if (isClientCuratorContactCallback(data)) {
-    return handleClientCuratorContactCallback(
+  if (isClientAppealsCallback(data)) {
+    return handleClientAppealsCallback(
       admin,
       data,
       chatId,

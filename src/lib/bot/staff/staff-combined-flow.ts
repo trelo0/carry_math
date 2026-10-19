@@ -60,6 +60,8 @@ export async function sendStaffCourseOnlyStart(
   telegramId: number,
   testFooter = '',
 ): Promise<void> {
+  const { clearStateIfAvailable } = await import('@/lib/bot/admin/core');
+  await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   const { STAFF_COURSE_HOME_TEXT } = await import('./staff-course-hub-flow');
   await telegramSend('sendMessage', {
@@ -67,8 +69,6 @@ export async function sendStaffCourseOnlyStart(
     text: STAFF_COURSE_HOME_TEXT + testFooter,
     reply_markup: staffGlobalReplyKeyboard(caps),
   });
-  const { tryAutoEnterSingleCourseWorkspace } = await import('./staff-course-hub-flow');
-  await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
 }
 
 export async function sendCombinedStaffStart(
@@ -77,6 +77,8 @@ export async function sendCombinedStaffStart(
   telegramId: number,
   testFooter = '',
 ): Promise<void> {
+  const { clearStateIfAvailable } = await import('@/lib/bot/admin/core');
+  await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   await telegramSend('sendMessage', {
     chat_id: chatId,

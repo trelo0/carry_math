@@ -143,6 +143,7 @@ export async function listClientInquiryLeads(
   admin: SupabaseClient,
   telegramId: number,
   kinds: InquiryKind[],
+  limit = 30,
 ): Promise<LeadRow[]> {
   const { data, error } = await admin
     .from('leads')
@@ -150,12 +151,55 @@ export async function listClientInquiryLeads(
     .eq('client_telegram_id', telegramId)
     .in('inquiry_kind', kinds)
     .order('created_at', { ascending: false })
-    .limit(30);
+    .limit(limit);
   if (error) {
     if (isInquiryKindColumnError(error)) return [];
     throw error;
   }
   return (data ?? []) as LeadRow[];
+}
+
+const ARCHIVE_INQUIRY_KINDS: InquiryKind[] = ['application', 'student_question', 'guest_question'];
+
+/** Все обращения ученика в leads (включая заявки на обучение) + legacy по comment. */
+export async function listClientLeadsForAppealsArchive(
+  admin: SupabaseClient,
+  telegramId: number,
+  limit = 40,
+): Promise<LeadRow[]> {
+  const byId = new Map<string, LeadRow>();
+
+  const modern = await listClientInquiryLeads(admin, telegramId, ARCHIVE_INQUIRY_KINDS, limit);
+  for (const row of modern) byId.set(row.id, row);
+
+  try {
+    const tag = `telegram_id:${telegramId}`;
+    const { data, error } = await admin
+      .from('leads')
+      .select(LEAD_SELECT_COLUMNS)
+      .ilike('comment', `%${tag}%`)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (!error) {
+      for (const row of (data ?? []) as LeadRow[]) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+      }
+    }
+  } catch {
+    /* optional */
+  }
+
+  return [...byId.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+}
+
+export function leadArchiveKindLabel(row: LeadRow): string {
+  const kind = row.inquiry_kind;
+  if (kind === 'application') return '📚 Заявка';
+  if (kind === 'guest_question') return '🛡 Вопрос (гость)';
+  if (kind === 'student_question') return '🛡 Вопрос админу';
+  const service = (row.service ?? '').toLowerCase();
+  if (service.includes('заявк') || service.includes('курс')) return '📚 Заявка';
+  return '🛡 Обращение';
 }
 
 export async function countOpenQuestionLeads(admin: SupabaseClient): Promise<number> {

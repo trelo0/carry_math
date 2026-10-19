@@ -31,7 +31,10 @@ import {
   CHECK_REJECT_CONFIRM_STEP,
   CHECK_REJECT_FILE_STEP,
 } from '@/lib/bot/staff/staff-steps';
-import { packHomeworkReviewNote } from '@/lib/bot/education/homework-review-note';
+import {
+  isPlaceholderReviewText,
+  packHomeworkReviewNote,
+} from '@/lib/bot/education/homework-review-note';
 import { assertCheckCourseAccess } from './check-access';
 import {
   collectCheckArchive,
@@ -524,18 +527,20 @@ export async function handleCheckHomeworkFamily(
         draftText?: string;
         draftFileRef?: string;
         draftFileKind?: 'photo' | 'voice' | 'document';
+        draftVoiceRef?: string;
       };
       const rawNote = payload.draftText?.trim() || '';
-      const note =
-        rawNote && rawNote !== 'Голосовой комментарий' && rawNote !== 'Комментарий на фото' && rawNote !== 'Комментарий в файле'
-          ? rawNote
-          : undefined;
-      const storedNote = packHomeworkReviewNote(
-        note,
-        payload.draftFileRef
-          ? { kind: payload.draftFileKind ?? 'document', ref: payload.draftFileRef }
-          : null,
-      );
+      const note = isPlaceholderReviewText(rawNote) ? undefined : rawNote;
+      const files: Array<{ kind: 'photo' | 'document' | 'voice'; ref: string }> = [];
+      if (payload.draftFileRef && payload.draftFileKind && payload.draftFileKind !== 'voice') {
+        files.push({ kind: payload.draftFileKind, ref: payload.draftFileRef });
+      } else if (payload.draftFileRef && payload.draftFileKind === 'voice' && !payload.draftVoiceRef) {
+        files.push({ kind: 'voice', ref: payload.draftFileRef });
+      }
+      if (payload.draftVoiceRef) {
+        files.push({ kind: 'voice', ref: payload.draftVoiceRef });
+      }
+      const storedNote = packHomeworkReviewNote(note, files);
       try {
         const { lesson } = await rejectCourseHomeworkByCurator(
           admin,
@@ -549,9 +554,6 @@ export async function handleCheckHomeworkFamily(
           lessonNumber: lesson.lessonNumber,
           title: lesson.title,
           approved: false,
-          note,
-          reviewFileRef: payload.draftFileRef ?? null,
-          reviewFileKind: payload.draftFileKind ?? null,
           sanityLessonId: lesson.sanityId,
         });
         await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
@@ -721,15 +723,34 @@ export async function showRejectDraftConfirm(
     draftText?: string | null;
     draftFileKind?: 'photo' | 'voice' | 'document' | null;
     draftFileRef?: string | null;
+    draftVoiceRef?: string | null;
   },
   origin: CheckHwListOrigin,
 ): Promise<void> {
+  const { sendTelegramFileById } = await import('@/lib/bot/studentHomeworkFlow');
+  if (payload.draftFileRef && payload.draftFileKind && payload.draftFileKind !== 'voice') {
+    await sendTelegramFileById(
+      chatId,
+      payload.draftFileRef.replace(/^tg:/, ''),
+      payload.draftFileKind,
+    );
+  } else if (payload.draftFileRef && payload.draftFileKind === 'voice' && !payload.draftVoiceRef) {
+    await sendTelegramFileById(chatId, payload.draftFileRef.replace(/^tg:/, ''), 'voice');
+  }
+  if (payload.draftVoiceRef) {
+    await sendTelegramFileById(chatId, payload.draftVoiceRef.replace(/^tg:/, ''), 'voice');
+  }
+
   const screen = renderCheckRejectDraftConfirm(
     payload.courseId,
     payload.studentId,
     payload.hwNumber,
     origin,
-    { text: payload.draftText, fileKind: payload.draftFileKind },
+    {
+      text: payload.draftText,
+      fileKind: payload.draftFileKind,
+      voiceAttached: Boolean(payload.draftVoiceRef),
+    },
   );
   const promptId = await sendAdminMessage(chatId, screen.text, screen.keyboard);
   await saveState(
@@ -739,6 +760,7 @@ export async function showRejectDraftConfirm(
     CHECK_REJECT_CONFIRM_STEP as never,
     (await checkDialogPayload(admin, telegramId, {
       ...payload,
+      draftVoiceRef: payload.draftVoiceRef,
       ...originToPayload(origin),
     })) as never,
   );

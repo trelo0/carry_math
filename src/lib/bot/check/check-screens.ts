@@ -527,23 +527,35 @@ export function renderCheckRejectDraftConfirm(
   studentId: string,
   hwNumber: number,
   origin: CheckHwListOrigin,
-  draft: { text?: string | null; fileKind?: 'photo' | 'voice' | 'document' | null },
+  draft: {
+    text?: string | null;
+    fileKind?: 'photo' | 'voice' | 'document' | null;
+    voiceAttached?: boolean;
+  },
 ): { text: string; keyboard: InlineKeyboard } {
-  const kindLabel =
-    draft.fileKind === 'photo'
-      ? 'фото'
-      : draft.fileKind === 'voice'
-        ? 'голосовое'
-        : draft.fileKind === 'document'
-          ? 'файл'
-          : 'нет';
-  const note = draft.text?.trim() ? draft.text.trim() : '—';
+  const lines = ['📄 Черновик пояснения', ''];
+  const raw = draft.text?.trim() ?? '';
+  const placeholder =
+    !raw ||
+    raw === 'Голосовой комментарий' ||
+    raw === 'Комментарий на фото' ||
+    raw === 'Комментарий в файле';
+  if (!placeholder) {
+    lines.push('📝 Текст:', raw, '');
+  }
+  const attach: string[] = [];
+  if (draft.fileKind === 'photo') attach.push('🖼 фото (выше)');
+  if (draft.fileKind === 'document') attach.push('📎 файл (выше)');
+  if (draft.fileKind === 'voice' && !draft.voiceAttached) attach.push('🎤 голосовое (выше)');
+  if (draft.voiceAttached) attach.push('🎤 голосовое (выше)');
+  if (attach.length) {
+    lines.push('Вложения:', ...attach.map((a) => `• ${a}`), '');
+  } else if (placeholder) {
+    lines.push('Без текста и без вложений.', '');
+  }
+  lines.push('Отправить работу на доработку?');
   return {
-    text:
-      '📄 Черновик\n\n' +
-      `Текст: ${note}\n` +
-      `Вложение: ${kindLabel}\n\n` +
-      'Отправить работу на доработку?',
+    text: lines.join('\n'),
     keyboard: {
       inline_keyboard: [
         [{ text: '✅ Подтвердить', callback_data: encodeRejCallback('go', courseId, studentId, hwNumber, origin) }],
@@ -714,21 +726,54 @@ export function renderCheckMessagesInbox(
   }
   if (threads.length === 0) {
     parts.push(mode === 'incoming' ? 'Нет новых сообщений.' : 'Диалогов пока нет.');
+  } else if (mode === 'incoming') {
+    parts.push('Последнее сообщение ученика — выберите, чтобы ответить:');
   } else {
-    parts.push('Выберите диалог:');
+    parts.push('Выберите ученика — откроется вся переписка:');
   }
-  const buttons = threads.map((t) => [
-    {
-      text: `${t.unreadCount > 0 ? '🔴 ' : ''}${t.studentLabel}`.slice(0, 60),
-      callback_data: `k:msg:${courseId}:d:${t.studentTelegramId}`,
-    },
-  ]);
+  const buttons = threads.map((t) => {
+    const preview = t.lastBody.replace(/\s+/g, ' ').trim().slice(0, 28);
+    const prefix = mode === 'incoming' ? '🔴 ' : '';
+    const label = `${prefix}${t.studentLabel}: ${preview || '…'}`.slice(0, 60);
+    const cb =
+      mode === 'incoming'
+        ? `k:msg:${courseId}:in:${t.studentTelegramId}`
+        : `k:msg:${courseId}:d:${t.studentTelegramId}`;
+    return [{ text: label, callback_data: cb }];
+  });
   return {
     text: parts.join('\n'),
     keyboard: {
+      inline_keyboard: [...buttons, [back('⬅️ Назад', `k:msg:${courseId}`)]],
+    },
+  };
+}
+
+export function renderCheckIncomingPreview(
+  courseId: number,
+  courseTitle: string,
+  studentLabel: string,
+  studentTelegramId: number,
+  lastBody: string,
+  lastAt: string,
+): { text: string; keyboard: InlineKeyboard } {
+  const time = new Date(lastAt).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
+  return {
+    text: [
+      '📥 Входящее',
+      `🎓 ${courseTitle}`,
+      '',
+      `👤 ${studentLabel}`,
+      `🕐 ${time}`,
+      '',
+      lastBody.trim() || '(без текста)',
+    ].join('\n'),
+    keyboard: {
       inline_keyboard: [
-        ...buttons,
-        [back('⬅️ Назад', `k:msg:${courseId}`)],
+        [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
+        [{ text: '💬 Посмотреть диалог', callback_data: `k:msg:${courseId}:d:${studentTelegramId}` }],
+        [{ text: '✅ Закрыть', callback_data: `k:msg:${courseId}:in:${studentTelegramId}:ok` }],
+        [back('⬅️ Назад', `k:msg:${courseId}:in`)],
       ],
     },
   };
@@ -748,10 +793,28 @@ export function renderCheckMessageThread(
   } else if (messages.length === 0) {
     parts.push('Сообщений в истории пока нет.', '');
   } else {
+    parts.push('───────────────', '');
     for (const msg of messages) {
-      const who = msg.direction === 'student_to_staff' ? '👤 Ученик' : '🧑‍🏫 Вы';
-      const time = new Date(msg.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
-      parts.push(`${who} · ${time}`, msg.body, '');
+      const inbound = msg.direction === 'student_to_staff';
+      const who = inbound ? '👤 Ученик' : '✅ Проверяющий';
+      const time = new Date(msg.createdAt).toLocaleString('ru-RU', {
+        timeZone: 'Europe/Minsk',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const attach =
+        msg.attachmentRef?.startsWith('tg:') && msg.attachmentKind
+          ? `\n📎 ${msg.attachmentKind === 'voice' ? 'голосовое' : msg.attachmentKind === 'photo' ? 'фото' : 'файл'}`
+          : '';
+      parts.push(
+        inbound ? '┌─ входящее ─' : '┌─ ваш ответ ─',
+        `${who} · ${time}`,
+        `${msg.body.trim() || '(без текста)'}${attach}`,
+        '└─────────────',
+        '',
+      );
     }
   }
   return {
@@ -759,8 +822,8 @@ export function renderCheckMessageThread(
     keyboard: {
       inline_keyboard: [
         [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
-        [back('⬅️ Назад', `k:msg:${courseId}`)],
-        [back('🏠 На главную', `k:home:${courseId}`)],
+        [back('⬅️ К диалогам', `k:msg:${courseId}:dlg`)],
+        [back('⬅️ В сообщения', `k:msg:${courseId}`)],
       ],
     },
   };

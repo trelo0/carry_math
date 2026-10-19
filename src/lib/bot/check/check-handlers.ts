@@ -43,6 +43,7 @@ import {
   renderCheckMessageThread,
   renderCheckMessagesHub,
   renderCheckMessagesInbox,
+  renderCheckIncomingPreview,
   renderCheckStudentCard,
   renderCheckStudentsHub,
   renderCheckStudentsList,
@@ -250,8 +251,58 @@ export async function handleCheckBotCallback(
           studentIds,
         );
         const mode = parts[3] === 'in' ? 'incoming' : 'dialogs';
-        const filtered = mode === 'incoming' ? threads.filter((t) => t.unreadCount > 0) : threads;
+        const filtered =
+          mode === 'incoming'
+            ? threads.filter(
+                (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+              )
+            : threads;
         const screen = renderCheckMessagesInbox(courseId, ctx.title, filtered, storageEnabled, mode);
+        await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
+      if (parts[3] === 'in' && parts[4] && parts[5] === 'ok') {
+        const studentTelegramId = Number(parts[4]);
+        await markCheckThreadRead(admin, telegramId, studentTelegramId, courseId);
+        const { threads, storageEnabled } = await listCheckThreadsForCourse(
+          admin,
+          telegramId,
+          courseId,
+          studentIds,
+        );
+        const filtered = threads.filter(
+          (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+        );
+        const screen = renderCheckMessagesInbox(
+          courseId,
+          ctx.title,
+          filtered,
+          storageEnabled,
+          'incoming',
+        );
+        await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
+      if (parts[3] === 'in' && parts[4] && !parts[5]) {
+        const studentTelegramId = Number(parts[4]);
+        const { threads } = await listCheckThreadsForCourse(
+          admin,
+          telegramId,
+          courseId,
+          studentIds,
+        );
+        const thread = threads.find((t) => t.studentTelegramId === studentTelegramId);
+        const label = thread?.studentLabel ?? (await staffStudentLabel(admin, studentTelegramId));
+        const screen = renderCheckIncomingPreview(
+          courseId,
+          ctx.title,
+          label,
+          studentTelegramId,
+          thread?.lastBody ?? '',
+          thread?.lastAt ?? new Date().toISOString(),
+        );
         await editScreen(message, screen.text, screen.keyboard);
         return true;
       }

@@ -252,17 +252,16 @@ export async function sendCuratorStart(
   telegramId: number,
   testFooter = '',
 ): Promise<void> {
+  const { clearStateIfAvailable } = await import('../admin/core');
+  await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   const { staffGlobalReplyKeyboard } = await import('../staff/staff-menu');
-  const { STAFF_COURSE_HOME_TEXT, tryAutoEnterSingleCourseWorkspace } = await import(
-    '../staff/staff-course-hub-flow'
-  );
+  const { STAFF_COURSE_HOME_TEXT } = await import('../staff/staff-course-hub-flow');
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: STAFF_COURSE_HOME_TEXT + testFooter,
     reply_markup: staffGlobalReplyKeyboard(caps),
   });
-  await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
 }
 
 // ---------------------------------------------------------------------------

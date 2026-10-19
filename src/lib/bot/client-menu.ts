@@ -13,7 +13,7 @@ export const CLIENT_LABELS = {
   myCourse: '🎓 Мой курс',
   homework: '📝 Домашние задания',
   contactTeacher: '💬 Связаться с преподавателем',
-  contactCurator: '💬 Связаться с куратором',
+  contactCurator: '📨 Мои обращения',
   contact: '💬 Связь',
   payments: '💳 Финансы',
   misc: '🆘 Получить помощь',

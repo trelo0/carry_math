@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import {
+  clearStateIfAvailable,
   getState,
   isConversationStateTableError,
   sendAdminMessage,
@@ -160,17 +161,15 @@ export async function sendCheckStart(
   telegramId: number,
   testFooter = '',
 ): Promise<void> {
+  await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   const { staffGlobalReplyKeyboard } = await import('@/lib/bot/staff/staff-menu');
-  const { STAFF_COURSE_HOME_TEXT, tryAutoEnterSingleCourseWorkspace } = await import(
-    '@/lib/bot/staff/staff-course-hub-flow'
-  );
+  const { STAFF_COURSE_HOME_TEXT } = await import('@/lib/bot/staff/staff-course-hub-flow');
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: STAFF_COURSE_HOME_TEXT + testFooter,
     reply_markup: staffGlobalReplyKeyboard(caps),
   });
-  await tryAutoEnterSingleCourseWorkspace(admin, chatId, telegramId);
 }
 
 export async function handleCheckMessage(
@@ -491,6 +490,7 @@ export async function handleCheckAttachment(
     hwNumber?: number;
     draftFileRef?: string;
     draftFileKind?: 'photo' | 'voice' | 'document';
+    draftVoiceRef?: string;
     draftText?: string;
   };
   const courseId = payload.courseId;
@@ -510,6 +510,25 @@ export async function handleCheckAttachment(
     return true;
   }
 
+  if (kind === 'voice' && payload.draftFileRef && payload.draftFileKind !== 'voice') {
+    await showRejectDraftConfirm(
+      admin,
+      telegramId,
+      chatId,
+      {
+        courseId,
+        studentId,
+        hwNumber,
+        draftText: payload.draftText,
+        draftFileRef: payload.draftFileRef,
+        draftFileKind: payload.draftFileKind ?? null,
+        draftVoiceRef: formatTelegramFileRef(fileId),
+      },
+      originFromPayload(state.payload as Record<string, unknown>),
+    );
+    return true;
+  }
+
   await showRejectDraftConfirm(
     admin,
     telegramId,
@@ -520,11 +539,12 @@ export async function handleCheckAttachment(
       hwNumber,
       draftText:
         kind === 'voice'
-          ? (payload.draftText ?? 'Голосовой комментарий')
+          ? payload.draftText
           : payload.draftText ??
             (kind === 'photo' ? 'Комментарий на фото' : 'Комментарий в файле'),
       draftFileKind: kind === 'voice' ? 'voice' : payload.draftFileKind ?? kind,
       draftFileRef: formatTelegramFileRef(fileId),
+      draftVoiceRef: payload.draftVoiceRef,
     },
     originFromPayload(state.payload as Record<string, unknown>),
   );

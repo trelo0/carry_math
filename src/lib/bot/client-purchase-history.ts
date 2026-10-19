@@ -58,12 +58,14 @@ export async function showClientPurchaseHistory(
     return;
   }
 
-  const lines = ['🧾 История', ''];
+  const lines = ['🧾 Мои оплаты', ''];
   for (const row of rows) {
     lines.push(
-      `• ${row.title}`,
-      `${row.amount_byn} BYN · ${statusLabel(row.status)}`,
-      formatDate(row.created_at),
+      '───────────────',
+      `📦 ${row.title}`,
+      `💰 ${row.amount_byn} BYN`,
+      `📌 ${statusLabel(row.status)}`,
+      `🕐 ${formatDate(row.created_at)}`,
       '',
     );
   }

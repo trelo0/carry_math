@@ -407,10 +407,7 @@ export async function notifyStudentHomeworkReviewed(
     sanityLessonId?: string;
   },
 ): Promise<void> {
-  const { unpackHomeworkReviewNote } = await import('./education/homework-review-note');
-  const { homeworkReviewNotifyKeyboard, studentNotifyKeyboard } = await import(
-    './student-push-notify'
-  );
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
 
   const { data } = await admin
     .from('bot_members')
@@ -420,26 +417,20 @@ export async function notifyStudentHomeworkReviewed(
   const chatId = data?.chat_id as number | undefined;
   if (!chatId) return;
 
-  let noteText = params.note?.trim() ?? '';
-  let fileRef = params.reviewFileRef?.trim() ?? null;
-  let fileKind = params.reviewFileKind ?? null;
-  if (noteText.includes('[[file:')) {
-    const unpacked = unpackHomeworkReviewNote(noteText);
-    noteText = unpacked.text.trim();
-    if (!fileRef && unpacked.fileRef) {
-      fileRef = unpacked.fileRef;
-      fileKind = unpacked.fileKind;
-    }
-  }
-
-  const base = params.approved
-    ? `✅ Домашка по занятию №${params.lessonNumber} «${params.title}» одобрена.`
-    : `❌ Домашка по занятию №${params.lessonNumber} «${params.title}» отправлена на доработку.`;
-  const text = noteText ? `${base}\n\nКомментарий:\n${noteText}` : base;
+  const text = params.approved
+    ? `✅ ДЗ №${params.lessonNumber} «${params.title}» одобрено.`
+    : `🔄 Куратор отправил ДЗ №${params.lessonNumber} «${params.title}» на доработку.\n\nНажмите «Посмотреть пояснение».`;
 
   const replyMarkup =
     !params.approved && params.sanityLessonId
-      ? homeworkReviewNotifyKeyboard(params.sanityLessonId)
+      ? studentNotifyKeyboard([
+          [
+            {
+              text: 'Посмотреть пояснение',
+              callback_data: `cl:chw:rev:${params.sanityLessonId}`,
+            },
+          ],
+        ])
       : studentNotifyKeyboard();
 
   await telegramSend('sendMessage', {
@@ -447,20 +438,6 @@ export async function notifyStudentHomeworkReviewed(
     text,
     reply_markup: replyMarkup,
   });
-
-  const ref = fileRef;
-  if (!ref) return;
-  if (ref.startsWith('tg:')) {
-    const sent = await sendTelegramFileById(chatId, ref.slice(3), fileKind);
-    if (!sent.ok) {
-      await telegramSend('sendMessage', {
-        chat_id: chatId,
-        text: sent.description ?? 'Не удалось отправить файл с правками.',
-      });
-    }
-  } else if (ref.startsWith('http')) {
-    await telegramSend('sendMessage', { chat_id: chatId, text: `🔗 Файл с правками: ${ref}` });
-  }
 }
 
 export async function sendTelegramFileById(

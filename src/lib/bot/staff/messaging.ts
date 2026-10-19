@@ -25,6 +25,7 @@ export type StaffThreadSummary = {
   unreadCount: number;
   lastBody: string;
   lastAt: string;
+  lastDirection?: 'student_to_staff' | 'staff_to_student';
 };
 
 function isMessagesTableError(error: unknown): boolean {
@@ -175,17 +176,23 @@ export async function deliverStaffToStudent(
     params.staffRole === 'teacher'
       ? 'преподавателя'
       : params.staffRole === 'check'
-        ? 'проверяющего'
+        ? 'куратора курса'
         : 'куратора';
-  const header = `💬 Сообщение от ${roleLabel} District`;
   const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
-  if (params.body.trim()) {
-    await telegramSend('sendMessage', {
-      chat_id: chatId,
-      text: `${header}\n\n${params.body.trim()}`,
-      reply_markup: studentNotifyKeyboard(),
-    });
-  }
+  const hasAttach = Boolean(params.attachmentRef?.startsWith('tg:') && params.attachmentKind);
+  const preview = params.body.trim();
+  const text = hasAttach && !preview
+    ? `💬 Новое сообщение от ${roleLabel}.`
+    : preview
+      ? `💬 Сообщение от ${roleLabel}:\n\n${preview}`
+      : `💬 Новое сообщение от ${roleLabel}.`;
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text,
+    reply_markup: studentNotifyKeyboard([
+      [{ text: 'Просмотреть', callback_data: 'cl:apl:in' }],
+    ]),
+  });
 
   if (params.attachmentRef?.startsWith('tg:') && params.attachmentKind) {
     const fileId = params.attachmentRef.slice(3);
@@ -456,16 +463,53 @@ export async function listCheckThreadsForCourse(
       .select('student_telegram_id, body, created_at, direction, staff_read_at, course_id')
       .eq('staff_telegram_id', checkTelegramId)
       .eq('staff_role', 'check')
+      .eq('course_id', courseId)
       .order('created_at', { ascending: false })
       .limit(500);
     const { data, error } = await q;
+    if (error && isCourseIdColumnError(error)) {
+      const fallback = await admin
+        .from('staff_student_messages')
+        .select('student_telegram_id, body, created_at, direction, staff_read_at, course_id')
+        .eq('staff_telegram_id', checkTelegramId)
+        .eq('staff_role', 'check')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (fallback.error) throw fallback.error;
+      const rows = (fallback.data ?? []).filter((row) => allowed.has(row.student_telegram_id as number));
+      const byStudent = new Map<number, StaffThreadSummary>();
+      for (const row of rows) {
+        const studentId = row.student_telegram_id as number;
+        if (byStudent.has(studentId)) continue;
+        const unread = rows.filter(
+          (r) =>
+            r.student_telegram_id === studentId &&
+            r.direction === 'student_to_staff' &&
+            !r.staff_read_at,
+        ).length;
+        byStudent.set(studentId, {
+          studentTelegramId: studentId,
+          studentLabel: '',
+          unreadCount: unread,
+          lastBody: String(row.body ?? ''),
+          lastAt: row.created_at as string,
+          lastDirection: row.direction as 'student_to_staff' | 'staff_to_student',
+        });
+        if (byStudent.size >= limit) break;
+      }
+      const threads = [...byStudent.values()];
+      for (const thread of threads) {
+        thread.studentLabel = await staffStudentLabel(admin, thread.studentTelegramId);
+      }
+      threads.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+      return { threads, storageEnabled: true };
+    }
     if (error) throw error;
 
     const rows = (data ?? []).filter((row) => {
       const tg = row.student_telegram_id as number;
       if (!allowed.has(tg)) return false;
       const cid = row.course_id as number | null | undefined;
-      if (cid == null) return true;
       return cid === courseId;
     });
 
@@ -485,6 +529,7 @@ export async function listCheckThreadsForCourse(
         unreadCount: unread,
         lastBody: String(row.body ?? ''),
         lastAt: row.created_at as string,
+        lastDirection: row.direction as 'student_to_staff' | 'staff_to_student',
       });
       if (byStudent.size >= limit) break;
     }
@@ -518,7 +563,7 @@ export async function loadCheckThreadMessages(
       .order('created_at', { ascending: true })
       .limit(limit);
     if (courseId != null) {
-      q = q.or(`course_id.eq.${courseId},course_id.is.null`);
+      q = q.eq('course_id', courseId);
     }
     const { data, error } = await q;
     if (error) {
@@ -563,7 +608,7 @@ export async function markCheckThreadRead(
       .eq('direction', 'student_to_staff')
       .is('staff_read_at', null);
     if (courseId != null) {
-      q = q.or(`course_id.eq.${courseId},course_id.is.null`);
+      q = q.eq('course_id', courseId);
     }
     await q;
   } catch (error) {
@@ -637,4 +682,103 @@ function summarizeStudentThreads(
   }
   const threads = [...byStaff.values()].sort((a, b) => b.lastAt.localeCompare(a.lastAt));
   return { threads, storageEnabled: true };
+}
+
+export async function listStudentTeacherStaffIds(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+): Promise<number[]> {
+  try {
+    const { data, error } = await admin
+      .from('staff_student_messages')
+      .select('staff_telegram_id')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('staff_role', 'teacher')
+      .limit(200);
+    if (error) throw error;
+    return [...new Set((data ?? []).map((r) => r.staff_telegram_id as number))];
+  } catch {
+    const teacher = await import('@/lib/bot/education/assignments').then((m) =>
+      m.getStudentTeacher(admin, studentTelegramId),
+    );
+    return teacher?.telegramId ? [teacher.telegramId] : [];
+  }
+}
+
+/** История переписки ученика со staff по курсу (check + curator). */
+export async function loadStudentCourseStaffMessageHistory(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  courseId: number,
+  limit = 50,
+): Promise<{ messages: StaffMessageRow[]; storageEnabled: boolean }> {
+  try {
+    const { data, error } = await admin
+      .from('staff_student_messages')
+      .select('*')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('course_id', courseId)
+      .in('staff_role', ['check', 'curator'])
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (error && isCourseIdColumnError(error)) {
+      const fallback = await admin
+        .from('staff_student_messages')
+        .select('*')
+        .eq('student_telegram_id', studentTelegramId)
+        .in('staff_role', ['check', 'curator'])
+        .order('created_at', { ascending: true })
+        .limit(limit);
+      if (fallback.error) throw fallback.error;
+      return {
+        messages: (fallback.data ?? []).map((r) => mapRow(r as Record<string, unknown>)),
+        storageEnabled: true,
+      };
+    }
+    if (error) throw error;
+    return {
+      messages: (data ?? []).map((r) => mapRow(r as Record<string, unknown>)),
+      storageEnabled: true,
+    };
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { messages: [], storageEnabled: false };
+  }
+}
+
+export async function loadStudentStaffMessageHistory(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  opts: {
+    staffRole: StaffMessageRole;
+    courseId?: number;
+    staffTelegramId?: number;
+    limit?: number;
+  },
+): Promise<{ messages: StaffMessageRow[]; storageEnabled: boolean }> {
+  const limit = opts.limit ?? 40;
+  try {
+    let q = admin
+      .from('staff_student_messages')
+      .select('*')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('staff_role', opts.staffRole)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (opts.staffTelegramId != null) {
+      q = q.eq('staff_telegram_id', opts.staffTelegramId);
+    }
+    if (opts.courseId != null) {
+      q = q.eq('course_id', opts.courseId);
+    }
+    const { data, error } = await q;
+    if (error) throw error;
+    return {
+      messages: (data ?? []).map((r) => mapRow(r as Record<string, unknown>)),
+      storageEnabled: true,
+    };
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { messages: [], storageEnabled: false };
+  }
 }

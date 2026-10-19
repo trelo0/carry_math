@@ -389,21 +389,23 @@ export async function showClientPackageMenu(
     return;
   }
 
+  const coursePkgs = packages.filter((p) => p.product === 'course');
+  const lessonPkgs = packages.filter((p) => p.product !== 'course');
   const lines = ['📦 Остаток пакетов', ''];
-  for (const pkg of packages) {
-    const kind =
-      pkg.product === 'course'
-        ? '🎓'
-        : pkg.product === 'individual'
-          ? '👤'
-          : '👥';
-    const statusLabel =
-      pkg.status === 'active' ? 'активен' : pkg.status === 'completed' ? 'завершён' : pkg.status;
-    lines.push(
-      `${kind} ${pkg.title}`,
-      `   ${pkg.remaining}/${pkg.total} занятий · ${statusLabel}`,
-      '',
-    );
+  if (coursePkgs.length) {
+    lines.push('🎓 Курсы:', '');
+    for (const pkg of coursePkgs) {
+      lines.push(`• ${pkg.title}`, `  Остаток: ${pkg.remaining} из ${pkg.total}`, '');
+    }
+  }
+  lines.push('👨‍🏫 Занятия с преподавателем:', '');
+  if (lessonPkgs.length === 0) {
+    lines.push('• Нет активного пакета (индивидуальные / групповые)', '');
+  } else {
+    for (const pkg of lessonPkgs) {
+      const kind = pkg.product === 'individual' ? '👤' : '👥';
+      lines.push(`${kind} ${pkg.title}`, `  Остаток: ${pkg.remaining} из ${pkg.total}`, '');
+    }
   }
 
   await renderHub(admin, telegramId, chatId, undefined, 'package-list', lines.join('\n').trim(), {

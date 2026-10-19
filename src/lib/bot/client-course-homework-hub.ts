@@ -12,7 +12,10 @@ import { deadlineUiState } from '@/lib/bot/education/homework-deadline';
 import type { CourseLessonStudentProgress } from '@/lib/bot/education/course-progress';
 import { listStudentPurchasedVisibleCourseContexts } from '@/lib/bot/education/student-course-context';
 import { beginCourseHomeworkSubmit, sendTelegramFileById } from './studentHomeworkFlow';
-import { unpackHomeworkReviewNote } from '@/lib/bot/education/homework-review-note';
+import {
+  isPlaceholderReviewText,
+  unpackHomeworkReviewParts,
+} from '@/lib/bot/education/homework-review-note';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
 import {
   clientBackButton,
@@ -78,9 +81,9 @@ function currentHwBlock(
     case 'revision':
       return [
         head,
-        'Статус: нужна доработка',
-        remaining != null ? `Осталось времени: ${formatRemainingMs(remaining)}` : null,
-        progress?.review_note?.trim() ? `Комментарий: ${progress.review_note.trim()}` : null,
+        '✏️ Статус: на доработке',
+        remaining != null ? `⏱ Осталось: ${formatRemainingMs(remaining)}` : null,
+        'Откройте «Посмотреть пояснение» для комментария проверяющего.',
       ]
         .filter(Boolean)
         .join('\n');
@@ -119,6 +122,47 @@ function filterTargetsBySlug(targets: SubmitTargetLesson[], courseSlug?: string)
   return targets.filter((t) => t.courseSlug === courseSlug);
 }
 
+/** Корень раздела ДЗ: выбор курса и/или занятий с преподавателем. */
+export async function showClientHomeworkMenu(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  deliver?: ClientHubDeliverOptions,
+): Promise<void> {
+  const state = await resolveClientState(admin, telegramId);
+  const courses = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  const hasLessons = state.hasActiveLessonProduct;
+
+  if (courses.length === 1 && !hasLessons) {
+    await showClientCourseHomeworkHub(admin, telegramId, chatId, deliver, courses[0]!.slug);
+    return;
+  }
+
+  const lines = ['📝 Домашние задания', '', 'Выберите раздел:'];
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (const c of courses) {
+    keyboard.push([
+      { text: `🎓 ${c.title.slice(0, 52)}`, callback_data: `cl:chw:hub:${c.slug}` },
+    ]);
+  }
+  if (hasLessons) {
+    keyboard.push([
+      { text: '👨‍🏫 ДЗ по занятиям с преподавателем', callback_data: 'cl:chw:lesson' },
+    ]);
+  }
+  keyboard.push([clientBackButton()]);
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    'course-hw-root',
+    lines.join('\n'),
+    { inline_keyboard: keyboard },
+    deliver,
+  );
+}
+
 export async function showClientCourseHomeworkHub(
   admin: SupabaseClient,
   telegramId: number,
@@ -136,8 +180,14 @@ export async function showClientCourseHomeworkHub(
     return;
   }
 
+  const purchased = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+  if (!courseSlug && purchased.length > 1) {
+    await showClientHomeworkMenu(admin, telegramId, chatId, deliver);
+    return;
+  }
+
   const allTargets = await listSubmitTargetLessons(admin, telegramId);
-  const targets = filterTargetsBySlug(allTargets, courseSlug);
+  const targets = filterTargetsBySlug(allTargets, courseSlug ?? purchased[0]?.slug);
 
   let courseTitle: string | undefined;
   if (courseSlug) {
@@ -487,7 +537,7 @@ export async function showClientCourseHomeworkRevision(
     return true;
   }
 
-  const unpacked = unpackHomeworkReviewNote(progress?.review_note as string | null);
+  const { files, text: reviewText } = unpackHomeworkReviewParts(progress?.review_note as string | null);
   const remaining =
     typeof progress?.homework_remaining_ms === 'number'
       ? progress.homework_remaining_ms
@@ -496,16 +546,40 @@ export async function showClientCourseHomeworkRevision(
         : null;
 
   const courseTitle = resolved.content.title?.trim();
-  const lines = [
+  const courseSlug = resolved.slug;
+  const header = [
     '📄 Пояснение к доработке',
     '',
     courseTitle ? `📚 ${courseTitle}` : null,
     `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
-    remaining != null ? `Осталось: ${formatRemainingMs(remaining)}` : null,
-    unpacked.text.trim() ? `Комментарий:\n${unpacked.text.trim()}` : 'Комментарий без текста.',
-  ].filter((x): x is string => x != null);
+    remaining != null ? `⏱ Осталось: ${formatRemainingMs(remaining)}` : null,
+  ]
+    .filter((x): x is string => x != null)
+    .join('\n');
 
-  const courseSlug = resolved.slug;
+  await telegramSend('sendMessage', { chat_id: chatId, text: header });
+
+  for (const file of files) {
+    if (file.kind === 'voice') continue;
+    if (file.ref.startsWith('tg:')) {
+      await sendTelegramFileById(chatId, file.ref.slice(3), file.kind);
+    }
+  }
+
+  if (!isPlaceholderReviewText(reviewText)) {
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: `💬 Комментарий:\n${reviewText.trim()}`,
+    });
+  }
+
+  for (const file of files) {
+    if (file.kind !== 'voice') continue;
+    if (file.ref.startsWith('tg:')) {
+      await sendTelegramFileById(chatId, file.ref.slice(3), 'voice');
+    }
+  }
+
   const keyboard = {
     inline_keyboard: [
       [{ text: '❓ Задать вопрос по ДЗ', callback_data: `cl:chw:ask:${sanityLessonId}` }],
@@ -519,14 +593,10 @@ export async function showClientCourseHomeworkRevision(
     telegramId,
     chatId,
     `course-hw-rev:${sanityLessonId}`,
-    lines.join('\n').trim().slice(0, 3900),
+    'Выберите действие:',
     keyboard,
-    { ...deliver, hubPayloadExtra: { activeCourseSlug: courseSlug } },
+    { forcePush: true, hubPayloadExtra: { activeCourseSlug: courseSlug } },
   );
-
-  if (unpacked.fileRef?.startsWith('tg:')) {
-    await sendTelegramFileById(chatId, unpacked.fileRef.slice(3), unpacked.fileKind);
-  }
 
   return true;
 }
@@ -618,6 +688,11 @@ export async function handleClientCourseHomeworkCallback(
   if (data === 'cl:chw:submit' || data.startsWith('cl:chw:submit:')) {
     const slug = data.startsWith('cl:chw:submit:') ? data.slice('cl:chw:submit:'.length) : undefined;
     await beginClientCourseHomeworkFromHub(admin, telegramId, chatId, slug || undefined);
+    return true;
+  }
+  if (data === 'cl:chw:lesson') {
+    const { showClientLessonHomeworkHub } = await import('./client-lesson-homework-flow');
+    await showClientLessonHomeworkHub(admin, telegramId, chatId, { editAt, forcePush: true });
     return true;
   }
   if (data.startsWith('cl:chw:go:')) {

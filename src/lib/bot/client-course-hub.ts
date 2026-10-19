@@ -224,10 +224,13 @@ export async function showClientMyCourseHub(
     const latestSubmitted = [...progressBySanity.values()]
       .filter((r) => r.homework_status === 'submitted' || r.homework_status === 'approved')
       .sort((a, b) => String(b.sanity_lesson_id).localeCompare(String(a.sanity_lesson_id)))[0];
-    if (latestSubmitted?.homework_status === 'submitted') {
-      hwLine = '⏳ Последнее отправленное ДЗ ожидает проверки';
+    const rejected = [...progressBySanity.values()].find((r) => r.homework_status === 'rejected');
+    if (rejected) {
+      hwLine = '✏️ Есть ДЗ на доработке — откройте раздел «Домашние задания»';
+    } else if (latestSubmitted?.homework_status === 'submitted') {
+      hwLine = '⏳ ДЗ на проверке';
     } else if (latestSubmitted?.homework_status === 'approved') {
-      hwLine = '✅ Последнее ДЗ принято — можно смотреть следующий урок';
+      hwLine = '✅ Последнее ДЗ принято';
     }
   }
 
@@ -267,18 +270,14 @@ export async function showClientMyCourseHub(
     `/cabinet?section=course&course=${encodeURIComponent(slug)}`,
   ).catch(() => null);
 
-  const rows: Array<Array<Record<string, string>>> = [
-    [{ text: '📝 Домашние задания курса', callback_data: `cl:chw:hub:${slug}` }],
-  ];
+  const rows: Array<Array<Record<string, string>>> = [];
   if (purchased.length > 1) {
     rows.push([{ text: '◀️ К списку курсов', callback_data: 'cl:course:pick' }]);
   }
   if (cabinetUrl) {
     rows.push([{ text: '🌐 Открыть кабинет курса', url: cabinetUrl }]);
   }
-  if (getClientProductMode(state) !== 'both') {
-    rows.push([{ text: '💬 Связаться с куратором', callback_data: `cl:course:ask:${slug}` }]);
-  }
+  rows.push([{ text: '💬 Связаться с куратором', callback_data: `cl:course:ask:${slug}` }]);
   if (purchased.length <= 1) {
     rows.push([{ text: '🏠 Главное меню', callback_data: 'cl:home' }]);
   }
