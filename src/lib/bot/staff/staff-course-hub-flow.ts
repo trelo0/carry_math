@@ -9,6 +9,7 @@ import {
   renderMyCourseListScreen,
   type StaffCourseAssignmentRow,
 } from './staff-my-course';
+import { groupStaffCourseRows } from '@/lib/staff/course-assignment-ui';
 import {
   enterStaffCourseWorkspace,
   exitStaffCourseWorkspace,
@@ -54,8 +55,13 @@ export async function tryAutoEnterSingleCourseWorkspace(
     return false;
   }
   const rows = await loadStaffMyCourseRows(admin, telegramId);
-  if (rows.length !== 1) return false;
-  await enterStaffCourseWorkspaceFromRow(admin, telegramId, chatId, rows[0]!);
+  const groups = groupStaffCourseRows(rows);
+  if (groups.length !== 1) return false;
+  const group = groups[0]!;
+  if (group.roles.length !== 1) return false;
+  const row = rows.find((r) => r.courseId === group.courseId && r.role === group.roles[0]);
+  if (!row) return false;
+  await enterStaffCourseWorkspaceFromRow(admin, telegramId, chatId, row);
   return true;
 }
 

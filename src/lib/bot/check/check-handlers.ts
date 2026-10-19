@@ -237,27 +237,10 @@ export async function handleCheckBotCallback(
 
       if (parts[3] === undefined) {
         const { threads } = await listCheckThreadsForCourse(admin, telegramId, courseId, studentIds);
-        const incoming = threads.filter((t) => t.unreadCount > 0).length;
+        const incoming = threads.filter(
+          (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+        ).length;
         const screen = renderCheckMessagesHub(courseId, ctx.title, incoming);
-        await editScreen(message, screen.text, screen.keyboard);
-        return true;
-      }
-
-      if (parts[3] === 'in' || parts[3] === 'dlg') {
-        const { threads, storageEnabled } = await listCheckThreadsForCourse(
-          admin,
-          telegramId,
-          courseId,
-          studentIds,
-        );
-        const mode = parts[3] === 'in' ? 'incoming' : 'dialogs';
-        const filtered =
-          mode === 'incoming'
-            ? threads.filter(
-                (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
-              )
-            : threads;
-        const screen = renderCheckMessagesInbox(courseId, ctx.title, filtered, storageEnabled, mode);
         await editScreen(message, screen.text, screen.keyboard);
         return true;
       }
@@ -325,6 +308,25 @@ export async function handleCheckBotCallback(
           storageEnabled,
           studentTelegramId,
         );
+        await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
+      if ((parts[3] === 'in' || parts[3] === 'dlg') && !parts[4]) {
+        const { threads, storageEnabled } = await listCheckThreadsForCourse(
+          admin,
+          telegramId,
+          courseId,
+          studentIds,
+        );
+        const mode = parts[3] === 'in' ? 'incoming' : 'dialogs';
+        const filtered =
+          mode === 'incoming'
+            ? threads.filter(
+                (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+              )
+            : threads;
+        const screen = renderCheckMessagesInbox(courseId, ctx.title, filtered, storageEnabled, mode);
         await editScreen(message, screen.text, screen.keyboard);
         return true;
       }

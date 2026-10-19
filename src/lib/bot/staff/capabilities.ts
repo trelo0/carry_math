@@ -67,7 +67,11 @@ export async function loadStaffCapabilities(
   const canCourseManagementBot =
     fullPreview ||
     (hasCourseStaffAssignment &&
-      (primaryRole === 'staff' || primaryRole === 'admin' || hasStaffExtra));
+      (primaryRole === 'staff' ||
+        primaryRole === 'admin' ||
+        primaryRole === 'curator' ||
+        primaryRole === 'check' ||
+        hasStaffExtra));
 
   const emptyStaff: StaffCapabilities = {
     telegramId,
@@ -127,9 +131,12 @@ export async function loadStaffCapabilities(
   if (effectiveRole === 'curator' || effectiveRole === 'check') {
     return {
       ...emptyStaff,
-      canCuratorBot: effectiveRole === 'curator' ? hasCuratorAssignment || fullPreview : canCuratorBot,
-      canCourseStaffBot,
-      canCourseManagementBot,
+      canCuratorBot: hasCuratorAssignment || fullPreview,
+      canCourseStaffBot: hasCourseStaffAssignment || fullPreview,
+      canCourseManagementBot:
+        fullPreview ||
+        hasCourseStaffAssignment ||
+        (hasStaffExtra && hasCourseStaffAssignment),
     };
   }
 

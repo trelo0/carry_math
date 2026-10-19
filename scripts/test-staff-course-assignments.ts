@@ -81,9 +81,22 @@ assert(
       canTeacherBot: false,
       canCuratorBot: false,
       canCourseStaffBot: true,
+      canCourseManagementBot: true,
     }),
   ) === 'course_staff_only',
   'check-only staff mode',
+);
+
+assert(
+  resolveStaffBotMode(
+    caps({
+      canTeacherBot: false,
+      canCuratorBot: true,
+      canCourseStaffBot: true,
+      canCourseManagementBot: true,
+    }),
+  ) === 'course_staff_only',
+  'curator+check assignments → course_staff_only',
 );
 
 console.log('test-staff-course-assignments: ok');

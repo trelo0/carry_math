@@ -1151,7 +1151,12 @@ export async function POST(request: Request) {
       update.message.from
     ) {
       const sender = await getMember(admin, update.message.from.id);
-      if (sender?.role !== 'admin' && !isAdminEnv(update.message.from.id)) {
+      const staffSkipModeration = new Set(['staff', 'teacher', 'curator', 'check', 'admin']);
+      const moderateText =
+        sender?.role !== 'admin' &&
+        !isAdminEnv(update.message.from.id) &&
+        !staffSkipModeration.has(String(sender?.role ?? 'guest'));
+      if (moderateText) {
         const analysis = await analyzeUserMessage(admin, {
           telegramId: update.message.from.id,
           chatId: update.message.chat.id,

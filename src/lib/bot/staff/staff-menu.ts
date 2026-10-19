@@ -64,19 +64,10 @@ export function resolveStaffBotMode(caps: StaffCapabilities): StaffBotMode {
   if (caps.canTeacherBot) {
     return 'teacher_only';
   }
-  if (caps.canCuratorBot && caps.canCourseManagementBot) {
+  if (caps.canCuratorBot || caps.canCourseStaffBot || caps.canCourseManagementBot) {
     return 'course_staff_only';
-  }
-  if (caps.canCourseStaffBot && !caps.canCuratorBot) {
-    return 'check_only';
-  }
-  if (caps.canCuratorBot) {
-    return 'curator_only';
   }
   if (caps.effectiveRole === 'staff' && caps.canCourseManagementBot) {
-    return 'course_staff_only';
-  }
-  if (caps.canCourseManagementBot) {
     return 'course_staff_only';
   }
   return null;

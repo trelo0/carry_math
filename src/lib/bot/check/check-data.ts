@@ -102,8 +102,26 @@ export async function loadCheckHomeStats(
     listCheckThreadsForCourse(admin, checkTelegramId, courseId, studentIds),
     loadCheckHomeworkStudents(admin, checkTelegramId, courseId),
   ]);
+  const unreadMessages = threads.filter(
+    (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+  ).length;
   return {
-    unreadMessages: threads.reduce((sum, t) => sum + t.unreadCount, 0),
+    unreadMessages,
     pendingHomework: collectCheckPending(students).length,
   };
+}
+
+export async function loadHomeworkReviewNote(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  sanityLessonId: string,
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from('course_lesson_student_progress')
+    .select('review_note')
+    .eq('telegram_id', studentTelegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (error) return null;
+  return (data?.review_note as string | null) ?? null;
 }

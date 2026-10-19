@@ -263,6 +263,7 @@ export async function handleCheckHomeworkFamily(
     if (
       (parts[3] === 'i' ||
         parts[3] === 'v' ||
+        parts[3] === 'vr' ||
         parts[3] === 'vd' ||
         parts[3] === 'ok' ||
         parts[3] === 'rej' ||
@@ -316,8 +317,44 @@ export async function handleCheckHomeworkFamily(
             error instanceof Error ? error.message : 'Не удалось открыть файл работы.',
           );
         }
-        const screen = renderCheckVerdict(courseId, student, homework, origin);
-        await sendAdminMessage(chatId, screen.text, screen.keyboard);
+        if (origin.mode === 'archive') {
+          await sendAdminMessage(
+            chatId,
+            '👀 Файлы работы отправлены выше (если были приложены).',
+            {
+              inline_keyboard: [
+                [
+                  {
+                    text: '⬅️ К карточке ДЗ',
+                    callback_data: encodeHwItemCallback('i', courseId, student.id, hwNum, origin),
+                  },
+                ],
+              ],
+            },
+          );
+        } else {
+          const screen = renderCheckVerdict(courseId, student, homework, origin);
+          await sendAdminMessage(chatId, screen.text, screen.keyboard);
+        }
+        return true;
+      }
+
+      if (parts[3] === 'vr') {
+        const { loadHomeworkReviewNote } = await import('./check-data');
+        const { renderCheckArchiveVerdictView } = await import('./check-screens');
+        const reviewNote = await loadHomeworkReviewNote(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+        );
+        const screen = renderCheckArchiveVerdictView(
+          courseId,
+          student,
+          homework,
+          origin,
+          reviewNote,
+        );
+        await editScreen(message, screen.text, screen.keyboard);
         return true;
       }
 

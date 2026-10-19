@@ -83,7 +83,7 @@ function currentHwBlock(
         head,
         '✏️ Статус: на доработке',
         remaining != null ? `⏱ Осталось: ${formatRemainingMs(remaining)}` : null,
-        'Откройте «Посмотреть пояснение» для комментария проверяющего.',
+        'Откройте «Посмотреть пояснение» для просмотра комментария проверяющего.',
       ]
         .filter(Boolean)
         .join('\n');
@@ -482,10 +482,7 @@ export async function showClientCourseHomeworkLessonStatus(
       { text: '📄 Посмотреть пояснение', callback_data: `cl:chw:rev:${sanityLessonId}` },
     ]);
   }
-  keyboard.push(
-    [{ text: '📋 Архив ДЗ', callback_data: histCb }],
-    [{ text: '◀️ К ДЗ', callback_data: hubCb }],
-  );
+  keyboard.push([{ text: '◀️ К ДЗ', callback_data: hubCb }]);
 
   await deliverClientHubScreen(
     admin,

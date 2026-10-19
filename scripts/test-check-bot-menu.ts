@@ -20,7 +20,7 @@ const checkOnlyCaps: StaffCapabilities = {
   canCourseStaffBot: true,
 };
 
-assert(resolveStaffBotMode(checkOnlyCaps) === 'check_only', 'staff+check assignment → check_only');
+assert(resolveStaffBotMode(checkOnlyCaps) === 'course_staff_only', 'staff+check assignment → course_staff_only');
 
 const combined: StaffCapabilities = {
   ...checkOnlyCaps,

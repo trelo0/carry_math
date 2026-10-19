@@ -5,13 +5,11 @@ import {
   deliverClientHubScreen,
   type ClientHubDeliverOptions,
 } from './client-nav';
-import { buildClientReplyKeyboard } from './client-menu';
-import { resolveClientState } from './client-state';
 import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
 import { formatDateTimeShort } from './client-format';
 import { beginStudentMentorQuestion } from './studentMentorFlow';
 import { beginStudentSupport } from './studentSupportFlow';
-import { listPurchaseRequestsForTelegram, type PurchaseRequestRow } from './purchase-requests';
+import { listPurchaseRequestsForTelegram } from './purchase-requests';
 import {
   listStudentCourseStaffThreads,
   loadStudentCourseStaffMessageHistory,
@@ -204,29 +202,14 @@ async function showArchiveCoursePick(
   );
 }
 
-function purchaseRequestArchiveLabel(row: PurchaseRequestRow): string {
-  const st =
-    row.status === 'approved'
-      ? '✅'
-      : row.status === 'rejected'
-        ? '❌'
-        : row.status === 'processing'
-          ? '🟡'
-          : '🔵';
-  return `${st} ${row.title}`.slice(0, 58);
-}
-
 async function showArchiveAdminList(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const [leads, purchases] = await Promise.all([
-    listClientLeadsForAppealsArchive(admin, telegramId),
-    listPurchaseRequestsForTelegram(admin, telegramId, 20),
-  ]);
-  if (leads.length === 0 && purchases.length === 0) {
+  const leads = await listClientLeadsForAppealsArchive(admin, telegramId);
+  if (leads.length === 0) {
     await deliverClientHubScreen(
       admin,
       telegramId,
@@ -249,21 +232,13 @@ async function showArchiveAdminList(
       },
     ]);
   }
-  for (const p of purchases.slice(0, 10)) {
-    keyboard.push([
-      {
-        text: purchaseRequestArchiveLabel(p),
-        callback_data: `cl:apl:pay:${p.id}`,
-      },
-    ]);
-  }
   keyboard.push([{ text: '◀️ Назад', callback_data: 'cl:apl:arch' }]);
   await deliverClientHubScreen(
     admin,
     telegramId,
     chatId,
     'appeals-arch-admin-list',
-    '🛡 Архив · администратор\n\nЗаявки на обучение, вопросы и заявки на оплату:',
+    '🛡 Архив · администратор\n\nЗаявки и переписка с администрацией:',
     { inline_keyboard: keyboard },
     deliver,
   );
@@ -320,7 +295,7 @@ async function showArchiveTeacherPick(
       telegramId,
       chatId,
       'appeals-arch-teacher-empty',
-      '👨‍🏫 Архив · преподаватель\n\nПереписки пока нет.',
+      '👨‍🏫 Архив · преподаватель\n\nВопросов преподавателям пока нет.',
       { inline_keyboard: [[{ text: '◀️ Назад', callback_data: 'cl:apl:arch' }]] },
       deliver,
     );
@@ -419,15 +394,7 @@ async function showArchiveCourseThreadList(
     `appeals-arch-course-${courseId}`,
     lines.join('\n').trim().slice(0, 3900),
     {
-      inline_keyboard: [
-        [
-          {
-            text: '✉️ Написать по курсу',
-            callback_data: `cl:apl:write:course:${courseId}`,
-          },
-        ],
-        [{ text: '◀️ Назад', callback_data: 'cl:apl:arch:course' }],
-      ],
+      inline_keyboard: [[{ text: '◀️ Назад', callback_data: 'cl:apl:arch:course' }]],
     },
     deliver,
   );
@@ -468,35 +435,6 @@ export async function handleClientAppealsCallback(
     if (leadId) await showArchiveLeadThread(admin, telegramId, chatId, leadId, { editAt });
     return true;
   }
-  if (data.startsWith('cl:apl:pay:')) {
-    const id = data.slice('cl:apl:pay:'.length);
-    const rows = await listPurchaseRequestsForTelegram(admin, telegramId, 30);
-    const row = rows.find((r) => r.id === id);
-    const text = row
-      ? [
-          '💳 Заявка на оплату',
-          '',
-          row.title,
-          `Статус: ${row.status}`,
-          `Сумма: ${row.amount_byn} BYN`,
-          row.created_at ? `Создана: ${formatDateTimeShort(row.created_at)}` : '',
-        ]
-          .filter(Boolean)
-          .join('\n')
-      : 'Заявка не найдена.';
-    await deliverClientHubScreen(
-      admin,
-      telegramId,
-      chatId,
-      `appeals-pay-${id.slice(0, 8)}`,
-      text,
-      {
-        inline_keyboard: [[{ text: '◀️ Назад', callback_data: 'cl:apl:arch:admin' }]],
-      },
-      { editAt },
-    );
-    return true;
-  }
   if (data === 'cl:apl:arch:course') {
     await showArchiveCoursePick(admin, telegramId, chatId, { editAt });
     return true;
@@ -509,15 +447,6 @@ export async function handleClientAppealsCallback(
     return true;
   }
   if (data === 'cl:apl:arch:teacher') {
-    const state = await resolveClientState(admin, telegramId);
-    if (!state.hasActiveLessonProduct) {
-      await telegramSend('sendMessage', {
-        chat_id: chatId,
-        text: 'Нет активных занятий с преподавателем.',
-        reply_markup: buildClientReplyKeyboard(state),
-      });
-      return true;
-    }
     await showArchiveTeacherPick(admin, telegramId, chatId, { editAt });
     return true;
   }

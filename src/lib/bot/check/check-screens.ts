@@ -15,6 +15,7 @@ import type { CuratorStudentView } from '@/lib/curator/students';
 import type { StaffMessageRow, StaffThreadSummary } from '@/lib/bot/staff/messaging';
 import type { CheckLibraryModule } from './check-library';
 import type { CuratorLibraryTask } from '@/lib/bot/curator/curator-types';
+import { unpackHomeworkReviewParts } from '@/lib/bot/education/homework-review-note';
 
 export const CHECK_BOT_WELCOME_TEXT =
   'Кабинет проверяющего ДЗ. Здесь ты можешь проверять работы учеников, отвечать на вопросы и следить за их прогрессом.';
@@ -202,13 +203,17 @@ function withOrigin(base: string, origin: CheckHwListOrigin): string {
 }
 
 export function encodeHwItemCallback(
-  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd',
+  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd' | 'vr',
   courseId: number,
   studentId: string,
   hwNumber: number,
   origin: CheckHwListOrigin,
 ): string {
   return withOrigin(`k:hw:${courseId}:${action}:${studentId}:${hwNumber}`, origin);
+}
+
+export function isArchiveHwOrigin(origin: CheckHwListOrigin): boolean {
+  return origin.mode === 'archive';
 }
 
 export function encodeRejCallback(
@@ -391,9 +396,14 @@ export function renderCheckHomeworkCard(
   if (homework.submissionNote?.trim()) {
     parts.push('', '💬 Комментарий ученика:', homework.submissionNote.trim());
   }
-  parts.push('', 'Откройте работу ученика, чтобы вынести вердикт.');
+  const archive = isArchiveHwOrigin(origin);
+  if (!archive) {
+    parts.push('', 'Откройте работу ученика, чтобы вынести вердикт.');
+  } else {
+    parts.push('', 'Архив — только просмотр, статус не меняется.');
+  }
 
-  const canLife = overdue && !options?.lifeDeducted && homework.status === 'submitted';
+  const canLife = !archive && overdue && !options?.lifeDeducted && homework.status === 'submitted';
   const rows: InlineKeyboard['inline_keyboard'] = [
     [
       {
@@ -416,6 +426,14 @@ export function renderCheckHomeworkCard(
       },
     ]);
   }
+  if (archive && (homework.status === 'revision' || homework.status === 'approved')) {
+    rows.push([
+      {
+        text: '📄 Посмотреть вердикт',
+        callback_data: encodeHwItemCallback('vr', courseId, student.id, homework.number, origin),
+      },
+    ]);
+  }
   rows.push([back('⬅️ Назад', encodeListCallback(courseId, origin))]);
   return { text: parts.join('\n'), keyboard: { inline_keyboard: rows } };
 }
@@ -425,8 +443,10 @@ export function renderCheckVerdict(
   student: CuratorStudentRecord,
   homework: CuratorHomeworkRecord,
   origin: CheckHwListOrigin,
+  options?: { readOnly?: boolean },
 ): { text: string; keyboard: InlineKeyboard } {
-  const canReview = homework.status === 'submitted';
+  const readOnly = options?.readOnly ?? isArchiveHwOrigin(origin);
+  const canReview = !readOnly && homework.status === 'submitted';
   const rows: InlineKeyboard['inline_keyboard'] = [];
   if (canReview) {
     rows.push([
@@ -442,12 +462,14 @@ export function renderCheckVerdict(
       },
     ]);
   }
-  rows.push([
-    {
-      text: '💬 Комментарий без смены статуса',
-      callback_data: encodeHwItemCallback('cmt', courseId, student.id, homework.number, origin),
-    },
-  ]);
+  if (!readOnly) {
+    rows.push([
+      {
+        text: '💬 Комментарий без смены статуса',
+        callback_data: encodeHwItemCallback('cmt', courseId, student.id, homework.number, origin),
+      },
+    ]);
+  }
   rows.push([
     back('⬅️ Назад', encodeHwItemCallback('i', courseId, student.id, homework.number, origin)),
   ]);
@@ -456,8 +478,51 @@ export function renderCheckVerdict(
       '⚖️ Ваш вердикт\n\n' +
       `👤 ${student.name}\n` +
       `📚 ДЗ №${homework.number}: ${homework.title}\n\n` +
-      (canReview ? 'Выберите решение:' : 'Работа уже проверена. Можно оставить комментарий.'),
+      (canReview
+        ? 'Выберите решение:'
+        : readOnly
+          ? 'Архив — только просмотр.'
+          : 'Работа уже проверена. Можно оставить комментарий.'),
     keyboard: { inline_keyboard: rows },
+  };
+}
+
+export function renderCheckArchiveVerdictView(
+  courseId: number,
+  student: CuratorStudentRecord,
+  homework: CuratorHomeworkRecord,
+  origin: CheckHwListOrigin,
+  reviewNote: string | null,
+): { text: string; keyboard: InlineKeyboard } {
+  const { text: noteText } = unpackHomeworkReviewParts(reviewNote);
+  const statusLine =
+    homework.status === 'revision'
+      ? '🔄 Отправлено на доработку'
+      : homework.status === 'approved'
+        ? '✅ Одобрено'
+        : CURATOR_HW_STATUS_LABELS[homework.status];
+  const lines = [
+    '📄 Вердикт (архив)',
+    '',
+    `👤 ${student.name}`,
+    `📚 ДЗ №${homework.number}: ${homework.title}`,
+    `📌 ${statusLine}`,
+    '',
+  ];
+  if (noteText?.trim()) {
+    lines.push('💬 Пояснение проверяющего:', noteText.trim());
+  } else if (homework.status === 'approved') {
+    lines.push('Комментарий к одобрению не сохранён.');
+  } else {
+    lines.push('Пояснение не найдено.');
+  }
+  return {
+    text: lines.join('\n').slice(0, 3900),
+    keyboard: {
+      inline_keyboard: [
+        [back('⬅️ Назад', encodeHwItemCallback('i', courseId, student.id, homework.number, origin))],
+      ],
+    },
   };
 }
 
@@ -822,8 +887,7 @@ export function renderCheckMessageThread(
     keyboard: {
       inline_keyboard: [
         [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
-        [back('⬅️ К диалогам', `k:msg:${courseId}:dlg`)],
-        [back('⬅️ В сообщения', `k:msg:${courseId}`)],
+        [back('⬅️ Назад', `k:msg:${courseId}:dlg`)],
       ],
     },
   };

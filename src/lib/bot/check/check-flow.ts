@@ -118,7 +118,9 @@ export async function sendCheckSectionForCourse(
     const { renderCheckMessagesHub } = await import('./check-screens');
     const studentIds = await listCourseStudentTelegramIds(admin, courseId);
     const { threads } = await listCheckThreadsForCourse(admin, telegramId, courseId, studentIds);
-    const incoming = threads.filter((t) => t.unreadCount > 0).length;
+    const incoming = threads.filter(
+      (t) => t.unreadCount > 0 || t.lastDirection === 'student_to_staff',
+    ).length;
     const screen = renderCheckMessagesHub(courseId, ctx.title, incoming);
     await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return;
@@ -181,6 +183,14 @@ export async function handleCheckMessage(
   if (!(await canUseCheckBot(admin, telegramId))) return false;
 
   const caps = await loadStaffCapabilities(admin, telegramId);
+  const { STAFF_COURSE_MANAGEMENT_LABEL } = await import('@/lib/bot/staff/staff-menu');
+  if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
+    const { exitStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
+    const { sendStaffCourseManagementList } = await import('@/lib/bot/staff/staff-course-hub-flow');
+    await exitStaffCourseWorkspace(admin, telegramId, chatId);
+    await sendStaffCourseManagementList(admin, chatId, telegramId);
+    return true;
+  }
 
   let state = null;
   try {
@@ -392,6 +402,10 @@ export async function handleCheckCallback(
   if (!data.startsWith('k:')) return false;
   if (!(await canUseCheckBot(admin, telegramId))) return false;
 
+  if (callbackQueryId) {
+    await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(() => undefined);
+  }
+
   if (data.startsWith('k:pk:')) {
     const ws = await getStaffCourseWorkspace(admin, telegramId);
     if (ws?.role === 'check' && ws.courseId) {
@@ -415,17 +429,11 @@ export async function handleCheckCallback(
         await sendAdminMessage(chatId, screen.text, screen.keyboard);
       }
     }
-    if (callbackQueryId) {
-      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
-    }
     return true;
   }
 
   const message: AdminMessage = { chatId, messageId };
   await handleCheckBotCallback(admin, message, telegramId, data);
-  if (callbackQueryId) {
-    await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
-  }
   return true;
 }
 
