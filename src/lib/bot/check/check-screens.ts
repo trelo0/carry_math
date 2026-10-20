@@ -203,7 +203,7 @@ function withOrigin(base: string, origin: CheckHwListOrigin): string {
 }
 
 export function encodeHwItemCallback(
-  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd' | 'vr',
+  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd' | 'vr' | 'hs',
   courseId: number,
   studentId: string,
   hwNumber: number,
@@ -434,6 +434,12 @@ export function renderCheckHomeworkCard(
       },
     ]);
   }
+  rows.push([
+    {
+      text: '📜 История сдач',
+      callback_data: encodeHwItemCallback('hs', courseId, student.id, homework.number, origin),
+    },
+  ]);
   rows.push([back('⬅️ Назад', encodeListCallback(courseId, origin))]);
   return { text: parts.join('\n'), keyboard: { inline_keyboard: rows } };
 }
@@ -487,12 +493,46 @@ export function renderCheckVerdict(
   };
 }
 
+export function renderCheckHomeworkSubmissionHistory(
+  courseId: number,
+  student: CuratorStudentRecord,
+  homework: CuratorHomeworkRecord,
+  origin: CheckHwListOrigin,
+  timelineLines: string[],
+): { text: string; keyboard: InlineKeyboard } {
+  const lines = [
+    '📜 История сдач',
+    '',
+    `👤 ${student.name}`,
+    `📚 ДЗ №${homework.number}: ${homework.title}`,
+    ...timelineLines,
+  ];
+  if (timelineLines.length === 0) {
+    lines.push('', 'Записей пока нет.');
+  }
+  return {
+    text: lines.join('\n').slice(0, 3900),
+    keyboard: {
+      inline_keyboard: [
+        [
+          back(
+            '⬅️ К карточке',
+            encodeHwItemCallback('i', courseId, student.id, homework.number, origin),
+          ),
+        ],
+        [back('⬅️ К списку', encodeListCallback(courseId, origin))],
+      ],
+    },
+  };
+}
+
 export function renderCheckArchiveVerdictView(
   courseId: number,
   student: CuratorStudentRecord,
   homework: CuratorHomeworkRecord,
   origin: CheckHwListOrigin,
   reviewNote: string | null,
+  timelineLines?: string[],
 ): { text: string; keyboard: InlineKeyboard } {
   const { text: noteText } = unpackHomeworkReviewParts(reviewNote);
   const statusLine =
@@ -515,6 +555,9 @@ export function renderCheckArchiveVerdictView(
     lines.push('Комментарий к одобрению не сохранён.');
   } else {
     lines.push('Пояснение не найдено.');
+  }
+  if (timelineLines?.length) {
+    lines.push(...timelineLines);
   }
   return {
     text: lines.join('\n').slice(0, 3900),
@@ -949,13 +992,13 @@ export function renderCheckLibraryTasks(
   tasks: CuratorLibraryTask[],
   moduleIndex: number,
 ): { text: string; keyboard: InlineKeyboard } {
-  const parts = [`📚 ${webinarTitle}`, '', 'Материалы (только просмотр):', ''];
+  const parts = [`📚 ${webinarTitle}`, '', 'Материалы (кнопки ниже):', ''];
   for (const t of tasks) {
-    parts.push(`• ${t.title}`, t.condition.slice(0, 500), t.fileUrl ? `🔗 ${t.fileUrl}` : '', '');
+    parts.push(`• ${t.title}`, t.condition.slice(0, 500), '');
   }
   const rows: InlineKeyboard['inline_keyboard'] = tasks
     .filter((t) => t.fileUrl?.startsWith('http'))
-    .map((t) => [{ text: `🔗 ${t.title}`.slice(0, 58), url: t.fileUrl! }]);
+    .map((t) => [{ text: t.title.slice(0, 58), url: t.fileUrl! }]);
   rows.push([back('⬅️ К вебинарам', `k:lib:${courseId}:m:${moduleIndex}`)]);
   return { text: parts.join('\n').slice(0, 3900), keyboard: { inline_keyboard: rows } };
 }

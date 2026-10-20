@@ -23,6 +23,12 @@ export async function loadStaffMyCourseRows(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<StaffCourseAssignmentRow[]> {
+  const { refreshStaffCourseAssignmentsForMember } = await import(
+    '@/lib/bot/education/course-staff'
+  );
+  await refreshStaffCourseAssignmentsForMember(admin, telegramId).catch((e) =>
+    console.warn('[staff-courses] refresh assignments failed:', e),
+  );
   const options = await listStaffCourseAssignmentOptions(admin, telegramId);
   return staffCourseRowsFromOptions(options);
 }

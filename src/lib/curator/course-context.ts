@@ -55,11 +55,10 @@ export async function listStaffCourseAssignmentOptions(
   for (const a of relevant) {
     if (a.role !== 'curator' && a.role !== 'check') continue;
     const meta = byId.get(a.courseId);
-    if (!meta) continue;
     out.push({
       courseId: a.courseId,
-      slug: meta.slug,
-      title: meta.title,
+      slug: meta?.slug ?? `course-${a.courseId}`,
+      title: meta?.title ?? `Курс #${a.courseId}`,
       role: a.role,
     });
   }

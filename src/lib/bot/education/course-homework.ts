@@ -640,6 +640,15 @@ export async function markHomeworkSubmitted(
 
     const { data, error } = await writeQuery.select('*').single();
     if (!error) {
+      const { logCourseHomeworkSubmitted } = await import('./course-homework-submission-history');
+      await logCourseHomeworkSubmitted(admin, {
+        telegramId,
+        sanityLessonId,
+        courseId: courseIdForGate ?? null,
+        note: input.note,
+        fileUrl: input.fileUrl,
+        submittedAt: now,
+      }).catch((err) => console.error('[course-hw] submission event log failed:', err));
       await revalidateCabinetAfterHomework();
       return data as CourseLessonStudentProgress;
     }
@@ -697,6 +706,19 @@ export async function markHomeworkRejected(
 
   const nowDate = new Date();
   const now = nowDate.toISOString();
+  const { logCourseHomeworkRevisionRequested } = await import('./course-homework-submission-history');
+  if (reviewer?.telegramId != null && reviewer.role) {
+    await logCourseHomeworkRevisionRequested(admin, {
+      telegramId,
+      sanityLessonId,
+      submissionNote: progress.submission_note ?? null,
+      submissionFileUrl: progress.submission_file_url ?? null,
+      reviewerTelegramId: reviewer.telegramId,
+      reviewerRole: reviewer.role,
+      reviewerComment: note,
+      createdAt: now,
+    }).catch((err) => console.error('[course-hw] revision event log failed:', err));
+  }
   const { data, error } = await admin
     .from('course_lesson_student_progress')
     .update({
@@ -825,6 +847,18 @@ export async function approveCourseHomeworkByCurator(
   } catch (error) {
     console.error('[courseHomework] unlock next after approve failed:', error);
   }
+
+  const { logCourseHomeworkApproved } = await import('./course-homework-submission-history');
+  await logCourseHomeworkApproved(admin, {
+    telegramId: studentTelegramId,
+    sanityLessonId: lesson.sanityId,
+    courseId: resolvedCourseId ?? null,
+    submissionNote: updated.submission_note ?? null,
+    submissionFileUrl: updated.submission_file_url ?? null,
+    reviewerTelegramId: curatorTelegramId,
+    reviewerRole,
+    reviewerComment: updated.review_note ?? null,
+  }).catch((err) => console.error('[course-hw] approve event log failed:', err));
 
   await revalidateCabinetAfterHomework();
   return { lesson, progress: updated };

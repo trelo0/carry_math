@@ -60,6 +60,7 @@ import {
   renderCheckHomeworkCard,
   renderCheckHomeworkHub,
   renderCheckHomeworkList,
+  renderCheckHomeworkSubmissionHistory,
   renderCheckHwFilterMenu,
   renderCheckLifeConfirm,
   renderCheckRejectCommentPrompt,
@@ -279,7 +280,8 @@ export async function handleCheckHomeworkFamily(
         parts[3] === 'vd' ||
         parts[3] === 'ok' ||
         parts[3] === 'rej' ||
-        parts[3] === 'cmt') &&
+        parts[3] === 'cmt' ||
+        parts[3] === 'hs') &&
       parts[4] &&
       parts[5]
     ) {
@@ -314,7 +316,43 @@ export async function handleCheckHomeworkFamily(
         return true;
       }
 
+      if (parts[3] === 'hs') {
+        const {
+          listCourseHomeworkSubmissionEvents,
+          formatCourseHomeworkSubmissionTimeline,
+        } = await import('@/lib/bot/education/course-homework-submission-history');
+        const { formatCheckHwWhen } = await import('./check-homework-meta');
+        const events = await listCourseHomeworkSubmissionEvents(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+        );
+        const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
+        const screen = renderCheckHomeworkSubmissionHistory(
+          courseId,
+          student,
+          homework,
+          origin,
+          timelineLines,
+        );
+        await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
       if (parts[3] === 'v') {
+        const {
+          listCourseHomeworkSubmissionEvents,
+          formatCourseHomeworkSubmissionTimeline,
+        } = await import('@/lib/bot/education/course-homework-submission-history');
+        const { formatCheckHwWhen } = await import('./check-homework-meta');
+        const events = await listCourseHomeworkSubmissionEvents(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+        );
+        const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
+        const timelineText = timelineLines.length ? timelineLines.join('\n') : '';
+
         try {
           await sendSubmissionToCurator(admin, telegramId, {
             studentName: student.name,
@@ -332,9 +370,15 @@ export async function handleCheckHomeworkFamily(
         if (origin.mode === 'archive') {
           await sendAdminMessage(
             chatId,
-            '👀 Файлы работы отправлены выше (если были приложены).',
+            ['👀 Работа ученика', timelineText].filter(Boolean).join('\n\n').trim(),
             {
               inline_keyboard: [
+                [
+                  {
+                    text: '📜 История сдач',
+                    callback_data: encodeHwItemCallback('hs', courseId, student.id, hwNum, origin),
+                  },
+                ],
                 [
                   {
                     text: '⬅️ К карточке ДЗ',
@@ -359,14 +403,33 @@ export async function handleCheckHomeworkFamily(
           student.telegramId,
           homework.sanityLessonId,
         );
+        const {
+          listCourseHomeworkSubmissionEvents,
+          formatCourseHomeworkSubmissionTimeline,
+        } = await import('@/lib/bot/education/course-homework-submission-history');
+        const { formatCheckHwWhen } = await import('./check-homework-meta');
+        const events = await listCourseHomeworkSubmissionEvents(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+        );
+        const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
         const screen = renderCheckArchiveVerdictView(
           courseId,
           student,
           homework,
           origin,
           reviewNote,
+          timelineLines,
         );
         await editScreen(message, screen.text, screen.keyboard);
+        const { unpackHomeworkReviewParts } = await import('@/lib/bot/education/homework-review-note');
+        const { sendTelegramFileById } = await import('@/lib/bot/studentHomeworkFlow');
+        const { files } = unpackHomeworkReviewParts(reviewNote);
+        for (const f of files) {
+          const ref = f.ref.startsWith('tg:') ? f.ref.slice(3) : f.ref;
+          if (ref) await sendTelegramFileById(chatId, ref, f.kind);
+        }
         return true;
       }
 

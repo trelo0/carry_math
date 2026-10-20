@@ -662,7 +662,7 @@ export async function handleClientCallback(
     if (data === 'cl:support:back') {
       await handleStudentSupportBack(admin, telegramId, chatId);
     } else {
-      await handleStudentSupportCancel(admin, telegramId, chatId, memberRole);
+      await handleStudentSupportCancel(admin, telegramId, chatId, memberRole, messageId);
     }
     return true;
   }

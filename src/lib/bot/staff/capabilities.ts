@@ -64,14 +64,8 @@ export async function loadStaffCapabilities(
 
   const canCuratorBot = fullPreview || hasCuratorAssignment;
   const canCourseStaffBot = fullPreview || hasCourseStaffAssignment;
-  const canCourseManagementBot =
-    fullPreview ||
-    (hasCourseStaffAssignment &&
-      (primaryRole === 'staff' ||
-        primaryRole === 'admin' ||
-        primaryRole === 'curator' ||
-        primaryRole === 'check' ||
-        hasStaffExtra));
+  /** «Управление курсами» — только при назначении curator/check (или admin preview). */
+  const canCourseManagementBot = fullPreview || hasCourseStaffAssignment;
 
   const emptyStaff: StaffCapabilities = {
     telegramId,

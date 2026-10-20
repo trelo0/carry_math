@@ -195,7 +195,7 @@ async function beginTeacherReply(
   await sendAdminMessage(
     chatId,
     `✏️ Сообщение для ${label}\n\nВведите текст или отправьте фото/документ.\n\nОтмена — «Отмена».`,
-    { inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `t:msg:d:${studentTelegramId}` }]] },
+    { inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `t:msg:xc:${studentTelegramId}` }]] },
   );
 }
 
@@ -523,6 +523,16 @@ async function routeTeacherCallback(
         const { threads, storageEnabled } = await listTeacherThreads(admin, telegramId);
         const screen = renderTeacherUnreadMessagesInbox(threads, storageEnabled, cabinetUrl, msgNav);
         await editTeacherScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+      if (id === 'xc' && subId) {
+        const studentId = Number(subId);
+        if (!Number.isFinite(studentId)) return true;
+        await clearStateIfAvailable(admin, telegramId);
+        await telegramSend('deleteMessage', {
+          chat_id: message.chatId,
+          message_id: message.messageId,
+        }).catch(() => undefined);
         return true;
       }
       if (id === 'd' && subId) {

@@ -133,6 +133,14 @@ export async function handleCheckBotCallback(
       return true;
     }
 
+    if (parts[1] === 'xc' && parts[2]) {
+      await resetStaffDialogKeepWorkspace(admin, telegramId, chatId);
+      await telegramSend('deleteMessage', { chat_id: chatId, message_id: message.messageId }).catch(
+        () => undefined,
+      );
+      return true;
+    }
+
     if (parts[1] === 'ntf' && parts[2] === 'close') {
       const deleted = await telegramSend('deleteMessage', {
         chat_id: message.chatId,
@@ -338,9 +346,7 @@ export async function handleCheckBotCallback(
         try {
           await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
           const promptId = await sendAdminMessage(chatId, '✏️ Сообщение ученику.\n\n⬅️ Отмена', {
-            inline_keyboard: [
-              [{ text: '⬅️ Отмена', callback_data: `k:stu:${courseId}:s:${studentTelegramId}` }],
-            ],
+            inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `k:xc:${courseId}` }]],
           });
           await saveState(
             admin,

@@ -129,7 +129,16 @@ async function saveHwWizardState(
   }
 }
 
-async function renderHwWizard(
+async function stripHwStepKeyboard(chatId: number, messageId?: number): Promise<void> {
+  if (!messageId) return;
+  await telegramSend('editMessageReplyMarkup', {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: { inline_keyboard: [] },
+  }).catch(() => undefined);
+}
+
+async function pushHwWizardStep(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
@@ -149,20 +158,7 @@ async function renderHwWizard(
         ? commentStepKeyboard()
         : confirmStepKeyboard();
 
-  const messageId = payload.hwWizardMessageId;
-  if (messageId) {
-    const edited = await telegramSend('editMessageText', {
-      chat_id: chatId,
-      message_id: messageId,
-      text,
-      reply_markup: keyboard,
-    });
-    if (edited.ok) {
-      await saveHwWizardState(admin, telegramId, chatId, step, payload);
-      return payload;
-    }
-  }
-
+  await stripHwStepKeyboard(chatId, payload.hwWizardMessageId);
   const newId = await sendAdminMessage(chatId, text, keyboard);
   const next = { ...payload, hwWizardMessageId: newId ?? payload.hwWizardMessageId };
   await saveHwWizardState(admin, telegramId, chatId, step, next);
@@ -282,17 +278,16 @@ async function finishSubmit(
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
+  await stripHwStepKeyboard(chatId, wizardId);
   await clearStateIfAvailable(admin, telegramId);
-  const { showClientCourseHomeworkLessonStatus } = await import('./client-course-homework-hub');
-  if (wizardId) {
-    await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
-      editAt: { chatId, messageId: wizardId },
-    });
-    return;
-  }
-  await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
-    forcePush: true,
-  });
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
+  await sendAdminMessage(
+    chatId,
+    '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.',
+    studentNotifyKeyboard([
+      [{ text: 'Проверить статус', callback_data: `cl:chw:stat:${sanityLessonId}` }],
+    ]),
+  );
 }
 
 async function loadHwState(admin: SupabaseClient, telegramId: number) {
@@ -337,14 +332,14 @@ export async function handleStudentHomeworkMessage(
 
   if (step === COURSE_HW_FILE_STEP) {
     const nextPayload = { ...payload, draftNote: text.trim() };
-    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, nextPayload);
+    await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, nextPayload);
     return true;
   }
 
   if (step === COURSE_HW_COMMENT_STEP) {
     const note = text.trim();
     const nextPayload = { ...payload, draftNote: note || payload.draftNote };
-    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, nextPayload);
+    await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, nextPayload);
     return true;
   }
 
@@ -386,7 +381,7 @@ export async function handleStudentHomeworkAttachment(
   if (!sanityLessonId) return false;
 
   const fileUrl = formatTelegramFileRef(attachment.fileId);
-  await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, {
+  await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, {
     ...payload,
     draftFileUrl: fileUrl,
     draftFileKind: attachment.kind,
@@ -408,10 +403,8 @@ export async function handleCourseHomeworkCallback(
 
   if (data === 'chw:cancel') {
     const cancelPayload = (await loadHwState(admin, telegramId))?.payload as SubmitPayload | undefined;
-    const slug = cancelPayload?.courseSlug;
+    await stripHwStepKeyboard(chatId, cancelPayload?.hwWizardMessageId);
     await clearStateIfAvailable(admin, telegramId);
-    const { showClientCourseHomeworkHub } = await import('./client-course-homework-hub');
-    await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true }, slug);
     return true;
   }
 
@@ -427,11 +420,11 @@ export async function handleCourseHomeworkCallback(
   if (data === 'chw:back') {
     const step = state.step as string;
     if (step === COURSE_HW_CONFIRM_STEP) {
-      await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, payload);
+      await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, payload);
       return true;
     }
     if (step === COURSE_HW_COMMENT_STEP) {
-      await renderHwWizard(admin, telegramId, chatId, COURSE_HW_FILE_STEP, {
+      await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_FILE_STEP, {
         ...payload,
         draftNote: undefined,
         draftFileUrl: undefined,
@@ -439,12 +432,12 @@ export async function handleCourseHomeworkCallback(
       });
       return true;
     }
-    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_FILE_STEP, payload);
+    await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_FILE_STEP, payload);
     return true;
   }
 
   if (data === 'chw:skip') {
-    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, payload);
+    await pushHwWizardStep(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, payload);
     return true;
   }
 

@@ -20,7 +20,6 @@ import { syncCourseStaffFromContent } from './education/course-staff';
 import { notifyStaffInboundFromStudent, type StaffMessageRole } from './staff/messaging';
 import { notifyAdminsOfSupportMessage } from './studentSupportFlow';
 import { isClientReplyLabel } from './client-menu';
-import { restoreClientHubAfterDialogCancel } from './client-nav';
 
 export type StudentMentorContext = 'course' | 'lessons';
 
@@ -334,6 +333,7 @@ export async function handleStudentMentorCallback(
   chatId: number,
   telegramId: number,
   callbackQueryId?: string,
+  promptMessageId?: number,
 ): Promise<boolean> {
   if (data.startsWith(MENTOR_CONFIRM_PREFIX)) {
     if (callbackQueryId) {
@@ -348,7 +348,11 @@ export async function handleStudentMentorCallback(
     }
     if (data === `${MENTOR_CONFIRM_PREFIX}cancel`) {
       await clearStateIfAvailable(admin, telegramId);
-      await restoreClientHubAfterDialogCancel(admin, telegramId, chatId);
+      if (promptMessageId) {
+        await telegramSend('deleteMessage', { chat_id: chatId, message_id: promptMessageId }).catch(
+          () => undefined,
+        );
+      }
       return true;
     }
     if (!state || state.step !== 'student:mentor-confirm') {

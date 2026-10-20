@@ -16,7 +16,7 @@ import {
   loadStudentStaffMessageHistory,
   staffStudentLabel,
 } from './staff/messaging';
-import { formatLeadMessageBody } from './admin/lead-messages';
+import { sendLeadMessageAttachment } from './admin/lead-message-media';
 import { leadArchiveKindLabel, listClientLeadsForAppealsArchive } from './inquiry-leads';
 import { listLeadMessages } from './admin/lead-messages';
 import { getStudentOrdinaryTeacherIds } from './education/assignments';
@@ -224,11 +224,11 @@ async function showArchiveAdminList(
   }
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   for (const l of leads.slice(0, 20)) {
-    const label = leadArchiveKindLabel(l);
-    const title = (l.service ?? l.comment ?? 'Обращение').slice(0, 42);
+    const snippet = (l.comment ?? '').replace(/\s+/g, ' ').trim().slice(0, 28) || 'без текста';
+    const when = formatDateTimeShort(l.created_at);
     keyboard.push([
       {
-        text: `${label} ${title}`.slice(0, 58),
+        text: `🛡 ${when} · ${snippet}`.slice(0, 64),
         callback_data: `cl:apl:lead:${l.id}`,
       },
     ]);
@@ -264,7 +264,8 @@ async function showArchiveLeadThread(
   } else {
     for (const m of messages) {
       const who = m.direction === 'client_to_admin' ? '👤 Вы' : '🛡 Администратор';
-      lines.push(`${who}: ${formatLeadMessageBody(m)}`, '');
+      const body = m.body?.trim();
+      if (body) lines.push(`${who}: ${body}`, '');
     }
   }
   await deliverClientHubScreen(
@@ -281,6 +282,9 @@ async function showArchiveLeadThread(
     },
     deliver,
   );
+  for (const m of messages) {
+    await sendLeadMessageAttachment(chatId, m);
+  }
 }
 
 async function showArchiveTeacherPick(

@@ -59,12 +59,19 @@ export async function findOpenInquiryLead(
   return row;
 }
 
+export type InquiryFirstAttachment = {
+  fileId: string;
+  kind: 'photo' | 'document' | 'voice';
+  fileName?: string;
+  mimeType?: string;
+};
+
 export async function createInquiryLead(
   admin: SupabaseClient,
   telegramId: number,
   kind: InquiryKind,
   firstMessage: string,
-  options?: { forceNew?: boolean },
+  options?: { forceNew?: boolean; firstAttachment?: InquiryFirstAttachment },
 ): Promise<LeadRow | null> {
   const existing = options?.forceNew ? null : await findOpenInquiryLead(admin, telegramId, kind);
   if (existing) {
@@ -72,7 +79,16 @@ export async function createInquiryLead(
       leadId: existing.id,
       direction: 'client_to_admin',
       senderTelegramId: telegramId,
-      body: firstMessage,
+      body: firstMessage || null,
+      messageType: options?.firstAttachment?.kind ?? 'text',
+      attachment: options?.firstAttachment
+        ? {
+            file_id: options.firstAttachment.fileId,
+            kind: options.firstAttachment.kind,
+            file_name: options.firstAttachment.fileName,
+            mime_type: options.firstAttachment.mimeType,
+          }
+        : undefined,
     });
     return existing;
   }
@@ -110,7 +126,16 @@ export async function createInquiryLead(
           leadId: row.id,
           direction: 'client_to_admin',
           senderTelegramId: telegramId,
-          body: firstMessage,
+          body: firstMessage || null,
+          messageType: options?.firstAttachment?.kind ?? 'text',
+          attachment: options?.firstAttachment
+            ? {
+                file_id: options.firstAttachment.fileId,
+                kind: options.firstAttachment.kind,
+                file_name: options.firstAttachment.fileName,
+                mime_type: options.firstAttachment.mimeType,
+              }
+            : undefined,
         });
       }
       return row;
@@ -124,7 +149,16 @@ export async function createInquiryLead(
       leadId: row.id,
       direction: 'client_to_admin',
       senderTelegramId: telegramId,
-      body: firstMessage,
+      body: firstMessage || null,
+      messageType: options?.firstAttachment?.kind ?? 'text',
+      attachment: options?.firstAttachment
+        ? {
+            file_id: options.firstAttachment.fileId,
+            kind: options.firstAttachment.kind,
+            file_name: options.firstAttachment.fileName,
+            mime_type: options.firstAttachment.mimeType,
+          }
+        : undefined,
     });
     try {
       await logLeadEvent(admin, {

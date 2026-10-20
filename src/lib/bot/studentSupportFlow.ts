@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
-import { getState, isConversationStateTableError, sendAdminMessage } from './admin/core';
+import {
+  clearStateIfAvailable,
+  getState,
+  isConversationStateTableError,
+  sendAdminMessage,
+} from './admin/core';
 import { logLeadEvent } from './admin/lead-events';
 import { insertLeadMessage } from './admin/lead-messages';
 import { setLeadStatus } from './admin/leads';
@@ -142,12 +147,27 @@ async function appendInquiryMessage(
   leadId: string,
   telegramId: number,
   body: string,
+  attachment?: {
+    fileId: string;
+    kind: 'photo' | 'document' | 'voice';
+    fileName?: string;
+    mimeType?: string;
+  },
 ): Promise<void> {
   await insertLeadMessage(admin, {
     leadId,
     direction: 'client_to_admin',
     senderTelegramId: telegramId,
-    body,
+    body: body || null,
+    messageType: attachment?.kind ?? 'text',
+    attachment: attachment
+      ? {
+          file_id: attachment.fileId,
+          kind: attachment.kind,
+          file_name: attachment.fileName,
+          mime_type: attachment.mimeType,
+        }
+      : undefined,
   });
   await logLeadEvent(admin, {
     leadId,
@@ -164,9 +184,18 @@ async function deliverSupportToAdmin(
   chatId: number,
   body: string,
   ack: string,
+  attachment?: {
+    fileId: string;
+    kind: 'photo' | 'document' | 'voice';
+    fileName?: string;
+    mimeType?: string;
+  },
 ): Promise<void> {
   const kind = await inquiryKindForUser(admin, telegramId);
-  const lead = await createInquiryLead(admin, telegramId, kind, body, { forceNew: true });
+  const lead = await createInquiryLead(admin, telegramId, kind, body, {
+    forceNew: true,
+    firstAttachment: attachment,
+  });
   await notifyAdminsOfSupportMessage(admin, telegramId, body);
   if (lead?.id) {
     await enterSupportThread(admin, telegramId, chatId, lead.id);
@@ -225,6 +254,12 @@ export async function handleStudentSupportAttachment(
   telegramId: number,
   chatId: number,
   caption: string,
+  media?: {
+    fileId: string;
+    kind: 'photo' | 'document' | 'voice';
+    fileName?: string;
+    mimeType?: string;
+  },
 ): Promise<boolean> {
   let state = null;
   try {
@@ -235,13 +270,13 @@ export async function handleStudentSupportAttachment(
   }
   if (!state) return false;
 
-  const body = caption || '(вложение без подписи)';
+  const body = caption.trim();
 
   if (state.step === 'student:support-thread') {
     const leadId = state.payload?.inquiryLeadId as string | undefined;
     if (!leadId) return false;
-    await appendInquiryMessage(admin, leadId, telegramId, body);
-    await notifyAdminsOfSupportMessage(admin, telegramId, body);
+    await appendInquiryMessage(admin, leadId, telegramId, body, media);
+    if (body) await notifyAdminsOfSupportMessage(admin, telegramId, body);
     await sendAdminMessage(chatId, '✅ Вложение добавлено к обращению.', supportIntroKeyboard());
     return true;
   }
@@ -254,6 +289,7 @@ export async function handleStudentSupportAttachment(
     chatId,
     body,
     '✅ Вложение отправлено администратору.',
+    media,
   );
   return true;
 }
@@ -273,7 +309,13 @@ export async function handleStudentSupportCancel(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
-  memberRole?: BotRole,
+  _memberRole?: BotRole,
+  promptMessageId?: number,
 ): Promise<void> {
-  await restoreClientHubAfterDialogCancel(admin, telegramId, chatId, memberRole);
+  await clearStateIfAvailable(admin, telegramId);
+  if (promptMessageId) {
+    await telegramSend('deleteMessage', { chat_id: chatId, message_id: promptMessageId }).catch(
+      () => undefined,
+    );
+  }
 }

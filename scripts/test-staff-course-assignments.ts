@@ -8,6 +8,8 @@ import type { StaffCourseAssignmentOption } from '../src/lib/curator/course-cont
 import {
   defaultWebSectionForCourseRole,
   filterStaffCourseRows,
+  groupStaffCourseRows,
+  staffCourseRowsFromOptions,
   webNavSectionsForCourseRole,
 } from '../src/lib/staff/course-assignment-ui';
 import { buildStaffCabinetPath } from '../src/lib/staff/staff-cabinet-url';
@@ -46,6 +48,13 @@ const rows = [
 ];
 assert(filterStaffCourseRows(rows, 'curator-tools').length === 1, 'filter curator-tools');
 assert(filterStaffCourseRows(rows, 'homework').length === 2, 'filter homework all');
+
+const multiRows = staffCourseRowsFromOptions(courses);
+assert(multiRows.length === 3, 'three assignment rows from two courses');
+const grouped = groupStaffCourseRows(multiRows);
+assert(grouped.length === 2, 'two course groups');
+assert(grouped.find((g) => g.courseId === 1)?.roles.length === 2, 'course A has curator+check');
+assert(grouped.find((g) => g.courseId === 2)?.roles[0] === 'check', 'course B check only');
 
 const url = buildStaffCabinetPath({ section: 'course-homework', courseId: 5, courseRole: 'check' });
 assert(url.includes('courseId=5') && url.includes('courseRole=check'), 'staff cabinet url');

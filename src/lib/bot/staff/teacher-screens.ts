@@ -39,7 +39,10 @@ export function renderTeacherScheduleHome(
     parts.push('Ближайших занятий нет.', '');
   }
 
-  parts.push(`📆 Сегодня: ${today.length}`, `📋 Предстоящие: ${upcoming.length}`);
+  parts.push(
+    `📆 Сегодня: ${today.length} (календарный день, Minsk)`,
+    `📋 Предстоящие: ${upcoming.length} (запланированные после сегодня, без отменённых)`,
+  );
 
   return {
     text: parts.join('\n'),
@@ -248,13 +251,15 @@ export function renderTeacherStudentCard(
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
     .slice(0, 5);
 
+  const notes = student.notes?.trim();
   const parts = [
     `👤 ${studentDisplayName(student)}`,
     '',
-    `Осталось занятий: ${pkg ?? 'нет активного пакета'}`,
-    `Ближайшее занятие: ${next}`,
-    `Домашних на проверке: ${pending}`,
-  ];
+    notes ? `Заметки / цель: ${notes.slice(0, 400)}` : null,
+    `Остаток занятий: ${pkg ?? 'нет активного пакета'}`,
+    `Следующее занятие: ${next}`,
+    pending > 0 ? `📤 ДЗ отправлено, на проверке: ${pending}` : '📤 ДЗ на проверке: нет',
+  ].filter((x): x is string => x != null);
   if (student.phone?.trim()) {
     parts.push(`☎️ ${student.phone.trim()}`);
   }

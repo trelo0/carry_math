@@ -8,8 +8,7 @@ import {
   type AdminMessage,
 } from '@/lib/bot/admin/core';
 import { loadStaffCapabilities } from '@/lib/bot/staff/capabilities';
-import { CHECK_BOT_MENU_LABELS } from '@/lib/bot/staff/staff-menu';
-import { isStaffMenuLabel } from '@/lib/bot/staff/staff-menu';
+import { CHECK_BOT_MENU_LABELS, isStaffMenuLabel, resolveStaffBotMode } from '@/lib/bot/staff/staff-menu';
 import {
   getStaffCourseWorkspace,
   resetStaffDialogKeepWorkspace,
@@ -183,6 +182,17 @@ export async function handleCheckMessage(
   if (!(await canUseCheckBot(admin, telegramId))) return false;
 
   const caps = await loadStaffCapabilities(admin, telegramId);
+  const mode = resolveStaffBotMode(caps);
+  if (mode === 'teacher_only') return false;
+
+  const wsEarly = await getStaffCourseWorkspace(admin, telegramId);
+  const teacherStyleHwMsg = new Set<string>([
+    CHECK_BOT_MENU_LABELS.homework,
+    CHECK_BOT_MENU_LABELS.messages,
+  ]);
+  if (teacherStyleHwMsg.has(text) && wsEarly?.role !== 'check') {
+    return false;
+  }
   const { STAFF_COURSE_MANAGEMENT_LABEL } = await import('@/lib/bot/staff/staff-menu');
   if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
     const { exitStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
@@ -377,6 +387,9 @@ export async function handleCheckMessage(
   const section = MENU_TO_SECTION[text];
   if (section) {
     const ws = await getStaffCourseWorkspace(admin, telegramId);
+    if (mode === 'combined' && ws?.role !== 'check') {
+      return false;
+    }
     if (ws?.role === 'check') {
       await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);
     } else {

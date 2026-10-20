@@ -409,7 +409,7 @@ export async function showClientCourseHomeworkHistory(
     keyboard.push([
       {
         text: `№${lesson.lessonNumber} · ${lesson.title.slice(0, 28)} (${meta})`.slice(0, 64),
-        callback_data: `cl:chw:view:${row.sanity_lesson_id as string}`,
+        callback_data: `cl:chw:view:${row.sanity_lesson_id as string}:a`,
       },
     ]);
   }
@@ -536,6 +536,7 @@ export async function showClientCourseHomeworkSubmissionView(
   chatId: number,
   sanityLessonId: string,
   deliver?: ClientHubDeliverOptions,
+  options?: { nav?: 'hub' | 'archive' },
 ): Promise<boolean> {
   const { resolveCourseForSanityLesson } = await import(
     '@/lib/bot/education/student-course-context'
@@ -564,6 +565,13 @@ export async function showClientCourseHomeworkSubmissionView(
   const note = (progress?.submission_note as string | null)?.trim();
   const fileRef = (progress?.submission_file_url as string | null)?.trim();
 
+  const {
+    listCourseHomeworkSubmissionEvents,
+    formatCourseHomeworkSubmissionTimeline,
+  } = await import('@/lib/bot/education/course-homework-submission-history');
+  const events = await listCourseHomeworkSubmissionEvents(admin, telegramId, sanityLessonId);
+  const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatDateTimeShort);
+
   const lines = [
     '📋 Ваша работа',
     '',
@@ -575,11 +583,17 @@ export async function showClientCourseHomeworkSubmissionView(
       : null,
     note ? `💬 Ваш комментарий:\n${note}` : null,
     fileRef ? '📎 Файл приложен (см. ниже)' : null,
+    ...timelineLines,
   ].filter((x): x is string => x != null);
 
   const courseSlug = resolved.slug;
   const hubCb = `cl:chw:hub:${courseSlug}`;
   const histCb = `cl:chw:hist:${courseSlug}`;
+  const nav = options?.nav ?? 'hub';
+  const keyboard =
+    nav === 'archive'
+      ? [[{ text: '◀️ К архиву', callback_data: histCb }]]
+      : [[{ text: '◀️ К ДЗ', callback_data: hubCb }]];
 
   await deliverClientHubScreen(
     admin,
@@ -587,13 +601,8 @@ export async function showClientCourseHomeworkSubmissionView(
     chatId,
     `course-hw-view:${sanityLessonId}`,
     lines.join('\n').trim().slice(0, 3900),
-    {
-      inline_keyboard: [
-        [{ text: '◀️ К архиву', callback_data: histCb }],
-        [{ text: '◀️ К ДЗ', callback_data: hubCb }],
-      ],
-    },
-    deliver,
+    { inline_keyboard: keyboard },
+    { ...deliver, forcePush: true },
   );
 
   if (fileRef?.startsWith('tg:')) {
@@ -810,11 +819,17 @@ export async function handleClientCourseHomeworkCallback(
     return true;
   }
   if (data.startsWith('cl:chw:view:')) {
-    const sanityLessonId = data.slice('cl:chw:view:'.length);
+    const rest = data.slice('cl:chw:view:'.length);
+    const [sanityLessonId, navToken] = rest.split(':');
     if (sanityLessonId) {
-      await showClientCourseHomeworkSubmissionView(admin, telegramId, chatId, sanityLessonId, {
-        editAt,
-      });
+      await showClientCourseHomeworkSubmissionView(
+        admin,
+        telegramId,
+        chatId,
+        sanityLessonId,
+        undefined,
+        { nav: navToken === 'a' ? 'archive' : 'hub' },
+      );
     }
     return true;
   }

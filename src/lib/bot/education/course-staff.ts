@@ -125,6 +125,37 @@ export async function syncCourseStaffFromContent(
   await assignFromSanity(content.checkTelegramId, 'check');
 }
 
+/** Подтянуть назначения из Sanity по всем курсам + гарантировать строки courses. */
+export async function refreshStaffCourseAssignmentsForMember(
+  admin: SupabaseClient,
+  staffTelegramId: number,
+): Promise<void> {
+  const { listDistrictCourseSummaries, getDistrictCourseContent } = await import(
+    '@/lib/studio/courseContent'
+  );
+  const { ensureDistrictCourseRecord } = await import('./course-record');
+  const id = Math.floor(staffTelegramId);
+  if (!Number.isFinite(id)) return;
+
+  const summaries = await listDistrictCourseSummaries().catch(() => []);
+  for (const summary of summaries) {
+    const content = await getDistrictCourseContent(summary.slug).catch(() => null);
+    if (!content) continue;
+    const courseId = await ensureDistrictCourseRecord(admin, content).catch(() => null);
+    if (courseId == null) continue;
+    if (content.curatorTelegramId === id) {
+      await upsertCourseStaffAssignment(admin, courseId, id, 'curator').catch((e) =>
+        console.warn('[course-staff] refresh curator failed:', e),
+      );
+    }
+    if (content.checkTelegramId === id) {
+      await upsertCourseStaffAssignment(admin, courseId, id, 'check').catch((e) =>
+        console.warn('[course-staff] refresh check failed:', e),
+      );
+    }
+  }
+}
+
 /** Назначение из админ-бота (с проверкой роли в bot_members). */
 export async function assignCourseStaffFromAdmin(
   admin: SupabaseClient,

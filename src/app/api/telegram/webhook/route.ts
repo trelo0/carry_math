@@ -716,7 +716,13 @@ export async function POST(request: Request) {
         admin,
         update.message.from.id,
         update.message.chat.id,
-        update.message.caption ?? update.message.document.file_name ?? 'Документ',
+        update.message.caption ?? '',
+        {
+          fileId: update.message.document.file_id,
+          kind: 'document',
+          fileName: update.message.document.file_name,
+          mimeType: update.message.document.mime_type,
+        },
       );
       if (supportDocHandled) return NextResponse.json({ ok: true });
 
@@ -796,7 +802,8 @@ export async function POST(request: Request) {
           admin,
           update.message.from.id,
           update.message.chat.id,
-          update.message.caption ?? 'Фото',
+          update.message.caption ?? '',
+          { fileId: largest.file_id, kind: 'photo' },
         );
         if (supportPhotoHandled) return NextResponse.json({ ok: true });
 
@@ -837,6 +844,15 @@ export async function POST(request: Request) {
         { fileId: update.message.voice.file_id, kind: 'voice' },
       );
       if (mentorVoiceHandled) return NextResponse.json({ ok: true });
+
+      const supportVoiceHandled = await handleStudentSupportAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.caption ?? '',
+        { fileId: update.message.voice.file_id, kind: 'voice', mimeType: 'audio/ogg' },
+      );
+      if (supportVoiceHandled) return NextResponse.json({ ok: true });
 
       const leadVoice = await recordInboundClientMedia(admin, update.message.from.id, {
         messageType: 'voice',
@@ -1220,6 +1236,7 @@ export async function POST(request: Request) {
         chatId,
         from.id,
         id,
+        messageId,
       );
       if (mentorPickHandled) return NextResponse.json({ ok: true });
 
