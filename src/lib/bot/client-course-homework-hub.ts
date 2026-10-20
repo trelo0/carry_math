@@ -5,6 +5,7 @@ import {
 } from '@/lib/studio/courseContent';
 import {
   listSubmitTargetLessons,
+  listSubmittedAwaitingReviewForCourse,
   resolveSubmitTargetLesson,
   type SubmitTargetLesson,
 } from '@/lib/bot/education/course-homework';
@@ -187,7 +188,18 @@ export async function showClientCourseHomeworkHub(
   }
 
   const allTargets = await listSubmitTargetLessons(admin, telegramId);
-  const targets = filterTargetsBySlug(allTargets, courseSlug ?? purchased[0]?.slug);
+  let targets = filterTargetsBySlug(allTargets, courseSlug ?? purchased[0]?.slug);
+  const slugForAwaiting = courseSlug ?? purchased[0]?.slug;
+  if (slugForAwaiting) {
+    const awaiting = await listSubmittedAwaitingReviewForCourse(admin, telegramId, slugForAwaiting);
+    const seen = new Set(targets.map((t) => t.lesson.sanityId));
+    for (const row of awaiting) {
+      if (!seen.has(row.lesson.sanityId)) {
+        targets.push(row);
+        seen.add(row.lesson.sanityId);
+      }
+    }
+  }
 
   let courseTitle: string | undefined;
   if (courseSlug) {
@@ -221,7 +233,14 @@ export async function showClientCourseHomeworkHub(
   if (targets.length === 1) {
     const t = targets[0]!;
     const phase = deadlineUiState(t.progress);
-    if (phase === 'revision') {
+    if (phase === 'waiting_review') {
+      keyboard.push([
+        {
+          text: '👁 Посмотреть ДЗ',
+          callback_data: `cl:chw:view:${t.lesson.sanityId}`,
+        },
+      ]);
+    } else if (phase === 'revision') {
       keyboard.push([
         {
           text: '📄 Посмотреть пояснение',
@@ -240,7 +259,14 @@ export async function showClientCourseHomeworkHub(
     for (const t of targets) {
       const slug = t.courseSlug ?? courseSlug ?? '_default';
       const phase = deadlineUiState(t.progress);
-      if (phase === 'revision') {
+      if (phase === 'waiting_review') {
+        keyboard.push([
+          {
+            text: `👁 Ожидает проверки · №${t.lesson.lessonNumber}`.slice(0, 64),
+            callback_data: `cl:chw:view:${t.lesson.sanityId}`,
+          },
+        ]);
+      } else if (phase === 'revision') {
         keyboard.push([
           {
             text: `📄 Пояснение · №${t.lesson.lessonNumber}`.slice(0, 64),
@@ -366,36 +392,36 @@ export async function showClientCourseHomeworkHistory(
     return;
   }
 
-  const lines = ['📋 Архив ДЗ', ''];
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   for (const row of items.slice(0, 15)) {
     const lesson = lessonMap.get(row.sanity_lesson_id as string)!;
-    if (!courseSlug) lines.push(`📚 ${lesson.courseTitle}`);
-    lines.push(`№${lesson.lessonNumber} · ${lesson.title}`);
-    lines.push(`Статус: ${hwStatusLabel(row.homework_status as string)}`);
-    if (row.updated_at && row.homework_status !== 'pending') {
-      lines.push(`Отправлено: ${formatDateTimeShort(row.updated_at as string)}`);
-    }
-    if (row.homework_completed_at) {
-      lines.push(`Проверено: ${formatDateTimeShort(row.homework_completed_at as string)}`);
-    }
-    if (row.homework_status === 'rejected' && (row.review_note as string | null)?.trim()) {
-      lines.push(`Почему на доработке: ${(row.review_note as string).trim()}`);
-    }
-    if (row.homework_status === 'approved') {
-      lines.push('Результат: одобрено');
-    }
-    lines.push('');
+    const status = hwStatusLabel(row.homework_status as string);
+    const sent =
+      row.updated_at && row.homework_status !== 'pending'
+        ? formatDateTimeShort(row.updated_at as string)
+        : '';
+    const checked = row.homework_completed_at
+      ? formatDateTimeShort(row.homework_completed_at as string)
+      : '';
+    const meta = [status, sent ? `отпр. ${sent}` : '', checked ? `пр. ${checked}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    keyboard.push([
+      {
+        text: `№${lesson.lessonNumber} · ${lesson.title.slice(0, 28)} (${meta})`.slice(0, 64),
+        callback_data: `cl:chw:view:${row.sanity_lesson_id as string}`,
+      },
+    ]);
   }
+  keyboard.push([{ text: '◀️ К ДЗ', callback_data: hubCb }]);
 
   await deliverClientHubScreen(
     admin,
     telegramId,
     chatId,
     courseSlug ? `course-hw-hist:${courseSlug}` : 'course-hw-hist',
-    lines.join('\n').trim().slice(0, 3900),
-    {
-      inline_keyboard: [[{ text: '◀️ К ДЗ', callback_data: hubCb }]],
-    },
+    ['📋 Архив ДЗ', '', 'Выберите работу, чтобы посмотреть содержание и даты.'].join('\n'),
+    { inline_keyboard: keyboard },
     deliver,
   );
 }
@@ -475,8 +501,12 @@ export async function showClientCourseHomeworkLessonStatus(
   }
 
   const hubCb = `cl:chw:hub:${courseSlug}`;
-  const histCb = `cl:chw:hist:${courseSlug}`;
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (status === 'submitted') {
+    keyboard.push([
+      { text: '👁 Посмотреть ДЗ', callback_data: `cl:chw:view:${sanityLessonId}` },
+    ]);
+  }
   if (status === 'rejected') {
     keyboard.push([
       { text: '📄 Посмотреть пояснение', callback_data: `cl:chw:rev:${sanityLessonId}` },
@@ -496,6 +526,79 @@ export async function showClientCourseHomeworkLessonStatus(
       hubPayloadExtra: { activeCourseSlug: courseSlug },
     },
   );
+  return true;
+}
+
+/** Только просмотр отправленной работы (без повторной сдачи). */
+export async function showClientCourseHomeworkSubmissionView(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  sanityLessonId: string,
+  deliver?: ClientHubDeliverOptions,
+): Promise<boolean> {
+  const { resolveCourseForSanityLesson } = await import(
+    '@/lib/bot/education/student-course-context'
+  );
+  const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
+
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+  if (!resolved) return false;
+  const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
+  if (!lesson) return false;
+
+  const { data: progress, error } = await admin
+    .from('course_lesson_student_progress')
+    .select(
+      'homework_status, submission_note, submission_file_url, homework_submitted_at, updated_at, homework_completed_at',
+    )
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (error) throw error;
+
+  const status = (progress?.homework_status as string | undefined) ?? 'pending';
+  const submittedAt =
+    (progress?.homework_submitted_at as string | null) ??
+    (status !== 'pending' ? (progress?.updated_at as string | null) : null);
+  const note = (progress?.submission_note as string | null)?.trim();
+  const fileRef = (progress?.submission_file_url as string | null)?.trim();
+
+  const lines = [
+    '📋 Ваша работа',
+    '',
+    `Вебинар №${lesson.lessonNumber}: ${lesson.title}`,
+    `Статус: ${hwStatusLabel(status)}`,
+    submittedAt ? `Отправлено: ${formatDateTimeShort(submittedAt)}` : null,
+    progress?.homework_completed_at
+      ? `Проверено: ${formatDateTimeShort(progress.homework_completed_at as string)}`
+      : null,
+    note ? `💬 Ваш комментарий:\n${note}` : null,
+    fileRef ? '📎 Файл приложен (см. ниже)' : null,
+  ].filter((x): x is string => x != null);
+
+  const courseSlug = resolved.slug;
+  const hubCb = `cl:chw:hub:${courseSlug}`;
+  const histCb = `cl:chw:hist:${courseSlug}`;
+
+  await deliverClientHubScreen(
+    admin,
+    telegramId,
+    chatId,
+    `course-hw-view:${sanityLessonId}`,
+    lines.join('\n').trim().slice(0, 3900),
+    {
+      inline_keyboard: [
+        [{ text: '◀️ К архиву', callback_data: histCb }],
+        [{ text: '◀️ К ДЗ', callback_data: hubCb }],
+      ],
+    },
+    deliver,
+  );
+
+  if (fileRef?.startsWith('tg:')) {
+    await sendTelegramFileById(chatId, fileRef.slice(3));
+  }
   return true;
 }
 
@@ -701,6 +804,15 @@ export async function handleClientCourseHomeworkCallback(
     const sanityLessonId = data.slice('cl:chw:stat:'.length);
     if (sanityLessonId) {
       await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
+        editAt,
+      });
+    }
+    return true;
+  }
+  if (data.startsWith('cl:chw:view:')) {
+    const sanityLessonId = data.slice('cl:chw:view:'.length);
+    if (sanityLessonId) {
+      await showClientCourseHomeworkSubmissionView(admin, telegramId, chatId, sanityLessonId, {
         editAt,
       });
     }

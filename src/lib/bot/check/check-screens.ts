@@ -836,7 +836,12 @@ export function renderCheckIncomingPreview(
     keyboard: {
       inline_keyboard: [
         [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
-        [{ text: '💬 Посмотреть диалог', callback_data: `k:msg:${courseId}:d:${studentTelegramId}` }],
+        [
+          {
+            text: '💬 Посмотреть диалог',
+            callback_data: `k:msg:${courseId}:d:${studentTelegramId}:in`,
+          },
+        ],
         [{ text: '✅ Закрыть', callback_data: `k:msg:${courseId}:in:${studentTelegramId}:ok` }],
         [back('⬅️ Назад', `k:msg:${courseId}:in`)],
       ],
@@ -851,6 +856,7 @@ export function renderCheckMessageThread(
   messages: StaffMessageRow[],
   storageEnabled: boolean,
   studentTelegramId: number,
+  backTo: 'in' | 'dlg' = 'dlg',
 ): { text: string; keyboard: InlineKeyboard } {
   const parts = [`💬 ${studentLabel}`, `🎓 ${courseTitle}`, ''];
   if (!storageEnabled) {
@@ -887,7 +893,12 @@ export function renderCheckMessageThread(
     keyboard: {
       inline_keyboard: [
         [{ text: '✏️ Ответить', callback_data: `k:msg:${courseId}:w:${studentTelegramId}` }],
-        [back('⬅️ Назад', `k:msg:${courseId}:dlg`)],
+        [
+          back(
+            '⬅️ Назад',
+            backTo === 'in' ? `k:msg:${courseId}:in` : `k:msg:${courseId}:dlg`,
+          ),
+        ],
       ],
     },
   };
@@ -900,7 +911,7 @@ export function renderCheckLibraryModules(
 ): { text: string; keyboard: InlineKeyboard } {
   if (modules.length === 0) {
     return {
-      text: `📚 База ДЗ\n🎓 ${courseTitle}\n\nМатериалы домашних заданий не опубликованы.`,
+      text: `📚 База домашних заданий\n🎓 ${courseTitle}\n\nМатериалы домашних заданий не опубликованы.`,
       keyboard: { inline_keyboard: [[back('🏠 На главную', `k:home:${courseId}`)]] },
     };
   }

@@ -603,6 +603,44 @@ export async function handleClientCallback(
     return true;
   }
 
+  if (data.startsWith('cl:msg:show:')) {
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    const staffMsgId = Number(data.slice('cl:msg:show:'.length));
+    if (!Number.isFinite(staffMsgId)) return true;
+    const { loadStaffMessageForStudent } = await import('./staff/messaging');
+    const { sendTelegramFileById } = await import('./studentHomeworkFlow');
+    const row = await loadStaffMessageForStudent(admin, telegramId, staffMsgId);
+    if (!row) {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: 'Сообщение не найдено или устарело.',
+      });
+      return true;
+    }
+    const roleLabel =
+      row.staffRole === 'teacher'
+        ? 'преподавателя'
+        : row.staffRole === 'check'
+          ? 'куратора курса'
+          : 'куратора';
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: `💬 Сообщение от ${roleLabel}:\n\n${row.body}`,
+    });
+    const ref = row.attachmentRef?.trim() ?? '';
+    if (ref.startsWith('tg:')) {
+      await sendTelegramFileById(chatId, ref.slice(3), row.attachmentKind);
+    }
+    try {
+      await telegramSend('deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch {
+      /* notification already removed */
+    }
+    return true;
+  }
+
   const { isClientAppealsCallback, handleClientAppealsCallback } = await import(
     './client-appeals-hub'
   );
@@ -624,7 +662,7 @@ export async function handleClientCallback(
     if (data === 'cl:support:back') {
       await handleStudentSupportBack(admin, telegramId, chatId);
     } else {
-      await handleStudentSupportCancel(admin, telegramId, chatId);
+      await handleStudentSupportCancel(admin, telegramId, chatId, memberRole);
     }
     return true;
   }

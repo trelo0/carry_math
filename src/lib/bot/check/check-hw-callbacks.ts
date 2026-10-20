@@ -39,6 +39,7 @@ import { assertCheckCourseAccess } from './check-access';
 import {
   collectCheckArchive,
   collectCheckPending,
+  collectCheckQueue,
   loadCheckHomeworkStudents,
   loadCourseModuleLessonMap,
 } from './check-data';
@@ -49,6 +50,7 @@ import {
   loadCheckHwMetaMap,
   paginateItems,
   type CheckHomeworkListItem,
+  type CheckHwListFilters,
 } from './check-homework-meta';
 import {
   encodeHwItemCallback,
@@ -133,7 +135,17 @@ function collectModeItems(
   students: Awaited<ReturnType<typeof loadCheckHomeworkStudents>>['students'],
   metaMap: Awaited<ReturnType<typeof loadCheckHwMetaMap>>,
   mode: CheckHwListMode,
+  filters?: CheckHwListFilters,
 ): CheckHomeworkListItem[] {
+  if (mode === 'archive' && filters?.archiveStatus === 'overdue') {
+    const all = attachMetaToQueueItems(collectCheckQueue(students, 'all'), metaMap);
+    return all.filter(
+      (i) =>
+        i.meta?.overdue &&
+        i.homework.status !== 'approved' &&
+        (i.homework.status === 'waiting' || i.homework.status === 'upcoming'),
+    );
+  }
   const raw = mode === 'archive' ? collectCheckArchive(students) : collectCheckPending(students);
   return attachMetaToQueueItems(raw, metaMap);
 }
@@ -253,7 +265,7 @@ export async function handleCheckHomeworkFamily(
         message,
         courseId,
         ctx.title,
-        collectModeItems(students, metaMap, mode),
+        collectModeItems(students, metaMap, mode, filters),
         { mode, page, filters },
         moduleMap,
       );

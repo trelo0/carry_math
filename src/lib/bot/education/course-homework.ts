@@ -333,6 +333,49 @@ export async function listSubmitTargetLessons(
   });
 }
 
+/** Отправлено, ожидает проверки (не в списке «сдать сейчас»). */
+export async function listSubmittedAwaitingReviewForCourse(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseSlug: string,
+): Promise<SubmitTargetLesson[]> {
+  const { listStudentActiveCourseContexts } = await import('./student-course-context');
+  const { studentHasCourseAccessForCourse } = await import('./course-access');
+  const ctx = (await listStudentActiveCourseContexts(admin, telegramId)).find(
+    (c) => c.slug === courseSlug,
+  );
+  if (!ctx) return [];
+  const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+  if (!content) return [];
+  const hasCourseProduct = await studentHasCourseAccessForCourse(admin, telegramId, ctx.courseId);
+  const lessons = flattenCourseLessons(content)
+    .filter((l) => l.publicationStatus === 'published')
+    .filter((l) => !(l.isTrialFree && !hasCourseProduct));
+  const sanityIds = lessons.map((l) => l.sanityId);
+  if (sanityIds.length === 0) return [];
+
+  const { data: progressRows } = await admin
+    .from('course_lesson_student_progress')
+    .select('*')
+    .eq('telegram_id', telegramId)
+    .eq('homework_status', 'submitted')
+    .in('sanity_lesson_id', sanityIds);
+  const progressMap = new Map(
+    (progressRows ?? []).map((r) => [r.sanity_lesson_id as string, r as CourseLessonStudentProgress]),
+  );
+
+  return lessons
+    .filter((lesson) => progressMap.has(lesson.sanityId))
+    .map((lesson) => ({
+      lesson,
+      progress: progressMap.get(lesson.sanityId) ?? null,
+      courseId: ctx.courseId,
+      courseSlug: ctx.slug,
+      courseTitle: ctx.title,
+      hasCourseProduct,
+    }));
+}
+
 export async function resolveSubmitTargetLesson(
   admin: SupabaseClient,
   telegramId: number,

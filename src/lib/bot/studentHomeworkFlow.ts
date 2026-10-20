@@ -30,6 +30,7 @@ type SubmitPayload = AdminPayload & {
   lessonNumber?: number;
   courseSlug?: string;
   courseTitle?: string;
+  hwWizardMessageId?: number;
 };
 
 function formatSubmitError(error: unknown): string {
@@ -46,6 +47,126 @@ function cancelKeyboard() {
   return {
     inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'chw:cancel' }]],
   };
+}
+
+function commentStepKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
+      [
+        { text: '◀️ Назад', callback_data: 'chw:back' },
+        { text: '❌ Отмена', callback_data: 'chw:cancel' },
+      ],
+    ],
+  };
+}
+
+function confirmStepKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '✅ Отправить на проверку', callback_data: 'chw:confirm' }],
+      [
+        { text: '◀️ Назад', callback_data: 'chw:back' },
+        { text: '❌ Отмена', callback_data: 'chw:cancel' },
+      ],
+    ],
+  };
+}
+
+function fileStepText(payload: SubmitPayload): string {
+  return [
+    '📝 Сдача домашнего задания',
+    '',
+    payload.courseTitle ? `Курс: ${payload.courseTitle}` : null,
+    payload.lessonNumber != null
+      ? `Занятие №${payload.lessonNumber}: ${payload.lessonTitle ?? ''}`
+      : null,
+    '',
+    'Отправьте файл с решением (фото или документ) или текст задания одним сообщением.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function commentStepText(): string {
+  return '📎 Файл получен.\n\nНапишите комментарий к ДЗ (необязательно) или нажмите «Пропустить комментарий».';
+}
+
+function confirmStepText(payload: SubmitPayload): string {
+  const note = payload.draftNote?.trim();
+  return [
+    '✅ Подтверждение отправки',
+    '',
+    payload.lessonNumber != null
+      ? `Вебинар №${payload.lessonNumber}: ${payload.lessonTitle ?? ''}`
+      : null,
+    payload.draftFileUrl ? '📎 Файл приложен' : '📎 Файла нет',
+    note ? `💬 Комментарий ученика:\n${note}` : '💬 Комментарий: —',
+    '',
+    'Отправить работу куратору?',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function saveHwWizardState(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  step: typeof COURSE_HW_FILE_STEP | typeof COURSE_HW_COMMENT_STEP | typeof COURSE_HW_CONFIRM_STEP,
+  payload: SubmitPayload,
+): Promise<void> {
+  try {
+    await saveState(
+      admin,
+      telegramId,
+      { chatId, messageId: payload.hwWizardMessageId ?? 0 },
+      step,
+      payload,
+    );
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+}
+
+async function renderHwWizard(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  step: typeof COURSE_HW_FILE_STEP | typeof COURSE_HW_COMMENT_STEP | typeof COURSE_HW_CONFIRM_STEP,
+  payload: SubmitPayload,
+): Promise<SubmitPayload> {
+  const text =
+    step === COURSE_HW_FILE_STEP
+      ? fileStepText(payload)
+      : step === COURSE_HW_COMMENT_STEP
+        ? commentStepText()
+        : confirmStepText(payload);
+  const keyboard =
+    step === COURSE_HW_FILE_STEP
+      ? cancelKeyboard()
+      : step === COURSE_HW_COMMENT_STEP
+        ? commentStepKeyboard()
+        : confirmStepKeyboard();
+
+  const messageId = payload.hwWizardMessageId;
+  if (messageId) {
+    const edited = await telegramSend('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      reply_markup: keyboard,
+    });
+    if (edited.ok) {
+      await saveHwWizardState(admin, telegramId, chatId, step, payload);
+      return payload;
+    }
+  }
+
+  const newId = await sendAdminMessage(chatId, text, keyboard);
+  const next = { ...payload, hwWizardMessageId: newId ?? payload.hwWizardMessageId };
+  await saveHwWizardState(admin, telegramId, chatId, step, next);
+  return next;
 }
 
 async function assertCanSubmitCourseHw(
@@ -108,35 +229,29 @@ export async function beginCourseHomeworkSubmit(
         ? Math.max(0, Date.parse(progress.homework_deadline_at) - Date.now())
         : null;
 
-  const text = [
-    '📝 Сдача домашнего задания',
-    '',
-    gate.target.courseTitle ? `Курс: ${gate.target.courseTitle}` : null,
-    `Занятие №${lesson.lessonNumber}: ${lesson.title}`,
-    remaining != null ? `⏱ Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
-    '',
-    '1️⃣ Отправьте файл с решением (фото или документ).',
-    '2️⃣ При необходимости добавьте комментарий.',
-    '3️⃣ Нажмите «Отправить на проверку».',
-    '',
-    'Можно отменить в любой момент.',
+  const intro = [
+    fileStepText({
+      lessonTitle: lesson.title,
+      lessonNumber: lesson.lessonNumber,
+      courseTitle: gate.target.courseTitle,
+    }),
+    remaining != null ? `\n⏱ Осталось на сдачу: ${formatRemainingMs(remaining)}` : null,
   ]
     .filter(Boolean)
     .join('\n');
 
-  try {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_FILE_STEP, {
-      sanityLessonId: lesson.sanityId,
-      lessonTitle: lesson.title,
-      lessonNumber: lesson.lessonNumber,
-      courseSlug: gate.target.courseSlug,
-      courseTitle: gate.target.courseTitle,
-    });
-  } catch (error) {
-    if (!isConversationStateTableError(error)) throw error;
-  }
-
-  await sendAdminMessage(chatId, text, cancelKeyboard());
+  const payload: SubmitPayload = {
+    sanityLessonId: lesson.sanityId,
+    lessonTitle: lesson.title,
+    lessonNumber: lesson.lessonNumber,
+    courseSlug: gate.target.courseSlug,
+    courseTitle: gate.target.courseTitle,
+  };
+  const newId = await sendAdminMessage(chatId, intro, cancelKeyboard());
+  await saveHwWizardState(admin, telegramId, chatId, COURSE_HW_FILE_STEP, {
+    ...payload,
+    hwWizardMessageId: newId ?? undefined,
+  });
   return true;
 }
 
@@ -160,16 +275,21 @@ async function finishSubmit(
   } catch (error) {
     console.error('[course-hw] curator notify failed:', error);
   }
+  let wizardId: number | undefined;
+  try {
+    const state = await getState(admin, telegramId);
+    wizardId = (state?.payload as SubmitPayload | undefined)?.hwWizardMessageId;
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
   await clearStateIfAvailable(admin, telegramId);
-  const { studentNotifyKeyboard } = await import('./student-push-notify');
-  await sendAdminMessage(
-    chatId,
-    '✅ Домашка отправлена.\n\nСтатус: Ожидает проверки.',
-    studentNotifyKeyboard([
-      [{ text: 'Проверить статус', callback_data: `cl:chw:stat:${sanityLessonId}` }],
-    ]),
-  );
   const { showClientCourseHomeworkLessonStatus } = await import('./client-course-homework-hub');
+  if (wizardId) {
+    await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
+      editAt: { chatId, messageId: wizardId },
+    });
+    return;
+  }
   await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
     forcePush: true,
   });
@@ -216,34 +336,15 @@ export async function handleStudentHomeworkMessage(
   }
 
   if (step === COURSE_HW_FILE_STEP) {
-    // Текст на первом шаге — как файл-замена (заметка без вложения).
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_COMMENT_STEP, {
-      ...payload,
-      draftNote: text.trim(),
-    });
-    await sendAdminMessage(
-      chatId,
-      'Текст сохранён.\n\nМожете приложить файл или сразу написать комментарий / нажать «Пропустить комментарий».',
-      {
-        inline_keyboard: [
-          [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
-          [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
-        ],
-      },
-    );
+    const nextPayload = { ...payload, draftNote: text.trim() };
+    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, nextPayload);
     return true;
   }
 
   if (step === COURSE_HW_COMMENT_STEP) {
     const note = text.trim();
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_CONFIRM_STEP, {
-      ...payload,
-      draftNote: note || payload.draftNote,
-    });
-    await sendConfirmPrompt(chatId, {
-      ...payload,
-      draftNote: note || payload.draftNote,
-    });
+    const nextPayload = { ...payload, draftNote: note || payload.draftNote };
+    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, nextPayload);
     return true;
   }
 
@@ -268,27 +369,6 @@ export async function handleStudentHomeworkMessage(
   return false;
 }
 
-async function sendConfirmPrompt(chatId: number, payload: SubmitPayload): Promise<void> {
-  const lines = [
-    '✅ Подтверждение отправки',
-    '',
-    payload.lessonNumber != null
-      ? `Вебинар №${payload.lessonNumber}: ${payload.lessonTitle ?? ''}`
-      : null,
-    payload.draftFileUrl ? '📎 Файл приложен' : '📎 Файла нет',
-    payload.draftNote?.trim() ? `💬 Комментарий: ${payload.draftNote.trim()}` : '💬 Комментарий: —',
-    '',
-    'Отправить работу куратору?',
-  ].filter(Boolean);
-
-  await sendAdminMessage(chatId, lines.join('\n'), {
-    inline_keyboard: [
-      [{ text: '✅ Отправить на проверку', callback_data: 'chw:confirm' }],
-      [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
-    ],
-  });
-}
-
 export async function handleStudentHomeworkAttachment(
   admin: SupabaseClient,
   telegramId: number,
@@ -306,22 +386,11 @@ export async function handleStudentHomeworkAttachment(
   if (!sanityLessonId) return false;
 
   const fileUrl = formatTelegramFileRef(attachment.fileId);
-  await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_COMMENT_STEP, {
+  await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, {
     ...payload,
     draftFileUrl: fileUrl,
     draftFileKind: attachment.kind,
   });
-
-  await sendAdminMessage(
-    chatId,
-    '📎 Файл получен.\n\nНапишите комментарий к ДЗ (необязательно) или нажмите «Пропустить комментарий».',
-    {
-      inline_keyboard: [
-        [{ text: '⏭ Пропустить комментарий', callback_data: 'chw:skip' }],
-        [{ text: '◀️ Назад', callback_data: 'chw:back' }, { text: '❌ Отмена', callback_data: 'chw:cancel' }],
-      ],
-    },
-  );
   return true;
 }
 
@@ -338,8 +407,11 @@ export async function handleCourseHomeworkCallback(
   }
 
   if (data === 'chw:cancel') {
+    const cancelPayload = (await loadHwState(admin, telegramId))?.payload as SubmitPayload | undefined;
+    const slug = cancelPayload?.courseSlug;
     await clearStateIfAvailable(admin, telegramId);
-    await sendAdminMessage(chatId, 'Сдача домашки отменена.');
+    const { showClientCourseHomeworkHub } = await import('./client-course-homework-hub');
+    await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true }, slug);
     return true;
   }
 
@@ -353,22 +425,26 @@ export async function handleCourseHomeworkCallback(
   if (!sanityLessonId) return true;
 
   if (data === 'chw:back') {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_FILE_STEP, {
-      ...payload,
-      draftNote: undefined,
-      draftFileUrl: undefined,
-    });
-    await sendAdminMessage(
-      chatId,
-      'Отправьте файл с решением (фото или документ) или текст задания одним сообщением.',
-      cancelKeyboard(),
-    );
+    const step = state.step as string;
+    if (step === COURSE_HW_CONFIRM_STEP) {
+      await renderHwWizard(admin, telegramId, chatId, COURSE_HW_COMMENT_STEP, payload);
+      return true;
+    }
+    if (step === COURSE_HW_COMMENT_STEP) {
+      await renderHwWizard(admin, telegramId, chatId, COURSE_HW_FILE_STEP, {
+        ...payload,
+        draftNote: undefined,
+        draftFileUrl: undefined,
+        draftFileKind: undefined,
+      });
+      return true;
+    }
+    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_FILE_STEP, payload);
     return true;
   }
 
   if (data === 'chw:skip') {
-    await saveState(admin, telegramId, { chatId, messageId: 0 }, COURSE_HW_CONFIRM_STEP, payload);
-    await sendConfirmPrompt(chatId, payload);
+    await renderHwWizard(admin, telegramId, chatId, COURSE_HW_CONFIRM_STEP, payload);
     return true;
   }
 
@@ -487,9 +563,12 @@ export async function sendSubmissionToCurator(
     `📎 Работа ученика ${submission.studentName}\n` +
     `Занятие №${submission.lessonNumber}: ${submission.title}`;
   const note = submission.note?.trim();
+  const text = note
+    ? `${header}\n\n💬 Комментарий ученика:\n${note}`
+    : header;
   await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: note ? `${header}\n\n${note}` : header,
+    text,
   });
 
   const fileUrl = submission.fileUrl?.trim() ?? '';

@@ -83,7 +83,7 @@ export function collectCheckPending(students: CuratorStudentRecord[]): CuratorHo
   return collectCheckQueue(students, 'pending');
 }
 
-/** Архив = только проверенные (одобрено / на доработке), без очереди «на проверке» и «не сдано». */
+/** Архив = проверенные (одобрено / на доработке). Просрочка — отдельный фильтр в collectModeItems. */
 export function collectCheckArchive(students: CuratorStudentRecord[]): CuratorHomeworkListItem[] {
   return collectCheckQueue(students, 'all').filter(
     (item) => item.homework.status === 'approved' || item.homework.status === 'revision',

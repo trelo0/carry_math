@@ -7,6 +7,7 @@ import {
   showClientCourseHomeworkHistory,
   showClientCourseHomeworkHub,
   showClientCourseHomeworkLessonStatus,
+  showClientHomeworkMenu,
 } from './client-course-homework-hub';
 import { showClientMyCourseHub, showClientCoursePicker } from './client-course-hub';
 import { showClientScheduleMenu, showClientPackageMenu, showClientLessonsMenu } from './client-lessons-flow';
@@ -71,6 +72,9 @@ export async function renderClientScreenById(
       return;
     case 'my-leads':
       await showClientApplicationsHub(admin, telegramId, chatId, deliver);
+      return;
+    case 'course-hw-root':
+      await showClientHomeworkMenu(admin, telegramId, chatId, deliver);
       return;
     case 'course-hw-hub':
       await showClientCourseHomeworkHub(

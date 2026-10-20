@@ -52,6 +52,21 @@ export async function insertLeadMessage(
   return true;
 }
 
+export function formatLeadMessageBody(row: Pick<LeadMessageRow, 'body' | 'message_type' | 'attachment'>): string {
+  const text = row.body?.trim();
+  if (text) return text;
+  const att = row.attachment as { kind?: string; fileName?: string; type?: string } | null;
+  if (!att || typeof att !== 'object') return '📎 Вложение';
+  const kind = att.kind ?? att.type ?? row.message_type;
+  if (kind === 'photo') return '📷 Фото';
+  if (kind === 'voice') return '🎤 Голосовое сообщение';
+  if (kind === 'document') {
+    const name = att.fileName?.trim();
+    return name ? `📎 Документ: ${name}` : '📎 Документ';
+  }
+  return '📎 Вложение';
+}
+
 export async function listLeadMessages(
   admin: SupabaseClient,
   leadId: string,

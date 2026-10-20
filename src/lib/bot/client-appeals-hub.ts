@@ -16,6 +16,7 @@ import {
   loadStudentStaffMessageHistory,
   staffStudentLabel,
 } from './staff/messaging';
+import { formatLeadMessageBody } from './admin/lead-messages';
 import { leadArchiveKindLabel, listClientLeadsForAppealsArchive } from './inquiry-leads';
 import { listLeadMessages } from './admin/lead-messages';
 import { getStudentOrdinaryTeacherIds } from './education/assignments';
@@ -263,7 +264,7 @@ async function showArchiveLeadThread(
   } else {
     for (const m of messages) {
       const who = m.direction === 'client_to_admin' ? '👤 Вы' : '🛡 Администратор';
-      lines.push(`${who}: ${m.body ?? '(вложение)'}`, '');
+      lines.push(`${who}: ${formatLeadMessageBody(m)}`, '');
     }
   }
   await deliverClientHubScreen(

@@ -292,6 +292,7 @@ export async function handleCheckBotCallback(
 
       if (parts[3] === 'd' && parts[4]) {
         const studentTelegramId = Number(parts[4]);
+        const backTo = parts[5] === 'in' ? 'in' : 'dlg';
         await markCheckThreadRead(admin, telegramId, studentTelegramId, courseId);
         const label = await staffStudentLabel(admin, studentTelegramId);
         const { messages, storageEnabled } = await loadCheckThreadMessages(
@@ -307,6 +308,7 @@ export async function handleCheckBotCallback(
           messages,
           storageEnabled,
           studentTelegramId,
+          backTo,
         );
         await editScreen(message, screen.text, screen.keyboard);
         return true;
@@ -336,7 +338,9 @@ export async function handleCheckBotCallback(
         try {
           await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
           const promptId = await sendAdminMessage(chatId, '✏️ Сообщение ученику.\n\n⬅️ Отмена', {
-            inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `k:msg:${courseId}:d:${studentTelegramId}` }]],
+            inline_keyboard: [
+              [{ text: '⬅️ Отмена', callback_data: `k:stu:${courseId}:s:${studentTelegramId}` }],
+            ],
           });
           await saveState(
             admin,

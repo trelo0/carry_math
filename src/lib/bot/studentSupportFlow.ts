@@ -4,7 +4,13 @@ import { getState, isConversationStateTableError, sendAdminMessage } from './adm
 import { logLeadEvent } from './admin/lead-events';
 import { insertLeadMessage } from './admin/lead-messages';
 import { setLeadStatus } from './admin/leads';
-import { resetClientDialogToHub, saveClientDialogState, clientBackButton } from './client-nav';
+import {
+  restoreClientHubAfterDialogCancel,
+  resetClientDialogToHub,
+  saveClientDialogState,
+  clientBackButton,
+} from './client-nav';
+import type { BotRole } from './roles';
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { createInquiryLead, type InquiryKind } from './inquiry-leads';
 import { getMember } from './roles';
@@ -160,7 +166,7 @@ async function deliverSupportToAdmin(
   ack: string,
 ): Promise<void> {
   const kind = await inquiryKindForUser(admin, telegramId);
-  const lead = await createInquiryLead(admin, telegramId, kind, body);
+  const lead = await createInquiryLead(admin, telegramId, kind, body, { forceNew: true });
   await notifyAdminsOfSupportMessage(admin, telegramId, body);
   if (lead?.id) {
     await enterSupportThread(admin, telegramId, chatId, lead.id);
@@ -267,7 +273,7 @@ export async function handleStudentSupportCancel(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  memberRole?: BotRole,
 ): Promise<void> {
-  await resetClientDialogToHub(admin, telegramId);
-  await sendAdminMessage(chatId, 'Обращение отменено.');
+  await restoreClientHubAfterDialogCancel(admin, telegramId, chatId, memberRole);
 }

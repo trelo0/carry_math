@@ -64,8 +64,9 @@ export async function createInquiryLead(
   telegramId: number,
   kind: InquiryKind,
   firstMessage: string,
+  options?: { forceNew?: boolean },
 ): Promise<LeadRow | null> {
-  const existing = await findOpenInquiryLead(admin, telegramId, kind);
+  const existing = options?.forceNew ? null : await findOpenInquiryLead(admin, telegramId, kind);
   if (existing) {
     await insertLeadMessage(admin, {
       leadId: existing.id,
@@ -81,7 +82,7 @@ export async function createInquiryLead(
     name,
     contact,
     comment: firstMessage.slice(0, 2000),
-    service: kind === 'guest_question' ? 'Вопрос гостя' : 'Вопрос ученика',
+    service: kind === 'application' ? 'Заявка' : 'Вопрос админу',
     source: 'telegram_bot',
     status: 'new',
     inquiry_kind: kind,
@@ -195,8 +196,7 @@ export async function listClientLeadsForAppealsArchive(
 export function leadArchiveKindLabel(row: LeadRow): string {
   const kind = row.inquiry_kind;
   if (kind === 'application') return '📚 Заявка';
-  if (kind === 'guest_question') return '🛡 Вопрос (гость)';
-  if (kind === 'student_question') return '🛡 Вопрос админу';
+  if (kind === 'guest_question' || kind === 'student_question') return '🛡 Вопрос админу';
   const service = (row.service ?? '').toLowerCase();
   if (service.includes('заявк') || service.includes('курс')) return '📚 Заявка';
   return '🛡 Обращение';

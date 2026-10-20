@@ -107,7 +107,7 @@ export async function insertStaffMessage(
     markStaffRead?: boolean;
     courseId?: number | null;
   },
-): Promise<boolean> {
+): Promise<number | null> {
   const base = {
     staff_telegram_id: row.staffTelegramId,
     student_telegram_id: row.studentTelegramId,
@@ -121,15 +121,16 @@ export async function insertStaffMessage(
   try {
     const payload =
       row.courseId != null ? { ...base, course_id: row.courseId } : base;
-    let { error } = await admin.from('staff_student_messages').insert(payload);
+    let { data, error } = await admin.from('staff_student_messages').insert(payload).select('id').maybeSingle();
     if (error && row.courseId != null && isCourseIdColumnError(error)) {
-      ({ error } = await admin.from('staff_student_messages').insert(base));
+      ({ data, error } = await admin.from('staff_student_messages').insert(base).select('id').maybeSingle());
     }
     if (error) throw error;
-    return true;
+    const id = (data as { id?: number } | null)?.id;
+    return typeof id === 'number' ? id : null;
   } catch (error) {
     if (!isMessagesTableError(error)) throw error;
-    return false;
+    return null;
   }
 }
 
@@ -179,33 +180,7 @@ export async function deliverStaffToStudent(
         ? 'куратора курса'
         : 'куратора';
   const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
-  const hasAttach = Boolean(params.attachmentRef?.startsWith('tg:') && params.attachmentKind);
-  const preview = params.body.trim();
-  const text = hasAttach && !preview
-    ? `💬 Новое сообщение от ${roleLabel}.`
-    : preview
-      ? `💬 Сообщение от ${roleLabel}:\n\n${preview}`
-      : `💬 Новое сообщение от ${roleLabel}.`;
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text,
-    reply_markup: studentNotifyKeyboard([
-      [{ text: 'Просмотреть', callback_data: 'cl:apl:in' }],
-    ]),
-  });
-
-  if (params.attachmentRef?.startsWith('tg:') && params.attachmentKind) {
-    const fileId = params.attachmentRef.slice(3);
-    if (params.attachmentKind === 'photo') {
-      await telegramSend('sendPhoto', { chat_id: chatId, photo: fileId });
-    } else if (params.attachmentKind === 'voice') {
-      await telegramSend('sendVoice', { chat_id: chatId, voice: fileId });
-    } else {
-      await telegramSend('sendDocument', { chat_id: chatId, document: fileId });
-    }
-  }
-
-  await insertStaffMessage(admin, {
+  const messageId = await insertStaffMessage(admin, {
     staffTelegramId: params.staffTelegramId,
     studentTelegramId: params.studentTelegramId,
     staffRole: params.staffRole,
@@ -215,6 +190,47 @@ export async function deliverStaffToStudent(
     attachmentKind: params.attachmentKind,
     courseId: params.courseId,
   });
+
+  const showCb =
+    messageId != null ? `cl:msg:show:${messageId}` : 'cl:apl:in';
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: `💬 Новое сообщение от ${roleLabel}.\n\nНажмите «Показать», чтобы прочитать.`,
+    reply_markup: studentNotifyKeyboard([[{ text: 'Показать', callback_data: showCb }]]),
+  });
+}
+
+export async function loadStaffMessageForStudent(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  messageId: number,
+): Promise<{
+  body: string;
+  attachmentRef: string | null;
+  attachmentKind: 'photo' | 'document' | 'voice' | null;
+  staffRole: StaffMessageRole;
+} | null> {
+  const { data, error } = await admin
+    .from('staff_student_messages')
+    .select('body, attachment_ref, attachment_kind, staff_role, direction, student_telegram_id')
+    .eq('id', messageId)
+    .maybeSingle();
+  if (error) {
+    if (isMessagesTableError(error)) return null;
+    throw error;
+  }
+  if (!data) return null;
+  if ((data as { student_telegram_id: number }).student_telegram_id !== studentTelegramId) {
+    return null;
+  }
+  if ((data as { direction: string }).direction !== 'staff_to_student') return null;
+  return {
+    body: String((data as { body?: string }).body ?? '').trim() || '(без текста)',
+    attachmentRef: (data as { attachment_ref?: string | null }).attachment_ref ?? null,
+    attachmentKind: (data as { attachment_kind?: 'photo' | 'document' | 'voice' | null })
+      .attachment_kind ?? null,
+    staffRole: (data as { staff_role: StaffMessageRole }).staff_role,
+  };
 }
 
 export async function notifyStaffInboundFromStudent(
@@ -264,27 +280,22 @@ export async function notifyStaffInboundFromStudent(
   const isCheck = params.staffRole === 'check';
   await telegramSend('sendMessage', {
     chat_id: staffChatId,
-    text: ['💬 Сообщение от ученика', '', `👤 ${label}${courseLine}`, '', params.body.trim() || '📎 Вложение'].join('\n'),
+    text: [
+      '💬 Сообщение от ученика',
+      '',
+      `👤 ${label}${courseLine}`,
+      '',
+      'Нажмите «Показать», чтобы прочитать.',
+    ].join('\n'),
     reply_markup: {
-      inline_keyboard: isCheck
-        ? [
-            [
-              { text: 'Закрыть', callback_data: 'k:ntf:close' },
-              { text: 'Показать', callback_data: replyCallback },
-            ],
-          ]
-        : [[{ text: '↩️ Ответить', callback_data: replyCallback }]],
+      inline_keyboard: [
+        [
+          ...(isCheck ? [{ text: 'Закрыть', callback_data: 'k:ntf:close' }] : []),
+          { text: 'Показать', callback_data: replyCallback },
+        ],
+      ],
     },
   });
-
-  if (!isCheck && params.attachmentRef?.startsWith('tg:') && params.attachmentKind) {
-    const fileId = params.attachmentRef.slice(3);
-    if (params.attachmentKind === 'photo') {
-      await telegramSend('sendPhoto', { chat_id: staffChatId, photo: fileId });
-    } else {
-      await telegramSend('sendDocument', { chat_id: staffChatId, document: fileId });
-    }
-  }
 }
 
 function mapRow(raw: Record<string, unknown>): StaffMessageRow {

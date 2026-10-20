@@ -386,6 +386,40 @@ export async function editClientCard(
   });
 }
 
+/** После «Отмена» в диалоге — вернуть карточку hub на экран из стека. */
+export async function restoreClientHubAfterDialogCancel(
+  admin: SupabaseClient,
+  telegramId: number,
+  chatId: number,
+  memberRole?: import('./roles').BotRole,
+): Promise<void> {
+  const loaded = await loadClientHubPayload(admin, telegramId);
+  const stack = loaded?.payload.clientNavStack ?? ['home'];
+  const target = stack[stack.length - 1] ?? 'home';
+  await resetClientDialogToHub(admin, telegramId);
+  const hubId = loaded?.payload.clientHubMessageId ?? loaded?.payload.hubMessageId;
+  const { renderClientScreenById } = await import('./client-screen-router');
+  if (typeof hubId === 'number' && hubId > 0) {
+    await renderClientScreenById(
+      admin,
+      target,
+      chatId,
+      telegramId,
+      memberRole,
+      { kind: 'edit', hub: { chatId, messageId: hubId }, navStack: stack },
+    );
+    return;
+  }
+  await renderClientScreenById(
+    admin,
+    target,
+    chatId,
+    telegramId,
+    memberRole,
+    { kind: 'push', chatId },
+  );
+}
+
 export function popNavStack(stack: string[]): { target: string; nextStack: string[] } {
   const copy = [...stack];
   if (copy.length <= 1) {

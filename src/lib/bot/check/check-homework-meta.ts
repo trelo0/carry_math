@@ -122,7 +122,14 @@ export function applyCheckHwFilters(
   }
   if (filters.archiveStatus && filters.archiveStatus !== 'all') {
     if (filters.archiveStatus === 'overdue') {
-      out = out.filter((i) => i.meta?.overdue);
+      out = out.filter(
+        (i) =>
+          i.meta?.overdue &&
+          i.homework.status !== 'approved' &&
+          (i.homework.status === 'waiting' ||
+            i.homework.status === 'upcoming' ||
+            i.homework.status === 'revision'),
+      );
     } else {
       out = out.filter((i) => i.homework.status === filters.archiveStatus);
     }
