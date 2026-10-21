@@ -320,6 +320,116 @@ export async function sumCoursePackageRemainingLessons(
   return { remaining, total };
 }
 
+/** id пакетов course, привязанных к курсу (как в sumCoursePackageLessonEntitlement). */
+export async function listMatchingCoursePackageIds(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+): Promise<number[]> {
+  const { data, error } = await admin
+    .from('lesson_packages')
+    .select('id, status, course_id, title')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .neq('status', 'cancelled');
+  if (error) throw error;
+  const rows = data ?? [];
+
+  const { data: courseRow } = await admin
+    .from('courses')
+    .select('slug, title')
+    .eq('id', courseId)
+    .maybeSingle();
+  const slug = (courseRow?.slug as string | undefined)?.trim() ?? null;
+  const courseTitle = (courseRow?.title as string | undefined) ?? null;
+  const aliasIds = new Set(await expandCourseIdAliases(admin, courseId));
+  const pkgCourseIds = [
+    ...new Set(
+      rows
+        .map((row) => row.course_id as number | null)
+        .filter((id): id is number => id != null),
+    ),
+  ];
+  const slugByPkgCourseId = new Map<number, string>();
+  if (pkgCourseIds.length > 0) {
+    const { data: courseRows } = await admin
+      .from('courses')
+      .select('id, slug')
+      .in('id', pkgCourseIds);
+    for (const c of courseRows ?? []) {
+      if (c.id != null && c.slug) slugByPkgCourseId.set(c.id as number, c.slug as string);
+    }
+  }
+
+  return rows
+    .filter((row) =>
+      coursePackageRowMatchesCourse(
+        row.course_id as number | null,
+        (row as { title?: string }).title,
+        courseId,
+        slug,
+        courseTitle,
+        aliasIds,
+        slugByPkgCourseId,
+      ),
+    )
+    .map((row) => row.id as number);
+}
+
+/**
+ * Восстанавливает course_lesson_access по package_lesson_grants (после мультикурса / backfill).
+ */
+export async function reconcileCourseLessonAccessFromPackageGrants(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+): Promise<number> {
+  const packageIds = await listMatchingCoursePackageIds(admin, telegramId, courseId);
+  if (packageIds.length === 0) return 0;
+
+  const { data: grants, error } = await admin
+    .from('package_lesson_grants')
+    .select('package_id, sanity_lesson_id')
+    .in('package_id', packageIds)
+    .not('sanity_lesson_id', 'is', null);
+  if (error) throw error;
+
+  let updated = 0;
+  for (const grant of grants ?? []) {
+    const sanityId = grant.sanity_lesson_id as string | null;
+    const packageId = grant.package_id as number | null;
+    if (!sanityId || packageId == null) continue;
+
+    const { data: existing } = await admin
+      .from('course_lesson_access')
+      .select('access_status')
+      .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
+      .eq('sanity_lesson_id', sanityId)
+      .maybeSingle();
+    if (existing?.access_status === 'available' || existing?.access_status === 'blocked_lives') {
+      continue;
+    }
+
+    await upsertSanityLessonAccess(admin, telegramId, sanityId, 'package', packageId, courseId);
+    updated += 1;
+  }
+  return updated;
+}
+
+/** Перед отрисовкой карты: пробное, grants→access, join_current. */
+export async function syncCourseMapStudentAccess(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  content: DistrictCourseContent | null | undefined,
+): Promise<void> {
+  if (!content) return;
+  await grantEnrollmentTrialAccess(admin, telegramId, courseId, content);
+  await reconcileCourseLessonAccessFromPackageGrants(admin, telegramId, courseId);
+  await syncJoinCurrentEnrollmentAccess(admin, telegramId, courseId, content, null);
+}
+
 /** Есть оплаченный пакет / зачисление на конкретный курс. */
 export async function studentHasCourseAccessForCourse(
   admin: SupabaseClient,
@@ -725,12 +835,16 @@ export async function ensureCurrentLessonUnlocked(
   }
 
   const sanityIds = published.map((l) => l.sanityId);
+  let accessQuery = admin
+    .from('course_lesson_access')
+    .select('sanity_lesson_id, access_status')
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', sanityIds);
+  if (courseId != null) {
+    accessQuery = accessQuery.eq('course_id', courseId);
+  }
   const [{ data: accessRows, error: accessError }, progressMap] = await Promise.all([
-    admin
-      .from('course_lesson_access')
-      .select('sanity_lesson_id, access_status')
-      .eq('telegram_id', telegramId)
-      .in('sanity_lesson_id', sanityIds),
+    accessQuery,
     loadProgressMap(admin, telegramId, sanityIds, courseId),
   ]);
   if (accessError) throw accessError;

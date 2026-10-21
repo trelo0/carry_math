@@ -18,6 +18,7 @@ import {
 import {
   isCourseLessonCleared,
   previousCourseLessonsCleared,
+  listMatchingCoursePackageIds,
   sumCoursePackageLessonEntitlement,
 } from '@/lib/bot/education/course-access';
 import {
@@ -399,15 +400,74 @@ async function loadProgressAndAccessBySanity(
     await mergeLegacyLessonAccess(admin, telegramId, content, sanityLessonIds, accessMap);
   }
 
+  const progressMap = new Map(
+    (progressRows ?? []).map((r) => [
+      r.sanity_lesson_id as string,
+      normalizeProgressRow(r as CourseLessonStudentProgress),
+    ]),
+  );
+
+  if (courseId != null) {
+    await mergeCrossCourseProgressForGrantedLessons(
+      admin,
+      telegramId,
+      courseId,
+      sanityLessonIds,
+      accessMap,
+      progressMap,
+    );
+  }
+
   return {
     accessMap,
-    progressMap: new Map(
-      (progressRows ?? []).map((r) => [
-        r.sanity_lesson_id as string,
-        normalizeProgressRow(r as CourseLessonStudentProgress),
-      ]),
-    ),
+    progressMap,
   };
+}
+
+/** Прогресс мог остаться на другом course_id при том же sanity_lesson_id. */
+async function mergeCrossCourseProgressForGrantedLessons(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  sanityLessonIds: string[],
+  accessMap: Map<string, string>,
+  progressMap: Map<string, CourseLessonStudentProgress>,
+): Promise<void> {
+  const packageIds = await listMatchingCoursePackageIds(admin, telegramId, courseId);
+  const grantedSanity = new Set<string>();
+  if (packageIds.length > 0) {
+    const { data: grants, error: grantError } = await admin
+      .from('package_lesson_grants')
+      .select('sanity_lesson_id')
+      .in('package_id', packageIds)
+      .in('sanity_lesson_id', sanityLessonIds);
+    if (grantError) throw grantError;
+    for (const row of grants ?? []) {
+      const id = row.sanity_lesson_id as string | null;
+      if (id) grantedSanity.add(id);
+    }
+  }
+
+  const missing = sanityLessonIds.filter((id) => {
+    if (progressMap.has(id)) return false;
+    if (grantedSanity.has(id)) return true;
+    const status = accessMap.get(id);
+    return status === 'available' || status === 'blocked_lives';
+  });
+  if (missing.length === 0) return;
+
+  const { data: fallbackRows, error } = await admin
+    .from('course_lesson_student_progress')
+    .select(MAP_PROGRESS_SELECT)
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', missing);
+  if (error) throw error;
+
+  for (const row of fallbackRows ?? []) {
+    const sanityId = row.sanity_lesson_id as string;
+    if (!sanityId || progressMap.has(sanityId)) continue;
+    progressMap.set(sanityId, normalizeProgressRow(row as CourseLessonStudentProgress));
+  }
 }
 
 /** Карта курса из Sanity + состояние ученика в Supabase. */

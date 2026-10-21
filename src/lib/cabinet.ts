@@ -979,6 +979,14 @@ async function resolveCourseMapFromContent(
 
     if (shouldSyncAccess) {
       try {
+        const { syncCourseMapStudentAccess } = await import('@/lib/bot/education/course-access');
+        await syncCourseMapStudentAccess(admin, telegramId, courseId, content);
+      } catch (error) {
+        if (!isCourseProgressTableError(error)) {
+          console.error('[cabinet] course map access sync failed:', error);
+        }
+      }
+      try {
         const { ensureTrialHomeworkDeadlineIfEligible } = await import(
           '@/lib/bot/education/homework-deadline'
         );
@@ -997,20 +1005,6 @@ async function resolveCourseMapFromContent(
       courseId,
     });
 
-    if (shouldSyncAccess) {
-      void (async () => {
-        try {
-          const { syncJoinCurrentEnrollmentAccess } = await import(
-            '@/lib/bot/education/course-access'
-          );
-          await syncJoinCurrentEnrollmentAccess(admin, telegramId, courseId, content, null);
-        } catch (error) {
-          if (!isCourseProgressTableError(error)) {
-            console.error('[cabinet] background access sync failed:', error);
-          }
-        }
-      })();
-    }
     return {
       modules,
       stops: mapStops.map(mapStopToCabinet),
@@ -2361,18 +2355,14 @@ export async function getCabinetLessonPageData(
     fullyBlocked = livesState?.fully_blocked ?? false;
     const shouldSync = hasCourseProduct && !accessBlocked && !fullyBlocked;
     if (shouldSync) {
-      void (async () => {
-        try {
-          const { syncJoinCurrentEnrollmentAccess } = await import(
-            '@/lib/bot/education/course-access'
-          );
-          await syncJoinCurrentEnrollmentAccess(admin, telegramId, courseId!, courseContent, null);
-        } catch (error) {
-          if (!isCourseProgressTableError(error)) {
-            console.error('[cabinet] lesson page background sync failed:', error);
-          }
+      try {
+        const { syncCourseMapStudentAccess } = await import('@/lib/bot/education/course-access');
+        await syncCourseMapStudentAccess(admin, telegramId, courseId!, courseContent);
+      } catch (error) {
+        if (!isCourseProgressTableError(error)) {
+          console.error('[cabinet] lesson page access sync failed:', error);
         }
-      })();
+      }
     }
   }
 
