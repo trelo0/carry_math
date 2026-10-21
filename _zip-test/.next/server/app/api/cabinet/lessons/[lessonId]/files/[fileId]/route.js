@@ -1,0 +1,13 @@
+var R=require("../../../../../../../chunks/[turbopack]_runtime.js")("server/app/api/cabinet/lessons/[lessonId]/files/[fileId]/route.js")
+R.c("server/chunks/src_lib_eed6e80b._.js")
+R.c("server/chunks/[root-of-the-server]__d4443e0e._.js")
+R.c("server/chunks/node_modules_e95b3bed._.js")
+R.c("server/chunks/[root-of-the-server]__f9655ba0._.js")
+R.c("server/chunks/[root-of-the-server]__e41d6d2a._.js")
+R.c("server/chunks/node_modules_31e3e502._.js")
+R.c("server/chunks/node_modules_next_92aaecbe._.js")
+R.c("server/chunks/src_lib_supabase_admin_ts_291ac0f7._.js")
+R.c("server/chunks/node_modules_next_dist_e6406c48._.js")
+R.c("server/chunks/ce889_server_app_api_cabinet_lessons_[lessonId]_files_[fileId]_route_actions_b8db6ecd.js")
+R.m(243352)
+module.exports=R.m(243352).exports

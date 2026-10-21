@@ -16,3 +16,5 @@ export const CURATOR_REJECT_TEXT_STEP = 'curator:reject-text';
 export const CURATOR_REJECT_VOICE_STEP = 'curator:reject-voice';
 export const CURATOR_REJECT_PHOTO_STEP = 'curator:reject-photo';
 export const CURATOR_SCHEDULE_DATETIME_STEP = 'curator:schedule:datetime';
+export const CURATOR_SCHEDULE_CONFIRM_STEP = 'curator:schedule:confirm';
+export const CURATOR_STU_SEARCH_STEP = 'curator:stu:search';

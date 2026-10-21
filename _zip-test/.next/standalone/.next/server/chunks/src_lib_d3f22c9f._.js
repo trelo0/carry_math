@@ -1,0 +1,10 @@
+module.exports=[927837,e=>{"use strict";async function t(e,t){let a=await fetch(`https://api.telegram.org/bot${function(){let e=process.env.TELEGRAM_BOT_TOKEN;if(!e)throw Error("TELEGRAM_BOT_TOKEN не настроен");return e}()}/${e}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(t)});return await a.json()}function a(e,a){return t("sendMessage",{chat_id:e,text:`🔑 Ваш код для входа: *${a}*
+
+Действует 5 минут. Никому не сообщайте этот код.`,parse_mode:"Markdown"})}e.s(["sendOtpMessage",()=>a,"telegramSend",()=>t])},829368,e=>{"use strict";var t=e.i(927837);let a="cl:ntf:close";function n(e){return{inline_keyboard:[...e??[],[{text:"Закрыть",callback_data:a}]]}}function i(e){return n([[{text:"Посмотреть результат",callback_data:`cl:chw:rev:${e}`}]])}async function s(e,t){let{data:a}=await e.from("bot_members").select("chat_id").eq("telegram_id",t).maybeSingle();return a?.chat_id}async function r(e,a,i,r){let o=await s(e,a);o&&await (0,t.telegramSend)("sendMessage",{chat_id:o,text:i,reply_markup:n(r)})}async function o(e,t,a){let n=a.sanityLessonId?[[{text:"Проверить статус",callback_data:`cl:chw:stat:${a.sanityLessonId}`}]]:void 0;await r(e,t,`✅ ДЗ №${a.lessonNumber} \xab${a.title}\xbb отправлено на проверку.
+
+Ответ придёт в Telegram.`,n)}async function c(e,a,i){let r=await s(e,a);if(!r)return;let o=null!=i.livesMax?` из ${i.livesMax}`:"",c=i.courseTitle?.trim()?`
+🎓 ${i.courseTitle.trim()}`:"";await (0,t.telegramSend)("sendMessage",{chat_id:r,text:`❤️ Снята 1 жизнь за просрочку или невыполнение ДЗ.${c}
+
+Осталось жизней: ${i.livesLeft}${o}.`,reply_markup:n()})}e.s(["STUDENT_NTF_CLOSE",0,a,"homeworkReviewNotifyKeyboard",()=>i,"notifyStudentHomeworkSubmitted",()=>o,"notifyStudentLifeDeducted",()=>c,"sendStudentInfoPush",()=>r,"studentNotifyKeyboard",()=>n])}];
+
+//# sourceMappingURL=src_lib_d3f22c9f._.js.map

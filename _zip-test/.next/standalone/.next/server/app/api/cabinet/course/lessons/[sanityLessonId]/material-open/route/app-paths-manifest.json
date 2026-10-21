@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/course/lessons/[sanityLessonId]/material-open/route": "app/api/cabinet/course/lessons/[sanityLessonId]/material-open/route.js"
+}

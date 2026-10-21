@@ -5,6 +5,7 @@ import {
   CourseWatchDeniedError,
   reportLessonMaterialOpenedWithGate,
 } from '@/lib/bot/education/course-watch-gate';
+import { gateCabinetLessonCourse, readCourseSlugFromRequest } from '@/lib/cabinet/lesson-course-api';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -31,7 +32,20 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await reportLessonMaterialOpenedWithGate(auth.admin, auth.telegramId, sanityLessonId, materialKey);
+    const gate = await gateCabinetLessonCourse(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      request,
+    );
+    if (!gate.ok) return gate.response;
+    await reportLessonMaterialOpenedWithGate(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      materialKey,
+      readCourseSlugFromRequest(request),
+    );
     revalidatePath('/cabinet');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });

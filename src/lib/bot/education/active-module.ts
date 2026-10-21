@@ -193,14 +193,15 @@ export function resolveActiveModuleFromSessions(
  */
 export async function loadWebinarSessionMapForContent(
   admin: SupabaseClient,
+  courseId: number,
   content: DistrictCourseContent,
 ): Promise<Map<string, SanityLessonSessionRow>> {
   const sequence = buildPublishedLessonSequence(content);
   const webinarIds = sequence
     .filter((l) => l.lessonType === 'webinar')
     .map((l) => l.sanityId);
-  if (webinarIds.length === 0) return new Map();
-  return loadSanityLessonSessionMap(admin, webinarIds);
+  if (webinarIds.length === 0 || courseId <= 0) return new Map();
+  return loadSanityLessonSessionMap(admin, courseId, webinarIds);
 }
 
 /** Активный модуль для сценария join_current (ручной override → иначе поток по вебинарам). */
@@ -223,17 +224,19 @@ export function resolveActiveModuleForJoinCurrent(
 
 export async function determineActiveModuleForJoinCurrent(
   admin: SupabaseClient,
+  courseId: number,
   content: DistrictCourseContent,
 ): Promise<ActiveModuleResult> {
-  const sessionMap = await loadWebinarSessionMapForContent(admin, content);
+  const sessionMap = await loadWebinarSessionMapForContent(admin, courseId, content);
   return resolveActiveModuleForJoinCurrent(content, sessionMap);
 }
 
 export async function determineActiveModule(
   admin: SupabaseClient,
+  courseId: number,
   content: DistrictCourseContent,
 ): Promise<ActiveModuleResult> {
-  const sessionMap = await loadWebinarSessionMapForContent(admin, content);
+  const sessionMap = await loadWebinarSessionMapForContent(admin, courseId, content);
   return resolveActiveModuleFromSessions(content, sessionMap);
 }
 
@@ -249,7 +252,7 @@ export async function resolveJoinCurrentStartIds(
   courseId: number,
   content: DistrictCourseContent,
 ): Promise<JoinCurrentStartIds> {
-  const activeModuleResult = await determineActiveModuleForJoinCurrent(admin, content);
+  const activeModuleResult = await determineActiveModuleForJoinCurrent(admin, courseId, content);
   if (!activeModuleResult.module) {
     return { startModuleId: null, startLessonId: null, startLessonSanityId: null };
   }

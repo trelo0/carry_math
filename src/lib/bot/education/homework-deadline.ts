@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { studentHasCourseAccessForCourse, studentHasCourseProductAccess } from './course-access';
+import { studentHasCourseAccessForCourse } from './course-access';
 import {
   flattenCourseLessons,
   getDistrictCourseContent,
@@ -7,6 +7,7 @@ import {
 } from '@/lib/studio/courseContent';
 import { lessonHasHomework } from './lesson-progress-calc';
 import type { CourseLessonStudentProgress, HomeworkProgressStatus } from './course-progress';
+import { resolveProgressCourseId } from './course-lesson-scope';
 
 /** Режим с проверкой ДЗ (режимы 1–2). Режим 3 пока не включаем. */
 export type LearningMode = 'checked_homework' | 'self_paced_no_hw_check';
@@ -38,7 +39,46 @@ export type HomeworkDeadlineFields = {
 };
 
 const DEADLINE_SELECT =
-  'id, telegram_id, sanity_lesson_id, homework_status, lesson_first_opened_at, homework_deadline_at, homework_remaining_ms, homework_overdue_at, hw_remind_12h_at, hw_remind_6h_at, hw_remind_2h_at, hw_overdue_student_at, hw_overdue_curator_at, updated_at';
+  'id, telegram_id, course_id, sanity_lesson_id, homework_status, lesson_first_opened_at, homework_deadline_at, homework_remaining_ms, homework_overdue_at, hw_remind_12h_at, hw_remind_6h_at, hw_remind_2h_at, hw_overdue_student_at, hw_overdue_curator_at, updated_at';
+
+type ProgressScope = {
+  telegramId: number;
+  sanityLessonId: string;
+  courseId: number;
+};
+
+async function buildProgressScope(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+  courseId?: number | null,
+): Promise<ProgressScope | null> {
+  const resolved = await resolveProgressCourseId(admin, telegramId, sanityLessonId, courseId);
+  if (resolved == null) return null;
+  return { telegramId, sanityLessonId, courseId: resolved };
+}
+
+function scopedProgressSelect(admin: SupabaseClient, scope: ProgressScope, columns: string) {
+  return admin
+    .from('course_lesson_student_progress')
+    .select(columns)
+    .eq('telegram_id', scope.telegramId)
+    .eq('sanity_lesson_id', scope.sanityLessonId)
+    .eq('course_id', scope.courseId);
+}
+
+function scopedProgressUpdate(
+  admin: SupabaseClient,
+  scope: ProgressScope,
+  patch: Record<string, unknown>,
+) {
+  return admin
+    .from('course_lesson_student_progress')
+    .update(patch)
+    .eq('telegram_id', scope.telegramId)
+    .eq('sanity_lesson_id', scope.sanityLessonId)
+    .eq('course_id', scope.courseId);
+}
 
 function isMissingColumnError(error: unknown): boolean {
   const message = String((error as { message?: unknown } | null)?.message ?? error);
@@ -89,13 +129,11 @@ async function loadDeadlineRow(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseId?: number | null,
 ): Promise<(CourseLessonStudentProgress & HomeworkDeadlineFields) | null> {
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .select(DEADLINE_SELECT)
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
-    .maybeSingle();
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) return null;
+  const { data, error } = await scopedProgressSelect(admin, scope, DEADLINE_SELECT).maybeSingle();
   if (error) {
     if (isMissingColumnError(error)) return null;
     throw error;
@@ -107,25 +145,17 @@ async function resolveLesson(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseId?: number | null,
 ): Promise<CourseLessonContent | null> {
   const { resolveCourseForSanityLesson } = await import('./student-course-context');
   const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
   if (resolved) {
+    if (courseId != null && resolved.courseId !== courseId) return null;
     return (
       flattenCourseLessons(resolved.content).find((l) => l.sanityId === sanityLessonId) ?? null
     );
   }
-  const { listDistrictCourseSummaries } = await import('@/lib/studio/courseContent');
-  const summaries = await listDistrictCourseSummaries().catch(() => []);
-  for (const summary of summaries) {
-    const content = await getDistrictCourseContent(summary.slug).catch(() => null);
-    if (!content) continue;
-    const lesson = flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId);
-    if (lesson) return lesson;
-  }
-  const fallback = await getDistrictCourseContent().catch(() => null);
-  if (!fallback) return null;
-  return flattenCourseLessons(fallback).find((l) => l.sanityId === sanityLessonId) ?? null;
+  return null;
 }
 
 /**
@@ -141,18 +171,28 @@ export async function ensureHomeworkDeadlineStarted(
   const mode = options?.learningMode ?? DEFAULT_LEARNING_MODE;
   if (mode === 'self_paced_no_hw_check') return null;
 
-  const lesson = await resolveLesson(admin, telegramId, sanityLessonId);
+  const scope = await buildProgressScope(
+    admin,
+    telegramId,
+    sanityLessonId,
+    options?.courseId,
+  );
+  if (!scope) return null;
+
+  const lesson = await resolveLesson(admin, telegramId, sanityLessonId, scope.courseId);
   if (!lesson || !lessonHasHomework(lesson)) return null;
   if (options?.hasAccess === false) return null;
 
   if (lesson.isTrialFree) {
-    const hasCourseProduct = options?.courseId
-      ? await studentHasCourseAccessForCourse(admin, telegramId, options.courseId)
-      : await studentHasCourseProductAccess(admin, telegramId);
+    const hasCourseProduct = await studentHasCourseAccessForCourse(
+      admin,
+      telegramId,
+      scope.courseId,
+    );
     if (!hasCourseProduct) return null;
   }
 
-  const existing = await loadDeadlineRow(admin, telegramId, sanityLessonId);
+  const existing = await loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
   if (existing?.homework_deadline_at) {
     return existing;
   }
@@ -169,17 +209,13 @@ export async function ensureHomeworkDeadlineStarted(
 
   // Атомарно: только если deadline ещё null
   if (existing) {
-    const { data, error } = await admin
-      .from('course_lesson_student_progress')
-      .update({
-        lesson_first_opened_at: existing.lesson_first_opened_at ?? nowIso,
-        homework_deadline_at: deadlineIso,
-        homework_remaining_ms: HOMEWORK_DEADLINE_MS,
-        homework_overdue_at: null,
-        updated_at: nowIso,
-      })
-      .eq('telegram_id', telegramId)
-      .eq('sanity_lesson_id', sanityLessonId)
+    const { data, error } = await scopedProgressUpdate(admin, scope, {
+      lesson_first_opened_at: existing.lesson_first_opened_at ?? nowIso,
+      homework_deadline_at: deadlineIso,
+      homework_remaining_ms: HOMEWORK_DEADLINE_MS,
+      homework_overdue_at: null,
+      updated_at: nowIso,
+    })
       .is('homework_deadline_at', null)
       .select(DEADLINE_SELECT)
       .maybeSingle();
@@ -187,14 +223,15 @@ export async function ensureHomeworkDeadlineStarted(
       if (isMissingColumnError(error)) return existing;
       throw error;
     }
-    if (data) return data as CourseLessonStudentProgress & HomeworkDeadlineFields;
-    return loadDeadlineRow(admin, telegramId, sanityLessonId);
+    if (data) return data as unknown as CourseLessonStudentProgress & HomeworkDeadlineFields;
+    return loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
   }
 
   const { data, error } = await admin
     .from('course_lesson_student_progress')
     .insert({
       telegram_id: telegramId,
+      course_id: scope.courseId,
       sanity_lesson_id: sanityLessonId,
       homework_status: 'pending',
       lesson_first_opened_at: nowIso,
@@ -207,26 +244,22 @@ export async function ensureHomeworkDeadlineStarted(
   if (error) {
     if (isMissingColumnError(error)) return null;
     // Гонка insert — перечитать; если deadline ещё null — дописать атомарно
-    const again = await loadDeadlineRow(admin, telegramId, sanityLessonId);
+    const again = await loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
     if (again?.homework_deadline_at) return again;
     if (again) {
-      const { data: patched, error: patchError } = await admin
-        .from('course_lesson_student_progress')
-        .update({
-          lesson_first_opened_at: again.lesson_first_opened_at ?? nowIso,
-          homework_deadline_at: deadlineIso,
-          homework_remaining_ms: HOMEWORK_DEADLINE_MS,
-          homework_overdue_at: null,
-          updated_at: nowIso,
-        })
-        .eq('telegram_id', telegramId)
-        .eq('sanity_lesson_id', sanityLessonId)
+      const { data: patched, error: patchError } = await scopedProgressUpdate(admin, scope, {
+        lesson_first_opened_at: again.lesson_first_opened_at ?? nowIso,
+        homework_deadline_at: deadlineIso,
+        homework_remaining_ms: HOMEWORK_DEADLINE_MS,
+        homework_overdue_at: null,
+        updated_at: nowIso,
+      })
         .is('homework_deadline_at', null)
         .select(DEADLINE_SELECT)
         .maybeSingle();
       if (patchError && !isMissingColumnError(patchError)) throw patchError;
-      if (patched) return patched as CourseLessonStudentProgress & HomeworkDeadlineFields;
-      return loadDeadlineRow(admin, telegramId, sanityLessonId);
+      if (patched) return patched as unknown as CourseLessonStudentProgress & HomeworkDeadlineFields;
+      return loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
     }
     throw error;
   }
@@ -240,8 +273,11 @@ export async function pauseDeadlineOnSubmit(
   telegramId: number,
   sanityLessonId: string,
   now = new Date(),
+  courseId?: number | null,
 ): Promise<{ remainingMs: number; wasOverdue: boolean }> {
-  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId);
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) return { remainingMs: HOMEWORK_DEADLINE_MS, wasOverdue: false };
+  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
   const deadlineMs = row?.homework_deadline_at ? Date.parse(row.homework_deadline_at) : NaN;
   const hasTimer =
     Number.isFinite(deadlineMs) || typeof row?.homework_remaining_ms === 'number';
@@ -265,11 +301,7 @@ export async function pauseDeadlineOnSubmit(
     patch.homework_overdue_at = now.toISOString();
   }
 
-  const { error } = await admin
-    .from('course_lesson_student_progress')
-    .update(patch)
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId);
+  const { error } = await scopedProgressUpdate(admin, scope, patch);
   if (error && !isMissingColumnError(error)) throw error;
 
   return { remainingMs, wasOverdue };
@@ -281,12 +313,17 @@ export async function resumeDeadlineOnReject(
   telegramId: number,
   sanityLessonId: string,
   now = new Date(),
+  courseId?: number | null,
 ): Promise<{
   progress: (CourseLessonStudentProgress & HomeworkDeadlineFields) | null;
   remainingMs: number;
   immediatelyOverdue: boolean;
 }> {
-  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId);
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) {
+    return { progress: null, remainingMs: 0, immediatelyOverdue: true };
+  }
+  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
   const remainingMs = Math.max(0, Number(row?.homework_remaining_ms ?? 0));
   const immediatelyOverdue = remainingMs <= 0;
   const nowIso = now.toISOString();
@@ -303,11 +340,7 @@ export async function resumeDeadlineOnReject(
     patch.homework_overdue_at = nowIso;
   }
 
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .update(patch)
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
+  const { data, error } = await scopedProgressUpdate(admin, scope, patch)
     .select(DEADLINE_SELECT)
     .maybeSingle();
   if (error) {
@@ -329,16 +362,15 @@ export async function finalizeDeadlineOnApprove(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseId?: number | null,
 ): Promise<void> {
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) return;
   const now = new Date().toISOString();
-  const { error } = await admin
-    .from('course_lesson_student_progress')
-    .update({
-      homework_remaining_ms: 0,
-      updated_at: now,
-    })
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId);
+  const { error } = await scopedProgressUpdate(admin, scope, {
+    homework_remaining_ms: 0,
+    updated_at: now,
+  });
   if (error && !isMissingColumnError(error)) throw error;
 }
 
@@ -379,7 +411,7 @@ export async function listActiveHomeworkDeadlines(
     if (isMissingColumnError(error)) return [];
     throw error;
   }
-  return (data ?? []) as ActiveDeadlineRow[];
+  return (data ?? []) as unknown as ActiveDeadlineRow[];
 }
 
 export async function claimDeadlineReminder(
@@ -392,13 +424,15 @@ export async function claimDeadlineReminder(
     | 'hw_remind_2h_at'
     | 'hw_overdue_student_at'
     | 'hw_overdue_curator_at',
+  courseId?: number | null,
 ): Promise<boolean> {
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) return false;
   const now = new Date().toISOString();
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .update({ [column]: now, updated_at: now })
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
+  const { data, error } = await scopedProgressUpdate(admin, scope, {
+    [column]: now,
+    updated_at: now,
+  })
     .is(column, null)
     .select('id')
     .maybeSingle();
@@ -414,18 +448,20 @@ export async function ensureOverdueMarked(
   telegramId: number,
   sanityLessonId: string,
   now = new Date(),
+  courseId?: number | null,
 ): Promise<boolean> {
-  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId);
+  const scope = await buildProgressScope(admin, telegramId, sanityLessonId, courseId);
+  if (!scope) return false;
+  const row = await loadDeadlineRow(admin, telegramId, sanityLessonId, scope.courseId);
   if (!row?.homework_deadline_at) return false;
   if (row.homework_overdue_at) return true;
   const deadline = Date.parse(row.homework_deadline_at);
   if (!Number.isFinite(deadline) || deadline > now.getTime()) return false;
 
-  const { data, error } = await admin
-    .from('course_lesson_student_progress')
-    .update({ homework_overdue_at: now.toISOString(), updated_at: now.toISOString() })
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
+  const { data, error } = await scopedProgressUpdate(admin, scope, {
+    homework_overdue_at: now.toISOString(),
+    updated_at: now.toISOString(),
+  })
     .is('homework_overdue_at', null)
     .select('id')
     .maybeSingle();
@@ -450,13 +486,15 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
   const trial = flattenCourseLessons(content).find((l) => l.isTrialFree);
   if (!trial?.sanityId) return;
 
-  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId);
+  const { resolveCourseIdForContent } = await import('./course-record');
+  const courseId = await resolveCourseIdForContent(admin, content);
+  if (!courseId) return;
+
+  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId, courseId);
   if (row?.homework_status === 'approved') return;
   if (row?.homework_status === 'submitted') return;
 
-  const { resolveCourseIdForContent } = await import('./course-record');
-  const courseId = await resolveCourseIdForContent(admin, content);
-  if (courseId) {
+  {
     const { loadJoinCurrentGateContext, isJoinArchiveSanityId } = await import(
       './course-enrollment-start'
     );
@@ -469,21 +507,22 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
           row.homework_remaining_ms != null)
       ) {
         const clearNow = new Date().toISOString();
-        const { error: clearError } = await admin
-          .from('course_lesson_student_progress')
-          .update({
-            homework_deadline_at: null,
-            homework_remaining_ms: null,
-            homework_overdue_at: null,
-            hw_remind_12h_at: null,
-            hw_remind_6h_at: null,
-            hw_remind_2h_at: null,
-            hw_overdue_student_at: null,
-            hw_overdue_curator_at: null,
-            updated_at: clearNow,
-          })
-          .eq('telegram_id', telegramId)
-          .eq('sanity_lesson_id', trial.sanityId);
+        const clearScope = {
+          telegramId,
+          sanityLessonId: trial.sanityId,
+          courseId,
+        };
+        const { error: clearError } = await scopedProgressUpdate(admin, clearScope, {
+          homework_deadline_at: null,
+          homework_remaining_ms: null,
+          homework_overdue_at: null,
+          hw_remind_12h_at: null,
+          hw_remind_6h_at: null,
+          hw_remind_2h_at: null,
+          hw_overdue_student_at: null,
+          hw_overdue_curator_at: null,
+          updated_at: clearNow,
+        });
         if (clearError && !isMissingColumnError(clearError)) throw clearError;
       }
       return;
@@ -512,6 +551,7 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
     }
   }
 
+  const trialScope = { telegramId, sanityLessonId: trial.sanityId, courseId };
   const now = new Date();
   const nowIso = now.toISOString();
   const deadlineIso = new Date(now.getTime() + HOMEWORK_DEADLINE_MS).toISOString();
@@ -529,17 +569,14 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
   };
 
   if (row) {
-    const { error } = await admin
-      .from('course_lesson_student_progress')
-      .update(patch)
-      .eq('telegram_id', telegramId)
-      .eq('sanity_lesson_id', trial.sanityId);
+    const { error } = await scopedProgressUpdate(admin, trialScope, patch);
     if (error && !isMissingColumnError(error)) throw error;
     return;
   }
 
   const { error: insertError } = await admin.from('course_lesson_student_progress').insert({
     telegram_id: telegramId,
+    course_id: courseId,
     sanity_lesson_id: trial.sanityId,
     homework_status: 'pending',
     ...patch,
@@ -578,18 +615,23 @@ export async function ensureTrialHomeworkDeadlineIfEligible(
     if (isJoinArchiveSanityId(joinGate, trial.sanityId)) return;
   }
 
-  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId);
+  const row = await loadDeadlineRow(admin, telegramId, trial.sanityId, resolvedCourseId);
   if (row?.homework_deadline_at) return;
   if (row?.homework_status === 'approved' || row?.homework_status === 'submitted') return;
 
-  const { data: watchRow, error: watchError } = await admin
-    .from('course_lesson_student_progress')
-    .select('recording_watched_at, live_attended_at')
-    .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', trial.sanityId)
-    .maybeSingle();
+  const watchScope = {
+    telegramId,
+    sanityLessonId: trial.sanityId,
+    courseId: resolvedCourseId,
+  };
+  const { data: watchRow, error: watchError } = await scopedProgressSelect(
+    admin,
+    watchScope,
+    'recording_watched_at,live_attended_at',
+  ).maybeSingle();
   if (watchError && !isMissingColumnError(watchError)) throw watchError;
-  if (!watchRow?.recording_watched_at && !watchRow?.live_attended_at) return;
+  const watched = watchRow as { recording_watched_at?: string | null; live_attended_at?: string | null } | null;
+  if (!watched?.recording_watched_at && !watched?.live_attended_at) return;
 
   await ensureHomeworkDeadlineStarted(admin, telegramId, trial.sanityId, {
     hasAccess: true,

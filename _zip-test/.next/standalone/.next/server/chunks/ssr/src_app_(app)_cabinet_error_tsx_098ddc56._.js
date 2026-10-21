@@ -1,0 +1,3 @@
+module.exports=[695562,a=>{"use strict";var b=a.i(187924),c=a.i(238246);function d({error:a,reset:d}){let e=a.message?.trim()||"Не удалось загрузить кабинет. Проверьте интернет и попробуйте снова.";return(0,b.jsx)("div",{className:"cab-err-page",children:(0,b.jsxs)("div",{className:"cab-panel cab-err-card",children:[(0,b.jsx)("h1",{children:"Кабинет временно недоступен"}),(0,b.jsx)("p",{children:e}),(0,b.jsxs)("div",{className:"cab-err-actions",children:[(0,b.jsx)("button",{type:"button",className:"cab-btn cab-btn--join",onClick:()=>d(),children:"Повторить"}),(0,b.jsx)(c.default,{className:"cab-btn cab-btn--line",href:"/",children:"На главную"})]})]})})}a.s(["default",()=>d])}];
+
+//# sourceMappingURL=src_app_%28app%29_cabinet_error_tsx_098ddc56._.js.map

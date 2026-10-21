@@ -33,9 +33,11 @@ async function memberName(admin: SupabaseClient, telegramId: number): Promise<st
   return (data?.full_name as string | null)?.trim() || `Ученик ${telegramId}`;
 }
 
-function lessonCabinetUrl(sanityLessonId: string): string {
+function lessonCabinetUrl(sanityLessonId: string, courseSlug?: string | null): string {
   const base = (process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? '').replace(/\/$/, '');
-  return base ? `${base}/cabinet/lesson/${sanityLessonId}` : `/cabinet/lesson/${sanityLessonId}`;
+  const path = `/cabinet/lesson/${sanityLessonId}`;
+  const q = courseSlug?.trim() ? `?course=${encodeURIComponent(courseSlug.trim())}` : '';
+  return base ? `${base}${path}${q}` : `${path}${q}`;
 }
 
 function formatDeadlineRu(iso: string): string {
@@ -49,8 +51,15 @@ function formatDeadlineRu(iso: string): string {
   });
 }
 
-async function resolveLessonTitle(sanityLessonId: string): Promise<{ title: string; hwTitle: string; lessonNumber: number | null }> {
-  const content = await getDistrictCourseContent().catch(() => null);
+async function resolveLessonTitle(
+  sanityLessonId: string,
+  courseSlug?: string | null,
+): Promise<{ title: string; hwTitle: string; lessonNumber: number | null }> {
+  const slug = courseSlug?.trim();
+  if (!slug) {
+    return { title: 'Занятие', hwTitle: 'Домашнее задание', lessonNumber: null };
+  }
+  const content = await getDistrictCourseContent(slug).catch(() => null);
   const lesson = content
     ? flattenCourseLessons(content).find((l) => l.sanityId === sanityLessonId)
     : null;
@@ -59,6 +68,11 @@ async function resolveLessonTitle(sanityLessonId: string): Promise<{ title: stri
     hwTitle: lesson?.homework?.title?.trim() || lesson?.title || 'Домашнее задание',
     lessonNumber: lesson?.lessonNumber ?? null,
   };
+}
+
+function rowCourseId(row: ActiveDeadlineRow): number | null {
+  const raw = (row as { course_id?: number | null }).course_id;
+  return typeof raw === 'number' ? raw : null;
 }
 
 async function sendStudentReminder(
@@ -74,20 +88,34 @@ async function sendStudentReminder(
         : kind === '2h'
           ? 'hw_remind_2h_at'
           : 'hw_overdue_student_at';
+  const courseId = rowCourseId(row);
+  const { resolveCourseForSanityLesson } = await import('./student-course-context');
+  const resolved = await resolveCourseForSanityLesson(
+    admin,
+    row.telegram_id,
+    row.sanity_lesson_id as string,
+  ).catch(() => null);
+  let courseSlug = resolved?.slug ?? null;
+  if (!courseSlug && courseId != null) {
+    const { data } = await admin.from('courses').select('slug').eq('id', courseId).maybeSingle();
+    courseSlug = (data?.slug as string | null) ?? null;
+  }
+
   const claimed = await claimDeadlineReminder(
     admin,
     row.telegram_id,
     row.sanity_lesson_id as string,
     column,
+    courseId ?? resolved?.courseId,
   );
   if (!claimed) return false;
 
   const chatId = await memberChatId(admin, row.telegram_id);
   if (!chatId) return true; // claimed — не ретраим статус
 
-  const { title, hwTitle } = await resolveLessonTitle(row.sanity_lesson_id as string);
+  const { title, hwTitle } = await resolveLessonTitle(row.sanity_lesson_id as string, courseSlug);
   const deadline = row.homework_deadline_at ? formatDeadlineRu(row.homework_deadline_at) : '—';
-  const url = lessonCabinetUrl(row.sanity_lesson_id as string);
+  const url = lessonCabinetUrl(row.sanity_lesson_id as string, courseSlug);
 
   const head =
     kind === 'overdue'
@@ -124,33 +152,46 @@ export async function notifyCuratorOverdueOnce(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseIdHint?: number | null,
 ): Promise<boolean> {
-  await ensureOverdueMarked(admin, telegramId, sanityLessonId);
+  let courseId = courseIdHint ?? null;
+  let courseSlug: string | null = null;
+  if (courseId != null) {
+    const { data } = await admin.from('courses').select('slug').eq('id', courseId).maybeSingle();
+    courseSlug = (data?.slug as string | null) ?? null;
+  } else {
+    const { resolveCourseForSanityLesson } = await import('./student-course-context');
+    const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId).catch(
+      () => null,
+    );
+    courseId = resolved?.courseId ?? null;
+    courseSlug = resolved?.slug ?? null;
+  }
+
+  await ensureOverdueMarked(admin, telegramId, sanityLessonId, new Date(), courseId);
   const claimed = await claimDeadlineReminder(
     admin,
     telegramId,
     sanityLessonId,
     'hw_overdue_curator_at',
+    courseId,
   );
   if (!claimed) return false;
 
-  const { resolveCourseForSanityLesson } = await import('./student-course-context');
-  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId).catch(() => null);
-  const courseId = resolved?.courseId ?? null;
-
   const [name, meta] = await Promise.all([
     memberName(admin, telegramId),
-    resolveLessonTitle(sanityLessonId),
+    resolveLessonTitle(sanityLessonId, courseSlug),
   ]);
   const lives =
     courseId != null ? await getEnrollmentLives(admin, telegramId, courseId).catch(() => null) : null;
 
-  const { data: progress } = await admin
+  let progressQuery = admin
     .from('course_lesson_student_progress')
     .select('homework_deadline_at, homework_overdue_at')
     .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
-    .maybeSingle();
+    .eq('sanity_lesson_id', sanityLessonId);
+  if (courseId != null) progressQuery = progressQuery.eq('course_id', courseId);
+  const { data: progress } = await progressQuery.maybeSingle();
 
   const deadlineIso = (progress?.homework_deadline_at as string | null) ?? null;
   const overdueIso = (progress?.homework_overdue_at as string | null) ?? null;
@@ -209,7 +250,7 @@ export async function notifyCuratorOverdueOnce(
     }
   }
 
-  await notifyAdminsHomeworkOverdue(admin, telegramId, overdueText);
+  await notifyAdminsHomeworkOverdue(admin, telegramId, overdueText, courseId);
   return true;
 }
 
@@ -217,7 +258,9 @@ export async function notifyAdminsHomeworkOverdue(
   admin: SupabaseClient,
   studentTelegramId: number,
   overdueText: string,
+  courseId?: number | null,
 ): Promise<void> {
+  const { livesMenuCb } = await import('@/lib/bot/admin/lives-ops-callbacks');
   const adminChats = await getAdminNotifyChatIds(admin);
   for (const chatId of adminChats) {
     try {
@@ -228,7 +271,10 @@ export async function notifyAdminsHomeworkOverdue(
           inline_keyboard: [
             [
               { text: '⏱ Просрочки', callback_data: 'ae:lives:od:0' },
-              { text: '❤️ Жизни', callback_data: `al:m:${studentTelegramId}` },
+              {
+                text: '❤️ Жизни',
+                callback_data: livesMenuCb(studentTelegramId, courseId ?? undefined),
+              },
             ],
             [{ text: '👤 Профиль', callback_data: `admin:user:${studentTelegramId}::` }],
             [{ text: '💬 Ученик', url: `tg://user?id=${studentTelegramId}` }],
@@ -265,7 +311,13 @@ export async function runHomeworkDeadlineReminders(
 
     try {
       if (left <= 0) {
-        await ensureOverdueMarked(admin, row.telegram_id, row.sanity_lesson_id, now);
+        await ensureOverdueMarked(
+          admin,
+          row.telegram_id,
+          row.sanity_lesson_id,
+          now,
+          rowCourseId(row),
+        );
         if (!row.hw_overdue_student_at) {
           const ok = await sendStudentReminder(admin, row, 'overdue');
           if (ok) {
@@ -274,7 +326,12 @@ export async function runHomeworkDeadlineReminders(
           }
         }
         if (!row.hw_overdue_curator_at) {
-          const ok = await notifyCuratorOverdueOnce(admin, row.telegram_id, row.sanity_lesson_id);
+          const ok = await notifyCuratorOverdueOnce(
+            admin,
+            row.telegram_id,
+            row.sanity_lesson_id,
+            rowCourseId(row),
+          );
           if (ok) sent += 1;
         }
         continue;

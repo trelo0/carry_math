@@ -98,6 +98,27 @@ export async function upsertCourseStaffAssignment(
   if (error && !String(error.message).includes('course_staff_assignments')) throw error;
 }
 
+/** Завершить активные назначения role на курсе, кроме exceptStaffTelegramId (если задан). */
+export async function deactivateCourseStaffRole(
+  admin: SupabaseClient,
+  courseId: number,
+  role: 'curator' | 'check',
+  exceptStaffTelegramId?: number | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  let q = admin
+    .from('course_staff_assignments')
+    .update({ status: 'completed', ended_at: now, updated_at: now })
+    .eq('course_id', courseId)
+    .eq('role', role)
+    .eq('status', 'active');
+  if (exceptStaffTelegramId != null && Number.isFinite(exceptStaffTelegramId)) {
+    q = q.neq('staff_telegram_id', Math.floor(exceptStaffTelegramId));
+  }
+  const { error } = await q;
+  if (error && !String(error.message).includes('course_staff_assignments')) throw error;
+}
+
 /** Из Sanity/CMS: куратор курса и проверяющий ДЗ. */
 export async function syncCourseStaffFromContent(
   admin: SupabaseClient,
@@ -107,12 +128,16 @@ export async function syncCourseStaffFromContent(
 ): Promise<void> {
   if (!courseId || !content) return;
 
-  const assignFromSanity = async (
+  const syncRoleFromSanity = async (
     telegramId: number | null | undefined,
     role: 'curator' | 'check',
   ): Promise<void> => {
-    if (telegramId == null || !Number.isFinite(telegramId)) return;
+    if (telegramId == null || !Number.isFinite(telegramId)) {
+      await deactivateCourseStaffRole(admin, courseId, role);
+      return;
+    }
     const id = Math.floor(telegramId);
+    await deactivateCourseStaffRole(admin, courseId, role, id);
     if (!(await isRegisteredBotMember(admin, id))) return;
     try {
       await upsertCourseStaffAssignment(admin, courseId, id, role);
@@ -121,39 +146,16 @@ export async function syncCourseStaffFromContent(
     }
   };
 
-  await assignFromSanity(content.curatorTelegramId, 'curator');
-  await assignFromSanity(content.checkTelegramId, 'check');
+  await syncRoleFromSanity(content.curatorTelegramId, 'curator');
+  await syncRoleFromSanity(content.checkTelegramId, 'check');
 }
 
-/** Подтянуть назначения из Sanity по всем курсам + гарантировать строки courses. */
+/** @deprecated Не вызывать при каждом открытии списка — перезаписывает ручное снятие назначения. */
 export async function refreshStaffCourseAssignmentsForMember(
   admin: SupabaseClient,
-  staffTelegramId: number,
+  _staffTelegramId: number,
 ): Promise<void> {
-  const { listDistrictCourseSummaries, getDistrictCourseContent } = await import(
-    '@/lib/studio/courseContent'
-  );
-  const { ensureDistrictCourseRecord } = await import('./course-record');
-  const id = Math.floor(staffTelegramId);
-  if (!Number.isFinite(id)) return;
-
-  const summaries = await listDistrictCourseSummaries().catch(() => []);
-  for (const summary of summaries) {
-    const content = await getDistrictCourseContent(summary.slug).catch(() => null);
-    if (!content) continue;
-    const courseId = await ensureDistrictCourseRecord(admin, content).catch(() => null);
-    if (courseId == null) continue;
-    if (content.curatorTelegramId === id) {
-      await upsertCourseStaffAssignment(admin, courseId, id, 'curator').catch((e) =>
-        console.warn('[course-staff] refresh curator failed:', e),
-      );
-    }
-    if (content.checkTelegramId === id) {
-      await upsertCourseStaffAssignment(admin, courseId, id, 'check').catch((e) =>
-        console.warn('[course-staff] refresh check failed:', e),
-      );
-    }
-  }
+  /* no-op: назначения синхронизируются через syncCourseStaffFromContent при загрузке курса */
 }
 
 /** Назначение из админ-бота (с проверкой роли в bot_members). */

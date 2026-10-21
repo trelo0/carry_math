@@ -363,6 +363,7 @@ async function loadProgressAndAccessBySanity(
   telegramId: number,
   sanityLessonIds: string[],
   content?: DistrictCourseContent,
+  courseId?: number | null,
 ): Promise<{
   accessMap: Map<string, string>;
   progressMap: Map<string, CourseLessonStudentProgress>;
@@ -371,17 +372,24 @@ async function loadProgressAndAccessBySanity(
     return { accessMap: new Map(), progressMap: new Map() };
   }
 
+  let accessQuery = admin
+    .from('course_lesson_access')
+    .select('sanity_lesson_id, access_status')
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', sanityLessonIds);
+  let progressQuery = admin
+    .from('course_lesson_student_progress')
+    .select(MAP_PROGRESS_SELECT)
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', sanityLessonIds);
+  if (courseId != null) {
+    accessQuery = accessQuery.eq('course_id', courseId);
+    progressQuery = progressQuery.eq('course_id', courseId);
+  }
+
   const [{ data: accessRows }, { data: progressRows }] = await Promise.all([
-    admin
-      .from('course_lesson_access')
-      .select('sanity_lesson_id, access_status')
-      .eq('telegram_id', telegramId)
-      .in('sanity_lesson_id', sanityLessonIds),
-    admin
-      .from('course_lesson_student_progress')
-      .select(MAP_PROGRESS_SELECT)
-      .eq('telegram_id', telegramId)
-      .in('sanity_lesson_id', sanityLessonIds),
+    accessQuery,
+    progressQuery,
   ]);
 
   const accessMap = new Map(
@@ -418,9 +426,16 @@ export async function buildCourseMapStopsFromContent(
   const fullyBlocked = Boolean(options.fullyBlocked);
   const allLessons = flattenCourseLessons(content);
   const allSanityIds = allLessons.map((l) => l.sanityId);
+  const resolvedCourseId =
+    options.courseId ??
+    (await import('./course-record').then((m) =>
+      m.resolveCourseIdForContent(admin, content).catch(() => null),
+    ));
   const [{ accessMap, progressMap }, sessionMap] = await Promise.all([
-    loadProgressAndAccessBySanity(admin, telegramId, allSanityIds, content),
-    loadSanityLessonSessionMap(admin, allSanityIds),
+    loadProgressAndAccessBySanity(admin, telegramId, allSanityIds, content, options.courseId),
+    resolvedCourseId
+      ? loadSanityLessonSessionMap(admin, resolvedCourseId, allSanityIds)
+      : Promise.resolve(new Map()),
   ]);
 
   const progressSanityIds = new Set<string>();
@@ -926,8 +941,8 @@ export async function buildCourseMapStops(
 }
 
 type LessonProgressKey =
-  | { sanityLessonId: string; courseLessonId?: null }
-  | { sanityLessonId?: null; courseLessonId: number };
+  | { courseId: number; sanityLessonId: string; courseLessonId?: null }
+  | { courseId: number; sanityLessonId?: null; courseLessonId: number };
 
 /**
  * Partial unique index на (telegram_id, sanity_lesson_id) ломает PostgREST upsert —
@@ -941,8 +956,8 @@ async function writeProgressRow(
 ): Promise<CourseLessonStudentProgress> {
   const filter =
     key.sanityLessonId != null
-      ? { sanity_lesson_id: key.sanityLessonId }
-      : { course_lesson_id: key.courseLessonId };
+      ? { sanity_lesson_id: key.sanityLessonId, course_id: key.courseId }
+      : { course_lesson_id: key.courseLessonId, course_id: key.courseId };
 
   const { data: existing, error: findError } = await admin
     .from('course_lesson_student_progress')
@@ -965,6 +980,7 @@ async function writeProgressRow(
 
   const insertRow: Record<string, unknown> = {
     telegram_id: telegramId,
+    course_id: key.courseId,
     ...patch,
     updated_at: new Date().toISOString(),
   };
@@ -1027,8 +1043,8 @@ export async function markHomeworkApproved(
   const now = new Date().toISOString();
   const filter =
     key.sanityLessonId != null
-      ? { sanity_lesson_id: key.sanityLessonId }
-      : { course_lesson_id: key.courseLessonId };
+      ? { sanity_lesson_id: key.sanityLessonId, course_id: key.courseId }
+      : { course_lesson_id: key.courseLessonId, course_id: key.courseId };
 
   const { data: existing } = await admin
     .from('course_lesson_student_progress')
@@ -1068,12 +1084,13 @@ export async function reportWatchPercent(
   telegramId: number,
   sanityLessonId: string,
   watchPercent: number,
+  courseId: number,
 ): Promise<CourseLessonStudentProgress> {
   const pct = Math.max(0, Math.min(100, Math.round(watchPercent)));
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { watch_percent: pct };
   if (pct >= 50) patch.recording_watched_at = now;
-  return writeProgressRow(admin, telegramId, { sanityLessonId }, patch);
+  return writeProgressRow(admin, telegramId, { courseId, sanityLessonId }, patch);
 }
 
 /** @deprecated вариант B */
@@ -1082,6 +1099,7 @@ export async function reportMaterialOpened(
   telegramId: number,
   sanityLessonId: string,
   materialKey: string,
+  courseId: number,
 ): Promise<CourseLessonStudentProgress> {
   const key = materialKey.trim();
   if (!key) throw new Error('Empty material key');
@@ -1089,12 +1107,13 @@ export async function reportMaterialOpened(
     .from('course_lesson_student_progress')
     .select('*')
     .eq('telegram_id', telegramId)
+    .eq('course_id', courseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .maybeSingle();
   const prev = existing ? normalizeProgressRow(existing as CourseLessonStudentProgress) : null;
   const opened = new Set(prev?.materials_opened ?? []);
   opened.add(key);
-  return writeProgressRow(admin, telegramId, { sanityLessonId }, {
+  return writeProgressRow(admin, telegramId, { courseId, sanityLessonId }, {
     materials_opened: [...opened],
   });
 }

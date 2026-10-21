@@ -199,7 +199,7 @@ export async function getCuratorCabinetData(
 
   const content = activeCourse
     ? await getDistrictCourseContent(activeCourse.slug)
-    : await getDistrictCourseContent();
+    : null;
   const courseTitle = content?.title ?? activeCourse?.title ?? 'Курс District';
   const courseSlug = activeCourse?.slug ?? content?.slug ?? null;
 
@@ -222,7 +222,9 @@ export async function getCuratorCabinetData(
 
     const [filesMap, sessionMap] = await Promise.all([
       fetchCuratorLessonFilesMap(lessonIds),
-      loadSanityLessonSessionMap(admin, lessonIds),
+      activeCourse?.courseId
+        ? loadSanityLessonSessionMap(admin, activeCourse.courseId, lessonIds)
+        : Promise.resolve(new Map()),
     ]);
 
     content.modules.forEach((mod, moduleIndex) => {

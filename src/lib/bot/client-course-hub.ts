@@ -170,7 +170,10 @@ export async function showClientMyCourseHub(
 
   const now = Date.now();
   const sanityIds = lessons.map((l) => l.sanityId);
-  const sessionMap = sanityIds.length > 0 ? await loadSanityLessonSessionMap(admin, sanityIds) : new Map();
+  const sessionMap =
+    sanityIds.length > 0 && courseId
+      ? await loadSanityLessonSessionMap(admin, courseId, sanityIds)
+      : new Map();
   const { data: accessRows } = sanityIds.length
     ? await admin
         .from('course_lesson_access')

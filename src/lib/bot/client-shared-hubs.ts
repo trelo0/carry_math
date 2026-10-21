@@ -212,7 +212,43 @@ export async function handleClientSharedHubCallback(
       });
       return true;
     }
-    await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'course' });
+    const courses = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+    if (courses.length === 1) {
+      await beginStudentMentorQuestion(admin, telegramId, chatId, {
+        context: 'course',
+        courseId: courses[0]!.courseId,
+        courseSlug: courses[0]!.slug,
+      });
+    } else if (courses.length > 1) {
+      await deliverClientHubScreen(
+        admin,
+        telegramId,
+        chatId,
+        'contact-curator-pick',
+        '🎓 Выберите курс:',
+        {
+          inline_keyboard: [
+            ...courses.map((c) => [
+              { text: c.title.slice(0, 58), callback_data: `cl:contact:cur:${c.courseId}` },
+            ]),
+            [clientBackButton()],
+          ],
+        },
+        { editAt: { chatId, messageId } },
+      );
+    }
+    return true;
+  }
+  if (data.startsWith('cl:contact:cur:')) {
+    const courseId = Number(data.slice('cl:contact:cur:'.length));
+    const hit = (await listStudentPurchasedVisibleCourseContexts(admin, telegramId)).find(
+      (c) => c.courseId === courseId,
+    );
+    await beginStudentMentorQuestion(admin, telegramId, chatId, {
+      context: 'course',
+      courseId,
+      courseSlug: hit?.slug,
+    });
     return true;
   }
 

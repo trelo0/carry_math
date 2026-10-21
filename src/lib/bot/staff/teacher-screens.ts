@@ -29,7 +29,7 @@ export function renderTeacherScheduleHome(
   const upcoming = lessonsUpcoming(snapshot.allLessons);
   const parts = ['📅 РАСПИСАНИЕ ЗАНЯТИЙ', ''];
   const menuBack = nav?.mainMenuBack ?? 't:menu';
-  const menuLabel = menuBack.startsWith('s:sch') ? '⬅️ К расписанию' : '⬅️ Главное меню';
+  const menuLabel = '⬅️ На главную';
 
   if (snapshot.currentLesson) {
     parts.push('🟢 Сейчас:', lessonTitleLine(snapshot.currentLesson), '');
@@ -80,7 +80,7 @@ export function renderTeacherScheduleToday(snapshot: TeacherBotSnapshot): { text
             callback_data: `t:les:${l.id}`,
           },
         ]),
-        [backButton('⬅️ Расписание', 't:sch')],
+        [backButton('⬅️ На главную', 't:menu')],
       ],
     },
   };
@@ -99,7 +99,7 @@ export function renderTeacherScheduleUpcoming(snapshot: TeacherBotSnapshot): { t
     keyboard: {
       inline_keyboard: [
         ...upcoming.map((l) => [{ text: `${l.date} ${l.time} — ${l.topic}`.slice(0, 60), callback_data: `t:les:${l.id}` }]),
-        [backButton('⬅️ Расписание', 't:sch')],
+        [backButton('⬅️ На главную', 't:menu')],
       ],
     },
   };

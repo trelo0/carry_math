@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
-import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
+import {
+  assertLessonDeliveryAccess,
+  readLessonDeliveryCourseHint,
+} from '@/lib/curator/staff-course-access';
 import { CABINET_UPLOAD_MAX_BYTES, cabinetUploadTooLargeMessage } from '@/lib/api/read-error';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import {
@@ -39,7 +42,12 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    await assertLessonDeliveryAccess(
+      auth.admin,
+      auth,
+      sanityLessonId,
+      readLessonDeliveryCourseHint(request),
+    );
     const buffer = Buffer.from(await file.arrayBuffer());
     await uploadCourseLessonFile(sanityLessonId, field, buffer, file.name);
     revalidatePath('/cabinet');
@@ -72,7 +80,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    await assertLessonDeliveryAccess(
+      auth.admin,
+      auth,
+      sanityLessonId,
+      readLessonDeliveryCourseHint(request),
+    );
     await setCourseLessonFilePublished(sanityLessonId, field, index, body.published);
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');
@@ -99,7 +112,12 @@ export async function DELETE(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    await assertLessonDeliveryAccess(
+      auth.admin,
+      auth,
+      sanityLessonId,
+      readLessonDeliveryCourseHint(request),
+    );
     await deleteCourseLessonFile(sanityLessonId, field, index);
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { CabinetCourseStop } from '@/lib/cabinet';
 import {
   courseSlugFromLessonLocation,
+  lessonApiCourseQuery,
   markCourseMapStale,
   writeLastSelectedStop,
 } from '@/lib/cabinet-course-cache';
@@ -201,7 +202,7 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
     const endpoint = watchPhase === 'live' ? 'watch-live' : 'watch-recording';
     try {
       const res = await fetch(
-        `/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}`,
+        `/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/${endpoint}${lessonApiCourseQuery()}`,
         { method: 'POST' },
       );
       if (!res.ok) {

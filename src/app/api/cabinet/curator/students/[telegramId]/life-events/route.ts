@@ -5,10 +5,9 @@ import {
   memberCanDeliverCourse,
   memberCanReviewHomework,
 } from '@/lib/curator/staff-course-access';
-import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import { getLifeEvents, isLivesTableError } from '@/lib/bot/education/lives';
 import { curatorJsonError } from '@/lib/curator/api-errors';
-import { getDistrictCourseContent } from '@/lib/studio/courseContent';
+import { resolveStaffStudentCourseId } from '@/lib/curator/resolve-staff-student-course';
 
 type RouteParams = { params: Promise<{ telegramId: string }> };
 
@@ -33,15 +32,22 @@ export async function GET(request: Request, { params }: RouteParams) {
   try {
     const url = new URL(request.url);
     const courseIdRaw = url.searchParams.get('courseId');
-    let courseId: number | null =
-      courseIdRaw != null && courseIdRaw !== '' ? Number(courseIdRaw) : null;
-
-    if (courseId == null || !Number.isSafeInteger(courseId) || courseId <= 0) {
-      const content = await getDistrictCourseContent();
-      courseId = content ? await resolveCourseIdForContent(auth.admin, content) : null;
-    }
-    if (courseId == null || !Number.isSafeInteger(courseId) || courseId <= 0) {
-      return NextResponse.json({ error: 'Course not found' }, { status: 404 });
+    const parsedId =
+      courseIdRaw != null && courseIdRaw !== '' ? Number(courseIdRaw) : Number.NaN;
+    const courseId = await resolveStaffStudentCourseId(
+      auth.admin,
+      auth,
+      studentTelegramId,
+      {
+        courseId: Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null,
+        courseSlug: url.searchParams.get('course'),
+      },
+    );
+    if (courseId == null) {
+      return NextResponse.json(
+        { error: 'Укажите courseId или course=slug (несколько курсов у ученика).' },
+        { status: 400 },
+      );
     }
 
     await assertStaffStudentCourseView(auth.admin, auth, studentTelegramId, courseId);

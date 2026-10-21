@@ -7,6 +7,7 @@ import { loadStaffCapabilities } from './capabilities';
 import {
   loadStaffMyCourseRows,
   renderMyCourseListScreen,
+  renderMyCourseRolePicker,
   type StaffCourseAssignmentRow,
 } from './staff-my-course';
 import { groupStaffCourseRows } from '@/lib/staff/course-assignment-ui';
@@ -37,10 +38,7 @@ export async function sendStaffCourseManagementList(
   telegramId: number,
 ): Promise<void> {
   const rows = await loadStaffMyCourseRows(admin, telegramId);
-  const screen = renderMyCourseListScreen(rows, {
-    backCallback: 'staff:hub:close',
-    backLabel: '⬅️ Закрыть',
-  });
+  const screen = renderMyCourseListScreen(rows, { showBack: false });
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
 }
 
@@ -111,7 +109,6 @@ export async function handleStaffWorkspaceMenuMessage(
 
   if (text === STAFF_EXIT_ALL_COURSES_LABEL) {
     await exitStaffCourseWorkspace(admin, telegramId, chatId);
-    await sendStaffCourseManagementList(admin, chatId, telegramId);
     return true;
   }
 
@@ -181,6 +178,20 @@ export async function handleStaffCourseHubCallback(
   if (data === 'c:mc' || data === 'c:hub') {
     const rows = await loadStaffMyCourseRows(admin, telegramId);
     const screen = renderMyCourseListScreen(rows);
+    await editAdminMessage(message, screen.text, screen.keyboard);
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    return true;
+  }
+
+  if (data.startsWith('c:pick:')) {
+    const courseId = Number(data.split(':')[2]);
+    if (!Number.isFinite(courseId)) return false;
+    const rows = await loadStaffMyCourseRows(admin, telegramId);
+    const group = groupStaffCourseRows(rows).find((g) => g.courseId === courseId);
+    if (!group || group.roles.length < 2) return false;
+    const screen = renderMyCourseRolePicker(group.title, courseId);
     await editAdminMessage(message, screen.text, screen.keyboard);
     if (callbackQueryId) {
       await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });

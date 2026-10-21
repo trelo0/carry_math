@@ -100,19 +100,28 @@ function FileBlock({
   );
 }
 
+function curatorLessonCourseQuery(courseSlug: string | null | undefined): string {
+  const slug = courseSlug?.trim();
+  if (!slug) return '';
+  return `?course=${encodeURIComponent(slug)}`;
+}
+
 function LessonEditor({
   lesson,
+  courseSlug,
   busy,
   writeEnabled,
   onBack,
   runAction,
 }: {
   lesson: CuratorLessonView;
+  courseSlug: string | null;
   busy: boolean;
   writeEnabled: boolean;
   onBack: () => void;
   runAction: StaffRunAction;
 }) {
+  const courseQ = curatorLessonCourseQuery(courseSlug);
   const [liveUrl, setLiveUrl] = useState(lesson.liveUrl ?? '');
   const [recordingUrl, setRecordingUrl] = useState(lesson.recordingUrl ?? '');
   const [scheduledAt, setScheduledAt] = useState(toDatetimeLocal(lesson.scheduledAt));
@@ -124,7 +133,9 @@ function LessonEditor({
       setFeedbacks,
       'save',
       async () => {
-      const res = await fetch(`/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}`, {
+      const res = await fetch(
+        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}${courseQ}`,
+        {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -133,7 +144,8 @@ function LessonEditor({
           scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
           lessonDate: scheduledAt ? scheduledAt.slice(0, 10) : null,
         }),
-      });
+        },
+      );
       if (!res.ok) {
         throw new Error(await readApiErrorMessage(res, 'Не удалось сохранить'));
       }
@@ -148,7 +160,7 @@ function LessonEditor({
       'session',
       async () => {
       const res = await fetch(
-        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/session`,
+        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/session${courseQ}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -179,7 +191,7 @@ function LessonEditor({
       `notify-${type}`,
       async () => {
       const res = await fetch(
-        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/notify`,
+        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/notify${courseQ}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -209,7 +221,7 @@ function LessonEditor({
       form.set('field', field);
       form.set('file', file);
       const res = await fetch(
-        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files`,
+        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files${courseQ}`,
         { method: 'POST', body: form },
       );
       if (!res.ok) {
@@ -230,7 +242,7 @@ function LessonEditor({
       `${field}-${index}`,
       async () => {
       const res = await fetch(
-        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files`,
+        `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files${courseQ}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -255,6 +267,8 @@ function LessonEditor({
       `delete-${field}-${index}`,
       async () => {
         const params = new URLSearchParams({ field, index: String(index) });
+        const slug = courseSlug?.trim();
+        if (slug) params.set('course', slug);
         const res = await fetch(
           `/api/cabinet/curator/lessons/${encodeURIComponent(lesson.sanityId)}/files?${params}`,
           { method: 'DELETE' },
@@ -443,6 +457,7 @@ export default function CuratorLessonsPanel({
     return (
       <LessonEditor
         lesson={selectedLesson}
+        courseSlug={data.courseSlug}
         busy={busy}
         writeEnabled={data.sanityWriteEnabled}
         onBack={onBack}

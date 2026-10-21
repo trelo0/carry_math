@@ -22,6 +22,8 @@ import { listLeadMessages } from './admin/lead-messages';
 import { getStudentOrdinaryTeacherIds } from './education/assignments';
 import { loadDismissedAppealKeys, markAppealRead } from './student-appeal-reads';
 
+const appealsIncomingCache = new Map<number, AppealItem[]>();
+
 type AppealItem = {
   key: string;
   title: string;
@@ -115,6 +117,7 @@ async function showAppealsIncoming(
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const items = await collectIncomingAppeals(admin, telegramId);
+  appealsIncomingCache.set(telegramId, items);
   if (items.length === 0) {
     await deliverClientHubScreen(
       admin,
@@ -130,14 +133,13 @@ async function showAppealsIncoming(
     return;
   }
 
-  const lines = ['📥 Входящие', ''];
+  const lines = ['📥 Входящие', '', 'Выберите уведомление:'];
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-  for (const item of items.slice(0, 12)) {
-    lines.push(`• ${item.title}`, `  ${formatDateTimeShort(item.at)}`, '');
+  for (const [idx, item] of items.slice(0, 12).entries()) {
     keyboard.push([
       {
-        text: item.title.slice(0, 58),
-        callback_data: `cl:apl:open:${encodeURIComponent(item.key)}`,
+        text: `${item.title.slice(0, 40)} · ${formatDateTimeShort(item.at)}`.slice(0, 64),
+        callback_data: `cl:apl:open:${idx}`,
       },
     ]);
   }
@@ -479,9 +481,11 @@ export async function handleClientAppealsCallback(
     return true;
   }
   if (data.startsWith('cl:apl:open:')) {
-    const key = decodeURIComponent(data.slice('cl:apl:open:'.length));
-    const items = await collectIncomingAppeals(admin, telegramId);
-    const item = items.find((i) => i.key === key);
+    const idx = Number(data.slice('cl:apl:open:'.length));
+    const items =
+      appealsIncomingCache.get(telegramId) ??
+      (await collectIncomingAppeals(admin, telegramId));
+    const item = items[idx];
     if (!item) {
       await showAppealsIncoming(admin, telegramId, chatId, { editAt });
       return true;
@@ -490,11 +494,11 @@ export async function handleClientAppealsCallback(
       admin,
       telegramId,
       chatId,
-      `appeal-open:${key.slice(0, 40)}`,
+      `appeal-open:${item.key.slice(0, 40)}`,
       [`📩 ${item.title}`, '', formatDateTimeShort(item.at), '', item.preview].join('\n'),
       {
         inline_keyboard: [
-          [{ text: '✅ Прочитано', callback_data: `cl:apl:done:${encodeURIComponent(key)}` }],
+          [{ text: '✅ Прочитано', callback_data: `cl:apl:done:${idx}` }],
           item.kind === 'course' && item.courseId
             ? [
                 {
@@ -511,8 +515,12 @@ export async function handleClientAppealsCallback(
     return true;
   }
   if (data.startsWith('cl:apl:done:')) {
-    const key = decodeURIComponent(data.slice('cl:apl:done:'.length));
-    await markAppealRead(admin, telegramId, key);
+    const idx = Number(data.slice('cl:apl:done:'.length));
+    const items =
+      appealsIncomingCache.get(telegramId) ??
+      (await collectIncomingAppeals(admin, telegramId));
+    const key = items[idx]?.key;
+    if (key) await markAppealRead(admin, telegramId, key);
     await showAppealsIncoming(admin, telegramId, chatId, { editAt });
     return true;
   }

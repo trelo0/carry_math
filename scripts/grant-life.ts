@@ -33,20 +33,36 @@ const reason = arg('reason') ?? 'Бонус от куратора';
 
 if (!curatorRaw || !studentRaw) {
   console.error(`Usage:
-  npm run grant:life -- --curator=ID --student=ID [--reason=text]`);
+  npm run grant:life -- --curator=ID --student=ID [--course-id=ID | --course-slug=slug] [--reason=text]`);
   process.exit(1);
 }
 
 async function main() {
   const admin = createAdminClient();
-  const content = await getDistrictCourseContent();
-  if (!content) {
-    console.error('Курс не найден в Sanity.');
+  const courseIdRaw = arg('course-id');
+  const courseSlug = arg('course-slug')?.trim();
+
+  let courseId: number | null = courseIdRaw ? Number(courseIdRaw) : null;
+  if (courseIdRaw && !Number.isFinite(courseId)) {
+    console.error('Некорректный --course-id');
     process.exit(1);
   }
-  const courseId = await resolveCourseIdForContent(admin, content);
+
+  if (courseId == null && courseSlug) {
+    const content = await getDistrictCourseContent(courseSlug).catch(() => null);
+    if (!content) {
+      console.error(`Курс не найден в Sanity: ${courseSlug}`);
+      process.exit(1);
+    }
+    courseId = await resolveCourseIdForContent(admin, content);
+  }
+
+  if (courseId == null) {
+    console.error('Укажите --course-id или --course-slug');
+    process.exit(1);
+  }
   if (!courseId) {
-    console.error('course_id не найден для Sanity-курса.');
+    console.error('course_id не найден.');
     process.exit(1);
   }
 

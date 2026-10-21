@@ -49,8 +49,8 @@ export const COMBINED_LESSON_STUDENTS_NAV: StaffScreenNav = {
 };
 
 export const COMBINED_SCHEDULE_NAV: StaffScreenNav = {
-  mainMenuBack: 's:sch',
-  listBack: 's:sch',
+  mainMenuBack: 's:menu',
+  listBack: 's:menu',
 };
 
 export const COMBINED_CURATOR_COURSE_NAV: StaffScreenNav = {

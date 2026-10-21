@@ -1,0 +1,13 @@
+var R=require("../../../../../../chunks/[turbopack]_runtime.js")("server/app/api/cabinet/teacher/groups/[groupId]/route.js")
+R.c("server/chunks/src_lib_eed6e80b._.js")
+R.c("server/chunks/[root-of-the-server]__f9655ba0._.js")
+R.c("server/chunks/node_modules_e95b3bed._.js")
+R.c("server/chunks/[root-of-the-server]__5d436510._.js")
+R.c("server/chunks/src_lib_supabase_admin_ts_291ac0f7._.js")
+R.c("server/chunks/node_modules_31e3e502._.js")
+R.c("server/chunks/[root-of-the-server]__e41d6d2a._.js")
+R.c("server/chunks/node_modules_next_dist_e6406c48._.js")
+R.c("server/chunks/node_modules_next_92aaecbe._.js")
+R.c("server/chunks/ce889_server_app_api_cabinet_teacher_groups_[groupId]_route_actions_2c0ef375.js")
+R.m(959808)
+module.exports=R.m(959808).exports

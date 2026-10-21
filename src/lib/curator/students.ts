@@ -131,17 +131,19 @@ export async function loadCuratorCourseStudents(
   const homeworkLessons = publishedLessons.filter((l) => l.mandatoryHomework || l.homework);
   const sanityIds = publishedLessons.map((l) => l.sanityId);
 
-  const sessionMap = await loadSanityLessonSessionMap(admin, sanityIds);
+  const sessionMap = await loadSanityLessonSessionMap(admin, courseId, sanityIds);
 
   const [{ data: accessRows }, { data: progressRows }, { data: members }] = await Promise.all([
     admin
       .from('course_lesson_access')
       .select('telegram_id, sanity_lesson_id, access_status')
+      .eq('course_id', courseId)
       .in('telegram_id', studentIds)
       .in('sanity_lesson_id', sanityIds),
     admin
       .from('course_lesson_student_progress')
       .select('*')
+      .eq('course_id', courseId)
       .in('telegram_id', studentIds)
       .in('sanity_lesson_id', sanityIds),
     admin

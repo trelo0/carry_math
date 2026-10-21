@@ -50,7 +50,10 @@ export function isAchievementUnlocked(ruleKey: CabinetAchievementRuleKey, data: 
     case 'course_enrolled':
       return data.enrollment != null;
     case 'course_map_viewed':
-      return data.courseMapViewed;
+      return (
+        data.courseMapViewed ||
+        Object.values(data.courseMapViewedByCourseId ?? {}).some(Boolean)
+      );
     case 'lesson_complete_1':
       return lessonsDone >= 1;
     case 'lesson_complete_5':

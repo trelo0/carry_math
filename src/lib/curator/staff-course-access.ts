@@ -41,14 +41,30 @@ export function memberCanDeliverCourse(roles: BotRole[], telegramId: number): bo
   );
 }
 
+export type LessonDeliveryCourseHint = {
+  courseId?: number | null;
+  courseSlug?: string | null;
+};
+
+export function readLessonDeliveryCourseHint(request: Request): LessonDeliveryCourseHint {
+  const url = new URL(request.url);
+  const courseSlug = url.searchParams.get('course')?.trim() || null;
+  const rawId = url.searchParams.get('courseId');
+  const parsed = rawId != null ? Number(rawId) : NaN;
+  const courseId = Number.isFinite(parsed) ? parsed : null;
+  return { courseSlug, courseId };
+}
+
 async function resolveLessonCourseOption(
   admin: SupabaseClient,
   sanityLessonId: string,
+  hint?: LessonDeliveryCourseHint,
 ): Promise<CuratorCourseOption | null> {
   const summaries = await listDistrictCourseSummaries().catch(() => []);
   const slugs = summaries.map((s) => s.slug);
   const idBySlug = await lookupCourseIdsBySlugs(admin, slugs);
 
+  const matches: CuratorCourseOption[] = [];
   for (const summary of summaries) {
     const courseId = idBySlug.get(summary.slug);
     if (courseId == null) continue;
@@ -56,20 +72,21 @@ async function resolveLessonCourseOption(
     if (!content) continue;
     const lesson = findLessonBySanityId(content, sanityLessonId);
     if (!lesson) continue;
-    return { courseId, slug: summary.slug, title: summary.title };
+    matches.push({ courseId, slug: summary.slug, title: summary.title });
   }
 
-  const legacy = await getDistrictCourseContent().catch(() => null);
-  if (legacy) {
-    const lesson = findLessonBySanityId(legacy, sanityLessonId);
-    if (lesson) {
-      const idBySlugLegacy = await lookupCourseIdsBySlugs(admin, [legacy.slug]);
-      const courseId = idBySlugLegacy.get(legacy.slug);
-      if (courseId != null) {
-        return { courseId, slug: legacy.slug, title: legacy.title };
-      }
-    }
+  if (matches.length === 0) return null;
+
+  const slug = hint?.courseSlug?.trim();
+  if (slug) {
+    const bySlug = matches.find((m) => m.slug === slug);
+    if (bySlug) return bySlug;
   }
+  if (hint?.courseId != null) {
+    const byId = matches.find((m) => m.courseId === hint.courseId);
+    if (byId) return byId;
+  }
+  if (matches.length === 1) return matches[0];
   return null;
 }
 
@@ -93,10 +110,14 @@ export async function assertLessonDeliveryAccess(
   admin: SupabaseClient,
   auth: StaffAuthContext,
   sanityLessonId: string,
+  hint?: LessonDeliveryCourseHint,
 ): Promise<{ courseId: number; courseSlug: string }> {
-  const courseOpt = await resolveLessonCourseOption(admin, sanityLessonId);
+  const courseOpt = await resolveLessonCourseOption(admin, sanityLessonId, hint);
   if (!courseOpt) {
-    throw new StaffCourseAccessError('Занятие не найдено.', 'NOT_FOUND');
+    throw new StaffCourseAccessError(
+      'Занятие не найдено или нужно указать курс (?course=slug).',
+      'NOT_FOUND',
+    );
   }
 
   await assertStaffCourseCapability(admin, auth, courseOpt.courseId, 'curator');
@@ -130,6 +151,7 @@ export async function resolveCheckerApiCourse(
   if (error) throw error;
   const courses = (rows ?? []).map((r) => ({ courseId: r.id as number, slug: r.slug as string }));
 
+  if (courseId == null && courses.length !== 1) return null;
   const pick =
     courseId != null ? courses.find((c) => c.courseId === courseId) : courses[0] ?? null;
   if (!pick) return null;

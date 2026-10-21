@@ -3,6 +3,7 @@ import type { CabinetCourseViewSlice } from '@/lib/cabinet';
 const KEY_PREFIX = 'cabinet:course-slice:';
 const STALE_PREFIX = 'cabinet:map-stale:';
 const LAST_STOP_PREFIX = 'cabinet:last-stop:';
+const LAST_ACTIVE_COURSE_SLUG = 'cabinet:last-active-course-slug';
 /** Не refetch карты при возврате с урока, если кеш свежее. */
 export const CABINET_COURSE_SLICE_TTL_MS = 30 * 60_000;
 
@@ -87,6 +88,12 @@ export function courseSlugFromLessonLocation(): string {
   return new URLSearchParams(window.location.search).get('course')?.trim() ?? '';
 }
 
+/** Query suffix for lesson API routes (`?course=slug`). */
+export function lessonApiCourseQuery(): string {
+  const slug = courseSlugFromLessonLocation();
+  return slug ? `?course=${encodeURIComponent(slug)}` : '';
+}
+
 export function readLastSelectedStop(slug: string): number | null {
   if (typeof window === 'undefined' || !slug) return null;
   try {
@@ -103,6 +110,24 @@ export function writeLastSelectedStop(slug: string, stopId: number): void {
   if (typeof window === 'undefined' || !slug) return;
   try {
     sessionStorage.setItem(LAST_STOP_PREFIX + slug, String(stopId));
+  } catch {
+    // quota / private mode
+  }
+}
+
+export function readLastActiveCourseSlug(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(LAST_ACTIVE_COURSE_SLUG)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastActiveCourseSlug(slug: string): void {
+  if (typeof window === 'undefined' || !slug) return;
+  try {
+    sessionStorage.setItem(LAST_ACTIVE_COURSE_SLUG, slug.trim());
   } catch {
     // quota / private mode
   }

@@ -153,6 +153,7 @@ export function renderCuratorActivityReviewList(
 export function renderCuratorLowLivesList(
   entries: CuratorLowLivesEntry[],
   cabinetUrl: string | null,
+  courseId?: number | null,
 ): { text: string; keyboard: InlineKeyboard } {
   const parts = ['❤️ Мало жизней', '', 'Можно открыть карточку или сразу +1 / −1.', ''];
   if (entries.length === 0) {
@@ -167,8 +168,12 @@ export function renderCuratorLowLivesList(
         text: `${e.student.name} — ${lives}`.slice(0, 40),
         callback_data: `c:sp:${e.student.id}`,
       },
-      { text: '+1', callback_data: `c:life:g:${e.student.telegramId}` },
-      { text: '−1', callback_data: `c:life:d:${e.student.telegramId}` },
+      ...(courseId != null
+        ? [
+            { text: '+1', callback_data: `c:life:g:${e.student.telegramId}:${courseId}` },
+            { text: '−1', callback_data: `c:life:d:${e.student.telegramId}:${courseId}` },
+          ]
+        : []),
     ]);
   }
   rows.push([backButton('⬅️ К курсу', 'c:act')]);

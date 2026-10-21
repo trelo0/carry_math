@@ -1,0 +1,103 @@
+{
+  "app": {
+    "[project]/src/app/(app)/cabinet-preview/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/checkout/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/curator/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/lesson/[lessonId]/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/pick/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(app)/cabinet/staff/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/account/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/individual/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/login/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/privacy-policy/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/public-offer/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/(site)/register/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/_not-found/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ],
+    "[project]/src/app/studio/[[...tool]]/page": [
+      "static/media/d3fe2f289711ac3f-s.p.50575af1.woff2",
+      "static/media/a343f882a40d2cc9-s.p.71e1367e.woff2",
+      "static/media/87ccb897ba116d44-s.p.20997ec4.woff2",
+      "static/media/6ad1cda2f16975ee-s.p.b58dc1ff.woff2"
+    ]
+  },
+  "appUsingSizeAdjust": true,
+  "pages": {},
+  "pagesUsingSizeAdjust": false
+}

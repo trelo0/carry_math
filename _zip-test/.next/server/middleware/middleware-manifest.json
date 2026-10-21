@@ -1,0 +1,51 @@
+{
+  "sorted_middleware": [],
+  "middleware": {
+    "/": {
+      "files": [
+        "server/edge/chunks/[root-of-the-server]__cfc6ad0d._.js",
+        "server/edge/chunks/node_modules_c2810fc3._.js",
+        "server/edge/chunks/turbopack-node_modules_next_dist_esm_build_templates_edge-wrapper_b6ec9c24.js"
+      ],
+      "name": "middleware",
+      "page": "/",
+      "matchers": [
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/cabinet/:path*{(\\\\.json)}?",
+          "originalSource": "/cabinet/:path*"
+        },
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/auth/:path*{(\\\\.json)}?",
+          "originalSource": "/auth/:path*"
+        },
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/login{(\\\\.json)}?",
+          "originalSource": "/login"
+        },
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/account{(\\\\.json)}?",
+          "originalSource": "/account"
+        },
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/api/payments/:path*{(\\\\.json)}?",
+          "originalSource": "/api/payments/:path*"
+        },
+        {
+          "regexp": "/:nextData(_next/data/[^/]{1,})?/api/cabinet/:path*{(\\\\.json)}?",
+          "originalSource": "/api/cabinet/:path*"
+        }
+      ],
+      "wasm": [],
+      "assets": [],
+      "env": {
+        "__NEXT_BUILD_ID": "qjSrJdMJIUDcMndt5_kvr",
+        "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY": "Dedw5pUa7zPVixteUYjm6n2OxYoWmfxlj7NBzpFdj4M=",
+        "__NEXT_PREVIEW_MODE_ID": "e01b44f1563f694235e9ead186198227",
+        "__NEXT_PREVIEW_MODE_ENCRYPTION_KEY": "cc3ad13679922ad34da41bc0b4b0e2d102e336dc17675dbe043e8ab63874c9e8",
+        "__NEXT_PREVIEW_MODE_SIGNING_KEY": "ccaef1eb5151604ab0d86467453d7d9a6aaea25584e4ae7bfd3e8d78452386b2"
+      }
+    }
+  },
+  "instrumentation": null,
+  "functions": {}
+}

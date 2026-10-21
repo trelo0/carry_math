@@ -2,6 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getStudentCheckStaff } from '@/lib/bot/education/assignments';
 import type { CourseEnrollmentState } from './lives';
+import {
+  livesDeductCb,
+  livesGrantCb,
+  livesMenuCb,
+} from '@/lib/bot/admin/lives-ops-callbacks';
 
 async function memberChatId(admin: SupabaseClient, telegramId: number): Promise<number | null> {
   const { data } = await admin
@@ -144,9 +149,12 @@ export async function notifyLivesExhaustedOnce(
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '❤️ Жизни', callback_data: `al:m:${params.telegramId}` },
-            { text: '+1', callback_data: `al:g:${params.telegramId}` },
-            { text: '−1', callback_data: `al:d:${params.telegramId}` },
+            {
+              text: '❤️ Жизни',
+              callback_data: livesMenuCb(params.telegramId, params.courseId),
+            },
+            { text: '+1', callback_data: livesGrantCb(params.telegramId, params.courseId) },
+            { text: '−1', callback_data: livesDeductCb(params.telegramId, params.courseId) },
           ],
           [{ text: '👤 Профиль', callback_data: `admin:user:${params.telegramId}::` }],
           [{ text: '💬 Связаться с учеником', url: `tg://user?id=${params.telegramId}` }],

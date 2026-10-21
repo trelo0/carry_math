@@ -114,7 +114,6 @@ export function renderCuratorScheduleScreen(
     lines.push('ℹ️ У всех предстоящих занятий даты уже заданы (или нет занятий без даты).', '');
   }
   keyboard.push([back('📅 Настроить дату любого занятия', `c:cal:${courseId}:any`)]);
-  keyboard.push([back('⬅️ К выбору курса', 'c:pk:cal'), back('⬅️ Главная', 'c:hub')]);
 
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
@@ -166,7 +165,6 @@ export function renderCuratorLessonsModuleList(
   const keyboard: InlineKeyboard['inline_keyboard'] = data.modules.map((mod, idx) => [
     back(`📂 ${mod.title}`.slice(0, 58), `c:les:${courseId}:m:${idx}`),
   ]);
-  keyboard.push([back('⬅️ К выбору курса', 'c:pk:les'), back('⬅️ Главная', 'c:hub')]);
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
 
@@ -239,7 +237,9 @@ export function renderCuratorStudentsList(
     return {
       text: `👥 Ученики\n🎓 ${courseTitle}\n\nНет учеников с активным доступом к курсу.`,
       keyboard: {
-        inline_keyboard: [[back('⬅️ Назад', 'c:pk:stu'), back('⬅️ Главная', 'c:hub')]],
+        inline_keyboard: [
+          [back('🔎 Поиск по имени', `c:stu:${courseId}:find`)],
+        ],
       },
     };
   }
@@ -250,7 +250,7 @@ export function renderCuratorStudentsList(
       `c:stu:${courseId}:s:${s.telegramId}`,
     ),
   ]);
-  keyboard.push([back('⬅️ К выбору курса', 'c:pk:stu'), back('⬅️ Главная', 'c:hub')]);
+  keyboard.push([back('🔎 Поиск по имени', `c:stu:${courseId}:find`)]);
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }
 
@@ -316,10 +316,7 @@ export function renderScheduleDatePrompt(
   return {
     text: lines.join('\n'),
     keyboard: {
-      inline_keyboard: [
-        [back('⬅️ Отмена', backTarget)],
-        [back('⬅️ Расписание', `c:cal:${courseId}`)],
-      ],
+      inline_keyboard: [[back('⬅️ Отмена', backTarget)]],
     },
   };
 }

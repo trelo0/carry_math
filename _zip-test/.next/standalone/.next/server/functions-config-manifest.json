@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "functions": {
+    "/api/cron/broadcast-dispatch": {
+      "maxDuration": 60
+    },
+    "/api/cron/homework-deadlines": {
+      "maxDuration": 60
+    },
+    "/api/cron/lives-monthly-restore": {
+      "maxDuration": 60
+    },
+    "/api/cron/webinar-reminders": {
+      "maxDuration": 60
+    }
+  }
+}

@@ -157,6 +157,7 @@ export function buildCabinetPreviewData(
         : null,
     cabinetPricing: DEFAULT_CABINET_PRICING,
     courseMapViewed: variant !== 'preview',
+    courseMapViewedByCourseId: {},
     memberRoles: ['student'],
     achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
     telegramId: null,
@@ -166,11 +167,19 @@ export function buildCabinetPreviewData(
 
 /** Подмешивает реальный контент курса и цены из Sanity в dev-превью. */
 export async function enrichCabinetPreviewWithSanity(data: CabinetData): Promise<CabinetData> {
-  const [courseContent, cabinetPricing, summaries] = await Promise.all([
-    getDistrictCourseContent().catch(() => null),
+  const [cabinetPricing, summaries] = await Promise.all([
     getCabinetPricing().catch(() => data.cabinetPricing),
     listDistrictCourseSummaries().catch(() => []),
   ]);
+  const previewSlug =
+    summaries.find(
+      (s) =>
+        !isDistrictCourseFullyClosed(s.courseClosed) &&
+        isDistrictCoursePublicInCatalog(s.showInCatalog),
+    )?.slug ?? summaries[0]?.slug;
+  const courseContent = previewSlug
+    ? await getDistrictCourseContent(previewSlug).catch(() => null)
+    : null;
 
   const next: CabinetData = {
     ...data,

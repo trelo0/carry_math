@@ -1,0 +1,12 @@
+module.exports=[235617,e=>{"use strict";function t(e){let t=new Date(e),a=e=>String(e).padStart(2,"0");return{date:`${a(t.getDate())}.${a(t.getMonth()+1)}.${t.getFullYear()}`,time:`${a(t.getHours())}:${a(t.getMinutes())}`}}function a(e){return new Date(e).toLocaleString("ru-RU",{timeZone:"Europe/Minsk",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}e.s(["WEEKDAY_LABELS",0,["Пн","Вт","Ср","Чт","Пт","Сб","Вс"],"formatLessonDateTime",()=>t,"formatLessonDateTimeRu",()=>a])},217212,e=>{"use strict";var t=e.i(927837),a=e.i(235617);async function n(e,t){let{data:a,error:n}=await e.from("bot_members").select("chat_id").eq("telegram_id",t).maybeSingle();if(n)throw n;let i=a?.chat_id;return"number"==typeof i?i:null}async function i(e,i,s){let r=await n(e,i);if(!r)return;let o=(0,a.formatLessonDateTimeRu)(s.startsAt);await (0,t.telegramSend)("sendMessage",{chat_id:r,text:`📝 Преподаватель добавил домашнее задание
+
+Занятие: ${s.topic}
+Дата: ${o}`,reply_markup:{inline_keyboard:[[{text:"Открыть задание",callback_data:`cl:hw:open:${s.lessonId}`}],[{text:"Перейти к занятию",callback_data:`cl:less:v:${s.lessonId}:menu`}]]}})}async function s(e,i,s){let{data:r,error:o}=await e.from("scheduled_lessons").select("topic, starts_at, teacher_telegram_id").eq("id",i).maybeSingle();if(o)throw o;if(!r?.teacher_telegram_id)return;let l=await n(e,r.teacher_telegram_id);if(!l)return;let{data:m}=await e.from("bot_members").select("full_name, phone").eq("telegram_id",s).maybeSingle(),c=m?.full_name?.trim()||m?.phone?.trim()||`ID ${s}`;await (0,t.telegramSend)("sendMessage",{chat_id:l,text:`📝 Домашняя работа на проверке
+
+👤 ${c}
+📚 ${r.topic}
+🕐 ${(0,a.formatLessonDateTimeRu)(r.starts_at)}
+
+Откройте занятие в кабинете преподавателя.`})}async function r(a,i,s){let r=await n(a,i);if(!r)return;let o=[s.approved?"✅ Домашнее задание принято":"🔄 Нужна доработка","",s.topic];s.comment&&o.push("",s.comment),o.push("","Откройте карточку занятия для деталей.");let{studentNotifyKeyboard:l}=await e.A(337386);await (0,t.telegramSend)("sendMessage",{chat_id:r,text:o.join("\n"),reply_markup:l([[{text:"Открыть задание",callback_data:`cl:hw:open:${s.lessonId}`}]])})}e.s(["notifyStudentLessonHomeworkAssigned",()=>i,"notifyStudentLessonHomeworkReviewed",()=>r,"notifyTeacherLessonHomeworkSubmitted",()=>s])},337386,e=>{e.v(t=>Promise.all(["server/chunks/src_lib_bot_student-push-notify_ts_cd8839bd._.js"].map(t=>e.l(t))).then(()=>t(829368)))}];
+
+//# sourceMappingURL=src_lib_52da5187._.js.map

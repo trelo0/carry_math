@@ -119,11 +119,13 @@ async function loadProgress(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseId: number,
 ): Promise<CourseLessonStudentProgress | null> {
   const { data, error } = await admin
     .from('course_lesson_student_progress')
     .select('*')
     .eq('telegram_id', telegramId)
+    .eq('course_id', courseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .maybeSingle();
   if (error) throw error;
@@ -134,11 +136,13 @@ async function assertLessonAccess(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  courseId: number,
 ): Promise<void> {
   const { data, error } = await admin
     .from('course_lesson_access')
     .select('access_status')
     .eq('telegram_id', telegramId)
+    .eq('course_id', courseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .maybeSingle();
   if (error) throw error;
@@ -216,6 +220,7 @@ async function collectSubmitCandidatesForContent(
   admin: SupabaseClient,
   telegramId: number,
   content: DistrictCourseContent,
+  courseId: number,
   hasCourseProduct: boolean,
 ): Promise<Array<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null }>> {
   const lessons = flattenCourseLessons(content)
@@ -226,17 +231,19 @@ async function collectSubmitCandidatesForContent(
   const sanityIds = lessons.map((l) => l.sanityId);
   if (sanityIds.length === 0) return [];
 
-  const sessionMap = await loadSanityLessonSessionMap(admin, sanityIds);
+  const sessionMap = await loadSanityLessonSessionMap(admin, courseId, sanityIds);
   const [{ data: accessRows }, { data: progressRows }] = await Promise.all([
     admin
       .from('course_lesson_access')
       .select('sanity_lesson_id, access_status')
       .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
       .in('sanity_lesson_id', sanityIds),
     admin
       .from('course_lesson_student_progress')
       .select('*')
       .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
       .in('sanity_lesson_id', sanityIds),
   ]);
 
@@ -289,6 +296,7 @@ export async function listSubmitTargetLessons(
       admin,
       telegramId,
       content,
+      ctx.courseId,
       hasCourseProduct,
     );
     for (const item of candidates) {
@@ -299,30 +307,6 @@ export async function listSubmitTargetLessons(
         courseTitle: ctx.title,
         hasCourseProduct,
       });
-    }
-  }
-
-  if (out.length === 0) {
-    const content = await getDistrictCourseContent();
-    if (content) {
-      const hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-      const candidates = await collectSubmitCandidatesForContent(
-        admin,
-        telegramId,
-        content,
-        hasCourseProduct,
-      );
-      const map = await lookupCourseIdsBySlugs(admin, [content.slug]);
-      const courseId = map.get(content.slug);
-      for (const item of candidates) {
-        out.push({
-          ...item,
-          courseId: courseId ?? undefined,
-          courseSlug: content.slug,
-          courseTitle: content.title,
-          hasCourseProduct,
-        });
-      }
     }
   }
 
@@ -418,7 +402,8 @@ export async function resolveSubmitTargetLesson(
     const forCourse = all.filter((t) => t.courseSlug === preferredCourseSlug);
     return forCourse[0] ?? null;
   }
-  return all[0] ?? null;
+  if (all.length === 1) return all[0] ?? null;
+  return null;
 }
 
 /** Сдача по deep-link из кабинета: конкретное занятие, если оно готово к отправке. */
@@ -435,28 +420,29 @@ export async function resolveSubmitLessonForSanityId(
   },
 ): Promise<{ lesson: CourseLessonContent; progress: CourseLessonStudentProgress | null } | null> {
   let content = cached?.content ?? null;
+  let scopedCourseId: number | null = null;
   if (!content || !findLessonBySanityId(content, sanityLessonId)) {
     const { resolveCourseForSanityLesson } = await import('./student-course-context');
     const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
-    if (resolved) content = resolved.content;
+    if (resolved) {
+      content = resolved.content;
+      scopedCourseId = resolved.courseId;
+    }
   }
-  if (!content) content = await getDistrictCourseContent();
   if (!content) return null;
+  if (scopedCourseId == null) {
+    scopedCourseId = await resolveCourseIdForContent(admin, content).catch(() => null);
+  }
+  if (scopedCourseId == null) return null;
 
   let hasCourseProduct = cached?.hasCourseProduct;
   if (hasCourseProduct === undefined) {
-    const { resolveCourseForSanityLesson } = await import('./student-course-context');
     const { studentHasCourseAccessForCourse } = await import('./course-access');
-    const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
-    if (resolved) {
-      hasCourseProduct = await studentHasCourseAccessForCourse(
-        admin,
-        telegramId,
-        resolved.courseId,
-      );
-    } else {
-      hasCourseProduct = await studentHasCourseProductAccess(admin, telegramId);
-    }
+    hasCourseProduct = await studentHasCourseAccessForCourse(
+      admin,
+      telegramId,
+      scopedCourseId,
+    );
   }
 
   const lesson = findLessonBySanityId(content, sanityLessonId);
@@ -471,6 +457,7 @@ export async function resolveSubmitLessonForSanityId(
           .from('course_lesson_access')
           .select('sanity_lesson_id, access_status')
           .eq('telegram_id', telegramId)
+          .eq('course_id', scopedCourseId)
           .eq('sanity_lesson_id', sanityLessonId)
       ).data?.map((r) => [r.sanity_lesson_id as string, r.access_status as string]) ?? [],
     );
@@ -479,9 +466,15 @@ export async function resolveSubmitLessonForSanityId(
 
   const progress =
     cached?.progressMap?.get(sanityLessonId) ??
-    ((await loadProgress(admin, telegramId, sanityLessonId)) as CourseLessonStudentProgress | null);
+    ((await loadProgress(
+      admin,
+      telegramId,
+      sanityLessonId,
+      scopedCourseId,
+    )) as CourseLessonStudentProgress | null);
   const sessionMap =
-    cached?.sessionMap ?? (await loadSanityLessonSessionMap(admin, [sanityLessonId]));
+    cached?.sessionMap ??
+    (await loadSanityLessonSessionMap(admin, scopedCourseId, [sanityLessonId]));
   const sessionStatus = resolveWebinarSessionStatus(
     lesson.scheduledAt,
     sessionMap.get(sanityLessonId),
@@ -525,7 +518,13 @@ export async function markHomeworkSubmitted(
           if (courseId == null) return null;
           return { courseId, slug: content.slug, content };
         })()
-      : null) ?? (await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId));
+      : null) ??
+    (await resolveCourseForSanityLesson(
+      admin,
+      telegramId,
+      sanityLessonId,
+      options?.courseSlug,
+    ));
 
   if (!resolved) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
   const { content, courseId } = resolved;
@@ -572,9 +571,9 @@ export async function markHomeworkSubmitted(
     if (!isLivesTableError(error)) throw error;
   }
 
-  await assertLessonAccess(admin, telegramId, sanityLessonId);
-  const progress = await loadProgress(admin, telegramId, sanityLessonId);
-  const sessionRow = await getSanityLessonSession(admin, sanityLessonId);
+  await assertLessonAccess(admin, telegramId, sanityLessonId, courseId);
+  const progress = await loadProgress(admin, telegramId, sanityLessonId, courseId);
+  const sessionRow = await getSanityLessonSession(admin, courseId, sanityLessonId);
   const sessionStatus = resolveWebinarSessionStatus(lesson.scheduledAt, sessionRow);
   if (!lessonReadyForSubmit(lesson, progress ?? undefined, sessionStatus)) {
     throw new CourseHomeworkError(
@@ -602,10 +601,12 @@ export async function markHomeworkSubmitted(
     telegramId,
     sanityLessonId,
     nowDate,
+    courseId,
   );
 
   const row: Record<string, unknown> = {
     telegram_id: telegramId,
+    course_id: courseId,
     sanity_lesson_id: sanityLessonId,
     homework_status: 'submitted',
     homework_submitted_at: now,
@@ -620,6 +621,7 @@ export async function markHomeworkSubmitted(
     .from('course_lesson_student_progress')
     .select('id')
     .eq('telegram_id', telegramId)
+    .eq('course_id', courseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .maybeSingle();
   if (findError) {
@@ -698,8 +700,18 @@ export async function markHomeworkRejected(
   sanityLessonId: string,
   note?: string,
   reviewer?: { telegramId: number; role: CourseHomeworkReviewerRole },
+  courseId?: number | null,
 ): Promise<CourseLessonStudentProgress> {
-  const progress = await loadProgress(admin, telegramId, sanityLessonId);
+  let resolvedCourseId = courseId ?? null;
+  if (resolvedCourseId == null) {
+    const { resolveCourseForSanityLesson } = await import('./student-course-context');
+    const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
+    resolvedCourseId = resolved?.courseId ?? null;
+  }
+  if (resolvedCourseId == null) {
+    throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  }
+  const progress = await loadProgress(admin, telegramId, sanityLessonId, resolvedCourseId);
   if (!progress || progress.homework_status !== 'submitted') {
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
@@ -711,6 +723,7 @@ export async function markHomeworkRejected(
     await logCourseHomeworkRevisionRequested(admin, {
       telegramId,
       sanityLessonId,
+      courseId: resolvedCourseId,
       submissionNote: progress.submission_note ?? null,
       submissionFileUrl: progress.submission_file_url ?? null,
       reviewerTelegramId: reviewer.telegramId,
@@ -730,16 +743,23 @@ export async function markHomeworkRejected(
       reviewer_role: reviewer?.role ?? null,
     })
     .eq('telegram_id', telegramId)
+    .eq('course_id', resolvedCourseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .select('*')
     .single();
   if (error) throw error;
 
-  const resumed = await resumeDeadlineOnReject(admin, telegramId, sanityLessonId, nowDate);
+  const resumed = await resumeDeadlineOnReject(
+    admin,
+    telegramId,
+    sanityLessonId,
+    nowDate,
+    resolvedCourseId,
+  );
   if (resumed.immediatelyOverdue) {
     const { notifyCuratorOverdueOnce } = await import('./homework-deadline-notify');
-    void notifyCuratorOverdueOnce(admin, telegramId, sanityLessonId).catch((err) =>
-      console.error('[courseHomework] overdue notify on reject failed:', err),
+    void notifyCuratorOverdueOnce(admin, telegramId, sanityLessonId, resolvedCourseId).catch(
+      (err) => console.error('[courseHomework] overdue notify on reject failed:', err),
     );
   }
 
@@ -782,16 +802,18 @@ async function resolveContentForHomeworkReview(
     if (!content) continue;
     const lesson = findLessonByNumber(content, lessonNumber);
     if (!lesson) continue;
-    const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
+    const progress = await loadProgress(
+      admin,
+      studentTelegramId,
+      lesson.sanityId,
+      ctx.courseId,
+    );
     if (progress?.homework_status === 'submitted') {
       return { content, courseId: ctx.courseId };
     }
   }
 
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
-  const courseId = await resolveCourseIdForContent(admin, content).catch(() => null);
-  return { content, courseId };
+  throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
 }
 
 export async function approveCourseHomeworkByCurator(
@@ -817,7 +839,15 @@ export async function approveCourseHomeworkByCurator(
     courseId: resolvedCourseId,
     allowAdminPreview: hasFullStaffPreview(roles, curatorTelegramId),
   });
-  const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
+  if (resolvedCourseId == null) {
+    throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  }
+  const progress = await loadProgress(
+    admin,
+    studentTelegramId,
+    lesson.sanityId,
+    resolvedCourseId,
+  );
   if (!progress || progress.homework_status !== 'submitted') {
     throw new CourseHomeworkError('Нет домашки на проверке.', 'NOT_SUBMITTED');
   }
@@ -829,7 +859,7 @@ export async function approveCourseHomeworkByCurator(
   const updated = await markHomeworkApproved(
     admin,
     studentTelegramId,
-    { sanityLessonId: lesson.sanityId },
+    { courseId: resolvedCourseId, sanityLessonId: lesson.sanityId },
     undefined,
     {
       materialKeys: collectLessonMaterialKeys(lesson),
@@ -838,7 +868,12 @@ export async function approveCourseHomeworkByCurator(
       reviewerRole,
     },
   );
-  await finalizeDeadlineOnApprove(admin, studentTelegramId, lesson.sanityId);
+  await finalizeDeadlineOnApprove(
+    admin,
+    studentTelegramId,
+    lesson.sanityId,
+    resolvedCourseId,
+  );
 
   try {
     if (resolvedCourseId) {
@@ -985,14 +1020,23 @@ export async function addCourseHomeworkReviewComment(
     allowAdminPreview: hasFullStaffPreview(roles, checkerTelegramId),
   });
 
-  const progress = await loadProgress(admin, studentTelegramId, lesson.sanityId);
+  const resolvedCourseId =
+    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
+  if (resolvedCourseId == null) {
+    throw new CourseHomeworkError('Курс не найден.', 'LESSON_NOT_FOUND');
+  }
+
+  const progress = await loadProgress(
+    admin,
+    studentTelegramId,
+    lesson.sanityId,
+    resolvedCourseId,
+  );
   if (!progress) {
     throw new CourseHomeworkError('У ученика нет прогресса по этому занятию.', 'NOT_SUBMITTED');
   }
 
   const now = new Date().toISOString();
-  const resolvedCourseId =
-    options?.courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
   const reviewerRole = await resolveCourseHomeworkReviewerRole(
     admin,
     checkerTelegramId,
@@ -1009,6 +1053,7 @@ export async function addCourseHomeworkReviewComment(
       reviewer_role: reviewerRole,
     })
     .eq('telegram_id', studentTelegramId)
+    .eq('course_id', resolvedCourseId)
     .eq('sanity_lesson_id', lesson.sanityId);
   if (error) throw error;
 

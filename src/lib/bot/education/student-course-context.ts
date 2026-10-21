@@ -69,7 +69,7 @@ export async function listStudentPurchasedVisibleCourseContexts(
   return out;
 }
 
-/** Курс для действий ученика (контакт куратора, ДЗ): явный slug или последнее активное зачисление. */
+/** Курс для действий ученика: явный slug или единственное активное зачисление (без «последнего» при нескольких). */
 export async function resolveStudentCourseContext(
   admin: SupabaseClient,
   telegramId: number,
@@ -84,22 +84,14 @@ export async function resolveStudentCourseContext(
       const enrolled = await isStudentOnCourse(admin, telegramId, courseId);
       if (enrolled) return { courseId, slug };
     }
+    return null;
   }
 
-  const { data: enrollments, error } = await admin
-    .from('course_enrollments')
-    .select('course_id, started_at, courses ( slug )')
-    .eq('telegram_id', telegramId)
-    .eq('status', ACTIVE)
-    .order('started_at', { ascending: false });
-  if (error) throw error;
-
-  for (const row of enrollments ?? []) {
-    const courseId = row.course_id as number;
-    const slug = (row.courses as { slug?: string } | null)?.slug;
-    if (courseId && slug) return { courseId, slug };
+  const enrollments = await listStudentActiveCourseContexts(admin, telegramId);
+  if (enrollments.length === 1) {
+    const only = enrollments[0]!;
+    return { courseId: only.courseId, slug: only.slug };
   }
-
   return null;
 }
 
@@ -118,12 +110,15 @@ export async function isStudentOnCourse(
   return Boolean(enrollment);
 }
 
-/** В каком активном зачислении ученика есть это занятие (Sanity id). */
+/** В каком активном зачислении ученика есть это занятие (Sanity id). Без fallback на «дефолтный» курс. */
 export async function resolveCourseForSanityLesson(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  preferredSlug?: string | null,
 ): Promise<{ courseId: number; slug: string; content: DistrictCourseContent } | null> {
+  const slugFilter = preferredSlug?.trim() || null;
+
   const { data: enrollments, error } = await admin
     .from('course_enrollments')
     .select('course_id, courses ( slug )')
@@ -138,28 +133,25 @@ export async function resolveCourseForSanityLesson(
     const joined = Array.isArray(coursesRaw) ? coursesRaw[0] : coursesRaw;
     const slug = (joined as { slug?: string } | null)?.slug?.trim();
     const courseId = row.course_id as number;
-    if (slug && courseId) rows.push({ courseId, slug });
+    if (!slug || !courseId) continue;
+    if (slugFilter && slug !== slugFilter) continue;
+    rows.push({ courseId, slug });
   }
 
   const contents = await Promise.all(
     rows.map((row) => getDistrictCourseContent(row.slug).catch(() => null)),
   );
 
+  const matches: { courseId: number; slug: string; content: DistrictCourseContent }[] = [];
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]!;
     const content = contents[i];
     if (!content) continue;
     if (findLessonBySanityId(content, sanityLessonId)) {
-      return { courseId: row.courseId, slug: row.slug, content };
+      matches.push({ courseId: row.courseId, slug: row.slug, content });
     }
   }
 
-  const fallback = await getDistrictCourseContent().catch(() => null);
-  if (fallback && findLessonBySanityId(fallback, sanityLessonId)) {
-    const map = await lookupCourseIdsBySlugs(admin, [fallback.slug]);
-    const courseId = map.get(fallback.slug);
-    if (courseId != null) return { courseId, slug: fallback.slug, content: fallback };
-  }
-
+  if (matches.length === 1) return matches[0]!;
   return null;
 }

@@ -83,11 +83,13 @@ export function collectCheckPending(students: CuratorStudentRecord[]): CuratorHo
   return collectCheckQueue(students, 'pending');
 }
 
-/** Архив = проверенные (одобрено / на доработке). Просрочка — отдельный фильтр в collectModeItems. */
+/** Архив по умолчанию — только одобренные. */
 export function collectCheckArchive(students: CuratorStudentRecord[]): CuratorHomeworkListItem[] {
-  return collectCheckQueue(students, 'all').filter(
-    (item) => item.homework.status === 'approved' || item.homework.status === 'revision',
-  );
+  return collectCheckQueue(students, 'done');
+}
+
+export function collectCheckRevision(students: CuratorStudentRecord[]): CuratorHomeworkListItem[] {
+  return collectCheckQueue(students, 'revision');
 }
 
 export async function loadCheckHomeStats(
@@ -115,13 +117,15 @@ export async function loadHomeworkReviewNote(
   admin: SupabaseClient,
   studentTelegramId: number,
   sanityLessonId: string,
+  courseId?: number | null,
 ): Promise<string | null> {
-  const { data, error } = await admin
+  let query = admin
     .from('course_lesson_student_progress')
     .select('review_note')
     .eq('telegram_id', studentTelegramId)
-    .eq('sanity_lesson_id', sanityLessonId)
-    .maybeSingle();
+    .eq('sanity_lesson_id', sanityLessonId);
+  if (courseId != null) query = query.eq('course_id', courseId);
+  const { data, error } = await query.maybeSingle();
   if (error) return null;
   return (data?.review_note as string | null) ?? null;
 }

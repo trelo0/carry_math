@@ -1,0 +1,3 @@
+module.exports=[698685,t=>{"use strict";function r(t){if(null==t)return"—";if(t<=0)return"срок истёк";let r=Math.floor(t/6e4),e=Math.floor(r/1440),i=Math.floor(r%1440/60),o=r%60;return e>0?`${e} д ${i} ч`:i>0?`${i} ч ${o} мин`:`${o} мин`}function e(t){if(!t)return"—";try{return new Date(t).toLocaleString("ru-RU",{timeZone:"Europe/Moscow",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}catch{return t}}t.s(["formatDateTimeShort",()=>e,"formatRemainingMs",()=>r])}];
+
+//# sourceMappingURL=src_lib_bot_client-format_ts_65aee705._.js.map

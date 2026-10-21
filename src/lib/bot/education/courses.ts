@@ -140,7 +140,10 @@ export async function enrollStudent(
   const enrollment = data as CourseEnrollment;
 
   try {
-    const courseContent = await getDistrictCourseContent().catch(() => null);
+    const course = await getCourse(admin, courseId);
+    const courseContent = course?.slug
+      ? await getDistrictCourseContent(course.slug).catch(() => null)
+      : null;
     await grantEnrollmentTrialAccess(admin, telegramId, courseId, courseContent);
     await initEnrollmentLives(admin, telegramId, courseId);
   } catch (sideEffectError) {

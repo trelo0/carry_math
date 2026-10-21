@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/curator/students/[telegramId]/restore-life/route": "app/api/cabinet/curator/students/[telegramId]/restore-life/route.js"
+}

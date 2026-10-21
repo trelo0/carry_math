@@ -89,8 +89,7 @@ export function workspaceWelcomeText(ws: StaffCourseWorkspace): string {
   return (
     `🎓 ${ws.courseTitle}\n\n` +
     `Режим: ${roleLabel}.\n` +
-    'Все разделы меню ниже относятся только к этому курсу.\n\n' +
-    '«⬅️ Все курсы» — вернуться к списку назначений.'
+    'Разделы меню ниже относятся только к этому курсу.'
   );
 }
 
@@ -113,6 +112,19 @@ export async function enterStaffCourseWorkspace(
     );
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
+  }
+
+  if (ws.role === 'check') {
+    const { loadCheckHomeStats } = await import('@/lib/bot/check/check-data');
+    const { renderCheckHome } = await import('@/lib/bot/check/check-screens');
+    const stats = await loadCheckHomeStats(admin, telegramId, ws.courseId);
+    const screen = renderCheckHome(ws.courseId, ws.courseTitle, stats);
+    await telegramSend('sendMessage', {
+      chat_id: chatId,
+      text: screen.text,
+      reply_markup: staffCourseWorkspaceReplyKeyboard(ws.role),
+    });
+    return;
   }
 
   await telegramSend('sendMessage', {
@@ -160,11 +172,20 @@ export async function exitStaffCourseWorkspace(
 ): Promise<void> {
   await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: '🎓 Управление курсами\n\nВыберите курс или другой раздел меню.',
-    reply_markup: staffGlobalReplyKeyboard(caps),
-  });
+  const { resolveStaffBotMode } = await import('./staff-menu');
+  const mode = resolveStaffBotMode(caps);
+  if (mode === 'combined' && caps.canTeacherBot) {
+    const { sendCombinedStaffStart } = await import('./staff-combined-flow');
+    await sendCombinedStaffStart(admin, chatId, telegramId);
+    return;
+  }
+  if (mode === 'teacher_only' && caps.canTeacherBot) {
+    const { sendTeacherStart } = await import('@/lib/bot/teacher/teacherFlow');
+    await sendTeacherStart(admin, chatId, telegramId);
+    return;
+  }
+  const { sendStaffCourseOnlyStart } = await import('./staff-combined-flow');
+  await sendStaffCourseOnlyStart(admin, chatId, telegramId);
 }
 
 export async function mergeWorkspaceIntoPayload(

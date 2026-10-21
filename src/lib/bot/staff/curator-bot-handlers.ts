@@ -49,6 +49,8 @@ export type CuratorSchedulePayloadExt = CuratorSchedulePayload & {
   courseId?: number;
   lessonNumber?: number;
   allowCompleted?: boolean;
+  pendingScheduledAtIso?: string;
+  pendingLessonDate?: string;
 };
 
 async function editScreen(message: AdminMessage, text: string, keyboard: InlineKeyboard) {
@@ -261,6 +263,33 @@ export async function handleCuratorBotCallback(
       await editScreen(message, 'Нет доступа к курсу.', renderCuratorNoCourses().keyboard);
       return true;
     }
+    if (parts[3] === 'find') {
+      try {
+        await clearConflictingStaffStates(admin, telegramId, 'curator_stu_search');
+        await saveState(
+          admin,
+          telegramId,
+          { chatId: message.chatId, messageId: message.messageId },
+          'curator:stu:search' as never,
+          { courseId } as never,
+        );
+      } catch (error) {
+        if (!isConversationStateTableError(error)) throw error;
+        await sendAdminMessage(message.chatId, migrationText('bot_conversation_states.sql'));
+        return true;
+      }
+      await editScreen(
+        message,
+        [
+          '🔎 Поиск ученика',
+          '',
+          'Отправьте часть имени или фамилии.',
+          'Отмена — «Отмена».',
+        ].join('\n'),
+        { inline_keyboard: [[{ text: '⬅️ Отмена', callback_data: `c:stu:${courseId}` }]] },
+      );
+      return true;
+    }
     if (parts[3] === 's' && parts[4]) {
       const studentTg = Number(parts[4]);
       const loaded = await loadCuratorBotCabinet(admin, telegramId, courseId);
@@ -292,6 +321,99 @@ export async function handleCuratorBotCallback(
       courseSlug: ctx.slug,
     });
     const screen = renderCuratorStudentsList(courseId, loaded.data.courseTitle, students);
+    await editScreen(message, screen.text, screen.keyboard);
+    return true;
+  }
+
+  if (parts[1] === 'sch' && parts[2] === 'apply' && parts[3] && parts[4]) {
+    const courseId = Number(parts[3]);
+    const lessonNum = Number(parts[4]);
+    const loaded = await loadCuratorBotCabinet(admin, telegramId, courseId);
+    if (!loaded) return true;
+    const lesson = findLessonInCabinet(loaded.data, lessonNum);
+    if (!lesson) return true;
+    let state = null;
+    try {
+      const { getState } = await import('@/lib/bot/admin/core');
+      state = await getState(admin, telegramId);
+    } catch {
+      /* optional */
+    }
+    const payload = state?.payload as CuratorSchedulePayloadExt & {
+      pendingScheduledAtIso?: string;
+      pendingLessonDate?: string;
+    };
+    if (
+      !payload?.pendingScheduledAtIso ||
+      !payload.pendingLessonDate ||
+      payload.sanityLessonId !== lesson.sanityId
+    ) {
+      await editScreen(message, 'Дата не найдена. Введите дату заново.', {
+        inline_keyboard: [[{ text: '⬅️ Назад', callback_data: `c:cal:${courseId}` }]],
+      });
+      return true;
+    }
+    try {
+      const { applyCuratorLessonSchedule } = await import('./curator-schedule-bot');
+      const { clearStateIfAvailable } = await import('@/lib/bot/admin/core');
+      const { formatLessonDateTimeRu } = await import('@/lib/teacher/format');
+      await applyCuratorLessonSchedule(
+        admin,
+        courseId,
+        lesson.sanityId,
+        payload.pendingScheduledAtIso,
+        payload.pendingLessonDate,
+      );
+      await clearStateIfAvailable(admin, telegramId);
+      await editScreen(
+        message,
+        `✅ Дата назначена.\n\n№${lesson.lessonNumber}: ${lesson.title}\n${formatLessonDateTimeRu(payload.pendingScheduledAtIso)}`,
+        { inline_keyboard: [[{ text: '⬅️ Расписание', callback_data: `c:cal:${courseId}` }]] },
+      );
+    } catch (error) {
+      await editScreen(
+        message,
+        error instanceof Error ? error.message : 'Не удалось сохранить дату.',
+        { inline_keyboard: [[{ text: '⬅️ Назад', callback_data: `c:cal:${courseId}` }]] },
+      );
+    }
+    return true;
+  }
+
+  if (parts[1] === 'sch' && parts[2] === 'clr' && parts[3] && parts[4]) {
+    const courseId = Number(parts[3]);
+    const lessonNum = Number(parts[4]);
+    const loaded = await loadCuratorBotCabinet(admin, telegramId, courseId);
+    if (!loaded) return true;
+    const lesson = findLessonInCabinet(loaded.data, lessonNum);
+    if (!lesson) return true;
+    try {
+      const { clearCuratorLessonSchedule } = await import('./curator-schedule-bot');
+      const { clearStateIfAvailable } = await import('@/lib/bot/admin/core');
+      await clearCuratorLessonSchedule(admin, lesson.sanityId);
+      await clearStateIfAvailable(admin, telegramId);
+      await editScreen(message, '✅ Дата занятия удалена.', {
+        inline_keyboard: [[{ text: '⬅️ Расписание', callback_data: `c:cal:${courseId}` }]],
+      });
+    } catch (error) {
+      await editScreen(
+        message,
+        error instanceof Error ? error.message : 'Не удалось удалить дату.',
+        { inline_keyboard: [[{ text: '⬅️ Назад', callback_data: `c:cal:${courseId}` }]] },
+      );
+    }
+    return true;
+  }
+
+  if (parts[1] === 'pick' && parts[2]) {
+    const courseId = Number(parts[2]);
+    const rows = await loadStaffMyCourseRows(admin, telegramId);
+    const group = (await import('@/lib/staff/course-assignment-ui')).groupStaffCourseRows(rows).find(
+      (g) => g.courseId === courseId,
+    );
+    if (!group) return true;
+    const { renderMyCourseRolePicker } = await import('./staff-my-course');
+    const screen = renderMyCourseRolePicker(group.title, courseId);
     await editScreen(message, screen.text, screen.keyboard);
     return true;
   }
@@ -390,7 +512,7 @@ export async function handleCuratorBotReplyMenu(
   text: string,
   mode: StaffBotMode,
 ): Promise<boolean> {
-  if (mode !== 'curator_only' && mode !== 'combined') return false;
+  if (mode !== 'curator_only' && mode !== 'combined' && mode !== 'course_staff_only') return false;
 
   if (text === CURATOR_BOT_MENU_LABELS.schedule) {
     await sendCuratorSectionFromReply(admin, chatId, telegramId, 'cal');

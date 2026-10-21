@@ -5,6 +5,7 @@ import {
   CourseWatchDeniedError,
   watchRecordingWithAccessGate,
 } from '@/lib/bot/education/course-watch-gate';
+import { gateCabinetLessonCourse, readCourseSlugFromRequest } from '@/lib/cabinet/lesson-course-api';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -28,7 +29,21 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await watchRecordingWithAccessGate(auth.admin, auth.telegramId, sanityLessonId, watchPercent);
+    const gate = await gateCabinetLessonCourse(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      request,
+    );
+    if (!gate.ok) return gate.response;
+    const courseSlug = readCourseSlugFromRequest(request);
+    await watchRecordingWithAccessGate(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      watchPercent,
+      courseSlug,
+    );
     // Только страница урока — полный /cabinet рефетчить не надо (тормозит навигацию)
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });

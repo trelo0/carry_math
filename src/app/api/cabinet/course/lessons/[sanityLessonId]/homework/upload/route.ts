@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCabinetAuth } from '@/lib/cabinet-auth';
 import { uploadStudentHomeworkFile } from '@/lib/cabinet-homework-upload';
+import { gateCabinetLessonCourse } from '@/lib/cabinet/lesson-course-api';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -22,6 +23,13 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    const gate = await gateCabinetLessonCourse(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      request,
+    );
+    if (!gate.ok) return gate.response;
     const fileUrl = await uploadStudentHomeworkFile(auth.admin, auth.telegramId, sanityLessonId, file);
     return NextResponse.json({ fileUrl });
   } catch (error) {

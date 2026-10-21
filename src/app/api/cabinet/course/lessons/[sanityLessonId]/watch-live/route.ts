@@ -5,6 +5,7 @@ import {
   CourseWatchDeniedError,
   watchLiveWithAccessGate,
 } from '@/lib/bot/education/course-watch-gate';
+import { gateCabinetLessonCourse, readCourseSlugFromRequest } from '@/lib/cabinet/lesson-course-api';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -28,7 +29,20 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await watchLiveWithAccessGate(auth.admin, auth.telegramId, sanityLessonId, watchPercent);
+    const gate = await gateCabinetLessonCourse(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      request,
+    );
+    if (!gate.ok) return gate.response;
+    await watchLiveWithAccessGate(
+      auth.admin,
+      auth.telegramId,
+      sanityLessonId,
+      watchPercent,
+      readCourseSlugFromRequest(request),
+    );
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true });
   } catch (error) {

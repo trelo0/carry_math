@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/teacher/lessons/[lessonId]/materials/[materialId]/route": "app/api/cabinet/teacher/lessons/[lessonId]/materials/[materialId]/route.js"
+}

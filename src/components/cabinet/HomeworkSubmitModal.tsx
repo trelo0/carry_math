@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { CabinetCourseStop } from '@/lib/cabinet';
+import { lessonApiCourseQuery } from '@/lib/cabinet-course-cache';
 
 type Step = 'file' | 'comment' | 'status';
 
@@ -33,7 +34,9 @@ export default function HomeworkSubmitModal({
       if (file) {
         const form = new FormData();
         form.append('file', file);
-        const up = await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(lessonId)}/homework/upload`, {
+        const up = await fetch(
+          `/api/cabinet/course/lessons/${encodeURIComponent(lessonId)}/homework/upload${lessonApiCourseQuery()}`,
+          {
           method: 'POST',
           body: form,
         });
@@ -50,11 +53,14 @@ export default function HomeworkSubmitModal({
         return;
       }
 
-      const res = await fetch(`/api/cabinet/course/lessons/${encodeURIComponent(lessonId)}/homework/submit`, {
+      const res = await fetch(
+        `/api/cabinet/course/lessons/${encodeURIComponent(lessonId)}/homework/submit${lessonApiCourseQuery()}`,
+        {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: comment.trim() || undefined, fileUrl }),
-      });
+        },
+      );
       const data = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
         setError(data?.error ?? 'Не удалось отправить ДЗ');

@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
-import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
+import {
+  assertLessonDeliveryAccess,
+  readLessonDeliveryCourseHint,
+} from '@/lib/curator/staff-course-access';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { notifyStudentsLessonEvent, type LessonNotifyType } from '@/lib/curator/lesson-notify';
 
@@ -28,8 +31,12 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
-    const result = await notifyStudentsLessonEvent(auth.admin, sanityLessonId, body.type);
+    const courseHint = readLessonDeliveryCourseHint(request);
+    const course = await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId, courseHint);
+    const result = await notifyStudentsLessonEvent(auth.admin, sanityLessonId, body.type, {
+      courseId: course.courseId,
+      courseSlug: course.courseSlug,
+    });
     revalidatePath('/cabinet');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
     return NextResponse.json({ ok: true, ...result });

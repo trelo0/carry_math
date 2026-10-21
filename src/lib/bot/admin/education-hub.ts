@@ -134,7 +134,7 @@ export async function renderCourseDetail(
   const keyboard: InlineButton[][] = [
     [{ text: '👥 Сотрудники курса', callback_data: `ae:cs:${courseId}:m` }],
     [{ text: '👨‍🎓 Ученики курса', callback_data: `ae:ls:course:0` }],
-    [{ text: '❤️ Жизни курса', callback_data: 'ae:lives' }],
+    [{ text: '❤️ Жизни курса', callback_data: `ae:lives:c:${courseId}` }],
     [{ text: '⬅️ К списку курсов', callback_data: 'ae:courses:0' }],
     [homeButton()],
   ];

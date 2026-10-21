@@ -72,6 +72,7 @@ export function renderTeacherMessagesInbox(
           [backButton('⬅️ Главное меню', n.mainMenuBack ?? 't:menu')],
         ],
         cabinetUrl,
+        { includeCabinet: false },
       ),
     },
   };

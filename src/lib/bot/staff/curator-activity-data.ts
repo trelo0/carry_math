@@ -1,8 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { getCuratorCabinetData } from '@/lib/curator/cabinet-data';
 import { formatLessonDateTimeRu } from '@/lib/teacher/format';
-import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
 import {
   loadCuratorStudents,
@@ -26,6 +24,7 @@ export type CuratorLowLivesEntry = {
 };
 
 export type CuratorActivitySnapshot = {
+  courseId: number | null;
   awaitingReview: number;
   newQuestions: number;
   attentionCount: number;
@@ -45,15 +44,8 @@ export type CuratorActivitySnapshot = {
 async function listLowLivesStudents(
   admin: SupabaseClient,
   students: CuratorStudentRecord[],
+  courseId: number | null,
 ): Promise<CuratorLowLivesEntry[]> {
-  const content = await getDistrictCourseContent();
-  if (!content) return [];
-  let courseId: number | null = null;
-  try {
-    courseId = await resolveCourseIdForContent(admin, content);
-  } catch {
-    return [];
-  }
   if (!courseId) return [];
 
   const out: CuratorLowLivesEntry[] = [];
@@ -80,17 +72,9 @@ async function listLowLivesStudents(
 async function listLowActivityStudents(
   admin: SupabaseClient,
   students: CuratorStudentRecord[],
+  courseId: number | null,
 ): Promise<CuratorStudentRecord[]> {
-  const content = await getDistrictCourseContent();
-  if (!content || students.length === 0) return [];
-
-  let courseId: number | null = null;
-  try {
-    courseId = await resolveCourseIdForContent(admin, content);
-  } catch {
-    return [];
-  }
-  if (!courseId) return [];
+  if (!courseId || students.length === 0) return [];
 
   const ids = students.map((s) => s.telegramId);
   const cutoff = Date.now() - CURATOR_LOW_ACTIVITY_DAYS * 86400000;
@@ -104,6 +88,7 @@ async function listLowActivityStudents(
     admin
       .from('course_lesson_student_progress')
       .select('telegram_id, completed_at, homework_submitted_at, updated_at')
+      .eq('course_id', courseId)
       .in('telegram_id', ids),
   ]);
 
@@ -193,10 +178,11 @@ export async function loadCuratorActivitySnapshot(
     getCuratorCabinetData(admin, curatorTelegramId, null),
   ]);
 
+  const courseId = cabinet.courseId ?? null;
   const hw = summarizeCuratorStudents(students);
   const newQuestions = threads.filter((t) => t.unreadCount > 0).length;
-  const lowLives = await listLowLivesStudents(admin, students);
-  const lowActivityStudents = await listLowActivityStudents(admin, students);
+  const lowLives = await listLowLivesStudents(admin, students, courseId);
+  const lowActivityStudents = await listLowActivityStudents(admin, students, courseId);
   const accessBlockedStudents = courseViews.filter((s) => s.accessBlocked && !s.fullyBlocked);
   const frozenStudents = courseViews.filter(
     (s) => s.accessBlocked && (s.livesCurrent ?? 0) <= 0 && !s.fullyBlocked,
@@ -232,6 +218,7 @@ export async function loadCuratorActivitySnapshot(
   const lastAt = last?.endedAt ?? last?.scheduledAt ?? null;
 
   return {
+    courseId,
     awaitingReview: hw.awaitingReview,
     newQuestions,
     attentionCount: attentionItems.length,

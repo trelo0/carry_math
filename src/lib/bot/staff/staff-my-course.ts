@@ -23,34 +23,47 @@ export async function loadStaffMyCourseRows(
   admin: SupabaseClient,
   telegramId: number,
 ): Promise<StaffCourseAssignmentRow[]> {
-  const { refreshStaffCourseAssignmentsForMember } = await import(
-    '@/lib/bot/education/course-staff'
-  );
-  await refreshStaffCourseAssignmentsForMember(admin, telegramId).catch((e) =>
-    console.warn('[staff-courses] refresh assignments failed:', e),
-  );
   const options = await listStaffCourseAssignmentOptions(admin, telegramId);
   return staffCourseRowsFromOptions(options);
 }
 
+export function renderMyCourseRolePicker(
+  courseTitle: string,
+  courseId: number,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [`🎓 ${courseTitle}`, '', 'Войти как:'].join('\n'),
+    keyboard: {
+      inline_keyboard: [
+        [back('📡 Куратор', `c:mc:${courseId}:curator`)],
+        [back('📝 Проверяющий ДЗ', `c:mc:${courseId}:check`)],
+        [back('⬅️ Назад', 'c:mc')],
+      ],
+    },
+  };
+}
+
 export function renderMyCourseListScreen(
   rows: StaffCourseAssignmentRow[],
-  options?: { backCallback?: string; backLabel?: string },
+  options?: { backCallback?: string; backLabel?: string; showBack?: boolean },
 ): {
   text: string;
   keyboard: InlineKeyboard;
 } {
   const backCb = options?.backCallback ?? 's:menu';
   const backLabel = options?.backLabel ?? '⬅️ Главное меню';
+  const showBack = options?.showBack ?? backCb !== 'staff:hub:close';
 
   if (rows.length === 0) {
     return {
       text: CURATOR_NO_COURSES_TEXT,
-      keyboard: { inline_keyboard: [[back('⬅️ Закрыть', backCb)]] },
+      keyboard: {
+        inline_keyboard: showBack ? [[back(backLabel, backCb)]] : [],
+      },
     };
   }
 
-  const lines = [STAFF_COURSE_LIST_TITLE, '', STAFF_COURSE_LIST_INTRO, ''];
+  const lines = [STAFF_COURSE_LIST_INTRO, ''];
 
   const keyboard: InlineKeyboard['inline_keyboard'] = [];
   for (const group of groupStaffCourseRows(rows)) {
@@ -61,12 +74,11 @@ export function renderMyCourseListScreen(
       ]);
       continue;
     }
-    keyboard.push([
-      { text: `📡 ${group.title} · вебинары`, callback_data: `c:mc:${group.courseId}:curator` },
-      { text: '📝 ДЗ', callback_data: `c:mc:${group.courseId}:check` },
-    ]);
+    keyboard.push([back(group.title.slice(0, 58), `c:pick:${group.courseId}`)]);
   }
-  keyboard.push([back(backLabel, backCb)]);
+  if (showBack) {
+    keyboard.push([back(backLabel, backCb)]);
+  }
 
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }

@@ -1,0 +1,3 @@
+{
+  "/(app)/cabinet/lesson/[lessonId]/page": "app/(app)/cabinet/lesson/[lessonId]/page.js"
+}

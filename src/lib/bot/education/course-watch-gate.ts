@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getDistrictCourseContent, flattenCourseLessons } from '@/lib/studio/courseContent';
+import { flattenCourseLessons } from '@/lib/studio/courseContent';
 import {
   canStudentWatchSanityLesson,
   unlockNextCourseLessonAfterCleared,
@@ -13,7 +13,6 @@ import {
   type CourseLessonStudentProgress,
 } from '@/lib/bot/education/course-progress';
 import { isLessonProgressCompleted } from '@/lib/bot/education/lesson-progress-calc';
-import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import { ensureHomeworkDeadlineStarted } from '@/lib/bot/education/homework-deadline';
 import { homeworkRequiredForLesson } from '@/lib/bot/education/lesson-progress-calc';
 import { resolveCourseForSanityLesson } from '@/lib/bot/education/student-course-context';
@@ -30,16 +29,22 @@ async function resolveLessonCourseContext(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
+  preferredCourseSlug?: string | null,
 ): Promise<{ content: DistrictCourseContent; courseId: number }> {
-  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
-  if (resolved) {
-    return { content: resolved.content, courseId: resolved.courseId };
+  const resolved = await resolveCourseForSanityLesson(
+    admin,
+    telegramId,
+    sanityLessonId,
+    preferredCourseSlug,
+  );
+  if (!resolved) {
+    throw new CourseWatchDeniedError(
+      preferredCourseSlug
+        ? 'Занятие не найдено в выбранном курсе.'
+        : 'Укажите курс или выберите занятие из карты курса.',
+    );
   }
-  const content = await getDistrictCourseContent();
-  if (!content) throw new CourseWatchDeniedError('Курс не найден.');
-  const courseId = await resolveCourseIdForContent(admin, content);
-  if (!courseId) throw new CourseWatchDeniedError('Курс не найден.');
-  return { content, courseId };
+  return { content: resolved.content, courseId: resolved.courseId };
 }
 
 async function afterProgressMaybeCompleteAndUnlock(
@@ -73,6 +78,7 @@ async function afterProgressMaybeCompleteAndUnlock(
       .from('course_lesson_student_progress')
       .update({ completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('telegram_id', telegramId)
+      .eq('course_id', courseId)
       .eq('sanity_lesson_id', sanityLessonId);
   }
 
@@ -115,8 +121,14 @@ export async function watchRecordingWithAccessGate(
   telegramId: number,
   sanityLessonId: string,
   watchPercent?: number,
+  preferredCourseSlug?: string | null,
 ): Promise<CourseLessonStudentProgress> {
-  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const ctx = await resolveLessonCourseContext(
+    admin,
+    telegramId,
+    sanityLessonId,
+    preferredCourseSlug,
+  );
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
@@ -126,7 +138,12 @@ export async function watchRecordingWithAccessGate(
     telegramId,
     ctx.courseId,
   );
-  const progress = await markRecordingWatched(admin, telegramId, { sanityLessonId }, watchPercent);
+  const progress = await markRecordingWatched(
+    admin,
+    telegramId,
+    { courseId: ctx.courseId, sanityLessonId },
+    watchPercent,
+  );
   if (lesson) {
     await startDeadlineIfNeeded(
       admin,
@@ -147,8 +164,14 @@ export async function watchLiveWithAccessGate(
   telegramId: number,
   sanityLessonId: string,
   watchPercent?: number,
+  preferredCourseSlug?: string | null,
 ): Promise<CourseLessonStudentProgress> {
-  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const ctx = await resolveLessonCourseContext(
+    admin,
+    telegramId,
+    sanityLessonId,
+    preferredCourseSlug,
+  );
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
@@ -158,7 +181,12 @@ export async function watchLiveWithAccessGate(
     telegramId,
     ctx.courseId,
   );
-  const progress = await markLiveAttended(admin, telegramId, { sanityLessonId }, watchPercent);
+  const progress = await markLiveAttended(
+    admin,
+    telegramId,
+    { courseId: ctx.courseId, sanityLessonId },
+    watchPercent,
+  );
   if (lesson) {
     await startDeadlineIfNeeded(
       admin,
@@ -179,12 +207,24 @@ export async function reportLessonWatchPercentWithGate(
   telegramId: number,
   sanityLessonId: string,
   watchPercent: number,
+  preferredCourseSlug?: string | null,
 ): Promise<CourseLessonStudentProgress> {
-  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const ctx = await resolveLessonCourseContext(
+    admin,
+    telegramId,
+    sanityLessonId,
+    preferredCourseSlug,
+  );
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  const progress = await reportWatchPercent(admin, telegramId, sanityLessonId, watchPercent);
+  const progress = await reportWatchPercent(
+    admin,
+    telegramId,
+    sanityLessonId,
+    watchPercent,
+    ctx.courseId,
+  );
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }
@@ -194,12 +234,24 @@ export async function reportLessonMaterialOpenedWithGate(
   telegramId: number,
   sanityLessonId: string,
   materialKey: string,
+  preferredCourseSlug?: string | null,
 ): Promise<CourseLessonStudentProgress> {
-  const ctx = await resolveLessonCourseContext(admin, telegramId, sanityLessonId);
+  const ctx = await resolveLessonCourseContext(
+    admin,
+    telegramId,
+    sanityLessonId,
+    preferredCourseSlug,
+  );
   const gate = await canStudentWatchSanityLesson(admin, telegramId, sanityLessonId, ctx.content);
   if (!gate.ok) throw new CourseWatchDeniedError(gate.reason);
 
-  const progress = await reportMaterialOpened(admin, telegramId, sanityLessonId, materialKey);
+  const progress = await reportMaterialOpened(
+    admin,
+    telegramId,
+    sanityLessonId,
+    materialKey,
+    ctx.courseId,
+  );
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
   return progress;
 }

@@ -9,6 +9,7 @@ export type SanityWebinarSessionStatus =
 
 export type SanityLessonSessionRow = {
   sanity_lesson_id: string;
+  course_id: number | null;
   status: SanityWebinarSessionStatus;
   started_at: string | null;
   ended_at: string | null;
@@ -43,14 +44,18 @@ export function resolveWebinarSessionStatus(
 
 export async function loadSanityLessonSessionMap(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonIds: string[],
 ): Promise<Map<string, SanityLessonSessionRow>> {
   const map = new Map<string, SanityLessonSessionRow>();
-  if (sanityLessonIds.length === 0) return map;
+  if (sanityLessonIds.length === 0 || courseId <= 0) return map;
 
   const { data, error } = await admin
     .from('sanity_lesson_sessions')
-    .select('sanity_lesson_id, status, started_at, ended_at, started_by, ended_by, updated_at')
+    .select(
+      'sanity_lesson_id, course_id, status, started_at, ended_at, started_by, ended_by, updated_at',
+    )
+    .eq('course_id', courseId)
     .in('sanity_lesson_id', sanityLessonIds);
   if (error) {
     if (isSanitySessionTableError(error)) return map;
@@ -65,11 +70,15 @@ export async function loadSanityLessonSessionMap(
 
 export async function getSanityLessonSession(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
 ): Promise<SanityLessonSessionRow | null> {
   const { data, error } = await admin
     .from('sanity_lesson_sessions')
-    .select('sanity_lesson_id, status, started_at, ended_at, started_by, ended_by, updated_at')
+    .select(
+      'sanity_lesson_id, course_id, status, started_at, ended_at, started_by, ended_by, updated_at',
+    )
+    .eq('course_id', courseId)
     .eq('sanity_lesson_id', sanityLessonId)
     .maybeSingle();
   if (error) {
@@ -81,25 +90,27 @@ export async function getSanityLessonSession(
 
 async function upsertSession(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
   patch: Partial<SanityLessonSessionRow> & { status: SanityWebinarSessionStatus },
 ): Promise<SanityLessonSessionRow> {
   const now = new Date().toISOString();
+  const row = {
+    course_id: courseId,
+    sanity_lesson_id: sanityLessonId,
+    status: patch.status,
+    started_at: patch.started_at ?? null,
+    ended_at: patch.ended_at ?? null,
+    started_by: patch.started_by ?? null,
+    ended_by: patch.ended_by ?? null,
+    updated_at: now,
+  };
   const { data, error } = await admin
     .from('sanity_lesson_sessions')
-    .upsert(
-      {
-        sanity_lesson_id: sanityLessonId,
-        status: patch.status,
-        started_at: patch.started_at ?? null,
-        ended_at: patch.ended_at ?? null,
-        started_by: patch.started_by ?? null,
-        ended_by: patch.ended_by ?? null,
-        updated_at: now,
-      },
-      { onConflict: 'sanity_lesson_id' },
+    .upsert(row, { onConflict: 'course_id,sanity_lesson_id' })
+    .select(
+      'sanity_lesson_id, course_id, status, started_at, ended_at, started_by, ended_by, updated_at',
     )
-    .select('sanity_lesson_id, status, started_at, ended_at, started_by, ended_by, updated_at')
     .single();
   if (error) throw error;
   return data as SanityLessonSessionRow;
@@ -107,11 +118,12 @@ async function upsertSession(
 
 export async function startSanityLessonSession(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
   curatorTelegramId: number,
 ): Promise<SanityLessonSessionRow> {
   const now = new Date().toISOString();
-  return upsertSession(admin, sanityLessonId, {
+  return upsertSession(admin, courseId, sanityLessonId, {
     status: 'live',
     started_at: now,
     ended_at: null,
@@ -122,12 +134,13 @@ export async function startSanityLessonSession(
 
 export async function endSanityLessonSession(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
   curatorTelegramId: number,
 ): Promise<SanityLessonSessionRow> {
-  const existing = await getSanityLessonSession(admin, sanityLessonId);
+  const existing = await getSanityLessonSession(admin, courseId, sanityLessonId);
   const now = new Date().toISOString();
-  return upsertSession(admin, sanityLessonId, {
+  return upsertSession(admin, courseId, sanityLessonId, {
     status: 'completed',
     started_at: existing?.started_at ?? now,
     ended_at: now,
@@ -138,17 +151,18 @@ export async function endSanityLessonSession(
 
 export async function syncSessionAfterScheduleSave(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
   scheduledAt: string | null,
 ): Promise<void> {
   try {
-    const row = await getSanityLessonSession(admin, sanityLessonId);
+    const row = await getSanityLessonSession(admin, courseId, sanityLessonId);
     if (row && (row.status === 'live' || row.status === 'completed' || row.status === 'cancelled')) {
       return;
     }
     const next = defaultWebinarSessionStatus(scheduledAt);
     if (row?.status === next) return;
-    await upsertSession(admin, sanityLessonId, {
+    await upsertSession(admin, courseId, sanityLessonId, {
       status: next,
       started_at: null,
       ended_at: null,

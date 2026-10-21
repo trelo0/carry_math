@@ -3,8 +3,6 @@ import {
   findLessonBySanityId,
   type CourseHomeworkSubmitInput,
 } from '@/lib/bot/education/course-homework';
-import { getDistrictCourseContent } from '@/lib/studio/courseContent';
-
 async function studentDisplayName(admin: SupabaseClient, telegramId: number): Promise<string> {
   const [{ data: profile }, { data: member }] = await Promise.all([
     admin.from('student_profiles').select('display_name').eq('telegram_id', telegramId).maybeSingle(),
@@ -26,13 +24,11 @@ export async function notifyCuratorHomeworkSubmitted(
 ): Promise<void> {
   const { resolveCourseForSanityLesson } = await import('@/lib/bot/education/student-course-context');
   const resolved = await resolveCourseForSanityLesson(admin, studentTelegramId, sanityLessonId);
-  const content = resolved?.content ?? (await getDistrictCourseContent().catch(() => null));
-  if (!content) return;
-  const lesson = findLessonBySanityId(content, sanityLessonId);
+  if (!resolved?.courseId || !resolved.content) return;
+  const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
   if (!lesson) return;
 
-  const courseId = resolved?.courseId ?? null;
-  if (courseId == null) return;
+  const courseId = resolved.courseId;
 
   const studentName = await studentDisplayName(admin, studentTelegramId);
   await notifyCheckHomeworkSubmitted(admin, {

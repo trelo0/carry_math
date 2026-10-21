@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { getCabinetAuth } from '@/lib/cabinet-auth';
 import { CourseHomeworkError, markHomeworkSubmitted } from '@/lib/bot/education/course-homework';
 import { notifyCuratorHomeworkSubmitted } from '@/lib/curator/homework-events';
+import { gateCabinetLessonCourse, readCourseSlugFromRequest } from '@/lib/cabinet/lesson-course-api';
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
@@ -51,8 +52,15 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
+    if (!isSecretCall) {
+      const gate = await gateCabinetLessonCourse(admin, telegramId, sanityLessonId, request);
+      if (!gate.ok) return gate.response;
+    }
+    const courseSlug = readCourseSlugFromRequest(request);
     const submitInput = { note: body.note, fileUrl: body.fileUrl };
-    const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
+    const progress = await markHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput, {
+      courseSlug,
+    });
     await notifyCuratorHomeworkSubmitted(admin, telegramId, sanityLessonId, submitInput);
     try {
       const { resolveCourseForSanityLesson } = await import(

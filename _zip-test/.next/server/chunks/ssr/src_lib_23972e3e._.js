@@ -1,0 +1,12 @@
+module.exports=[725383,a=>{"use strict";async function b(a,b){let c=await fetch(`https://api.telegram.org/bot${function(){let a=process.env.TELEGRAM_BOT_TOKEN;if(!a)throw Error("TELEGRAM_BOT_TOKEN не настроен");return a}()}/${a}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});return await c.json()}a.s(["telegramSend",()=>b])},581307,a=>{"use strict";var b=a.i(725383),c=a.i(477406);async function d(a,b){let{data:c,error:d}=await a.from("bot_members").select("chat_id").eq("telegram_id",b).maybeSingle();if(d)throw d;let e=c?.chat_id;return"number"==typeof e?e:null}async function e(a,e,f){let g=await d(a,e);if(!g)return;let h=(0,c.formatLessonDateTimeRu)(f.startsAt);await (0,b.telegramSend)("sendMessage",{chat_id:g,text:`📝 Преподаватель добавил домашнее задание
+
+Занятие: ${f.topic}
+Дата: ${h}`,reply_markup:{inline_keyboard:[[{text:"Открыть задание",callback_data:`cl:hw:open:${f.lessonId}`}],[{text:"Перейти к занятию",callback_data:`cl:less:v:${f.lessonId}:menu`}]]}})}async function f(a,e,f){let{data:g,error:h}=await a.from("scheduled_lessons").select("topic, starts_at, teacher_telegram_id").eq("id",e).maybeSingle();if(h)throw h;if(!g?.teacher_telegram_id)return;let i=await d(a,g.teacher_telegram_id);if(!i)return;let{data:j}=await a.from("bot_members").select("full_name, phone").eq("telegram_id",f).maybeSingle(),k=j?.full_name?.trim()||j?.phone?.trim()||`ID ${f}`;await (0,b.telegramSend)("sendMessage",{chat_id:i,text:`📝 Домашняя работа на проверке
+
+👤 ${k}
+📚 ${g.topic}
+🕐 ${(0,c.formatLessonDateTimeRu)(g.starts_at)}
+
+Откройте занятие в кабинете преподавателя.`})}async function g(c,e,f){let g=await d(c,e);if(!g)return;let h=[f.approved?"✅ Домашнее задание принято":"🔄 Нужна доработка","",f.topic];f.comment&&h.push("",f.comment),h.push("","Откройте карточку занятия для деталей.");let{studentNotifyKeyboard:i}=await a.A(736988);await (0,b.telegramSend)("sendMessage",{chat_id:g,text:h.join("\n"),reply_markup:i([[{text:"Открыть задание",callback_data:`cl:hw:open:${f.lessonId}`}]])})}a.s(["notifyStudentLessonHomeworkAssigned",()=>e,"notifyStudentLessonHomeworkReviewed",()=>g,"notifyTeacherLessonHomeworkSubmitted",()=>f])},736988,a=>{a.v(b=>Promise.all(["server/chunks/ssr/src_lib_93b6b30f._.js"].map(b=>a.l(b))).then(()=>b(195787)))}];
+
+//# sourceMappingURL=src_lib_23972e3e._.js.map

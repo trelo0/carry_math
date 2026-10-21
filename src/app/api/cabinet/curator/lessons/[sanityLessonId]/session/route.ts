@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
-import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
+import {
+  assertLessonDeliveryAccess,
+  readLessonDeliveryCourseHint,
+} from '@/lib/curator/staff-course-access';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { findLessonBySanityId } from '@/lib/bot/education/course-homework';
 import {
@@ -33,14 +36,14 @@ export async function POST(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   }
 
-  const content = await getDistrictCourseContent();
-  const lesson = content ? findLessonBySanityId(content, sanityLessonId) : null;
-  if (!lesson) {
-    return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
-  }
-
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    const courseHint = readLessonDeliveryCourseHint(request);
+    const course = await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId, courseHint);
+    const content = await getDistrictCourseContent(course.courseSlug);
+    const lesson = content ? findLessonBySanityId(content, sanityLessonId) : null;
+    if (!lesson) {
+      return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
+    }
 
     if (body.action === 'start') {
       if (!lesson.liveUrl?.trim()) {
@@ -49,19 +52,32 @@ export async function POST(request: Request, { params }: RouteParams) {
           { status: 400 },
         );
       }
-      const existing = await getSanityLessonSession(auth.admin, sanityLessonId);
+      const existing = await getSanityLessonSession(auth.admin, course.courseId, sanityLessonId);
       if (existing?.status === 'live') {
         return NextResponse.json({ error: 'Эфир уже идёт.' }, { status: 409 });
       }
-      const session = await startSanityLessonSession(auth.admin, sanityLessonId, auth.telegramId);
-      const notify = await notifyStudentsLessonEvent(auth.admin, sanityLessonId, 'live');
+      const session = await startSanityLessonSession(
+        auth.admin,
+        course.courseId,
+        sanityLessonId,
+        auth.telegramId,
+      );
+      const notify = await notifyStudentsLessonEvent(auth.admin, sanityLessonId, 'live', {
+        courseId: course.courseId,
+        courseSlug: course.courseSlug,
+      });
       revalidatePath('/cabinet');
       revalidatePath('/cabinet/staff');
       revalidatePath(`/cabinet/lesson/${sanityLessonId}`);
       return NextResponse.json({ ok: true, session, notify });
     }
 
-    const session = await endSanityLessonSession(auth.admin, sanityLessonId, auth.telegramId);
+    const session = await endSanityLessonSession(
+      auth.admin,
+      course.courseId,
+      sanityLessonId,
+      auth.telegramId,
+    );
     revalidatePath('/cabinet');
     revalidatePath('/cabinet/staff');
     revalidatePath(`/cabinet/lesson/${sanityLessonId}`);

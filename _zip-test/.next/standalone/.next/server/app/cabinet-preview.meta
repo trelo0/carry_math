@@ -1,0 +1,17 @@
+{
+  "status": 404,
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(app)/layout,_N_T_/(app)/cabinet-preview/layout,_N_T_/(app)/cabinet-preview/page,_N_T_/cabinet-preview,sanity:siteSettings"
+  },
+  "segmentPaths": [
+    "/_tree",
+    "/_full",
+    "/!KGFwcCk/cabinet-preview/__PAGE__",
+    "/!KGFwcCk/cabinet-preview",
+    "/!KGFwcCk",
+    "/_index",
+    "/_head"
+  ]
+}

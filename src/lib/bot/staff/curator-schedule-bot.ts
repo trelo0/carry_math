@@ -127,8 +127,22 @@ export function renderCuratorSchedulePrompt(lesson: CuratorLessonView): {
   };
 }
 
+export async function clearCuratorLessonSchedule(
+  admin: SupabaseClient,
+  sanityLessonId: string,
+): Promise<void> {
+  if (!isSanityWriteConfigured()) {
+    throw new Error('SANITY_API_WRITE_TOKEN не настроен — дату нельзя сохранить в Sanity.');
+  }
+  await patchCourseLesson(sanityLessonId, {
+    scheduledAt: null,
+    lessonDate: null,
+  });
+}
+
 export async function applyCuratorLessonSchedule(
   admin: SupabaseClient,
+  courseId: number,
   sanityLessonId: string,
   scheduledAtIso: string,
   lessonDate: string,
@@ -141,7 +155,7 @@ export async function applyCuratorLessonSchedule(
     lessonDate,
   });
   try {
-    await syncSessionAfterScheduleSave(admin, sanityLessonId, scheduledAtIso);
+    await syncSessionAfterScheduleSave(admin, courseId, sanityLessonId, scheduledAtIso);
   } catch (error) {
     console.warn('[curator-bot] session sync after schedule failed', error);
   }

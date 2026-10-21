@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getCourseDeliveryAuth } from '@/lib/cabinet-auth';
-import { assertLessonDeliveryAccess } from '@/lib/curator/staff-course-access';
+import {
+  assertLessonDeliveryAccess,
+  readLessonDeliveryCourseHint,
+} from '@/lib/curator/staff-course-access';
 import { curatorJsonError } from '@/lib/curator/api-errors';
 import { getCourseLessonDetail } from '@/lib/curator/lesson-detail';
 import { syncSessionAfterScheduleSave } from '@/lib/curator/lesson-session';
@@ -9,7 +12,7 @@ import { patchCourseLesson, type LessonPatchFields } from '@/lib/studio/courseCo
 
 type RouteParams = { params: Promise<{ sanityLessonId: string }> };
 
-export async function GET(_request: Request, { params }: RouteParams) {
+export async function GET(request: Request, { params }: RouteParams) {
   const auth = await getCourseDeliveryAuth();
   if (!auth) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -17,7 +20,12 @@ export async function GET(_request: Request, { params }: RouteParams) {
 
   const { sanityLessonId } = await params;
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    await assertLessonDeliveryAccess(
+      auth.admin,
+      auth,
+      sanityLessonId,
+      readLessonDeliveryCourseHint(request),
+    );
     const detail = await getCourseLessonDetail(
       auth.admin,
       auth.telegramId,
@@ -67,7 +75,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (body.lessonDate !== undefined) fields.lessonDate = body.lessonDate?.trim() || null;
 
   try {
-    await assertLessonDeliveryAccess(auth.admin, auth, sanityLessonId);
+    const course = await assertLessonDeliveryAccess(
+      auth.admin,
+      auth,
+      sanityLessonId,
+      readLessonDeliveryCourseHint(request),
+    );
     await patchCourseLesson(sanityLessonId, fields);
 
     const effectiveScheduledAt =
@@ -81,7 +94,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
     if (effectiveScheduledAt !== undefined) {
       try {
-        await syncSessionAfterScheduleSave(auth.admin, sanityLessonId, effectiveScheduledAt);
+        await syncSessionAfterScheduleSave(
+          auth.admin,
+          course.courseId,
+          sanityLessonId,
+          effectiveScheduledAt,
+        );
       } catch (syncError) {
         console.warn('[curator-api] session sync after schedule save failed', syncError);
       }

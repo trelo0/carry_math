@@ -5,7 +5,6 @@ import {
   isCourseAccessTableError,
   resetCourseLearningForRepurchase,
 } from './education/course-access';
-import { resolveCourseIdForContent } from './education/course-record';
 import { enrollStudent, getActiveCourses } from './education/courses';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { assignTeacher } from './education/assignments';
@@ -168,10 +167,10 @@ export async function ensureCourseEnrollmentOnPurchase(
     const lives = await getEnrollmentLives(admin, telegramId, targetCourseId);
     // После full block + новая оплата: сброс прогресса и блокировок «с нуля».
     if (lives?.fully_blocked) {
-      const slug = options?.courseSlug;
+      const slug = await courseSlugForId(admin, targetCourseId, options?.courseSlug);
       const courseContent = slug
         ? await getDistrictCourseContent(slug).catch(() => null)
-        : await getDistrictCourseContent().catch(() => null);
+        : null;
       await resetCourseLearningForRepurchase(
         admin,
         telegramId,
@@ -190,11 +189,20 @@ export async function ensureCourseEnrollmentOnPurchase(
 
 async function resolveCourseId(admin: SupabaseClient, courseId?: number): Promise<number | null> {
   if (courseId) return courseId;
-  const courseContent = await getDistrictCourseContent().catch(() => null);
-  const fromContent = await resolveCourseIdForContent(admin, courseContent);
-  if (fromContent) return fromContent;
   const courses = await getActiveCourses(admin);
-  return courses[0]?.id ?? null;
+  if (courses.length === 1) return courses[0]!.id;
+  return null;
+}
+
+async function courseSlugForId(
+  admin: SupabaseClient,
+  courseId: number,
+  hint?: string,
+): Promise<string | null> {
+  const fromHint = hint?.trim();
+  if (fromHint) return fromHint;
+  const { data } = await admin.from('courses').select('slug').eq('id', courseId).maybeSingle();
+  return (data?.slug as string | null)?.trim() || null;
 }
 
 /**
@@ -229,7 +237,7 @@ export async function completeCoursePurchaseSideEffects(
   try {
     const courseContent = courseSlug
       ? await getDistrictCourseContent(courseSlug).catch(() => null)
-      : await getDistrictCourseContent().catch(() => null);
+      : null;
     await grantPackageLessonAccess(
       admin,
       telegramId,

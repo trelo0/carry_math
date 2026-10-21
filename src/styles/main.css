@@ -553,6 +553,18 @@
   text-shadow: 0 0 10px rgba(232, 149, 44, 0.35);
 }
 
+@media (max-width: 640px) {
+  .data-strip {
+    padding: 5px 0;
+  }
+
+  .data-strip-track span {
+    font-size: 7px;
+    letter-spacing: 0.2em;
+    padding-right: 28px;
+  }
+}
+
 @keyframes strip-move {
   to {
     transform: translateX(-50%);

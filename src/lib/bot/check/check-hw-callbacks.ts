@@ -39,6 +39,7 @@ import { assertCheckCourseAccess } from './check-access';
 import {
   collectCheckArchive,
   collectCheckPending,
+  collectCheckRevision,
   collectCheckQueue,
   loadCheckHomeworkStudents,
   loadCourseModuleLessonMap,
@@ -54,6 +55,7 @@ import {
 } from './check-homework-meta';
 import {
   encodeHwItemCallback,
+  originSuffix,
   parseListFilters,
   parseOriginFromParts,
   renderCheckArchiveStatusFilters,
@@ -91,7 +93,9 @@ function parseCourseId(raw: string | undefined): number | null {
 }
 
 export function originFromPayload(payload: Record<string, unknown> | undefined): CheckHwListOrigin {
-  const mode = payload?.listMode === 'archive' ? 'archive' : 'pending';
+  const rawMode = payload?.listMode;
+  const mode: CheckHwListOrigin['mode'] =
+    rawMode === 'archive' ? 'archive' : rawMode === 'revision' ? 'revision' : 'pending';
   return {
     mode,
     page: Number(payload?.listPage ?? 0) || 0,
@@ -138,6 +142,9 @@ function collectModeItems(
   mode: CheckHwListMode,
   filters?: CheckHwListFilters,
 ): CheckHomeworkListItem[] {
+  if (mode === 'revision') {
+    return attachMetaToQueueItems(collectCheckRevision(students), metaMap);
+  }
   if (mode === 'archive' && filters?.archiveStatus === 'overdue') {
     const all = attachMetaToQueueItems(collectCheckQueue(students, 'all'), metaMap);
     return all.filter(
@@ -147,8 +154,20 @@ function collectModeItems(
         (i.homework.status === 'waiting' || i.homework.status === 'upcoming'),
     );
   }
-  const raw = mode === 'archive' ? collectCheckArchive(students) : collectCheckPending(students);
-  return attachMetaToQueueItems(raw, metaMap);
+  if (mode === 'archive') {
+    let raw = collectCheckArchive(students);
+    if (filters?.archiveStatus === 'revision') {
+      raw = collectCheckRevision(students);
+    } else if (filters?.archiveStatus === 'approved') {
+      raw = collectCheckArchive(students);
+    } else if (filters?.archiveStatus === 'all') {
+      raw = collectCheckQueue(students, 'all').filter(
+        (i) => i.homework.status === 'approved' || i.homework.status === 'revision',
+      );
+    }
+    return attachMetaToQueueItems(raw, metaMap);
+  }
+  return attachMetaToQueueItems(collectCheckPending(students), metaMap);
 }
 
 async function showList(
@@ -246,9 +265,19 @@ export async function handleCheckHomeworkFamily(
       return true;
     }
 
-    if (parts[3] === 'pend' || parts[3] === 'arch' || parts[3] === 'a' || parts[3] === 'p') {
+    if (
+      parts[3] === 'pend' ||
+      parts[3] === 'arch' ||
+      parts[3] === 'rev' ||
+      parts[3] === 'a' ||
+      parts[3] === 'p'
+    ) {
       const mode: CheckHwListMode =
-        parts[3] === 'pend' || parts[3] === 'p' ? 'pending' : 'archive';
+        parts[3] === 'pend' || parts[3] === 'p'
+          ? 'pending'
+          : parts[3] === 'rev'
+            ? 'revision'
+            : 'archive';
       const maybeFilter = parts[4];
       const oldStatus =
         maybeFilter === 'all' ||
@@ -281,14 +310,15 @@ export async function handleCheckHomeworkFamily(
         parts[3] === 'ok' ||
         parts[3] === 'rej' ||
         parts[3] === 'cmt' ||
-        parts[3] === 'hs') &&
+        parts[3] === 'hs' ||
+        parts[3] === 'hsd') &&
       parts[4] &&
       parts[5]
     ) {
       const student = getCuratorStudentRecord(students, parts[4]);
       const hwNum = Number(parts[5]);
       const homework = student ? getCuratorHomeworkRecord(student, hwNum) : undefined;
-      const origin = parseOriginFromParts(parts, 6);
+      const origin = parseOriginFromParts(parts, parts[3] === 'hsd' ? 7 : 6);
       if (!student || !homework) {
         await editScreen(message, 'Работа не найдена.', { inline_keyboard: [] });
         return true;
@@ -319,23 +349,58 @@ export async function handleCheckHomeworkFamily(
       if (parts[3] === 'hs') {
         const {
           listCourseHomeworkSubmissionEvents,
-          formatCourseHomeworkSubmissionTimeline,
+          buildCheckHomeworkHistoryButtons,
         } = await import('@/lib/bot/education/course-homework-submission-history');
         const { formatCheckHwWhen } = await import('./check-homework-meta');
         const events = await listCourseHomeworkSubmissionEvents(
           admin,
           student.telegramId,
           homework.sanityLessonId,
+          { courseId },
         );
-        const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
+        const attemptButtons = buildCheckHomeworkHistoryButtons(events, formatCheckHwWhen, (seq) => {
+          const base = `k:hw:${courseId}:hsd:${student.id}:${hwNum}:${seq}:${originSuffix(origin)}`;
+          return base.length <= 64 ? base : `k:hw:${courseId}:hsd:${student.id}:${hwNum}:${seq}`;
+        });
         const screen = renderCheckHomeworkSubmissionHistory(
           courseId,
           student,
           homework,
           origin,
-          timelineLines,
+          attemptButtons,
         );
         await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
+      if (parts[3] === 'hsd' && parts[6]) {
+        const seqNo = Number(parts[6]);
+        const {
+          listCourseHomeworkSubmissionEvents,
+          summarizeSubmissionAttempt,
+        } = await import('@/lib/bot/education/course-homework-submission-history');
+        const { formatCheckHwWhen } = await import('./check-homework-meta');
+        const { renderCheckSubmissionAttemptDetail } = await import('./check-screens');
+        const { sendTelegramFileById } = await import('@/lib/bot/studentHomeworkFlow');
+        const events = await listCourseHomeworkSubmissionEvents(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+          { courseId },
+        );
+        const submit = events.find((e) => e.sequenceNo === seqNo && e.eventType === 'submitted');
+        const screen = renderCheckSubmissionAttemptDetail(
+          courseId,
+          student,
+          homework,
+          origin,
+          summarizeSubmissionAttempt(events, seqNo, formatCheckHwWhen),
+        );
+        await editScreen(message, screen.text, screen.keyboard);
+        const fileRef = submit?.submissionFileUrl?.trim();
+        if (fileRef?.startsWith('tg:')) {
+          await sendTelegramFileById(chatId, fileRef.slice(3));
+        }
         return true;
       }
 
@@ -349,6 +414,7 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
+          { courseId },
         );
         const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
         const timelineText = timelineLines.length ? timelineLines.join('\n') : '';
@@ -375,7 +441,7 @@ export async function handleCheckHomeworkFamily(
               inline_keyboard: [
                 [
                   {
-                    text: '📜 История сдач',
+                    text: '📜 История проверок',
                     callback_data: encodeHwItemCallback('hs', courseId, student.id, hwNum, origin),
                   },
                 ],
@@ -402,6 +468,7 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
+          courseId,
         );
         const {
           listCourseHomeworkSubmissionEvents,
@@ -412,6 +479,7 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
+          { courseId },
         );
         const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
         const screen = renderCheckArchiveVerdictView(

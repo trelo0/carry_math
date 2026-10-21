@@ -301,17 +301,29 @@ async function testFullyBlockedRepurchase(): Promise<void> {
   check('повторная оплата без full block не сбрасывает lives', s?.lives_current === before);
 }
 
+function cliArg(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  const hit = process.argv.find((a) => a.startsWith(prefix));
+  return hit ? hit.slice(prefix.length) : undefined;
+}
+
 async function testHomeworkDeadline(): Promise<void> {
   console.log('\n== Homework deadline start ==');
 
-  let content;
-  try {
-    content = await getDistrictCourseContent();
-  } catch {
-    content = null;
+  const sanitySlug = cliArg('sanity-slug')?.trim();
+  let content = null;
+  if (sanitySlug) {
+    try {
+      content = await getDistrictCourseContent(sanitySlug);
+    } catch {
+      content = null;
+    }
   }
   if (!content) {
-    skip('ensureHomeworkDeadlineStarted', 'нет Sanity course content');
+    skip(
+      'ensureHomeworkDeadlineStarted',
+      sanitySlug ? `нет Sanity content для ${sanitySlug}` : 'передайте --sanity-slug= для проверки ДЗ',
+    );
     return;
   }
 

@@ -270,6 +270,7 @@ async function formatCourseWebinarLines(
       const lessons = flattenCourseLessons(content).filter((l) => l.publicationStatus === 'published');
       const sessionMap = await loadSanityLessonSessionMap(
         admin,
+        ctx.courseId,
         lessons.map((l) => l.sanityId),
       );
       const next = lessons

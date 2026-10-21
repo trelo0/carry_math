@@ -299,8 +299,10 @@ export type CabinetData = {
   cabinetPricing: CabinetPricing;
   /** РљР°СЂС‚РѕС‡РєРё РѕРїР»Р°С‚С‹ РєСѓСЂСЃРѕРІ (С†РµРЅР° + N Р·Р°РЅСЏС‚РёР№ РёР· РЅР°СЃС‚СЂРѕРµРє РєР°Р¶РґРѕРіРѕ РєСѓСЂСЃР°). */
   coursePaymentOffers: CoursePaymentOffer[];
-  /** РќР°Р¶Р°Р» В«РџРѕСЃРјРѕС‚СЂРµС‚СЊ РєР°СЂС‚Сѓ РєСѓСЂСЃР°В» РІ РїСЂРµРІСЊСЋ (student_profiles.course_map_viewed_at). */
+  /** Legacy: глобальный флаг профиля (достижения). */
   courseMapViewed: boolean;
+  /** «Карта просмотрена» по course_id (course_enrollment_state.map_viewed_at). */
+  courseMapViewedByCourseId: Record<number, boolean>;
   /** Р’СЃРµ СЂРѕР»Рё СѓС‡Р°СЃС‚РЅРёРєР°: РѕСЃРЅРѕРІРЅР°СЏ + extra_roles. */
   memberRoles: BotRole[];
   /** Агрегаты для достижений (эфир, запись, ДЗ, сообщения куратору). */
@@ -371,13 +373,15 @@ export function hasCoursePaymentForCourse(
 }
 
 export function getCourseCabinetStateForCourse(
-  data: Pick<CabinetData, 'courseMapViewed' | 'packages' | 'accesses'>,
+  data: Pick<CabinetData, 'courseMapViewed' | 'packages' | 'accesses'> & {
+    courseMapViewedByCourseId?: Record<number, boolean>;
+  },
   courseId: number,
   courseSlug?: string | null,
   courseTitle?: string | null,
   aliasCourseIds?: number[],
 ): CourseCabinetState {
-  if (!hasViewedCourseMap(data)) return 'preview';
+  if (!hasViewedCourseMap(data, courseId, courseSlug, courseTitle)) return 'preview';
   if (
     !hasCoursePaymentForCourse(
       data.packages,
@@ -400,13 +404,8 @@ export function resolveMapHasCourseProductAccess(
   courseTitle?: string | null,
   aliasCourseIds?: number[],
 ): boolean {
-  if (
-    courseId != null &&
-    hasCoursePaymentForCourse(packages, courseId, courseSlug, courseTitle, aliasCourseIds)
-  ) {
-    return true;
-  }
-  return packages.some((p) => p.product === 'course' && p.total > 0);
+  if (courseId == null) return false;
+  return hasCoursePaymentForCourse(packages, courseId, courseSlug, courseTitle, aliasCourseIds);
 }
 
 export function isCabinetLessonContentOpen(
@@ -419,7 +418,18 @@ export function isCabinetLessonContentOpen(
 }
 
 /** РџСЂРµРІСЊСЋ СЃРєСЂС‹РІР°РµС‚СЃСЏ РїРѕСЃР»Рµ РєР»РёРєР° В«РџРѕСЃРјРѕС‚СЂРµС‚СЊ РєР°СЂС‚СѓВ» РёР»Рё РµСЃР»Рё РєСѓСЂСЃ СѓР¶Рµ РѕРїР»Р°С‡РµРЅ. */
-export function hasViewedCourseMap(data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages'>): boolean {
+export function hasViewedCourseMap(
+  data: Pick<CabinetData, 'courseMapViewed' | 'accesses' | 'packages'> & {
+    courseMapViewedByCourseId?: Record<number, boolean>;
+  },
+  courseId?: number | null,
+  courseSlug?: string | null,
+  courseTitle?: string | null,
+): boolean {
+  if (courseId != null) {
+    if (data.courseMapViewedByCourseId?.[courseId]) return true;
+    return hasCoursePaymentForCourse(data.packages, courseId, courseSlug, courseTitle);
+  }
   return data.courseMapViewed || hasCoursePayment(data);
 }
 
@@ -446,8 +456,11 @@ export function shouldShowCourseCurator(data: CabinetData): boolean {
 }
 
 /** Р’ Sanity/Supabase РµСЃС‚СЊ РїСЂРµРґР»РѕР¶РµРЅРёРµ РѕРЅР»Р°Р№РЅ-РєСѓСЂСЃР° РґР»СЏ РєР°Р±РёРЅРµС‚Р°. */
-export function hasCourseCatalogOffer(data: Pick<CabinetData, 'courseCatalog' | 'courseContent'>): boolean {
+export function hasCourseCatalogOffer(
+  data: Pick<CabinetData, 'courseCatalog' | 'courseCatalogs' | 'courseContent'>,
+): boolean {
   if (data.courseCatalog) return true;
+  if ((data.courseCatalogs?.length ?? 0) > 0) return true;
   return (data.courseContent?.modules.length ?? 0) > 0;
 }
 
@@ -729,6 +742,40 @@ async function loadProfile(
     },
     courseMapViewed: Boolean(data.course_map_viewed_at),
   };
+}
+
+async function loadCourseMapViewedByCourseId(
+  admin: ReturnType<typeof createAdminClient>,
+  telegramId: number,
+  globalProfileViewed: boolean,
+): Promise<Record<number, boolean>> {
+  const out: Record<number, boolean> = {};
+  const { data, error } = await admin
+    .from('course_enrollment_state')
+    .select('course_id, map_viewed_at')
+    .eq('telegram_id', telegramId);
+  if (error) {
+    const message = String((error as { message?: string }).message ?? error);
+    if (message.includes('map_viewed_at')) {
+      if (!globalProfileViewed) return out;
+      const { data: enrollments } = await admin
+        .from('course_enrollments')
+        .select('course_id')
+        .eq('telegram_id', telegramId)
+        .eq('status', 'active');
+      for (const row of enrollments ?? []) {
+        const id = row.course_id as number;
+        if (id) out[id] = true;
+      }
+      return out;
+    }
+    throw error;
+  }
+  for (const row of data ?? []) {
+    const id = row.course_id as number;
+    if (id && row.map_viewed_at) out[id] = true;
+  }
+  return out;
 }
 
 function formatSessionDate(iso: string | null): string {
@@ -1095,6 +1142,7 @@ export async function getCabinetData(
     cabinetPricing: DEFAULT_CABINET_PRICING,
     coursePaymentOffers: [],
     courseMapViewed: false,
+    courseMapViewedByCourseId: {},
     memberRoles: ['guest'],
     achievementStats: EMPTY_CABINET_ACHIEVEMENT_STATS,
     telegramId: null,
@@ -1237,7 +1285,7 @@ export async function getCabinetData(
       .select('status, started_at, course_id, purchase_scenario, courses(title, slug)')
       .eq('telegram_id', telegramId)
       .eq('status', ACTIVE)
-      .order('started_at', { ascending: true }),
+      .order('started_at', { ascending: false }),
   ]);
 
   const { memberRoles, studentName } = memberBlock;
@@ -1267,14 +1315,17 @@ export async function getCabinetData(
   const { data: enrollmentRowsEarly, error: enrollmentErrorEarly } = enrollmentQuery;
   const enrollmentListEarly =
     (!enrollmentErrorEarly ? (enrollmentRowsEarly as EnrollmentRow[] | null) : null) ?? [];
-  const primaryEnrollmentEarly = enrollmentListEarly[0] ?? null;
+  const multiEnrollmentEarly = enrollmentListEarly.length > 1;
+  const primaryEnrollmentEarly =
+    enrollmentListEarly.length === 1 ? enrollmentListEarly[0]! : null;
   const joinedCourseEarly = primaryEnrollmentEarly
     ? Array.isArray(primaryEnrollmentEarly.courses)
       ? primaryEnrollmentEarly.courses[0]
       : primaryEnrollmentEarly.courses
     : null;
   const courseContentSlugEarly =
-    preferredNormalizedEarly ?? joinedCourseEarly?.slug ?? courseSummaries[0]?.slug ?? null;
+    preferredNormalizedEarly ??
+    (!multiEnrollmentEarly ? joinedCourseEarly?.slug ?? null : null);
   const courseContentEarlyPromise = courseContentSlugEarly
     ? getDistrictCourseContent(courseContentSlugEarly).catch((error) => {
         console.error('[cabinet] early course content fetch failed:', error);
@@ -1395,8 +1446,10 @@ export async function getCabinetData(
   const enrolledMatchingPreferred = preferredCatalog
     ? activeEnrollments.find((row) => row.course_id === preferredCatalog.id)
     : null;
-  // Р‘РµР· ?course= вЂ” СЃР°РјС‹Р№ СЂР°РЅРЅРёР№ РєСѓРїР»РµРЅРЅС‹Р№ РєСѓСЂСЃ (ascending).
-  const primaryEnrollment = enrolledMatchingPreferred ?? activeEnrollments[0] ?? null;
+  const multiEnrolled = activeEnrollments.length > 1;
+  const primaryEnrollment =
+    enrolledMatchingPreferred ??
+    (activeEnrollments.length === 1 ? activeEnrollments[0]! : null);
 
   let enrollment: CabinetEnrollment | null = null;
   let enrolledCourseId: number | null = null;
@@ -1418,9 +1471,9 @@ export async function getCabinetData(
 
   const activeSlug =
     preferredCatalog?.slug ??
-    courseCatalogs.find((c) => c.id === enrolledCourseId)?.slug ??
-    courseCatalogs[0]?.slug ??
-    null;
+    (!multiEnrolled && enrolledCourseId != null
+      ? courseCatalogs.find((c) => c.id === enrolledCourseId)?.slug ?? null
+      : null);
 
   const loadMentorsBlock = async (): Promise<CabinetMentor[]> => {
     try {
@@ -1471,9 +1524,8 @@ export async function getCabinetData(
           const early = await courseContentEarlyPromise;
           if (early) return early;
         }
-        return activeSlug
-          ? await getDistrictCourseContent(activeSlug)
-          : await getDistrictCourseContent();
+        if (!activeSlug) return null;
+        return await getDistrictCourseContent(activeSlug);
       } catch (error) {
         console.error('[cabinet] course content fetch failed:', error);
         return null;
@@ -1504,10 +1556,9 @@ export async function getCabinetData(
 
   courseContent = courseContentFetched;
 
-  let courseCatalog: CabinetCourseCatalog | null =
-    (activeSlug ? courseCatalogs.find((c) => c.slug === activeSlug) : null) ??
-    courseCatalogs[0] ??
-    null;
+  let courseCatalog: CabinetCourseCatalog | null = activeSlug
+    ? courseCatalogs.find((c) => c.slug === activeSlug) ?? null
+    : null;
 
   let resolvedCourseId: number | null = courseCatalog?.id ?? null;
   if (!resolvedCourseId && courseContent) {
@@ -1583,6 +1634,16 @@ export async function getCabinetData(
   });
   let profile: CabinetProfile | null = profileFetched.profile;
   let courseMapViewed = profileFetched.courseMapViewed;
+  let courseMapViewedByCourseId: Record<number, boolean> = {};
+  try {
+    courseMapViewedByCourseId = await loadCourseMapViewedByCourseId(
+      admin,
+      telegramId,
+      courseMapViewed,
+    );
+  } catch (error) {
+    if (!isDegradedCabinetLoadError(error)) throw error;
+  }
   let courseProgress: CabinetCourseProgress[] = [];
   let courseModules: CabinetCourseModule[] = [];
   let courseStops: CabinetCourseStop[] = [];
@@ -1640,7 +1701,12 @@ export async function getCabinetData(
     }
   }
 
-  const cabinetSlice = { courseMapViewed, accesses: accessesForCabinet, packages };
+  const cabinetSlice = {
+    courseMapViewed,
+    courseMapViewedByCourseId,
+    accesses: accessesForCabinet,
+    packages,
+  };
   const courseState =
     courseIdForMap != null
       ? getCourseCabinetStateForCourse(
@@ -1656,7 +1722,12 @@ export async function getCabinetData(
     courseContent?.slug,
     courseCatalog?.title ?? courseContent?.title,
   );
-  const viewedCourseMap = hasViewedCourseMap(cabinetSlice);
+  const viewedCourseMap = hasViewedCourseMap(
+    cabinetSlice,
+    courseIdForMap,
+    courseContent?.slug,
+    courseCatalog?.title ?? courseContent?.title,
+  );
 
   const mapWithProgress =
     loadMapProgress &&
@@ -1748,7 +1819,7 @@ export async function getCabinetData(
   }
   if (courseCatalog && !visibleCatalogSlugs.has(courseCatalog.slug)) {
     if (!ownedCourseIds.has(courseCatalog.id)) {
-      courseCatalog = courseCatalogs[0] ?? null;
+      courseCatalog = null;
     }
   }
 
@@ -1800,6 +1871,7 @@ export async function getCabinetData(
     cabinetPricing,
     coursePaymentOffers,
     courseMapViewed,
+    courseMapViewedByCourseId,
     memberRoles,
     achievementStats,
     courseMapProgressLoaded: loadMapProgress,
@@ -1957,8 +2029,15 @@ async function buildCourseMapSliceForSlug(
       }
     : null;
 
+  const courseMapViewedByCourseId = await loadCourseMapViewedByCourseId(
+    admin,
+    telegramId,
+    profileFetched.courseMapViewed,
+  ).catch(() => ({} as Record<number, boolean>));
+
   const cabinetSliceForState = {
     courseMapViewed: profileFetched.courseMapViewed,
+    courseMapViewedByCourseId,
     accesses,
     packages: allCoursePackages,
   };
@@ -1990,7 +2069,12 @@ async function buildCourseMapSliceForSlug(
     courseCatalog.title,
     aliasIdsArr,
   );
-  const viewedCourseMap = hasViewedCourseMap(cabinetSliceForState);
+  const viewedCourseMap = hasViewedCourseMap(
+    cabinetSliceForState,
+    courseId,
+    courseContent.slug,
+    courseCatalog.title,
+  );
   const mapWithProgress = Boolean(courseId && (viewedCourseMap || courseState !== 'preview'));
 
   let courseModules: CabinetCourseModule[] = [];
@@ -2161,8 +2245,7 @@ export async function getCabinetLessonPageData(
   if (!courseContent) {
     const { resolveCourseForSanityLesson } = await import('@/lib/bot/education/student-course-context');
     const resolvedCourse = await resolveCourseForSanityLesson(admin, telegramId, lessonKey);
-    courseContent =
-      resolvedCourse?.content ?? (await getDistrictCourseContent().catch(() => null));
+    courseContent = resolvedCourse?.content ?? null;
     courseId = resolvedCourse?.courseId ?? null;
   }
   if (!courseContent || courseContent.courseClosed) return null;
@@ -2249,7 +2332,12 @@ export async function getCabinetLessonPageData(
   }));
 
   const enrolled = Boolean(enrollmentRows?.[0]);
-  const cabinetSlice = { courseMapViewed: enrolled, accesses, packages };
+  const cabinetSlice = {
+    courseMapViewed: enrolled,
+    courseMapViewedByCourseId: {} as Record<number, boolean>,
+    accesses,
+    packages,
+  };
   const courseSlugForState = courseContent.slug;
   const courseState =
     courseId != null

@@ -71,7 +71,7 @@ export async function resolveEnrollmentStartLessonSanityId(
   if (modBySort) return findFirstLessonInModule(modBySort);
 
   // Оплата join_current без start_* (legacy / пустой course_modules): восстановить якорь из Sanity.
-  const active = await determineActiveModuleForJoinCurrent(admin, content);
+  const active = await determineActiveModuleForJoinCurrent(admin, courseId, content);
   if (active.module) return findFirstLessonInModule(active.module);
 
   return null;

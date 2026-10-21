@@ -5,6 +5,7 @@ import {
   CURATOR_REJECT_TEXT_STEP,
   CURATOR_REJECT_VOICE_STEP,
   CURATOR_SCHEDULE_DATETIME_STEP,
+  CURATOR_STU_SEARCH_STEP,
   STAFF_CURATOR_REPLY_STEP,
   STAFF_TEACHER_HW_REVISION_STEP,
   STAFF_TEACHER_REPLY_STEP,
@@ -19,7 +20,13 @@ const CURATOR_REJECT_STEPS = new Set([
 export async function clearConflictingStaffStates(
   admin: SupabaseClient,
   telegramId: number,
-  keep: 'teacher_reply' | 'curator_reply' | 'teacher_hw' | 'curator_reject' | 'curator_schedule',
+  keep:
+    | 'teacher_reply'
+    | 'curator_reply'
+    | 'teacher_hw'
+    | 'curator_reject'
+    | 'curator_schedule'
+    | 'curator_stu_search',
 ): Promise<void> {
   try {
     const state = await getState(admin, telegramId);
@@ -30,7 +37,8 @@ export async function clearConflictingStaffStates(
       (keep !== 'curator_reply' && step === STAFF_CURATOR_REPLY_STEP) ||
       (keep !== 'teacher_hw' && step === STAFF_TEACHER_HW_REVISION_STEP) ||
       (keep !== 'curator_reject' && CURATOR_REJECT_STEPS.has(step)) ||
-      (keep !== 'curator_schedule' && step === CURATOR_SCHEDULE_DATETIME_STEP);
+      (keep !== 'curator_schedule' && step === CURATOR_SCHEDULE_DATETIME_STEP) ||
+      (keep !== 'curator_stu_search' && step === CURATOR_STU_SEARCH_STEP);
     if (shouldClear) await clearStateIfAvailable(admin, telegramId);
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
