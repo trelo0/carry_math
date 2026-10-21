@@ -217,7 +217,6 @@ export async function listEnrollmentsWithLivesCurrent(
 
 export type OverdueHomeworkHubRow = {
   telegram_id: number;
-  course_id: number | null;
   sanity_lesson_id: string;
   homework_deadline_at: string;
   homework_overdue_at: string | null;
@@ -237,23 +236,19 @@ function isOverdueHwRow(row: {
 /** Просроченные ДЗ (pending/rejected, deadline в прошлом или overdue_at). */
 export async function listOverdueHomeworkForHub(
   admin: SupabaseClient,
-  options?: { limit?: number; offset?: number; courseId?: number | null },
+  options?: { limit?: number; offset?: number },
 ): Promise<OverdueHomeworkHubRow[]> {
   const limit = options?.limit ?? 8;
   const offset = options?.offset ?? 0;
   const nowMs = Date.now();
   // Берём активные дедлайны и фильтруем просрочку в коде (безопаснее, чем ISO в .or()).
-  let query = admin
+  const { data, error } = await admin
     .from('course_lesson_student_progress')
-    .select(
-      'telegram_id, course_id, sanity_lesson_id, homework_deadline_at, homework_overdue_at, homework_status',
-    )
+    .select('telegram_id, sanity_lesson_id, homework_deadline_at, homework_overdue_at, homework_status')
     .in('homework_status', ['pending', 'rejected'])
     .not('homework_deadline_at', 'is', null)
     .order('homework_deadline_at', { ascending: true })
     .limit(Math.min(400, offset + limit + 50));
-  if (options?.courseId != null) query = query.eq('course_id', options.courseId);
-  const { data, error } = await query;
   if (error) {
     const message = String((error as { message?: unknown }).message ?? error);
     if (
@@ -282,7 +277,6 @@ export async function listOverdueHomeworkForHub(
     .slice(offset, offset + limit)
     .map((row) => ({
       telegram_id: row.telegram_id as number,
-      course_id: (row.course_id as number | null) ?? null,
       sanity_lesson_id: row.sanity_lesson_id as string,
       homework_deadline_at: row.homework_deadline_at as string,
       homework_overdue_at: (row.homework_overdue_at as string | null) ?? null,
@@ -290,19 +284,14 @@ export async function listOverdueHomeworkForHub(
     }));
 }
 
-export async function countOverdueHomeworkForHub(
-  admin: SupabaseClient,
-  courseId?: number | null,
-): Promise<number> {
+export async function countOverdueHomeworkForHub(admin: SupabaseClient): Promise<number> {
   const nowMs = Date.now();
-  let query = admin
+  const { data, error } = await admin
     .from('course_lesson_student_progress')
     .select('homework_deadline_at, homework_overdue_at')
     .in('homework_status', ['pending', 'rejected'])
     .not('homework_deadline_at', 'is', null)
     .limit(500);
-  if (courseId != null) query = query.eq('course_id', courseId);
-  const { data, error } = await query;
   if (error) {
     const message = String((error as { message?: unknown }).message ?? error);
     if (
@@ -835,13 +824,10 @@ export async function monthlyRestoreLivesForEnrollment(
 export async function runMonthlyLivesRestore(
   admin: SupabaseClient,
   periodKey = moscowPeriodKey(),
-  courseId?: number | null,
 ): Promise<{ processed: number; restored: number; skipped: number; errors: number }> {
-  let query = admin
+  const { data: all, error } = await admin
     .from('course_enrollment_state')
     .select('telegram_id, course_id, lives_current, lives_max');
-  if (courseId != null) query = query.eq('course_id', courseId);
-  const { data: all, error } = await query;
   if (error) throw error;
 
   let processed = 0;

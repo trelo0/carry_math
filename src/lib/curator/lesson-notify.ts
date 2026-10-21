@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { SITE_URL_FALLBACK } from '@/lib/siteUrl';
+import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import { findLessonBySanityId } from '@/lib/bot/education/course-homework';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { listCourseStudentTelegramIds } from '@/lib/curator/students';
@@ -15,34 +16,37 @@ export type LessonNotifyResult = {
   total: number;
 };
 
-export type LessonNotifyCourseContext = {
-  courseId: number;
-  courseSlug: string;
-};
-
 async function listLessonStudentTelegramIds(
   admin: SupabaseClient,
   sanityLessonId: string,
-  course: LessonNotifyCourseContext,
 ): Promise<number[]> {
   const { data, error } = await admin
     .from('course_lesson_access')
     .select('telegram_id')
     .eq('sanity_lesson_id', sanityLessonId)
-    .eq('course_id', course.courseId)
     .neq('access_status', 'revoked');
   if (error) throw error;
 
   const ids = new Set((data ?? []).map((row) => row.telegram_id as number));
   if (ids.size > 0) return [...ids];
 
-  const enrolled = await listCourseStudentTelegramIds(admin, course.courseId);
+  const content = await getDistrictCourseContent();
+  if (!content) return [];
+
+  let courseId: number | null = null;
+  try {
+    courseId = await resolveCourseIdForContent(admin, content);
+  } catch {
+    courseId = null;
+  }
+  if (!courseId) return [];
+
+  const enrolled = await listCourseStudentTelegramIds(admin, courseId);
   for (const telegramId of enrolled) {
     const { count, error: countError } = await admin
       .from('course_lesson_access')
       .select('*', { count: 'exact', head: true })
       .eq('telegram_id', telegramId)
-      .eq('course_id', course.courseId)
       .not('sanity_lesson_id', 'is', null);
     if (countError) throw countError;
     if ((count ?? 0) > 0) continue;
@@ -76,20 +80,19 @@ function buildNotifyContent(
   };
 }
 
-function lessonCabinetPath(sanityLessonId: string, courseSlug: string): string {
-  const q = `?course=${encodeURIComponent(courseSlug)}`;
-  return `/cabinet/lesson/${encodeURIComponent(sanityLessonId)}${q}`;
+function lessonCabinetPath(sanityLessonId: string): string {
+  return `/cabinet/lesson/${encodeURIComponent(sanityLessonId)}`;
 }
 
 /** Inline-кнопки в TG не принимают localhost — всегда прод-домен как запасной. */
-function resolveNotifyButtonUrl(cabinetUrl: string, sanityLessonId: string, courseSlug: string): string {
+function resolveNotifyButtonUrl(cabinetUrl: string, sanityLessonId: string): string {
   if (/^https:\/\/district-school\.by/i.test(cabinetUrl)) return cabinetUrl;
   if (!/localhost|127\.0\.0\.1/i.test(cabinetUrl)) return cabinetUrl;
   try {
     const parsed = new URL(cabinetUrl);
     return `${SITE_URL_FALLBACK}${parsed.pathname}${parsed.search}`;
   } catch {
-    return `${SITE_URL_FALLBACK}${lessonCabinetPath(sanityLessonId, courseSlug)}`;
+    return `${SITE_URL_FALLBACK}${lessonCabinetPath(sanityLessonId)}`;
   }
 }
 
@@ -106,14 +109,13 @@ function formatNotifyResult(result: LessonNotifyResult): string {
   return parts.join(' · ');
 }
 
-/** Уведомляет учеников с доступом к занятию (TG) в рамках одного course_id. */
+/** Уведомляет учеников с доступом к занятию (TG). */
 export async function notifyStudentsLessonEvent(
   admin: SupabaseClient,
   sanityLessonId: string,
   type: LessonNotifyType,
-  course: LessonNotifyCourseContext,
 ): Promise<LessonNotifyResult & { message: string }> {
-  const content = await getDistrictCourseContent(course.courseSlug).catch(() => null);
+  const content = await getDistrictCourseContent();
   if (!content) {
     const empty = { sent: 0, skipped: 0, failed: 0, total: 0 };
     return { ...empty, message: formatNotifyResult(empty) };
@@ -124,7 +126,7 @@ export async function notifyStudentsLessonEvent(
     return { ...empty, message: formatNotifyResult(empty) };
   }
 
-  const studentIds = await listLessonStudentTelegramIds(admin, sanityLessonId, course);
+  const studentIds = await listLessonStudentTelegramIds(admin, sanityLessonId);
   const total = studentIds.length;
   if (total === 0) {
     const empty = { sent: 0, skipped: 0, failed: 0, total: 0 };
@@ -139,7 +141,6 @@ export async function notifyStudentsLessonEvent(
   let sent = 0;
   let skipped = 0;
   let failed = 0;
-  const path = lessonCabinetPath(sanityLessonId, course.courseSlug);
   for (const studentId of studentIds) {
     const member = (members ?? []).find((m) => m.telegram_id === studentId);
     const chatId = (member?.chat_id as number | undefined) ?? studentId;
@@ -149,11 +150,11 @@ export async function notifyStudentsLessonEvent(
     }
     let cabinetUrl: string;
     try {
-      cabinetUrl = await createCabinetLoginUrl(admin, studentId, path);
+      cabinetUrl = await createCabinetLoginUrl(admin, studentId, lessonCabinetPath(sanityLessonId));
     } catch {
-      cabinetUrl = `${SITE_URL_FALLBACK}${path}`;
+      cabinetUrl = `${SITE_URL_FALLBACK}${lessonCabinetPath(sanityLessonId)}`;
     }
-    cabinetUrl = resolveNotifyButtonUrl(cabinetUrl, sanityLessonId, course.courseSlug);
+    cabinetUrl = resolveNotifyButtonUrl(cabinetUrl, sanityLessonId);
     const { text, buttonText } = buildNotifyContent(type, lesson.lessonNumber, lesson.title);
     const response = await telegramSend('sendMessage', {
       chat_id: chatId,

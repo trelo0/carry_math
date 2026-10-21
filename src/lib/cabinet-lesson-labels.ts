@@ -22,13 +22,13 @@ function isWebinarBeforeBroadcast(params: {
   lessonKind?: 'webinar' | 'practice' | 'milestone';
   webinarSessionStatus?: WebinarStatus;
   stopStatus?: 'locked' | 'now' | 'watched' | 'done' | undefined;
+  homeworkStatus?: HomeworkProgressStatus | null;
 }): boolean {
   if (params.lessonKind !== 'webinar') return false;
   if (params.webinarSessionStatus === 'live') return false;
+  if (params.homeworkStatus === 'approved' || params.stopStatus === 'done') return false;
   const webinarDone =
-    params.webinarSessionStatus === 'completed' ||
-    params.stopStatus === 'watched' ||
-    params.stopStatus === 'done';
+    params.webinarSessionStatus === 'completed' || params.stopStatus === 'watched';
   return !webinarDone;
 }
 
@@ -96,6 +96,7 @@ export function lessonMapChipLabel(params: {
       lessonKind: params.lessonKind,
       webinarSessionStatus: params.webinarSessionStatus,
       stopStatus: params.stopStatus,
+      homeworkStatus: params.homeworkStatus,
     })
   ) {
     return 'Скоро';

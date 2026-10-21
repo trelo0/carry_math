@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
 import {
   adjustLives,
   getEnrollmentLives,
@@ -11,6 +12,7 @@ import {
   setCourseFullyBlocked,
   unfreezeEnrollment,
 } from '@/lib/bot/education/lives';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { logAdminAction } from './action-log';
 import {
   type AdminMessage,
@@ -22,92 +24,19 @@ import {
 } from './core';
 import { getMember } from '@/lib/bot/roles';
 import { memberDisplayName } from './users';
-import { getAdminLivesHubCourse, setAdminLivesHubCourse } from './lives-hub-course';
-import { getCourse } from '@/lib/bot/education/courses';
-import {
-  livesBlockAskCb,
-  livesBlockConfirmCb,
-  livesDeductCb,
-  livesGrantCb,
-  livesHistoryCb,
-  livesMenuCb,
-  livesRefundCb,
-  livesUnfreezeCb,
-  parseLivesBlockAction,
-  parseLivesOpsCourseId,
-  parseLivesRefundAction,
-} from './lives-ops-callbacks';
 
-type EnrollmentCourseOption = { courseId: number; title: string };
-
-async function listActiveEnrollmentCourses(
-  admin: SupabaseClient,
-  telegramId: number,
-): Promise<EnrollmentCourseOption[]> {
-  const { data, error } = await admin
-    .from('course_enrollments')
-    .select('course_id')
-    .eq('telegram_id', telegramId)
-    .eq('status', 'active');
-  if (error) throw error;
-  const ids = [...new Set((data ?? []).map((r) => r.course_id as number))];
-  const out: EnrollmentCourseOption[] = [];
-  for (const courseId of ids) {
-    const course = await getCourse(admin, courseId);
-    out.push({ courseId, title: course?.title?.trim() || `Курс #${courseId}` });
-  }
-  return out;
+async function resolveStudentCourseId(admin: SupabaseClient): Promise<number | null> {
+  const content = await getDistrictCourseContent();
+  if (!content) return null;
+  return resolveCourseIdForContent(admin, content);
 }
 
 function backToUser(telegramId: number): InlineButton {
   return { text: '↩️ К профилю', callback_data: `admin:user:${telegramId}::` };
 }
 
-function backToLives(telegramId: number, courseId?: number | null): InlineButton {
-  return { text: '↩️ К жизням', callback_data: livesMenuCb(telegramId, courseId) };
-}
-
-async function resolveCourseForStudentLives(
-  admin: SupabaseClient,
-  adminChatId: number,
-  studentTelegramId: number,
-  explicitCourseId?: number | null,
-): Promise<number | null> {
-  if (explicitCourseId != null && explicitCourseId > 0) {
-    setAdminLivesHubCourse(adminChatId, explicitCourseId);
-    return explicitCourseId;
-  }
-  const cached = getAdminLivesHubCourse(adminChatId);
-  if (cached != null) {
-    const { isStudentOnCourse } = await import('@/lib/bot/education/student-course-context');
-    if (await isStudentOnCourse(admin, studentTelegramId, cached)) return cached;
-  }
-  const enrollments = await listActiveEnrollmentCourses(admin, studentTelegramId);
-  if (enrollments.length === 1) {
-    setAdminLivesHubCourse(adminChatId, enrollments[0]!.courseId);
-    return enrollments[0]!.courseId;
-  }
-  return null;
-}
-
-async function renderLivesEnrollmentPicker(
-  admin: SupabaseClient,
-  message: AdminMessage,
-  studentTelegramId: number,
-  courses: EnrollmentCourseOption[],
-): Promise<void> {
-  const member = await getMember(admin, studentTelegramId);
-  const name = member ? memberDisplayName(member) : `ID ${studentTelegramId}`;
-  const lines = [
-    `❤️ Жизни: ${name}`,
-    '',
-    'Ученик на нескольких курсах — выберите курс:',
-  ];
-  const keyboard: InlineButton[][] = courses.map((c) => [
-    { text: c.title.slice(0, 48), callback_data: livesMenuCb(studentTelegramId, c.courseId) },
-  ]);
-  keyboard.push([backToUser(studentTelegramId)], [homeButton()]);
-  await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });
+function backToLives(telegramId: number): InlineButton {
+  return { text: '↩️ К жизням', callback_data: `al:m:${telegramId}` };
 }
 
 export function isLivesOpsAction(data: string): boolean {
@@ -118,36 +47,17 @@ async function renderLivesMenu(
   admin: SupabaseClient,
   message: AdminMessage,
   studentTelegramId: number,
-  courseIdOverride?: number | null,
 ): Promise<void> {
   const member = await getMember(admin, studentTelegramId);
   const name = member ? memberDisplayName(member) : `ID ${studentTelegramId}`;
-  let courseId = await resolveCourseForStudentLives(
-    admin,
-    message.chatId,
-    studentTelegramId,
-    courseIdOverride,
-  );
-  if (courseId == null) {
-    const enrollments = await listActiveEnrollmentCourses(admin, studentTelegramId);
-    if (enrollments.length > 1) {
-      await renderLivesEnrollmentPicker(admin, message, studentTelegramId, enrollments);
-      return;
-    }
-    if (enrollments.length === 1) {
-      courseId = enrollments[0]!.courseId;
-      setAdminLivesHubCourse(message.chatId, courseId);
-    }
-  }
+  const courseId = await resolveStudentCourseId(admin);
+
   if (!courseId) {
     await editAdminMessage(message, 'Курс не найден — жизни недоступны.', {
       inline_keyboard: [[backToUser(studentTelegramId)], [homeButton()]],
     });
     return;
   }
-
-  const course = await getCourse(admin, courseId);
-  const courseTitle = course?.title?.trim() || `курс #${courseId}`;
 
   let state = await getEnrollmentLives(admin, studentTelegramId, courseId);
   if (!state) {
@@ -171,7 +81,6 @@ async function renderLivesMenu(
 
   const lines = [
     `❤️ Жизни: ${name}`,
-    `🎓 ${courseTitle}`,
     '',
     `Сейчас: ${state.lives_current} из ${state.lives_max}`,
     state.fully_blocked
@@ -185,27 +94,21 @@ async function renderLivesMenu(
 
   const keyboard: InlineButton[][] = [
     [
-      { text: '+1 жизнь', callback_data: livesGrantCb(studentTelegramId, courseId) },
-      { text: '−1 жизнь', callback_data: livesDeductCb(studentTelegramId, courseId) },
+      { text: '+1 жизнь', callback_data: `al:g:${studentTelegramId}` },
+      { text: '−1 жизнь', callback_data: `al:d:${studentTelegramId}` },
     ],
-    [{ text: '📋 История', callback_data: livesHistoryCb(studentTelegramId, courseId) }],
+    [{ text: '📋 История', callback_data: `al:h:${studentTelegramId}` }],
     [
       state.fully_blocked
-        ? {
-            text: '🔓 Снять полную блокировку',
-            callback_data: livesBlockAskCb(studentTelegramId, courseId, false),
-          }
-        : {
-            text: '🔒 Полная блокировка',
-            callback_data: livesBlockAskCb(studentTelegramId, courseId, true),
-          },
+        ? { text: '🔓 Снять полную блокировку', callback_data: `al:b:${studentTelegramId}:0` }
+        : { text: '🔒 Полная блокировка', callback_data: `al:b:${studentTelegramId}:1` },
     ],
     state.access_blocked
-      ? [{ text: '▶️ Разморозить курс', callback_data: livesUnfreezeCb(studentTelegramId, courseId) }]
+      ? [{ text: '▶️ Разморозить курс', callback_data: `al:u:${studentTelegramId}` }]
       : [],
     [
-      { text: '💸 Возврат: да', callback_data: livesRefundCb(studentTelegramId, courseId, true) },
-      { text: '💸 Возврат: нет', callback_data: livesRefundCb(studentTelegramId, courseId, false) },
+      { text: '💸 Возврат: да', callback_data: `al:rf:${studentTelegramId}:yes` },
+      { text: '💸 Возврат: нет', callback_data: `al:rf:${studentTelegramId}:no` },
     ],
     [{ text: '⬅️ К разделу жизней', callback_data: 'ae:lives' }],
     [backToUser(studentTelegramId)],
@@ -219,17 +122,11 @@ async function renderHistory(
   admin: SupabaseClient,
   message: AdminMessage,
   studentTelegramId: number,
-  courseIdOverride?: number | null,
 ): Promise<void> {
-  const courseId = await resolveCourseForStudentLives(
-    admin,
-    message.chatId,
-    studentTelegramId,
-    courseIdOverride,
-  );
+  const courseId = await resolveStudentCourseId(admin);
   if (!courseId) {
     await editAdminMessage(message, 'Курс не найден.', {
-      inline_keyboard: [[backToLives(studentTelegramId)], [homeButton()]],
+      inline_keyboard: [[backToUser(studentTelegramId)], [homeButton()]],
     });
     return;
   }
@@ -257,7 +154,7 @@ async function renderHistory(
           .join('\n\n');
 
   await editAdminMessage(message, `📋 История жизней\n\n${body}`, {
-    inline_keyboard: [[backToLives(studentTelegramId, courseId)], [homeButton()]],
+    inline_keyboard: [[backToLives(studentTelegramId)], [homeButton()]],
   });
 }
 
@@ -265,25 +162,21 @@ export async function handleMonthlyLivesRestoreAction(
   admin: SupabaseClient,
   message: AdminMessage,
   adminTelegramId: number,
-  courseId?: number | null,
 ): Promise<void> {
   const deliver = editDeliver(message);
   const periodKey = moscowPeriodKey();
-  const courseTitle =
-    courseId != null ? (await getCourse(admin, courseId))?.title?.trim() : null;
   try {
-    const summary = await runMonthlyLivesRestore(admin, periodKey, courseId);
+    const summary = await runMonthlyLivesRestore(admin, periodKey);
     await logAdminAction(admin, {
       actorTelegramId: adminTelegramId,
       action: 'lives.monthly_restore',
       entityType: 'course_enrollment_state',
-      detail: { periodKey, courseId: courseId ?? null, ...summary },
+      detail: { periodKey, ...summary },
     });
     await editAdminMessage(
       message,
       [
         '❤️ Ежемесячное восстановление жизней',
-        courseTitle ? `🎓 ${courseTitle}` : 'Все курсы',
         '',
         `Период: ${periodKey} (МСК)`,
         `Восстановлено: ${summary.restored}`,
@@ -318,16 +211,9 @@ export async function handleLivesOpsAction(
   const parts = data.split(':');
   const action = parts[1] ?? '';
 
-  // al:rm или al:rm:{courseId}
+  // Массовое восстановление: al:rm (без telegram id)
   if (action === 'rm') {
-    const rawCourse = parts[2];
-    const scopedCourse =
-      rawCourse != null && rawCourse !== '' ? Number(rawCourse) : undefined;
-    const courseId =
-      scopedCourse != null && Number.isFinite(scopedCourse) && scopedCourse > 0
-        ? scopedCourse
-        : undefined;
-    await handleMonthlyLivesRestoreAction(admin, message, adminTelegramId, courseId);
+    await handleMonthlyLivesRestoreAction(admin, message, adminTelegramId);
     return true;
   }
 
@@ -338,27 +224,20 @@ export async function handleLivesOpsAction(
     return true;
   }
 
-  const explicitCourseId = parseLivesOpsCourseId(parts, action);
-
   try {
     if (action === 'm') {
-      await renderLivesMenu(admin, message, studentTelegramId, explicitCourseId);
+      await renderLivesMenu(admin, message, studentTelegramId);
       return true;
     }
 
     if (action === 'h') {
-      await renderHistory(admin, message, studentTelegramId, explicitCourseId);
+      await renderHistory(admin, message, studentTelegramId);
       return true;
     }
 
-    let courseId = await resolveCourseForStudentLives(
-      admin,
-      message.chatId,
-      studentTelegramId,
-      explicitCourseId,
-    );
+    const courseId = await resolveStudentCourseId(admin);
     if (!courseId) {
-      await deliver('Выберите курс в меню «Жизни».', homeOnlyKeyboard());
+      await deliver('Курс не найден.', homeOnlyKeyboard());
       return true;
     }
 
@@ -377,7 +256,7 @@ export async function handleLivesOpsAction(
         targetTelegramId: studentTelegramId,
         detail: { delta: 1 },
       });
-      await renderLivesMenu(admin, message, studentTelegramId, courseId);
+      await renderLivesMenu(admin, message, studentTelegramId);
       return true;
     }
 
@@ -398,18 +277,13 @@ export async function handleLivesOpsAction(
         targetTelegramId: studentTelegramId,
         detail: { delta: -1 },
       });
-      await renderLivesMenu(admin, message, studentTelegramId, courseId);
+      await renderLivesMenu(admin, message, studentTelegramId);
       return true;
     }
 
     if (action === 'b') {
-      const parsed = parseLivesBlockAction(parts, courseId);
-      const blockCourseId = parsed.courseId ?? courseId;
-      if (blockCourseId == null) {
-        await deliver('Курс не найден.', homeOnlyKeyboard());
-        return true;
-      }
-      const { blocked, confirm } = parsed;
+      const blocked = parts[3] === '1';
+      const confirm = parts[4] === 'c';
       if (!confirm) {
         await editAdminMessage(
           message,
@@ -421,10 +295,10 @@ export async function handleLivesOpsAction(
               [
                 {
                   text: blocked ? '🔒 Да, заблокировать' : '🔓 Да, разблокировать',
-                  callback_data: livesBlockConfirmCb(studentTelegramId, blockCourseId, blocked),
+                  callback_data: `al:b:${studentTelegramId}:${blocked ? '1' : '0'}:c`,
                 },
               ],
-              [backToLives(studentTelegramId, blockCourseId)],
+              [backToLives(studentTelegramId)],
             ],
           },
         );
@@ -433,7 +307,7 @@ export async function handleLivesOpsAction(
 
       await setCourseFullyBlocked(admin, {
         telegramId: studentTelegramId,
-        courseId: blockCourseId,
+        courseId,
         adminTelegramId,
         reason: blocked ? 'Блокировка администратором' : '',
         blocked,
@@ -442,10 +316,10 @@ export async function handleLivesOpsAction(
         actorTelegramId: adminTelegramId,
         action: blocked ? 'course.full_block' : 'course.full_unblock',
         entityType: 'course_enrollment_state',
-        entityId: blockCourseId,
+        entityId: courseId,
         targetTelegramId: studentTelegramId,
       });
-      await renderLivesMenu(admin, message, studentTelegramId, blockCourseId);
+      await renderLivesMenu(admin, message, studentTelegramId);
       return true;
     }
 
@@ -463,38 +337,33 @@ export async function handleLivesOpsAction(
         entityId: courseId,
         targetTelegramId: studentTelegramId,
       });
-      await renderLivesMenu(admin, message, studentTelegramId, courseId);
+      await renderLivesMenu(admin, message, studentTelegramId);
       return true;
     }
 
     if (action === 'rf') {
-      const refund = parseLivesRefundAction(parts);
-      const refundCourseId = refund.courseId ?? courseId;
-      if (refundCourseId == null) {
-        await deliver('Курс не найден.', homeOnlyKeyboard());
-        return true;
-      }
+      const decided = parts[3] === 'yes';
       await logAdminAction(admin, {
         actorTelegramId: adminTelegramId,
         action: 'purchase.refund_decision',
         entityType: 'course_enrollment',
-        entityId: refundCourseId,
+        entityId: courseId,
         targetTelegramId: studentTelegramId,
-        detail: { refund: refund.refundYes, note: 'Решение зафиксировано без вызова bePaid' },
+        detail: { refund: decided, note: 'Решение зафиксировано без вызова bePaid' },
       });
       await editAdminMessage(
         message,
-        refund.refundYes
+        decided
           ? '💸 Решение: возврат — зафиксировано в журнале (без bePaid).'
           : '💸 Решение: без возврата — зафиксировано в журнале.',
         {
-          inline_keyboard: [[backToLives(studentTelegramId, refundCourseId)], [homeButton()]],
+          inline_keyboard: [[backToLives(studentTelegramId)], [homeButton()]],
         },
       );
       return true;
     }
 
-    await renderLivesMenu(admin, message, studentTelegramId, courseId);
+    await renderLivesMenu(admin, message, studentTelegramId);
     return true;
   } catch (error) {
     if (isLivesTableError(error)) {

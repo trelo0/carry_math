@@ -7,6 +7,7 @@ import {
   defaultWebinarSessionStatus,
   loadSanityLessonSessionMap,
   resolveWebinarSessionStatus,
+  type SanityLessonSessionRow,
   type SanityWebinarSessionStatus,
 } from '@/lib/curator/lesson-session';
 import {
@@ -198,10 +199,12 @@ export function computeMapStopStatus(params: {
   sessionStatus: WebinarSessionStatus | null;
   progress: CourseLessonStudentProgress | undefined;
   isCurrent: boolean;
+  /** Пройдено по прогрессу (ДЗ/материалы), даже без completed_at. */
+  lessonCleared?: boolean;
 }): CourseMapStopStatus {
+  if (params.lessonCleared || isLessonCompleted(params.progress)) return 'done';
   if (!params.hasAccess || params.accessStatus === 'revoked') return 'locked';
   if (params.accessBlocked && params.accessStatus === 'blocked_lives') return 'locked';
-  if (isLessonCompleted(params.progress)) return 'done';
   if (params.sessionStatus === 'completed' && hasWatchedProgress(params.progress)) {
     if (params.progress?.homework_status !== 'approved') return 'watched';
   }
@@ -295,9 +298,21 @@ function resolveLessonAccess(params: {
   accessStatus: string | null;
   isTrialFree: boolean;
   previousCleared: boolean;
+  lessonCleared?: boolean;
 }): { hasAccess: boolean; accessStatus: string | null } {
   if (params.courseState === 'preview') {
     return { hasAccess: false, accessStatus: null };
+  }
+  if (
+    params.lessonCleared &&
+    params.hasCourseProductAccess &&
+    params.accessStatus !== 'revoked'
+  ) {
+    return {
+      hasAccess: true,
+      accessStatus:
+        params.accessStatus === 'blocked_lives' ? 'blocked_lives' : 'available',
+    };
   }
   if (!params.previousCleared) {
     return { hasAccess: false, accessStatus: params.accessStatus };
@@ -468,6 +483,41 @@ async function mergeCrossCourseProgressForGrantedLessons(
     if (!sanityId || progressMap.has(sanityId)) continue;
     progressMap.set(sanityId, normalizeProgressRow(row as CourseLessonStudentProgress));
   }
+
+  const stillMissing = sanityLessonIds.filter((id) => !progressMap.has(id));
+  if (stillMissing.length === 0) return;
+
+  const { data: anyCourseRows, error: anyCourseError } = await admin
+    .from('course_lesson_student_progress')
+    .select(MAP_PROGRESS_SELECT)
+    .eq('telegram_id', telegramId)
+    .in('sanity_lesson_id', stillMissing);
+  if (anyCourseError) throw anyCourseError;
+
+  for (const row of anyCourseRows ?? []) {
+    const sanityId = row.sanity_lesson_id as string;
+    if (!sanityId || progressMap.has(sanityId)) continue;
+    progressMap.set(sanityId, normalizeProgressRow(row as CourseLessonStudentProgress));
+  }
+}
+
+function effectiveWebinarSessionStatusForMap(
+  scheduledAt: string | null,
+  sessionRow: Pick<SanityLessonSessionRow, 'status'> | null | undefined,
+  progress: CourseLessonStudentProgress | undefined,
+  lessonCleared: boolean,
+): SanityWebinarSessionStatus | null {
+  const base = resolveWebinarSessionStatus(scheduledAt, sessionRow);
+  if (base === 'completed' || base === 'live' || base === 'cancelled') return base;
+  if (lessonCleared) return 'completed';
+  if (
+    progress?.homework_status === 'approved' ||
+    progress?.recording_watched_at ||
+    progress?.live_attended_at
+  ) {
+    return 'completed';
+  }
+  return base;
 }
 
 /** Карта курса из Sanity + состояние ученика в Supabase. */
@@ -625,6 +675,10 @@ export async function buildCourseMapStopsFromContent(
         .filter(({ lesson }, index) => {
           if (isArchiveLesson.has(lesson.sanityId)) return false;
 
+          const gateProgress = progressForGate.get(lesson.sanityId);
+          const lessonCleared = isCourseLessonCleared(lesson, gateProgress, {
+            hasCourseProduct: effectiveHasCourseProduct,
+          });
           const access = resolveLessonAccess({
             courseState: options.courseState,
             hasCourseProductAccess: effectiveHasCourseProduct,
@@ -634,6 +688,7 @@ export async function buildCourseMapStopsFromContent(
               hasCourseProduct: effectiveHasCourseProduct,
               gateStartIndex,
             }),
+            lessonCleared,
           });
           if (!access.hasAccess) return false;
           const accessStatus = access.accessStatus;
@@ -654,20 +709,29 @@ export async function buildCourseMapStopsFromContent(
           hasCourseProduct: effectiveHasCourseProduct,
           gateStartIndex,
         });
-    
+
+    const progress = progressMap.get(lesson.sanityId);
+    const lessonCleared = isJoinArchive
+      ? false
+      : isCourseLessonCleared(lesson, progress, {
+          hasCourseProduct: effectiveHasCourseProduct,
+        });
+
     const access = resolveLessonAccess({
       courseState: options.courseState,
       hasCourseProductAccess: effectiveHasCourseProduct,
       accessStatus: accessMap.get(lesson.sanityId) ?? null,
       isTrialFree: lesson.isTrialFree,
       previousCleared: effectivePreviousCleared,
+      lessonCleared,
     });
-    const progress = progressMap.get(lesson.sanityId);
     const sessionStatus =
       lesson.lessonType === 'webinar'
-        ? resolveWebinarSessionStatus(
+        ? effectiveWebinarSessionStatusForMap(
             lesson.scheduledAt,
             sessionMap.get(lesson.sanityId),
+            progress,
+            lessonCleared,
           )
         : null;
     const rawAccessStatus = accessMap.get(lesson.sanityId) ?? null;
@@ -689,6 +753,7 @@ export async function buildCourseMapStopsFromContent(
       sessionStatus,
       progress,
       isCurrent,
+      lessonCleared: fullyBlocked ? false : lessonCleared,
     });
     const { mapAccessState, isScheduleActive } = computeMapAccessState({
       hasAccess: fullyBlocked ? false : access.hasAccess,

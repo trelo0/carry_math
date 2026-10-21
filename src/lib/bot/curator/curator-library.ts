@@ -1,12 +1,8 @@
 import { flattenCourseLessons, getDistrictCourseContent } from '@/lib/studio/courseContent';
 import type { CuratorLibraryTask, CuratorLibraryWebinar } from './curator-types';
 
-export async function loadCuratorLibrary(
-  courseSlug?: string | null,
-): Promise<CuratorLibraryWebinar[]> {
-  const slug = courseSlug?.trim();
-  if (!slug) return [];
-  const content = await getDistrictCourseContent(slug).catch(() => null);
+export async function loadCuratorLibrary(): Promise<CuratorLibraryWebinar[]> {
+  const content = await getDistrictCourseContent();
   if (!content) return [];
 
   const lessons = flattenCourseLessons(content)

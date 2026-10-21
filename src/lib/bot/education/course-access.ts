@@ -320,116 +320,6 @@ export async function sumCoursePackageRemainingLessons(
   return { remaining, total };
 }
 
-/** id пакетов course, привязанных к курсу (как в sumCoursePackageLessonEntitlement). */
-export async function listMatchingCoursePackageIds(
-  admin: SupabaseClient,
-  telegramId: number,
-  courseId: number,
-): Promise<number[]> {
-  const { data, error } = await admin
-    .from('lesson_packages')
-    .select('id, status, course_id, title')
-    .eq('telegram_id', telegramId)
-    .eq('product', 'course')
-    .neq('status', 'cancelled');
-  if (error) throw error;
-  const rows = data ?? [];
-
-  const { data: courseRow } = await admin
-    .from('courses')
-    .select('slug, title')
-    .eq('id', courseId)
-    .maybeSingle();
-  const slug = (courseRow?.slug as string | undefined)?.trim() ?? null;
-  const courseTitle = (courseRow?.title as string | undefined) ?? null;
-  const aliasIds = new Set(await expandCourseIdAliases(admin, courseId));
-  const pkgCourseIds = [
-    ...new Set(
-      rows
-        .map((row) => row.course_id as number | null)
-        .filter((id): id is number => id != null),
-    ),
-  ];
-  const slugByPkgCourseId = new Map<number, string>();
-  if (pkgCourseIds.length > 0) {
-    const { data: courseRows } = await admin
-      .from('courses')
-      .select('id, slug')
-      .in('id', pkgCourseIds);
-    for (const c of courseRows ?? []) {
-      if (c.id != null && c.slug) slugByPkgCourseId.set(c.id as number, c.slug as string);
-    }
-  }
-
-  return rows
-    .filter((row) =>
-      coursePackageRowMatchesCourse(
-        row.course_id as number | null,
-        (row as { title?: string }).title,
-        courseId,
-        slug,
-        courseTitle,
-        aliasIds,
-        slugByPkgCourseId,
-      ),
-    )
-    .map((row) => row.id as number);
-}
-
-/**
- * Восстанавливает course_lesson_access по package_lesson_grants (после мультикурса / backfill).
- */
-export async function reconcileCourseLessonAccessFromPackageGrants(
-  admin: SupabaseClient,
-  telegramId: number,
-  courseId: number,
-): Promise<number> {
-  const packageIds = await listMatchingCoursePackageIds(admin, telegramId, courseId);
-  if (packageIds.length === 0) return 0;
-
-  const { data: grants, error } = await admin
-    .from('package_lesson_grants')
-    .select('package_id, sanity_lesson_id')
-    .in('package_id', packageIds)
-    .not('sanity_lesson_id', 'is', null);
-  if (error) throw error;
-
-  let updated = 0;
-  for (const grant of grants ?? []) {
-    const sanityId = grant.sanity_lesson_id as string | null;
-    const packageId = grant.package_id as number | null;
-    if (!sanityId || packageId == null) continue;
-
-    const { data: existing } = await admin
-      .from('course_lesson_access')
-      .select('access_status')
-      .eq('telegram_id', telegramId)
-      .eq('course_id', courseId)
-      .eq('sanity_lesson_id', sanityId)
-      .maybeSingle();
-    if (existing?.access_status === 'available' || existing?.access_status === 'blocked_lives') {
-      continue;
-    }
-
-    await upsertSanityLessonAccess(admin, telegramId, sanityId, 'package', packageId, courseId);
-    updated += 1;
-  }
-  return updated;
-}
-
-/** Перед отрисовкой карты: пробное, grants→access, join_current. */
-export async function syncCourseMapStudentAccess(
-  admin: SupabaseClient,
-  telegramId: number,
-  courseId: number,
-  content: DistrictCourseContent | null | undefined,
-): Promise<void> {
-  if (!content) return;
-  await grantEnrollmentTrialAccess(admin, telegramId, courseId, content);
-  await reconcileCourseLessonAccessFromPackageGrants(admin, telegramId, courseId);
-  await syncJoinCurrentEnrollmentAccess(admin, telegramId, courseId, content, null);
-}
-
 /** Есть оплаченный пакет / зачисление на конкретный курс. */
 export async function studentHasCourseAccessForCourse(
   admin: SupabaseClient,
@@ -524,7 +414,7 @@ export async function grantEnrollmentTrialAccess(
       (l) => l.isTrialFree && l.publicationStatus === 'published',
     );
     if (trial) {
-      await upsertSanityLessonAccess(admin, telegramId, trial.sanityId, 'enrollment', null, courseId);
+      await upsertSanityLessonAccess(admin, telegramId, trial.sanityId, 'enrollment');
       return;
     }
   }
@@ -559,7 +449,6 @@ async function upsertSanityLessonAccess(
   sanityLessonId: string,
   source: LessonAccessSource,
   packageId?: number | null,
-  courseId?: number | null,
 ): Promise<void> {
   const patch = {
     access_status: 'available' as const,
@@ -567,51 +456,22 @@ async function upsertSanityLessonAccess(
     package_id: packageId ?? null,
   };
 
-  if (courseId == null) {
-    const { data: rows, error: listError } = await admin
-      .from('course_lesson_access')
-      .select('id')
-      .eq('telegram_id', telegramId)
-      .eq('sanity_lesson_id', sanityLessonId)
-      .limit(2);
-    if (listError) throw listError;
-    if ((rows?.length ?? 0) > 1) {
-      throw new Error(
-        `[course-access] ambiguous lesson access for ${sanityLessonId}; pass courseId`,
-      );
-    }
-    if (rows?.[0]?.id) {
-      const updatePatch = patch;
-      const { error } = await admin
-        .from('course_lesson_access')
-        .update(updatePatch)
-        .eq('id', rows[0].id as number);
-      if (error) throw error;
-      return;
-    }
-  } else {
-    const { data: existing, error: findError } = await admin
-      .from('course_lesson_access')
-      .select('id')
-      .eq('telegram_id', telegramId)
-      .eq('sanity_lesson_id', sanityLessonId)
-      .eq('course_id', courseId)
-      .maybeSingle();
-    if (findError) throw findError;
+  const { data: existing, error: findError } = await admin
+    .from('course_lesson_access')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
+  if (findError) throw findError;
 
-    if (existing?.id) {
-      const { error } = await admin
-        .from('course_lesson_access')
-        .update({ ...patch, course_id: courseId })
-        .eq('id', existing.id);
-      if (error) throw error;
-      return;
-    }
+  if (existing?.id) {
+    const { error } = await admin.from('course_lesson_access').update(patch).eq('id', existing.id);
+    if (error) throw error;
+    return;
   }
 
   const { error } = await admin.from('course_lesson_access').insert({
     telegram_id: telegramId,
-    course_id: courseId ?? null,
     sanity_lesson_id: sanityLessonId,
     course_lesson_id: null,
     ...patch,
@@ -835,16 +695,12 @@ export async function ensureCurrentLessonUnlocked(
   }
 
   const sanityIds = published.map((l) => l.sanityId);
-  let accessQuery = admin
-    .from('course_lesson_access')
-    .select('sanity_lesson_id, access_status')
-    .eq('telegram_id', telegramId)
-    .in('sanity_lesson_id', sanityIds);
-  if (courseId != null) {
-    accessQuery = accessQuery.eq('course_id', courseId);
-  }
   const [{ data: accessRows, error: accessError }, progressMap] = await Promise.all([
-    accessQuery,
+    admin
+      .from('course_lesson_access')
+      .select('sanity_lesson_id, access_status')
+      .eq('telegram_id', telegramId)
+      .in('sanity_lesson_id', sanityIds),
     loadProgressMap(admin, telegramId, sanityIds, courseId),
   ]);
   if (accessError) throw accessError;
@@ -885,7 +741,7 @@ export async function ensureCurrentLessonUnlocked(
 
   // Пробное — enrollment, без списания remaining_lessons
   if (current.isTrialFree) {
-    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'enrollment', null, courseId);
+    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'enrollment');
     return 1;
   }
 
@@ -894,7 +750,7 @@ export async function ensureCurrentLessonUnlocked(
   // Уже был доступ (legacy) — не списываем кредит повторно
   if (status === 'revoked') {
     const linked = await resolveActiveCoursePackageId(admin, telegramId, courseId, packageId);
-    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', linked, courseId);
+    await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', linked);
     return 1;
   }
 
@@ -916,14 +772,7 @@ export async function ensureCurrentLessonUnlocked(
     if (grantError) throw grantError;
   }
 
-  await upsertSanityLessonAccess(
-    admin,
-    telegramId,
-    current.sanityId,
-    'package',
-    linkedPackageId,
-    courseId,
-  );
+  await upsertSanityLessonAccess(admin, telegramId, current.sanityId, 'package', linkedPackageId);
   return 1;
 }
 
@@ -936,13 +785,8 @@ export async function grantArchiveAccessBeforeSanityId(
   telegramId: number,
   content: DistrictCourseContent,
   startSanityId: string,
-  courseId?: number | null,
 ): Promise<void> {
   const { buildPublishedLessonSequence } = await import('./active-module');
-  const { resolveCourseIdForContent } = await import('./course-record');
-  const resolvedCourseId =
-    courseId ?? (await resolveCourseIdForContent(admin, content).catch(() => null));
-
   const allLessons = buildPublishedLessonSequence(content);
   const startIndex = allLessons.findIndex((l) => l.sanityId === startSanityId);
   if (startIndex <= 0) return;
@@ -953,7 +797,6 @@ export async function grantArchiveAccessBeforeSanityId(
   const now = new Date().toISOString();
   const inserts = archiveSanityIds.map((sanityId) => ({
     telegram_id: telegramId,
-    course_id: resolvedCourseId,
     sanity_lesson_id: sanityId,
     course_lesson_id: null,
     access_status: 'available' as const,
@@ -962,23 +805,14 @@ export async function grantArchiveAccessBeforeSanityId(
     granted_at: now,
   }));
 
-  const onConflict =
-    resolvedCourseId != null
-      ? 'telegram_id,course_id,sanity_lesson_id'
-      : 'telegram_id,sanity_lesson_id';
-  const { error } = await admin.from('course_lesson_access').upsert(inserts, { onConflict });
+  const { error } = await admin
+    .from('course_lesson_access')
+    .upsert(inserts, { onConflict: 'telegram_id,sanity_lesson_id' });
 
   if (error) {
     for (const sanityId of archiveSanityIds) {
       try {
-        await upsertSanityLessonAccess(
-          admin,
-          telegramId,
-          sanityId,
-          'enrollment',
-          null,
-          resolvedCourseId,
-        );
+        await upsertSanityLessonAccess(admin, telegramId, sanityId, 'enrollment');
       } catch (err) {
         console.error('[grantArchiveAccessBeforeSanityId] Failed:', sanityId, err);
       }
@@ -1354,14 +1188,7 @@ export async function canStudentWatchSanityLesson(
   if (isArchive) {
     if (status === 'available' || status === 'blocked_lives') return { ok: true };
     if (hasCourseProduct) {
-      await upsertSanityLessonAccess(
-        admin,
-        telegramId,
-        lesson.sanityId,
-        'enrollment',
-        null,
-        courseId,
-      );
+      await upsertSanityLessonAccess(admin, telegramId, lesson.sanityId, 'enrollment');
       return { ok: true };
     }
     return { ok: false, reason: 'Архивное занятие доступно после оплаты курса.' };
@@ -1391,14 +1218,7 @@ export async function canStudentWatchSanityLesson(
           reason: 'Доступ к новым занятиям приостановлен: закончились жизни. Свяжитесь с куратором.',
         };
       }
-      await upsertSanityLessonAccess(
-        admin,
-        telegramId,
-        lesson.sanityId,
-        'enrollment',
-        null,
-        courseId,
-      );
+      await upsertSanityLessonAccess(admin, telegramId, lesson.sanityId, 'enrollment');
       return { ok: true };
     }
   }

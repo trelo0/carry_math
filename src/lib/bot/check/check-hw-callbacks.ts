@@ -356,7 +356,6 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
-          { courseId },
         );
         const attemptButtons = buildCheckHomeworkHistoryButtons(events, formatCheckHwWhen, (seq) => {
           const base = `k:hw:${courseId}:hsd:${student.id}:${hwNum}:${seq}:${originSuffix(origin)}`;
@@ -386,7 +385,6 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
-          { courseId },
         );
         const submit = events.find((e) => e.sequenceNo === seqNo && e.eventType === 'submitted');
         const screen = renderCheckSubmissionAttemptDetail(
@@ -414,7 +412,6 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
-          { courseId },
         );
         const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
         const timelineText = timelineLines.length ? timelineLines.join('\n') : '';
@@ -468,7 +465,6 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
-          courseId,
         );
         const {
           listCourseHomeworkSubmissionEvents,
@@ -479,7 +475,6 @@ export async function handleCheckHomeworkFamily(
           admin,
           student.telegramId,
           homework.sanityLessonId,
-          { courseId },
         );
         const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
         const screen = renderCheckArchiveVerdictView(

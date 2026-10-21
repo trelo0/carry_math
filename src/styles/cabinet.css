@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    Р вЂєР С‘РЎвЂЎР Р…РЎвЂ№Р в„– Р С”Р В°Р В±Р С‘Р Р…Р ВµРЎвЂљ РЎС“РЎвЂЎР ВµР Р…Р С‘Р С”Р В° РІР‚вЂќ District (game-edtech UI Р Р† РЎРѓРЎвЂљР С‘Р В»Р Вµ РЎРѓР В°Р в„–РЎвЂљР В°)
    ========================================================================== */
 
@@ -4833,23 +4833,6 @@
   }
   .cab-mycourses-label { padding-right: 0; }
   .cab-mycourses-card { min-width: 190px; }
-}
-
-.cab-course-pick-hint {
-  margin-bottom: 0;
-}
-
-.cab-course-pick-title {
-  margin: 0 0 8px;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.cab-course-pick-text {
-  margin: 0;
-  color: rgba(232, 243, 255, 0.75);
-  font-size: 14px;
-  line-height: 1.45;
 }
 
 .cab-course-view.is-switching,

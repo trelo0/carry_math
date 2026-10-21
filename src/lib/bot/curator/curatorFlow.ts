@@ -75,6 +75,8 @@ import {
   initEnrollmentLives,
   isLivesTableError,
 } from '../education/lives';
+import { resolveCourseIdForContent } from '../education/course-record';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import {
   notifyStudentHomeworkReviewed,
   sendSubmissionToCurator,
@@ -276,10 +278,8 @@ function notFoundKeyboard(backText: string, backCallback: string): InlineKeyboar
 
 // --- Библиотека учебных материалов (§4) ------------------------------------
 
-export async function renderCuratorLibrary(
-  courseSlug?: string | null,
-): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const library = await loadCuratorLibrary(courseSlug);
+export async function renderCuratorLibrary(): Promise<{ text: string; keyboard: InlineKeyboard }> {
+  const library = await loadCuratorLibrary();
   if (library.length === 0) {
     return {
       text: '📝 ДОМАШКИ\n\nПока нет опубликованных заданий в программе курса.',
@@ -298,8 +298,8 @@ export async function renderCuratorLibrary(
   };
 }
 
-async function findLibraryTask(taskId: string, courseSlug?: string | null) {
-  const library = await loadCuratorLibrary(courseSlug);
+async function findLibraryTask(taskId: string) {
+  const library = await loadCuratorLibrary();
   for (const webinar of library) {
     const task = webinar.tasks.find((t) => t.id === taskId);
     if (task) return { webinar, task };
@@ -307,11 +307,8 @@ async function findLibraryTask(taskId: string, courseSlug?: string | null) {
   return null;
 }
 
-export async function renderCuratorWebinar(
-  webinarId: string,
-  courseSlug?: string | null,
-): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
-  const library = await loadCuratorLibrary(courseSlug);
+export async function renderCuratorWebinar(webinarId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const library = await loadCuratorLibrary();
   const webinar = library.find((w) => w.id === webinarId);
   if (!webinar) return null;
   const text = `📂 ${webinar.title}\n\n${webinar.tasks.map((t) => `📄 ${t.title}`).join('\n')}`;
@@ -326,15 +323,12 @@ export async function renderCuratorWebinar(
   };
 }
 
-export async function renderCuratorLibraryTask(
-  taskId: string,
-  courseSlug?: string | null,
-): Promise<{
+export async function renderCuratorLibraryTask(taskId: string): Promise<{
   text: string;
   keyboard: InlineKeyboard;
   webinarId: string;
 } | null> {
-  const hit = await findLibraryTask(taskId, courseSlug);
+  const hit = await findLibraryTask(taskId);
   if (!hit) return null;
   const { webinar, task } = hit;
   return {
@@ -349,11 +343,8 @@ export async function renderCuratorLibraryTask(
   };
 }
 
-export async function renderCuratorLibraryFile(
-  taskId: string,
-  courseSlug?: string | null,
-): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
-  const hit = await findLibraryTask(taskId, courseSlug);
+export async function renderCuratorLibraryFile(taskId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
+  const hit = await findLibraryTask(taskId);
   if (!hit?.task.fileUrl) return null;
   return {
     text: `📎 ${hit.task.title}\n\n${hit.task.fileUrl}`,
@@ -401,7 +392,6 @@ export type CuratorStudentProfileExtra = {
   lastActivityAt?: string | null;
   overdueHomeworkCount?: number;
   phone?: string | null;
-  courseId?: number | null;
 };
 
 export function renderCuratorStudentProfile(
@@ -481,26 +471,15 @@ export function renderCuratorStudentProfile(
       },
     ],
   );
-  const lifeCourseId = extra.courseId ?? null;
-  const lifeRow: InlineButton[] =
-    lifeCourseId != null
-      ? [
-          {
-            text: '+1 жизнь',
-            callback_data: `c:life:g:${student.telegramId}:${lifeCourseId}`,
-          },
-          {
-            text: '−1 жизнь',
-            callback_data: `c:life:d:${student.telegramId}:${lifeCourseId}`,
-          },
-        ]
-      : [];
   const text = parts.join('\n');
   return {
     text,
     keyboard: {
       inline_keyboard: [
-        ...(lifeRow.length ? [lifeRow] : []),
+        [
+          { text: '+1 жизнь', callback_data: `c:life:g:${student.telegramId}` },
+          { text: '−1 жизнь', callback_data: `c:life:d:${student.telegramId}` },
+        ],
         [{ text: '💬 Написать в боте', callback_data: `c:msg:w:${student.telegramId}` }],
         [{ text: '📲 Открыть в Telegram', url: `tg://user?id=${student.telegramId}` }],
         ...hwButtons.slice(0, 12),
@@ -1133,18 +1112,12 @@ async function routeCuratorCallback(
     }
 
     case 'life': {
-      const { parseCuratorLifeCallback, resolveCuratorBotCourseScope } = await import(
-        './curator-course-scope'
-      );
-      const parsed = parseCuratorLifeCallback(parts);
-      if (!parsed) return true;
-      const { op, studentTelegramId } = parsed;
+      const op = id; // g | d
+      const studentTelegramId = Number(subId);
+      if ((op !== 'g' && op !== 'd') || !Number.isFinite(studentTelegramId)) return true;
       try {
-        let courseId = parsed.courseId;
-        if (courseId == null) {
-          const scope = await resolveCuratorBotCourseScope(admin, telegramId);
-          courseId = scope?.courseId ?? null;
-        }
+        const content = await getDistrictCourseContent();
+        const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
         if (!courseId) {
           await sendAdminMessage(message.chatId, 'Курс не найден — жизни недоступны.');
           return true;
@@ -1187,7 +1160,6 @@ async function routeCuratorCallback(
             lastActivityAt: view?.lastActivityAt ?? null,
             overdueHomeworkCount: view?.overdueHomeworkCount,
             phone: view?.phone ?? null,
-            courseId,
           });
           await editCuratorScreen(message, screen.text, screen.keyboard);
         }
@@ -1232,11 +1204,7 @@ async function routeCuratorCallback(
         return true;
       }
       if (id === 'lives') {
-        const screen = renderCuratorLowLivesList(
-          snapshot.lowLives,
-          cabinetUrl,
-          snapshot.courseId,
-        );
+        const screen = renderCuratorLowLivesList(snapshot.lowLives, cabinetUrl);
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
       }
@@ -1295,45 +1263,36 @@ async function routeCuratorCallback(
     }
 
     // Библиотека: корень → вебинар → задание → файл-заглушка.
-    case 'lib':
-    case 'libw':
-    case 'libv':
-    case 'libf': {
-      const { resolveCuratorBotCourseScope } = await import('./curator-course-scope');
-      const libScope = await resolveCuratorBotCourseScope(admin, telegramId);
-      const libSlug = libScope?.slug ?? null;
-      if (action === 'lib') {
-        const screen = await renderCuratorLibrary(libSlug);
-        await editCuratorScreen(message, screen.text, screen.keyboard);
-        return true;
-      }
-      if (action === 'libw') {
-      const screen = id ? await renderCuratorWebinar(id, libSlug) : null;
+    case 'lib': {
+      const screen = await renderCuratorLibrary();
+      await editCuratorScreen(message, screen.text, screen.keyboard);
+      return true;
+    }
+    case 'libw': {
+      const screen = id ? await renderCuratorWebinar(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Вебинар не найден.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
       }
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
-      }
-      if (action === 'libv') {
-      const screen = id ? await renderCuratorLibraryTask(id, libSlug) : null;
+    }
+    case 'libv': {
+      const screen = id ? await renderCuratorLibraryTask(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
       }
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
-      }
-      if (action === 'libf') {
-      const screen = id ? await renderCuratorLibraryFile(id, libSlug) : null;
+    }
+    case 'libf': {
+      const screen = id ? await renderCuratorLibraryFile(id) : null;
       if (!screen) {
         await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
         return true;
       }
       await editCuratorScreen(message, screen.text, screen.keyboard);
-      return true;
-      }
       return true;
     }
 
@@ -1368,9 +1327,8 @@ async function routeCuratorCallback(
       }
       const { students: courseViews } = await loadCuratorCourseStudents(admin, telegramId);
       const view = courseViews.find((s) => s.telegramId === student!.telegramId);
-      const { resolveCuratorBotCourseScope } = await import('./curator-course-scope');
-      const scope = await resolveCuratorBotCourseScope(admin, telegramId);
-      const courseId = scope?.courseId ?? null;
+      const content = await getDistrictCourseContent();
+      const courseId = content ? await resolveCourseIdForContent(admin, content) : null;
       const lives = courseId
         ? await getEnrollmentLives(admin, student.telegramId, courseId)
         : null;
@@ -1385,7 +1343,6 @@ async function routeCuratorCallback(
         lastActivityAt: view?.lastActivityAt ?? null,
         overdueHomeworkCount: view?.overdueHomeworkCount,
         phone: view?.phone ?? null,
-        courseId,
       });
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;

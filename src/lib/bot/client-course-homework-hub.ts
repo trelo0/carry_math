@@ -30,15 +30,6 @@ import { resolveClientState } from './client-state';
 import { telegramSend } from '@/lib/telegram';
 import { buildClientReplyKeyboard } from './client-menu';
 
-async function activeCourseSlugFromHub(
-  admin: SupabaseClient,
-  telegramId: number,
-): Promise<string | undefined> {
-  const loaded = await loadClientHubPayload(admin, telegramId);
-  const slug = loaded?.payload.activeCourseSlug?.trim();
-  return slug || undefined;
-}
-
 function hwStatusLabel(status: string): string {
   switch (status) {
     case 'pending':
@@ -442,21 +433,14 @@ export async function showClientCourseHomeworkLessonStatus(
   chatId: number,
   sanityLessonId: string,
   deliver?: ClientHubDeliverOptions,
-  options?: { requireSubmitted?: boolean; preferredCourseSlug?: string | null },
+  options?: { requireSubmitted?: boolean },
 ): Promise<boolean> {
   const { resolveCourseForSanityLesson } = await import(
     '@/lib/bot/education/student-course-context'
   );
   const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
 
-  const preferredSlug =
-    options?.preferredCourseSlug ?? deliver?.hubPayloadExtra?.activeCourseSlug ?? undefined;
-  const resolved = await resolveCourseForSanityLesson(
-    admin,
-    telegramId,
-    sanityLessonId,
-    preferredSlug,
-  );
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
   if (!resolved) return false;
   const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
   if (!lesson) return false;
@@ -553,21 +537,14 @@ export async function showClientCourseHomeworkSubmissionView(
   chatId: number,
   sanityLessonId: string,
   deliver?: ClientHubDeliverOptions,
-  options?: { nav?: 'hub' | 'archive'; preferredCourseSlug?: string | null },
+  options?: { nav?: 'hub' | 'archive' },
 ): Promise<boolean> {
   const { resolveCourseForSanityLesson } = await import(
     '@/lib/bot/education/student-course-context'
   );
   const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
 
-  const preferredSlug =
-    options?.preferredCourseSlug ?? deliver?.hubPayloadExtra?.activeCourseSlug ?? undefined;
-  const resolved = await resolveCourseForSanityLesson(
-    admin,
-    telegramId,
-    sanityLessonId,
-    preferredSlug,
-  );
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
   if (!resolved) return false;
   const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
   if (!lesson) return false;
@@ -594,9 +571,7 @@ export async function showClientCourseHomeworkSubmissionView(
     listCourseHomeworkSubmissionEvents,
     formatCourseHomeworkSubmissionTimeline,
   } = await import('@/lib/bot/education/course-homework-submission-history');
-  const events = await listCourseHomeworkSubmissionEvents(admin, telegramId, sanityLessonId, {
-    courseId: resolved.courseId,
-  });
+  const events = await listCourseHomeworkSubmissionEvents(admin, telegramId, sanityLessonId);
   const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatDateTimeShort);
 
   const lines = [
@@ -644,21 +619,13 @@ export async function showClientCourseHomeworkRevision(
   chatId: number,
   sanityLessonId: string,
   deliver?: ClientHubDeliverOptions,
-  options?: { preferredCourseSlug?: string | null },
 ): Promise<boolean> {
   const { resolveCourseForSanityLesson } = await import(
     '@/lib/bot/education/student-course-context'
   );
   const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
 
-  const preferredSlug =
-    options?.preferredCourseSlug ?? deliver?.hubPayloadExtra?.activeCourseSlug ?? undefined;
-  const resolved = await resolveCourseForSanityLesson(
-    admin,
-    telegramId,
-    sanityLessonId,
-    preferredSlug,
-  );
+  const resolved = await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId);
   if (!resolved) return false;
   const lesson = findLessonBySanityId(resolved.content, sanityLessonId);
   if (!lesson) return false;
@@ -751,11 +718,6 @@ export async function beginClientCourseHomeworkFromHub(
   chatId: number,
   courseSlug?: string,
 ): Promise<void> {
-  const purchased = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
-  if (!courseSlug && purchased.length > 1) {
-    await showClientHomeworkMenu(admin, telegramId, chatId, { forcePush: true });
-    return;
-  }
   const target = await resolveSubmitTargetLesson(admin, telegramId, undefined, courseSlug);
   if (!target) {
     await deliverClientHubScreen(
@@ -849,19 +811,12 @@ export async function handleClientCourseHomeworkCallback(
     await beginClientCourseHomeworkFromHub(admin, telegramId, chatId, slug || undefined);
     return true;
   }
-  const preferredCourseSlug = await activeCourseSlugFromHub(admin, telegramId);
-
   if (data.startsWith('cl:chw:stat:')) {
     const sanityLessonId = data.slice('cl:chw:stat:'.length);
     if (sanityLessonId) {
-      await showClientCourseHomeworkLessonStatus(
-        admin,
-        telegramId,
-        chatId,
-        sanityLessonId,
-        { editAt },
-        { preferredCourseSlug },
-      );
+      await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, sanityLessonId, {
+        editAt,
+      });
     }
     return true;
   }
@@ -875,10 +830,7 @@ export async function handleClientCourseHomeworkCallback(
         chatId,
         sanityLessonId,
         undefined,
-        {
-          nav: navToken === 'a' ? 'archive' : 'hub',
-          preferredCourseSlug,
-        },
+        { nav: navToken === 'a' ? 'archive' : 'hub' },
       );
     }
     return true;
@@ -886,10 +838,7 @@ export async function handleClientCourseHomeworkCallback(
   if (data.startsWith('cl:chw:rev:')) {
     const sanityLessonId = data.slice('cl:chw:rev:'.length);
     if (sanityLessonId) {
-      await showClientCourseHomeworkRevision(admin, telegramId, chatId, sanityLessonId, {
-        editAt,
-        hubPayloadExtra: preferredCourseSlug ? { activeCourseSlug: preferredCourseSlug } : undefined,
-      });
+      await showClientCourseHomeworkRevision(admin, telegramId, chatId, sanityLessonId, { editAt });
     }
     return true;
   }
@@ -900,7 +849,7 @@ export async function handleClientCourseHomeworkCallback(
     );
     const { findLessonBySanityId } = await import('@/lib/bot/education/course-homework');
     const resolved = sanityLessonId
-      ? await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId, preferredCourseSlug)
+      ? await resolveCourseForSanityLesson(admin, telegramId, sanityLessonId)
       : null;
     const lesson =
       resolved && sanityLessonId

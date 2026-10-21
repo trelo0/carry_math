@@ -82,10 +82,8 @@ import {
   markCourseMapStale,
   isCourseSliceCacheFresh,
   readCourseSliceCache,
-  readLastActiveCourseSlug,
   readLastSelectedStop,
   writeCourseSliceCache,
-  writeLastActiveCourseSlug,
   writeLastSelectedStop,
 } from '@/lib/cabinet-course-cache';
 import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
@@ -1667,14 +1665,9 @@ export default function CabinetShell({
       ),
   );
   const [courseTab, setCourseTab] = useState<CourseTabId>('program');
-  const [activeCourseId, setActiveCourseId] = useState<number | null>(() => {
-    if (data.courseCatalog?.id) return data.courseCatalog.id;
-    if (data.enrollment?.courseId) return data.enrollment.courseId;
-    if ((data.courseEnrollments?.length ?? 0) === 1) {
-      return data.courseEnrollments![0]!.courseId;
-    }
-    return null;
-  });
+  const [activeCourseId, setActiveCourseId] = useState<number | null>(
+    () => data.courseCatalog?.id ?? data.enrollment?.courseId ?? null,
+  );
   const [courseSlice, setCourseSlice] = useState<CabinetCourseViewSlice | null>(null);
   const [courseSwitching, setCourseSwitching] = useState(false);
   const [courseDescExpanded, setCourseDescExpanded] = useState(false);
@@ -1714,7 +1707,6 @@ export default function CabinetShell({
 
   useEffect(() => {
     const nextId = data.courseCatalog?.id ?? data.enrollment?.courseId ?? null;
-    if (nextId == null) return;
     setActiveCourseId(nextId);
     const slug = data.courseCatalog?.slug;
     if (!slug) return;
@@ -1814,9 +1806,7 @@ export default function CabinetShell({
     [activeCourseSlug, data.courseCatalog?.slug],
   );
   const courseState: CourseCabinetState =
-    activeCourseId != null &&
-    (activeCourseOwned ||
-      hasViewedCourseMap(data, activeCourseId, activeCourseSlug, activeCatalog?.title))
+    activeCourseId != null && (activeCourseOwned || hasViewedCourseMap(data))
       ? getCourseCabinetStateForCourse(
           data,
           activeCourseId,
@@ -1918,16 +1908,11 @@ export default function CabinetShell({
 
     const gateSlice = {
       courseMapViewed: data.courseMapViewed,
-      courseMapViewedByCourseId: data.courseMapViewedByCourseId,
       accesses: data.accesses,
       packages: data.packages,
     };
     const state = getCourseCabinetState(gateSlice);
-    if (
-      !hasViewedCourseMap(gateSlice, activeCourseId ?? undefined, slug, activeCatalog?.title) &&
-      state === 'preview'
-    )
-      return;
+    if (!hasViewedCourseMap(gateSlice) && state === 'preview') return;
 
     const sessionCached = readCourseSliceCache(slug);
     const stale = isCourseMapStale(slug);
@@ -2001,7 +1986,6 @@ export default function CabinetShell({
       setActiveCourseId(course.id);
       setSection('course');
       syncCourseUrl(course.slug);
-      writeLastActiveCourseSlug(course.slug);
 
       const cached = courseCacheRef.current.get(course.slug);
       if (cached) {
@@ -2031,39 +2015,6 @@ export default function CabinetShell({
     },
     [activeCourseId, courseSwitching, fetchCourseSlice, syncCourseUrl],
   );
-
-  const ownedCourseChoices = useMemo(
-    () => courseChoices.filter((c) => c.purchased),
-    [courseChoices],
-  );
-  const needsCoursePick =
-    !courseCabinetGate && ownedCourseChoices.length > 1 && activeCourseId == null;
-
-  const restoredActiveCourseRef = useRef(false);
-  useEffect(() => {
-    if (restoredActiveCourseRef.current) return;
-    if (activeCourseId != null) {
-      restoredActiveCourseRef.current = true;
-      return;
-    }
-    if (data.courseCatalog?.id) {
-      restoredActiveCourseRef.current = true;
-      return;
-    }
-    const owned = ownedCourseChoices;
-    if (owned.length === 1) {
-      restoredActiveCourseRef.current = true;
-      void selectCourse(owned[0]!);
-      return;
-    }
-    if (owned.length < 2) return;
-    const lastSlug = readLastActiveCourseSlug();
-    const hit = lastSlug ? owned.find((c) => c.slug === lastSlug) : null;
-    if (hit) {
-      restoredActiveCourseRef.current = true;
-      void selectCourse(hit);
-    }
-  }, [activeCourseId, data.courseCatalog?.id, ownedCourseChoices, selectCourse]);
 
   // Прогрев остальных курсов в фоне — первое переключение не ждёт Sanity.
   useEffect(() => {
@@ -2373,10 +2324,7 @@ export default function CabinetShell({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          course:
-            activeCatalog?.slug ??
-            data.courseCatalog?.slug ??
-            (activeCourseSlug ?? undefined),
+          courseId: activeCatalog?.id ?? data.courseCatalog?.id ?? data.enrollment?.courseId,
         }),
       });
       const payload = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -2511,28 +2459,7 @@ export default function CabinetShell({
               />
             )}
 
-            {section === 'course' && !courseCabinetGate && needsCoursePick && (
-              <div className="cab-stack cab-course-screen">
-                <section className="cab-panel cab-course-pick-hint">
-                  <p className="cab-course-pick-title">У вас несколько курсов</p>
-                  <p className="cab-course-pick-text">
-                    Выберите курс в карусели ниже — откроется карта занятий и прогресс по выбранному
-                    курсу.
-                  </p>
-                </section>
-                <CourseSwitcher
-                  courses={courseChoices}
-                  activeId={activeCourseId}
-                  loading={courseSwitching}
-                  onSelect={selectCourse}
-                />
-              </div>
-            )}
-
-            {section === 'course' &&
-              !courseCabinetGate &&
-              !needsCoursePick &&
-              courseState === 'preview' && (
+            {section === 'course' && !courseCabinetGate && courseState === 'preview' && (
               <div className="cab-stack cab-course-screen">
                 <CourseSwitcher
                   courses={courseChoices}
@@ -2553,10 +2480,7 @@ export default function CabinetShell({
               </div>
             )}
 
-            {section === 'course' &&
-              !courseCabinetGate &&
-              !needsCoursePick &&
-              courseState !== 'preview' && (
+            {section === 'course' && !courseCabinetGate && courseState !== 'preview' && (
               <div className="cab-stack cab-course-screen">
                 <CourseSwitcher
                   courses={courseChoices}

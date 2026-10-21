@@ -24,15 +24,12 @@ async function nextSequenceNo(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
-  courseId?: number | null,
 ): Promise<number> {
-  let query = admin
+  const { count, error } = await admin
     .from('course_homework_submission_events')
     .select('id', { count: 'exact', head: true })
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId);
-  if (courseId != null) query = query.eq('course_id', courseId);
-  const { count, error } = await query;
   if (error) {
     if (isEventsTableError(error)) return 1;
     throw error;
@@ -55,12 +52,7 @@ async function insertEvent(
     createdAt?: string;
   },
 ): Promise<void> {
-  const sequenceNo = await nextSequenceNo(
-    admin,
-    row.telegramId,
-    row.sanityLessonId,
-    row.courseId,
-  );
+  const sequenceNo = await nextSequenceNo(admin, row.telegramId, row.sanityLessonId);
   const payload: Record<string, unknown> = {
     telegram_id: row.telegramId,
     sanity_lesson_id: row.sanityLessonId,
@@ -176,17 +168,15 @@ async function backfillEventsFromProgress(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
-  courseId?: number | null,
 ): Promise<void> {
-  let query = admin
+  const { data, error } = await admin
     .from('course_lesson_student_progress')
     .select(
       'homework_status, homework_submitted_at, submission_note, submission_file_url, review_note, reviewed_at, reviewed_by_telegram_id, reviewer_role, updated_at',
     )
     .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId);
-  if (courseId != null) query = query.eq('course_id', courseId);
-  const { data, error } = await query.maybeSingle();
+    .eq('sanity_lesson_id', sanityLessonId)
+    .maybeSingle();
   if (error || !data) return;
 
   const status = String(data.homework_status ?? 'pending');
@@ -199,7 +189,6 @@ async function backfillEventsFromProgress(
     await logCourseHomeworkSubmitted(admin, {
       telegramId,
       sanityLessonId,
-      courseId,
       note: data.submission_note as string | null,
       fileUrl: data.submission_file_url as string | null,
       submittedAt,
@@ -214,7 +203,6 @@ async function backfillEventsFromProgress(
       await logCourseHomeworkRevisionRequested(admin, {
         telegramId,
         sanityLessonId,
-        courseId,
         submissionNote: data.submission_note as string | null,
         submissionFileUrl: data.submission_file_url as string | null,
         reviewerTelegramId: reviewerId,
@@ -227,7 +215,6 @@ async function backfillEventsFromProgress(
       await logCourseHomeworkApproved(admin, {
         telegramId,
         sanityLessonId,
-        courseId,
         submissionNote: data.submission_note as string | null,
         submissionFileUrl: data.submission_file_url as string | null,
         reviewerTelegramId: reviewerId,
@@ -243,34 +230,31 @@ export async function listCourseHomeworkSubmissionEvents(
   admin: SupabaseClient,
   telegramId: number,
   sanityLessonId: string,
-  options?: { backfill?: boolean; courseId?: number | null },
+  options?: { backfill?: boolean },
 ): Promise<CourseHomeworkSubmissionEvent[]> {
-  const courseId = options?.courseId;
-  let listQuery = admin
+  const { data, error } = await admin
     .from('course_homework_submission_events')
     .select(
       'id, sequence_no, event_type, submission_note, submission_file_url, reviewer_telegram_id, reviewer_role, reviewer_comment, created_at',
     )
     .eq('telegram_id', telegramId)
-    .eq('sanity_lesson_id', sanityLessonId);
-  if (courseId != null) listQuery = listQuery.eq('course_id', courseId);
-  const { data, error } = await listQuery.order('sequence_no', { ascending: true });
+    .eq('sanity_lesson_id', sanityLessonId)
+    .order('sequence_no', { ascending: true });
   if (error) {
     if (isEventsTableError(error)) return [];
     throw error;
   }
   let rows = (data ?? []).map((r) => mapRow(r as Record<string, unknown>));
   if (rows.length === 0 && options?.backfill !== false) {
-    await backfillEventsFromProgress(admin, telegramId, sanityLessonId, courseId);
-    let retryQuery = admin
+    await backfillEventsFromProgress(admin, telegramId, sanityLessonId);
+    const retry = await admin
       .from('course_homework_submission_events')
       .select(
         'id, sequence_no, event_type, submission_note, submission_file_url, reviewer_telegram_id, reviewer_role, reviewer_comment, created_at',
       )
       .eq('telegram_id', telegramId)
-      .eq('sanity_lesson_id', sanityLessonId);
-    if (courseId != null) retryQuery = retryQuery.eq('course_id', courseId);
-    const retry = await retryQuery.order('sequence_no', { ascending: true });
+      .eq('sanity_lesson_id', sanityLessonId)
+      .order('sequence_no', { ascending: true });
     if (!retry.error) {
       rows = (retry.data ?? []).map((r) => mapRow(r as Record<string, unknown>));
     }
