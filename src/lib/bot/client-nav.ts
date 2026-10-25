@@ -262,6 +262,7 @@ export async function deliverClientHubScreen(
       });
       return;
     }
+    options = { ...options, forcePush: true, editAt: undefined };
   }
 
   if (!options?.forcePush) {

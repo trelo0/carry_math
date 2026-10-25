@@ -267,36 +267,56 @@ export function formatCourseHomeworkSubmissionTimeline(
   formatWhen: (iso: string) => string,
 ): string[] {
   if (events.length === 0) return [];
-  const lines = ['', '📜 История сдач:', ''];
+  const lines = ['', '📜 История проверок:', ''];
   let submitIndex = 0;
   for (const ev of events) {
     const when = formatWhen(ev.createdAt);
     if (ev.eventType === 'submitted') {
       submitIndex += 1;
       const label =
-        submitIndex === 1 ? '1-я отправка куратору' : `${submitIndex}-я отправка на проверку`;
+        submitIndex === 1 ? '1-я отправка' : `${submitIndex}-я отправка на проверку`;
       lines.push(`• ${when} — ${label}`);
-      if (ev.submissionNote?.trim()) {
-        lines.push(`  💬 ${ev.submissionNote.trim()}`);
-      }
-      if (ev.submissionFileUrl?.trim()) {
-        lines.push('  📎 Файл приложен');
-      }
       continue;
     }
     if (ev.eventType === 'revision_requested') {
-      lines.push(`• ${when} — отправлено на доработку`);
-      if (ev.reviewerComment?.trim()) {
-        lines.push(`  ✏️ ${ev.reviewerComment.trim()}`);
-      }
+      lines.push(`• ${when} — на доработке`);
       continue;
     }
     if (ev.eventType === 'approved') {
       lines.push(`• ${when} — одобрено`);
-      if (ev.reviewerComment?.trim()) {
-        lines.push(`  ✅ ${ev.reviewerComment.trim()}`);
-      }
     }
   }
   return lines;
+}
+
+export type HomeworkSubmissionHistoryEntry = {
+  submitIndex: number;
+  sequenceNo: number;
+  statusLabel: string;
+  event: CourseHomeworkSubmissionEvent;
+};
+
+/** Кнопки сдач для экрана «История проверок». */
+export function buildHomeworkSubmissionHistoryEntries(
+  events: CourseHomeworkSubmissionEvent[],
+): HomeworkSubmissionHistoryEntry[] {
+  const out: HomeworkSubmissionHistoryEntry[] = [];
+  let submitIndex = 0;
+  for (const ev of events) {
+    if (ev.eventType !== 'submitted') continue;
+    submitIndex += 1;
+    const next = events.find(
+      (e) => e.sequenceNo > ev.sequenceNo && e.eventType !== 'submitted',
+    );
+    let statusLabel = 'на проверке';
+    if (next?.eventType === 'approved') statusLabel = 'одобрено';
+    if (next?.eventType === 'revision_requested') statusLabel = 'на доработке';
+    out.push({
+      submitIndex,
+      sequenceNo: ev.sequenceNo,
+      statusLabel,
+      event: ev,
+    });
+  }
+  return out;
 }

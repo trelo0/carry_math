@@ -79,6 +79,31 @@ export async function listCuratorStudentTelegramIds(
   return [...new Set((data ?? []).map((r) => r.telegram_id as number))];
 }
 
+/** Активный курс куратора в боте: workspace или единственное назначение. */
+export async function resolveCuratorBotCourseScope(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+): Promise<{ courseId: number; courseSlug: string } | null> {
+  const { getStaffCourseWorkspace } = await import('../staff/staff-course-session');
+  const { resolveCuratorCourseContext } = await import('@/lib/curator/course-context');
+  const ws = await getStaffCourseWorkspace(admin, curatorTelegramId);
+  if (ws?.role === 'curator') {
+    return { courseId: ws.courseId, courseSlug: ws.courseSlug };
+  }
+  const ctx = await resolveCuratorCourseContext(admin, curatorTelegramId);
+  if (!ctx) return null;
+  return { courseId: ctx.courseId, courseSlug: ctx.slug };
+}
+
+export async function loadCuratorStudentsForBot(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+): Promise<CuratorStudentRecord[]> {
+  const scope = await resolveCuratorBotCourseScope(admin, curatorTelegramId);
+  if (!scope) return [];
+  return loadCuratorStudents(admin, curatorTelegramId, scope);
+}
+
 export async function loadCuratorStudents(
   admin: SupabaseClient,
   curatorTelegramId: number,

@@ -37,10 +37,7 @@ export async function sendStaffCourseManagementList(
   telegramId: number,
 ): Promise<void> {
   const rows = await loadStaffMyCourseRows(admin, telegramId);
-  const screen = renderMyCourseListScreen(rows, {
-    backCallback: 'staff:hub:close',
-    backLabel: '⬅️ Закрыть',
-  });
+  const screen = renderMyCourseListScreen(rows, { showBack: false });
   await sendAdminMessage(chatId, screen.text, screen.keyboard);
 }
 
@@ -111,7 +108,6 @@ export async function handleStaffWorkspaceMenuMessage(
 
   if (text === STAFF_EXIT_ALL_COURSES_LABEL) {
     await exitStaffCourseWorkspace(admin, telegramId, chatId);
-    await sendStaffCourseManagementList(admin, chatId, telegramId);
     return true;
   }
 
@@ -191,8 +187,30 @@ export async function handleStaffCourseHubCallback(
   if (data.startsWith('c:mc:')) {
     const parts = data.split(':');
     const courseId = Number(parts[2]);
-    const role = parts[3] as 'curator' | 'check';
-    if (!Number.isFinite(courseId) || (role !== 'curator' && role !== 'check')) return false;
+    const token = parts[3];
+    if (!Number.isFinite(courseId) || !token) return false;
+
+    if (token === 'pick') {
+      const rows = await loadStaffMyCourseRows(admin, telegramId);
+      const group = groupStaffCourseRows(rows).find((g) => g.courseId === courseId);
+      if (!group || group.roles.length < 2) {
+        await editAdminMessage(message, 'Курс не найден.', { inline_keyboard: [] });
+        if (callbackQueryId) {
+          await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+        }
+        return true;
+      }
+      const { renderMyCourseRolePicker } = await import('./staff-my-course');
+      const screen = renderMyCourseRolePicker(group.title, courseId);
+      await editAdminMessage(message, screen.text, screen.keyboard);
+      if (callbackQueryId) {
+        await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+      }
+      return true;
+    }
+
+    const role = token as 'curator' | 'check';
+    if (role !== 'curator' && role !== 'check') return false;
 
     const rows = await loadStaffMyCourseRows(admin, telegramId);
     const row = rows.find((r) => r.courseId === courseId && r.role === role);

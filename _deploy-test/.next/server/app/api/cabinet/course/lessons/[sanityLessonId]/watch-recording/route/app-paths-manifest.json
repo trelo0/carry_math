@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/course/lessons/[sanityLessonId]/watch-recording/route": "app/api/cabinet/course/lessons/[sanityLessonId]/watch-recording/route.js"
+}

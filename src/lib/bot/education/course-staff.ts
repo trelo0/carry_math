@@ -98,6 +98,44 @@ export async function upsertCourseStaffAssignment(
   if (error && !String(error.message).includes('course_staff_assignments')) throw error;
 }
 
+/** Завершить активные назначения role на курсе, кроме keepTelegramId (null — снять всех). */
+export async function endActiveCourseStaffForRole(
+  admin: SupabaseClient,
+  courseId: number,
+  role: 'curator' | 'check',
+  keepTelegramId: number | null,
+): Promise<void> {
+  const now = new Date().toISOString();
+  let q = admin
+    .from('course_staff_assignments')
+    .update({ status: 'completed', ended_at: now, updated_at: now })
+    .eq('course_id', courseId)
+    .eq('role', role)
+    .eq('status', 'active');
+  if (keepTelegramId != null && Number.isFinite(keepTelegramId)) {
+    q = q.neq('staff_telegram_id', Math.floor(keepTelegramId));
+  }
+  const { error } = await q;
+  if (error && !String(error.message).includes('course_staff_assignments')) throw error;
+}
+
+async function endStaffAssignmentForMemberOnCourse(
+  admin: SupabaseClient,
+  courseId: number,
+  staffTelegramId: number,
+  role: 'curator' | 'check',
+): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await admin
+    .from('course_staff_assignments')
+    .update({ status: 'completed', ended_at: now, updated_at: now })
+    .eq('course_id', courseId)
+    .eq('staff_telegram_id', staffTelegramId)
+    .eq('role', role)
+    .eq('status', 'active');
+  if (error && !String(error.message).includes('course_staff_assignments')) throw error;
+}
+
 /** Из Sanity/CMS: куратор курса и проверяющий ДЗ. */
 export async function syncCourseStaffFromContent(
   admin: SupabaseClient,
@@ -120,6 +158,18 @@ export async function syncCourseStaffFromContent(
       console.warn(`[course-staff] ${role} sync failed:`, e);
     }
   };
+
+  const curatorKeep =
+    content.curatorTelegramId != null && Number.isFinite(content.curatorTelegramId)
+      ? Math.floor(content.curatorTelegramId)
+      : null;
+  const checkKeep =
+    content.checkTelegramId != null && Number.isFinite(content.checkTelegramId)
+      ? Math.floor(content.checkTelegramId)
+      : null;
+
+  await endActiveCourseStaffForRole(admin, courseId, 'curator', curatorKeep);
+  await endActiveCourseStaffForRole(admin, courseId, 'check', checkKeep);
 
   await assignFromSanity(content.curatorTelegramId, 'curator');
   await assignFromSanity(content.checkTelegramId, 'check');
@@ -147,10 +197,18 @@ export async function refreshStaffCourseAssignmentsForMember(
       await upsertCourseStaffAssignment(admin, courseId, id, 'curator').catch((e) =>
         console.warn('[course-staff] refresh curator failed:', e),
       );
+    } else {
+      await endStaffAssignmentForMemberOnCourse(admin, courseId, id, 'curator').catch((e) =>
+        console.warn('[course-staff] refresh end curator failed:', e),
+      );
     }
     if (content.checkTelegramId === id) {
       await upsertCourseStaffAssignment(admin, courseId, id, 'check').catch((e) =>
         console.warn('[course-staff] refresh check failed:', e),
+      );
+    } else {
+      await endStaffAssignmentForMemberOnCourse(admin, courseId, id, 'check').catch((e) =>
+        console.warn('[course-staff] refresh end check failed:', e),
       );
     }
   }

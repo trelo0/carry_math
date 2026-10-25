@@ -29,7 +29,7 @@ export function renderTeacherScheduleHome(
   const upcoming = lessonsUpcoming(snapshot.allLessons);
   const parts = ['📅 РАСПИСАНИЕ ЗАНЯТИЙ', ''];
   const menuBack = nav?.mainMenuBack ?? 't:menu';
-  const menuLabel = menuBack.startsWith('s:sch') ? '⬅️ К расписанию' : '⬅️ Главное меню';
+  const menuLabel = menuBack.startsWith('s:sch') ? '⬅️ На главную' : '⬅️ Главное меню';
 
   if (snapshot.currentLesson) {
     parts.push('🟢 Сейчас:', lessonTitleLine(snapshot.currentLesson), '');

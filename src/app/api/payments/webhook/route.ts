@@ -1,15 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isAccessProduct } from '@/lib/bot/accesses';
-import { fulfillPurchase, PurchaseFulfillError, resolvePurchaseOffer } from '@/lib/bot/purchase-fulfillment';
+import { fulfillPurchase, PurchaseFulfillError } from '@/lib/bot/purchase-fulfillment';
 import { getPurchaseRequest, markPurchaseRequestResolved } from '@/lib/bot/purchase-requests';
-import {
-  resolveCourseFulfillContext,
-  runCourseSideEffectsAfterFulfill,
-} from '@/lib/bepaid/fulfill-from-request';
 import { acquireProcessingLockWithRetry, type ProcessingLockResult } from '@/lib/bepaid/processing-lock';
 import { fetchBePaidTransactionByUid, getBePaidCredentialsFromEnv } from '@/lib/bepaid/transactions';
-import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
+import { fulfillPurchaseRequestFromWebhook } from '@/lib/bepaid/webhook-fulfill';
 import { createVerify } from 'crypto';
 
 export const dynamic = 'force-dynamic';
@@ -173,9 +169,6 @@ export async function POST(request: Request) {
     const lockBlocked = bePaidLockToResponse(lockResult);
     if (lockBlocked) return lockBlocked;
 
-    const scenario = purchaseRequest.scenario || undefined;
-    const telegramId = purchaseRequest.telegram_id;
-
     if (lockResult.mode === 'recovery' && uid) {
       const ok = await verifyBePaidRecoveryTransaction(uid, tracking_id, expectedAmount);
       if (!ok) {
@@ -184,106 +177,20 @@ export async function POST(request: Request) {
     }
 
     try {
-      let atomicResult;
-      let fulfillLessons = 1;
-      let fulfillCourseContext: Awaited<ReturnType<typeof resolveCourseFulfillContext>> | null = null;
-
-      try {
-        const pricing = await getCabinetPricing();
-        const offer = await resolvePurchaseOffer(pricing, {
-          product: purchaseRequest.product,
-          packageIndex: purchaseRequest.package_index,
-          teacherId: purchaseRequest.teacher_id || undefined,
-          courseSlug: purchaseRequest.course_slug || undefined,
-        });
-
-        fulfillLessons =
-          purchaseRequest.lessons_count != null && purchaseRequest.lessons_count > 0
-            ? purchaseRequest.lessons_count
-            : offer.lessons;
-
-        if (offer.amountByn !== purchaseRequest.amount_byn) {
-          console.error('[bePaid webhook] Offer amount drift vs request', {
-            requestAmount: purchaseRequest.amount_byn,
-            offerAmount: offer.amountByn,
-          });
-          return NextResponse.json({ error: 'Price configuration mismatch' }, { status: 409 });
-        }
-
-        fulfillCourseContext = await resolveCourseFulfillContext(admin, purchaseRequest, scenario);
-
-        if (purchaseRequest.product === 'course' && !fulfillCourseContext.courseId) {
-          console.error('[bePaid webhook] Course purchase without resolvable course_id', {
-            requestId: purchaseRequest.id,
-            courseSlug: purchaseRequest.course_slug,
-          });
-          return NextResponse.json({ error: 'Course not resolved for payment' }, { status: 409 });
-        }
-
-        const { data, error } = await admin.rpc('fulfill_purchase_full', {
-          p_id: tracking_id,
-          p_expected_version: lockResult.version,
-          p_telegram_id: telegramId,
-          p_product: purchaseRequest.product,
-          p_amount_byn: purchaseRequest.amount_byn,
-          p_lessons: fulfillLessons,
-          p_title: purchaseRequest.title,
-          p_expires_at: null,
-          p_course_id: fulfillCourseContext.courseId,
-          p_scenario: scenario || null,
-          p_start_module_id: fulfillCourseContext.startModuleId,
-          p_start_lesson_id: fulfillCourseContext.startLessonId,
-          p_bepaid_transaction_uid: uid ?? null,
-        });
-        if (error) throw error;
-        atomicResult = data as { success: boolean; reason?: string; payment_id?: number; package_id?: number };
-      } catch (error) {
-        console.error('[bePaid webhook] Atomic fulfill failed:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
-        // Различаем типы ошибок
-        if (errorMessage.includes('different') || errorMessage.includes('conflict')) {
-          // Ошибка верификации данных — диагностическая ошибка
-          return NextResponse.json(
-            { error: 'Data verification failed', details: errorMessage },
-            { status: 409 }
-          );
-        }
-        
-        // Временная ошибка БД — можно повторить
-        return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+      const fulfillResult = await fulfillPurchaseRequestFromWebhook(
+        admin,
+        tracking_id,
+        lockResult.version ?? 0,
+        uid,
+      );
+      if (!fulfillResult.ok) {
+        return NextResponse.json(fulfillResult.body, { status: fulfillResult.status });
       }
-
-      if (!atomicResult.success) {
-        if (atomicResult.reason === 'already_approved') {
-          console.log('[bePaid webhook] Already approved');
-          return NextResponse.json({ ok: true, alreadyProcessed: true });
-        }
-        if (atomicResult.reason === 'stale_version') {
-          console.log('[bePaid webhook] Stale version, another handler owns the lock');
-          return NextResponse.json({ ok: true, status: 'retry_later' });
-        }
-        return NextResponse.json({ error: 'Unknown error', reason: atomicResult.reason }, { status: 500 });
-      }
-
-      if (atomicResult.package_id && purchaseRequest.product === 'course' && fulfillCourseContext) {
-        try {
-          await runCourseSideEffectsAfterFulfill(
-            admin,
-            purchaseRequest,
-            atomicResult.package_id,
-            fulfillLessons,
-            fulfillCourseContext,
-          );
-        } catch (sideEffectError) {
-          console.error('[bePaid webhook] Course side effects failed:', sideEffectError);
-          return NextResponse.json({ error: 'Post-fulfill error' }, { status: 500 });
-        }
-      }
-
       return NextResponse.json({
         ok: true,
-        packageId: atomicResult.package_id,
+        alreadyProcessed: fulfillResult.alreadyProcessed,
+        packageId: fulfillResult.packageId,
+        mode: fulfillResult.mode,
       });
     } catch (error) {
       console.error('[bePaid webhook fulfill]', error);

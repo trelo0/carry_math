@@ -130,13 +130,12 @@ async function showAppealsIncoming(
     return;
   }
 
-  const lines = ['📥 Входящие', ''];
+  const lines = ['📥 Входящие', '', 'Новые ответы — выберите обращение:'];
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   for (const item of items.slice(0, 12)) {
-    lines.push(`• ${item.title}`, `  ${formatDateTimeShort(item.at)}`, '');
     keyboard.push([
       {
-        text: item.title.slice(0, 58),
+        text: `${item.title.slice(0, 40)} · ${formatDateTimeShort(item.at)}`.slice(0, 60),
         callback_data: `cl:apl:open:${encodeURIComponent(item.key)}`,
       },
     ]);

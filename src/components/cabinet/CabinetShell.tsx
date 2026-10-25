@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from 'react';
 import type {
   CourseMapAccessState,
   HomeworkProgressStatus,
@@ -48,8 +56,17 @@ import { buildAchievementViews } from '@/lib/cabinet-achievements';
 import CabinetAchievementSlider from '@/components/cabinet/CabinetAchievementSlider';
 import CabinetAchievementToasts from '@/components/cabinet/CabinetAchievementToasts';
 import LessonPlayer from '@/components/cabinet/LessonPlayer';
+import CourseHomeworkPanel from '@/components/cabinet/CourseHomeworkPanel';
+import CourseCompleteModal from '@/components/cabinet/CourseCompleteModal';
+import CourseProgressModal from '@/components/cabinet/CourseProgressModal';
 import HomeworkRowChip from '@/components/cabinet/HomeworkRowChip';
 import { homeworkLockedActionHint, homeworkRowState } from '@/lib/cabinet-homework-row';
+import {
+  isCourseFullyCompleted,
+  markCourseCompleteSeen,
+  readCourseCompleteSeen,
+  summarizeCourseProgress,
+} from '@/lib/course-completion';
 import {
   buildRoadmapGeometry,
   buildRoadSegments,
@@ -451,9 +468,10 @@ function stopLabel(
 }
 
 function RoadRibbon({ d, tone }: { d: string; tone: RoadTone }) {
-  const s = ROAD_TONE_STYLE[tone];
-  const neon = tone === 'active';
   const future = tone === 'future';
+  const s = ROAD_TONE_STYLE[future ? 'future' : 'active'];
+  const neon = !future;
+  const isActive = tone === 'active';
   return (
     <g className={`cab-rm-ribbon is-${tone}`}>
       <path
@@ -468,7 +486,7 @@ function RoadRibbon({ d, tone }: { d: string; tone: RoadTone }) {
       />
       <path d={d} fill="none" stroke="rgba(0, 0, 0, 0.5)" strokeWidth="11" strokeLinecap="round" transform="translate(0, 2.6)" opacity={neon ? 0.55 : 0.32} />
       <path d={d} fill="none" stroke={s.ribbon} strokeWidth={neon ? 9 : 6.5} strokeLinecap="round" strokeLinejoin="round" />
-      {neon ? <path d={d} fill="none" stroke={s.rim} strokeWidth="10" strokeLinecap="round" opacity="0.42" /> : null}
+      {isActive ? <path d={d} fill="none" stroke={s.rim} strokeWidth="10" strokeLinecap="round" opacity="0.42" /> : null}
       <path d={d} fill="none" stroke="rgba(4, 10, 22, 0.72)" strokeWidth="4.6" strokeLinecap="round" />
       <path d={d} fill="none" stroke={s.core} strokeWidth={neon ? 1.8 : 1.35} strokeLinecap="round" />
       <path
@@ -575,10 +593,48 @@ function CourseRoadTrack({
   );
 }
 
-function RoadBeacon({ kind, x, y }: { kind: 'start' | 'finish'; x: number; y: number }) {
+function RoadBeacon({
+  kind,
+  x,
+  y,
+  celebrate,
+  onPress,
+}: {
+  kind: 'start' | 'finish';
+  x: number;
+  y: number;
+  celebrate?: boolean;
+  onPress?: () => void;
+}) {
   const isStart = kind === 'start';
+  const isFinish = kind === 'finish';
+  const clickable = isFinish && Boolean(onPress);
+  const finishLocked = isFinish && !celebrate;
+
+  const onKeyDown = (e: KeyboardEvent<SVGGElement>) => {
+    if (!onPress) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onPress();
+    }
+  };
+
+  const finishLabel = celebrate
+    ? 'Финиш — курс пройден, открыть поздравление'
+    : 'Финиш — прогресс курса';
+
   return (
-    <g className={`cab-rm-beacon is-${kind}`} transform={`translate(${x} ${y})`}>
+    <g
+      className={[
+        'cab-rm-beacon',
+        `is-${kind}`,
+        celebrate ? ' is-celebrate' : '',
+        finishLocked ? ' is-locked-finish' : '',
+      ]
+        .filter(Boolean)
+        .join('')}
+      transform={`translate(${x} ${y})`}
+    >
       <ellipse className="cab-rm-beacon-pad" cx="0" cy="12" rx="26" ry="8" />
       <circle className="cab-rm-beacon-halo" r="24" />
       <circle className="cab-rm-beacon-pulse" r="22" />
@@ -593,6 +649,18 @@ function RoadBeacon({ kind, x, y }: { kind: 'start' | 'finish'; x: number; y: nu
           {isStart ? 'СТАРТ' : 'ФИНИШ'}
         </text>
       </g>
+      {clickable ? (
+        <circle
+          className={`cab-rm-beacon-hit${celebrate ? ' is-celebrate' : ' is-locked-finish'}`}
+          r="22"
+          fill="transparent"
+          role="button"
+          tabIndex={0}
+          aria-label={finishLabel}
+          onClick={onPress}
+          onKeyDown={onKeyDown}
+        />
+      ) : null}
     </g>
   );
 }
@@ -648,6 +716,8 @@ function CourseMap({
   locked,
   allowLockedSelect,
   hasCourse = false,
+  courseCompleted = false,
+  onFinishPress,
   stops = [],
   modules = [],
 }: {
@@ -657,6 +727,8 @@ function CourseMap({
   /** Разрешить выбор закрытых остановок (просмотр структуры без доступа к контенту). */
   allowLockedSelect?: boolean;
   hasCourse?: boolean;
+  courseCompleted?: boolean;
+  onFinishPress?: () => void;
   stops?: CourseStop[];
   modules?: { name: string; color: string; count: number; about?: string }[];
 }) {
@@ -670,14 +742,23 @@ function CourseMap({
     : stops.findIndex((s) => s.isCurrent || s.status === 'now');
   const pathEndIndex = locked
     ? -1
-    : streamScheduleIndex >= 0
-      ? streamScheduleIndex
-      : studentHighlightIndex;
+    : courseCompleted
+      ? Math.max(0, stops.length - 1)
+      : (() => {
+          const stream = streamScheduleIndex >= 0 ? streamScheduleIndex : -1;
+          const student = studentHighlightIndex >= 0 ? studentHighlightIndex : -1;
+          if (stream < 0 && student < 0) return -1;
+          if (stream < 0) return student;
+          if (student < 0) return stream;
+          return Math.max(stream, student);
+        })();
   const highlightIndex =
-    locked || studentHighlightIndex < 0
-      ? -1
-      : pathEndIndex >= 0
-        ? Math.min(studentHighlightIndex, pathEndIndex)
+    locked || courseCompleted
+      ? courseCompleted
+        ? Math.max(0, stops.length - 1)
+        : -1
+      : studentHighlightIndex < 0
+        ? -1
         : studentHighlightIndex;
 
   const syncThumb = useCallback(() => {
@@ -745,10 +826,12 @@ function CourseMap({
   }
 
   return (
-    <div className={`cab-roadmap-frame${locked ? ' is-locked' : ''}`}>
+    <div
+      className={`cab-roadmap-frame${locked ? ' is-locked' : ''}${courseCompleted ? ' is-course-complete' : ''}`}
+    >
       <div className="cab-roadmap" id="cab-roadmap-scroll" ref={wrapRef} onScroll={syncThumb} aria-label="Путь по курсу">
         <div className="cab-roadmap-canvas" style={{ width: geometry.canvasW }}>
-          <svg className="cab-roadmap-svg" width={geometry.canvasW} height={geometry.canvasH} aria-hidden="true">
+          <svg className="cab-roadmap-svg" width={geometry.canvasW} height={geometry.canvasH}>
             <CourseRoadTrack
               pathEndIndex={pathEndIndex}
               highlightIndex={highlightIndex}
@@ -760,7 +843,13 @@ function CourseMap({
 
             <RoadModuleGaps geometry={geometry} stops={stops} modules={modules} />
             <RoadBeacon kind="start" x={geometry.rmStart.x} y={geometry.rmStart.y} />
-            <RoadBeacon kind="finish" x={geometry.rmFinish.x} y={geometry.rmFinish.y} />
+            <RoadBeacon
+              kind="finish"
+              x={geometry.rmFinish.x}
+              y={geometry.rmFinish.y}
+              celebrate={courseCompleted}
+              onPress={!locked && onFinishPress ? onFinishPress : undefined}
+            />
           </svg>
 
           {stops.map((s, i) => {
@@ -1581,8 +1670,13 @@ export default function CabinetShell({
   );
   const [courseSlice, setCourseSlice] = useState<CabinetCourseViewSlice | null>(null);
   const [courseSwitching, setCourseSwitching] = useState(false);
+  const [courseDescExpanded, setCourseDescExpanded] = useState(false);
   const [mapHydrating, setMapHydrating] = useState(false);
   const courseCacheRef = useRef<Map<string, CabinetCourseViewSlice>>(new Map());
+
+  useEffect(() => {
+    setCourseDescExpanded(false);
+  }, [activeCourseId]);
 
   useEffect(() => {
     if (hasCoursePayment(data)) return;
@@ -2086,6 +2180,36 @@ export default function CabinetShell({
     : emptyStopModule;
   const selectedCabinetStop = cabinetCourseStops.find((s) => s.id === stopId) ?? cabinetCourseStops[0];
   const hasCourse = courseState === 'full';
+  const courseCompleted = useMemo(() => {
+    if (cabinetCourseStops.length === 0) return false;
+    return isCourseFullyCompleted(cabinetCourseStops);
+  }, [cabinetCourseStops]);
+  const [courseCompleteOpen, setCourseCompleteOpen] = useState(false);
+  const [courseProgressOpen, setCourseProgressOpen] = useState(false);
+
+  const courseProgressSummary = useMemo(
+    () => summarizeCourseProgress(cabinetCourseStops),
+    [cabinetCourseStops],
+  );
+
+  const openCourseFinishModal = useCallback(() => {
+    if (cabinetCourseStops.length === 0) return;
+    if (courseCompleted) {
+      setCourseProgressOpen(false);
+      setCourseCompleteOpen(true);
+      return;
+    }
+    setCourseCompleteOpen(false);
+    setCourseProgressOpen(true);
+  }, [cabinetCourseStops.length, courseCompleted]);
+
+  useEffect(() => {
+    if (!hasCourse) return;
+    if (!courseCompleted || !activeCourseSlug) return;
+    if (readCourseCompleteSeen(data.phone, activeCourseSlug)) return;
+    setCourseCompleteOpen(true);
+    markCourseCompleteSeen(data.phone, activeCourseSlug);
+  }, [activeCourseSlug, courseCompleted, data.phone, hasCourse]);
 
   /* ——— Настройки профиля ——— */
   /* TEMP: класс и цель пока хранятся локально — для записи в базу потребуется
@@ -2387,7 +2511,26 @@ export default function CabinetShell({
                           <span className="cab-course-hero-title">{sanityText(courseName)}</span>
                         </div>
                         <h2>{sanityText(courseHeadline)}</h2>
-                        <p>{sanityText(courseDescription)}</p>
+                        {courseDescription && sanityText(courseDescription) ? (
+                          <>
+                            <p
+                              className={`cab-course-hero-desc${courseDescExpanded ? ' is-expanded' : ''}`}
+                            >
+                              {sanityText(courseDescription)}
+                            </p>
+                            <button
+                              type="button"
+                              className="cab-course-hero-desc-toggle"
+                              aria-expanded={courseDescExpanded}
+                              onClick={() => setCourseDescExpanded((open) => !open)}
+                            >
+                              {courseDescExpanded ? 'Свернуть описание' : 'Развернуть описание'}
+                              <span className="cab-course-hero-desc-toggle-arrow" aria-hidden="true">
+                                {courseDescExpanded ? '▴' : '▾'}
+                              </span>
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
                     <ul className="cab-course-hero-meta">
@@ -2457,6 +2600,10 @@ export default function CabinetShell({
                           onSelect={selectMapStop}
                           allowLockedSelect={hasCourse || courseState === 'enrolled_locked'}
                           hasCourse={hasCourse}
+                          courseCompleted={hasCourse && courseCompleted}
+                          onFinishPress={
+                            cabinetCourseStops.length > 0 ? openCourseFinishModal : undefined
+                          }
                           stops={mapCourseStops}
                           modules={courseModules}
                         />
@@ -2482,115 +2629,13 @@ export default function CabinetShell({
                   )}
 
                 {courseTab === 'homework' && (
-                  <div className="cab-hw-panel">
-                    <header className="cab-hw-head">
-                      <div className="cab-hw-head-main">
-                        <h3>
-                          <Icon d={ICONS.homework} />
-                          Домашние задания
-                        </h3>
-                        {homeworkIntro?.trim() ? (
-                          <p>{sanityText(homeworkIntro)}</p>
-                        ) : null}
-                      </div>
-                      <span className="cab-hw-info">
-                        <Icon d={ICONS.info} strokeWidth={1.6} />
-                        ДЗ открываются после прохождения вебинара
-                      </span>
-                    </header>
-                    <div className="cab-hw-list">
-                      {cabinetCourseStops.map((s) => {
-                        const mod = courseModules[s.module];
-                        const hw = homeworkRowState(s, hasCourse);
-                        return (
-                          <article key={s.id} className={`cab-hw-row is-${hw.tone}`}>
-                            <div className="cab-hw-index">
-                              <strong>{String(s.numInModule).padStart(2, '0')}</strong>
-                              <span>{`M${s.module + 1} · ${String(s.numInModule).padStart(2, '0')}`}</span>
-                            </div>
-                            <div className="cab-hw-thumb" aria-hidden="true">
-                              <i style={{ background: mod?.color ?? 'var(--cab-cyan)' }} />
-                            </div>
-                            <div className="cab-hw-body">
-                              <strong>{s.title}</strong>
-                              <p>
-                                <span>Вебинар</span>
-                                <span className="cab-hw-dot" aria-hidden="true">•</span>
-                                <span>{formatCabinetLessonDate(s.date)}</span>
-                              </p>
-                            </div>
-                            <div className="cab-hw-side">
-                              <HomeworkRowChip
-                                row={hw}
-                                isJoinArchive={s.isJoinArchive}
-                                homeworkStatus={s.homeworkStatus}
-                                homeworkDeadlineAt={s.homeworkDeadlineAt}
-                                homeworkRemainingMs={s.homeworkRemainingMs}
-                                homeworkOverdueAt={s.homeworkOverdueAt}
-                                trackDeadline={hasCourse && !(s.isTrialFree && !hasCourse)}
-                              />
-                              {hw.action === 'view' && s.sanityLessonId ? (
-                                <a
-                                  className="cab-hw-action is-active"
-                                  href={tgBotUrl(
-                                    buildCourseHomeworkStatusTelegramStart(s.sanityLessonId),
-                                  )}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={markHomeworkMapStale}
-                                >
-                                  <Icon d={ICONS.file} />
-                                  Посмотреть ответ
-                                  <Icon d={ICONS.chevron} />
-                                </a>
-                              ) : hw.action === 'view' ? (
-                                <span className="cab-hw-action is-locked">
-                                  <Icon d={ICONS.file} />
-                                  Посмотреть ответ
-                                </span>
-                              ) : hw.action === 'locked' ? (
-                                <span className="cab-hw-action is-locked">
-                                  <Icon d={ICONS.file} />
-                                  {homeworkLockedActionHint(hw.label, s)}
-                                </span>
-                              ) : hw.action === 'check_status' && s.sanityLessonId ? (
-                                <a
-                                  className="cab-hw-action is-active"
-                                  href={tgBotUrl(
-                                    buildCourseHomeworkStatusTelegramStart(s.sanityLessonId),
-                                  )}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={markHomeworkMapStale}
-                                >
-                                  <Icon d={ICONS.homework} />
-                                  Проверить статус
-                                  <Icon d={ICONS.chevron} />
-                                </a>
-                              ) : hw.action === 'submit' && s.sanityLessonId ? (
-                                <a
-                                  className="cab-hw-action is-active"
-                                  href={tgBotUrl(buildCourseHomeworkTelegramStart(s.sanityLessonId))}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={markHomeworkMapStale}
-                                >
-                                  <Icon d={ICONS.homework} />
-                                  Сдать ДЗ в Telegram
-                                  <Icon d={ICONS.chevron} />
-                                </a>
-                              ) : (
-                                <span className="cab-hw-action is-empty" aria-hidden="true" />
-                              )}
-                            </div>
-                          </article>
-                        );
-                      })}
-                      {!cabinetCourseStops.length && (
-                        <p className="cab-hw-empty">Домашние задания появятся вместе с программой курса.</p>
-                      )}
-                    </div>
-                  </div>
+                  <CourseHomeworkPanel
+                    modules={courseModules}
+                    stops={cabinetCourseStops}
+                    hasCourse={hasCourse}
+                    homeworkIntro={homeworkIntro ? sanityText(homeworkIntro, '') : null}
+                    onHomeworkInteraction={markHomeworkMapStale}
+                  />
                 )}
                 </section>
 
@@ -3298,6 +3343,18 @@ export default function CabinetShell({
           setSection('course');
           closePaymentResult();
         }}
+      />
+      <CourseCompleteModal
+        open={courseCompleteOpen}
+        courseTitle={sanityText(courseName, 'курс')}
+        studentName={profileName}
+        onClose={() => setCourseCompleteOpen(false)}
+      />
+      <CourseProgressModal
+        open={courseProgressOpen}
+        courseTitle={sanityText(courseName, 'курс')}
+        progress={courseProgressSummary}
+        onClose={() => setCourseProgressOpen(false)}
       />
     </div>
   );

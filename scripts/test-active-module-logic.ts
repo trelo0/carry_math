@@ -14,7 +14,11 @@ import {
   resolveStreamSchedulePointer,
   findFirstLessonInModule,
 } from '../src/lib/bot/education/active-module';
-import type { SanityLessonSessionRow } from '../src/lib/curator/lesson-session';
+import {
+  defaultWebinarSessionStatus,
+  resolveWebinarSessionStatus,
+  type SanityLessonSessionRow,
+} from '../src/lib/curator/lesson-session';
 
 function lesson(
   partial: Partial<CourseLessonContent> & { sanityId: string; lessonNumber: number },
@@ -30,7 +34,7 @@ function lesson(
     isTrialFree: partial.isTrialFree ?? false,
     scheduledAt: partial.scheduledAt ?? null,
     liveUrl: null,
-    recordingUrl: null,
+    recordingUrl: partial.recordingUrl ?? null,
     mandatoryHomework: true,
     homework: null,
     materials: [],
@@ -150,6 +154,37 @@ assert.equal(seq[0]?.sanityId, 'w1');
   assert.equal(ptr.activeModule?.sanityId, 'mod-m2');
   const m2 = twoModuleCourse.modules.find((m) => m.sanityId === 'mod-m2')!;
   assert.equal(findFirstLessonInModule(m2), 'w3');
+}
+
+// Прошедшая дата без строки в БД → completed, курсор на следующий вебинар
+{
+  const past = new Date('2026-10-05T12:00:00Z').toISOString();
+  const now = new Date('2026-10-21T12:00:00Z').getTime();
+  assert.equal(defaultWebinarSessionStatus(past, now), 'waiting');
+  assert.equal(resolveWebinarSessionStatus(past, null), 'waiting');
+  assert.equal(
+    resolveWebinarSessionStatus(past, null, 'https://cdn.example/rec.mp4'),
+    'completed',
+  );
+  const w1Past = lesson({
+    sanityId: 'w1',
+    lessonNumber: 1,
+    scheduledAt: past,
+    recordingUrl: 'https://cdn.example/w1.mp4',
+  });
+  const w2Future = lesson({
+    sanityId: 'w2',
+    lessonNumber: 2,
+    scheduledAt: new Date('2026-10-25T12:00:00Z').toISOString(),
+  });
+  const course = content([mod(0, [w1Past, w2Future], 'mod-m1')]);
+  const seqPast = buildPublishedLessonSequence(course);
+  assert.equal(findStreamCursorIndex(seqPast, new Map()), 1);
+  const w1NoRec = lesson({ sanityId: 'w1b', lessonNumber: 1, scheduledAt: past });
+  const seqStuck = buildPublishedLessonSequence(
+    content([mod(0, [w1NoRec, w2Future], 'mod-m1')]),
+  );
+  assert.equal(findStreamCursorIndex(seqStuck, new Map()), 0);
 }
 
 // activeModuleOverride не влияет на поток (только Sanity-поле для других сценариев)

@@ -1,0 +1,3 @@
+{
+  "/api/cron/broadcast-dispatch/route": "app/api/cron/broadcast-dispatch/route.js"
+}

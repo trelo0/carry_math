@@ -40,6 +40,7 @@ export async function completeScheduledLesson(
     throw new Error('Не удалось завершить занятие');
   }
   if (!updated.package_id) {
+    await afterLessonCompleted(admin, lessonId);
     return { consumed: false };
   }
 
@@ -72,7 +73,17 @@ export async function completeScheduledLesson(
     .eq('id', packageId);
   if (pkgUpdateError) throw pkgUpdateError;
 
+  await afterLessonCompleted(admin, lessonId);
   return { consumed: true };
+}
+
+async function afterLessonCompleted(admin: SupabaseClient, lessonId: number): Promise<void> {
+  try {
+    const { maybeNotifyTrialLessonCompleted } = await import('@/lib/bot/admin/trial-completion-notify');
+    await maybeNotifyTrialLessonCompleted(admin, lessonId);
+  } catch (error) {
+    console.error('[completeScheduledLesson] trial notify failed', error);
+  }
 }
 
 /** Отмена до проведения — урок не списывается. */

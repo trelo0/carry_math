@@ -408,21 +408,81 @@ export async function listCuratorThreads(
   return listStaffThreadsForRole(admin, curatorTelegramId, 'curator', limit);
 }
 
+/** Переписка куратора только по ученикам и course_id выбранного курса. */
+export async function listCuratorThreadsForCourse(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+  courseId: number,
+  limit = 30,
+): Promise<{ threads: StaffThreadSummary[]; storageEnabled: boolean }> {
+  const { listCourseStudentTelegramIds } = await import('@/lib/curator/students');
+  const allowed = new Set(await listCourseStudentTelegramIds(admin, courseId));
+  try {
+    const { data, error } = await admin
+      .from('staff_student_messages')
+      .select('student_telegram_id, body, created_at, direction, staff_read_at, course_id')
+      .eq('staff_telegram_id', curatorTelegramId)
+      .eq('staff_role', 'curator')
+      .or(`course_id.eq.${courseId},course_id.is.null`)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error && isCourseIdColumnError(error)) {
+      return listCuratorThreads(admin, curatorTelegramId, limit);
+    }
+    if (error) throw error;
+    const rows = (data ?? []).filter((row) => allowed.has(row.student_telegram_id as number));
+    const byStudent = new Map<number, StaffThreadSummary>();
+    for (const row of rows) {
+      const studentId = row.student_telegram_id as number;
+      if (byStudent.has(studentId)) continue;
+      byStudent.set(studentId, {
+        studentTelegramId: studentId,
+        studentLabel: '',
+        unreadCount: 0,
+        lastBody: String(row.body ?? ''),
+        lastAt: row.created_at as string,
+        lastDirection: row.direction as StaffThreadSummary['lastDirection'],
+      });
+    }
+    for (const row of rows) {
+      const studentId = row.student_telegram_id as number;
+      const t = byStudent.get(studentId);
+      if (!t) continue;
+      if (row.direction === 'student_to_staff' && !row.staff_read_at) {
+        t.unreadCount += 1;
+      }
+    }
+    const threads: StaffThreadSummary[] = [];
+    for (const t of byStudent.values()) {
+      t.studentLabel = await staffStudentLabel(admin, t.studentTelegramId);
+      threads.push(t);
+    }
+    threads.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+    return { threads: threads.slice(0, limit), storageEnabled: true };
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { threads: [], storageEnabled: false };
+  }
+}
+
 export async function loadCuratorThreadMessages(
   admin: SupabaseClient,
   curatorTelegramId: number,
   studentTelegramId: number,
   limit = 25,
+  courseId?: number | null,
 ): Promise<{ messages: StaffMessageRow[]; storageEnabled: boolean }> {
   try {
-    const { data, error } = await admin
+    let q = admin
       .from('staff_student_messages')
       .select('*')
       .eq('staff_telegram_id', curatorTelegramId)
       .eq('staff_role', 'curator')
-      .eq('student_telegram_id', studentTelegramId)
-      .order('created_at', { ascending: true })
-      .limit(limit);
+      .eq('student_telegram_id', studentTelegramId);
+    if (courseId != null) {
+      q = q.or(`course_id.eq.${courseId},course_id.is.null`);
+    }
+    const { data, error } = await q.order('created_at', { ascending: true }).limit(limit);
     if (error) throw error;
     return { messages: (data ?? []).map((r) => mapRow(r as Record<string, unknown>)), storageEnabled: true };
   } catch (error) {

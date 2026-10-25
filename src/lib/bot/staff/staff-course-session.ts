@@ -89,8 +89,7 @@ export function workspaceWelcomeText(ws: StaffCourseWorkspace): string {
   return (
     `🎓 ${ws.courseTitle}\n\n` +
     `Режим: ${roleLabel}.\n` +
-    'Все разделы меню ниже относятся только к этому курсу.\n\n' +
-    '«⬅️ Все курсы» — вернуться к списку назначений.'
+    'Разделы меню ниже относятся только к этому курсу.'
   );
 }
 
@@ -120,6 +119,11 @@ export async function enterStaffCourseWorkspace(
     text: workspaceWelcomeText(ws),
     reply_markup: staffCourseWorkspaceReplyKeyboard(ws.role),
   });
+
+  if (ws.role === 'check') {
+    const { sendCheckSectionForCourse } = await import('@/lib/bot/check/check-flow');
+    await sendCheckSectionForCourse(admin, chatId, telegramId, 'home', ws.courseId);
+  }
 }
 
 /** Сброс диалога (поиск/доработка/ответ) без выхода из курса. */
@@ -160,9 +164,22 @@ export async function exitStaffCourseWorkspace(
 ): Promise<void> {
   await clearStateIfAvailable(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
+  const { resolveStaffBotMode } = await import('./staff-menu');
+  const mode = resolveStaffBotMode(caps);
+  if (mode === 'combined' || mode === 'teacher_only') {
+    const { sendCombinedStaffStart } = await import('./staff-combined-flow');
+    if (mode === 'combined') {
+      await sendCombinedStaffStart(admin, chatId, telegramId);
+      return;
+    }
+    const { sendTeacherStart } = await import('@/lib/bot/teacher/teacherFlow');
+    await sendTeacherStart(admin, chatId, telegramId);
+    return;
+  }
+  const { STAFF_COURSE_HOME_TEXT } = await import('./staff-course-hub-flow');
   await telegramSend('sendMessage', {
     chat_id: chatId,
-    text: '🎓 Управление курсами\n\nВыберите курс или другой раздел меню.',
+    text: STAFF_COURSE_HOME_TEXT,
     reply_markup: staffGlobalReplyKeyboard(caps),
   });
 }

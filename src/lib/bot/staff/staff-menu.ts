@@ -39,7 +39,7 @@ export const CHECK_BOT_MENU_LABELS = {
 export const CHECK_BOT_MENU_LABEL_SET = new Set<string>(Object.values(CHECK_BOT_MENU_LABELS));
 
 export const STAFF_COURSE_MANAGEMENT_LABEL = '🎓 Управление курсами';
-export const STAFF_EXIT_ALL_COURSES_LABEL = '⬅️ Все курсы';
+export const STAFF_EXIT_ALL_COURSES_LABEL = '⬅️ На главную';
 
 export const COMBINED_STAFF_MENU_LABELS = {
   schedule: '📅 Расписание',
@@ -77,10 +77,14 @@ export function staffCourseWorkspaceReplyKeyboard(role: 'curator' | 'check'): Re
   if (role === 'curator') {
     return {
       keyboard: [
-        [{ text: CURATOR_BOT_MENU_LABELS.schedule }],
-        [{ text: CURATOR_BOT_MENU_LABELS.lessons }],
-        [{ text: CURATOR_BOT_MENU_LABELS.students }],
-        [{ text: STAFF_EXIT_ALL_COURSES_LABEL }],
+        [
+          { text: CURATOR_BOT_MENU_LABELS.schedule },
+          { text: CURATOR_BOT_MENU_LABELS.lessons },
+        ],
+        [
+          { text: CURATOR_BOT_MENU_LABELS.students },
+          { text: STAFF_EXIT_ALL_COURSES_LABEL },
+        ],
         [{ text: CURATOR_BOT_MENU_LABELS.cabinet }],
       ],
       resize_keyboard: true,

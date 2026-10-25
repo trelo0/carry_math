@@ -1,0 +1,6 @@
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,713323,e=>{"use strict";var t=e.i(118915);let a="cl:ntf:close";function i(e){return{inline_keyboard:[...e??[],[{text:"Закрыть",callback_data:a}]]}}function n(e){return i([[{text:"Посмотреть результат",callback_data:`cl:chw:rev:${e}`}]])}async function l(e,t){let{data:a}=await e.from("bot_members").select("chat_id").eq("telegram_id",t).maybeSingle();return a?.chat_id}async function c(e,a,n,c){let s=await l(e,a);s&&await (0,t.telegramSend)("sendMessage",{chat_id:s,text:n,reply_markup:i(c)})}async function s(e,t,a){let i=a.sanityLessonId?[[{text:"Проверить статус",callback_data:`cl:chw:stat:${a.sanityLessonId}`}]]:void 0;await c(e,t,`✅ ДЗ №${a.lessonNumber} \xab${a.title}\xbb отправлено на проверку.
+
+Ответ придёт в Telegram.`,i)}async function o(e,a,n){let c=await l(e,a);if(!c)return;let s=null!=n.livesMax?` из ${n.livesMax}`:"",o=n.courseTitle?.trim()?`
+🎓 ${n.courseTitle.trim()}`:"";await (0,t.telegramSend)("sendMessage",{chat_id:c,text:`❤️ Снята 1 жизнь за просрочку или невыполнение ДЗ.${o}
+
+Осталось жизней: ${n.livesLeft}${s}.`,reply_markup:i()})}e.s(["STUDENT_NTF_CLOSE",0,a,"homeworkReviewNotifyKeyboard",()=>n,"notifyStudentHomeworkSubmitted",()=>s,"notifyStudentLifeDeducted",()=>o,"sendStudentInfoPush",()=>c,"studentNotifyKeyboard",()=>i])}]);

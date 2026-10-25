@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/curator/lessons/[sanityLessonId]/files/route": "app/api/cabinet/curator/lessons/[sanityLessonId]/files/route.js"
+}

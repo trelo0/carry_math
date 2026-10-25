@@ -94,11 +94,13 @@ export async function resolveStudentCourseContext(
     .order('started_at', { ascending: false });
   if (error) throw error;
 
-  for (const row of enrollments ?? []) {
-    const courseId = row.course_id as number;
-    const slug = (row.courses as { slug?: string } | null)?.slug;
+  const rows = enrollments ?? [];
+  if (rows.length === 1) {
+    const courseId = rows[0]!.course_id as number;
+    const slug = (rows[0]!.courses as { slug?: string } | null)?.slug;
     if (courseId && slug) return { courseId, slug };
   }
+  if (rows.length > 1) return null;
 
   return null;
 }

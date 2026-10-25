@@ -1,0 +1,593 @@
+{
+  "version": 3,
+  "pages404": true,
+  "appType": "app",
+  "caseSensitive": false,
+  "basePath": "",
+  "redirects": [
+    {
+      "source": "/:path+/",
+      "destination": "/:path+",
+      "internal": true,
+      "priority": true,
+      "statusCode": 308,
+      "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$"
+    }
+  ],
+  "headers": [],
+  "rewrites": {
+    "beforeFiles": [],
+    "afterFiles": [],
+    "fallback": []
+  },
+  "dynamicRoutes": [
+    {
+      "page": "/api/cabinet/booking/requests/[id]/cancel",
+      "regex": "^/api/cabinet/booking/requests/([^/]+?)/cancel(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/api/cabinet/booking/requests/(?<nxtPid>[^/]+?)/cancel(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/homework/submit",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/homework/submit(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/homework/submit(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/homework/upload",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/homework/upload(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/homework/upload(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/material-open",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/material\\-open(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/material\\-open(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/watch-live",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/watch\\-live(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/watch\\-live(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/watch-progress",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/watch\\-progress(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/watch\\-progress(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/lessons/[sanityLessonId]/watch-recording",
+      "regex": "^/api/cabinet/course/lessons/([^/]+?)/watch\\-recording(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/course/lessons/(?<nxtPsanityLessonId>[^/]+?)/watch\\-recording(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/lessons/[sanityLessonId]",
+      "regex": "^/api/cabinet/curator/lessons/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/curator/lessons/(?<nxtPsanityLessonId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/lessons/[sanityLessonId]/files",
+      "regex": "^/api/cabinet/curator/lessons/([^/]+?)/files(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/curator/lessons/(?<nxtPsanityLessonId>[^/]+?)/files(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/lessons/[sanityLessonId]/notify",
+      "regex": "^/api/cabinet/curator/lessons/([^/]+?)/notify(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/curator/lessons/(?<nxtPsanityLessonId>[^/]+?)/notify(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/lessons/[sanityLessonId]/session",
+      "regex": "^/api/cabinet/curator/lessons/([^/]+?)/session(?:/)?$",
+      "routeKeys": {
+        "nxtPsanityLessonId": "nxtPsanityLessonId"
+      },
+      "namedRegex": "^/api/cabinet/curator/lessons/(?<nxtPsanityLessonId>[^/]+?)/session(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/students/[telegramId]/deduct-life",
+      "regex": "^/api/cabinet/curator/students/([^/]+?)/deduct\\-life(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/curator/students/(?<nxtPtelegramId>[^/]+?)/deduct\\-life(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/students/[telegramId]/life-events",
+      "regex": "^/api/cabinet/curator/students/([^/]+?)/life\\-events(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/curator/students/(?<nxtPtelegramId>[^/]+?)/life\\-events(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/students/[telegramId]/message",
+      "regex": "^/api/cabinet/curator/students/([^/]+?)/message(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/curator/students/(?<nxtPtelegramId>[^/]+?)/message(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/students/[telegramId]/restore-life",
+      "regex": "^/api/cabinet/curator/students/([^/]+?)/restore\\-life(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/curator/students/(?<nxtPtelegramId>[^/]+?)/restore\\-life(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/students/[telegramId]/unfreeze",
+      "regex": "^/api/cabinet/curator/students/([^/]+?)/unfreeze(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/curator/students/(?<nxtPtelegramId>[^/]+?)/unfreeze(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/lessons/[lessonId]/files/[fileId]",
+      "regex": "^/api/cabinet/lessons/([^/]+?)/files/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId",
+        "nxtPfileId": "nxtPfileId"
+      },
+      "namedRegex": "^/api/cabinet/lessons/(?<nxtPlessonId>[^/]+?)/files/(?<nxtPfileId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/groups/[groupId]",
+      "regex": "^/api/cabinet/teacher/groups/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPgroupId": "nxtPgroupId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/groups/(?<nxtPgroupId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/groups/[groupId]/notes",
+      "regex": "^/api/cabinet/teacher/groups/([^/]+?)/notes(?:/)?$",
+      "routeKeys": {
+        "nxtPgroupId": "nxtPgroupId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/groups/(?<nxtPgroupId>[^/]+?)/notes(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/cancel",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/cancel(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/cancel(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/homework",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/homework(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/homework(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/homework/review",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/homework/review(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/homework/review(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/materials",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/materials(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/materials(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/materials/[materialId]",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/materials/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId",
+        "nxtPmaterialId": "nxtPmaterialId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/materials/(?<nxtPmaterialId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/reschedule",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/reschedule(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/reschedule(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/lessons/[lessonId]/status",
+      "regex": "^/api/cabinet/teacher/lessons/([^/]+?)/status(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/lessons/(?<nxtPlessonId>[^/]+?)/status(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/students/[telegramId]/notes",
+      "regex": "^/api/cabinet/teacher/students/([^/]+?)/notes(?:/)?$",
+      "routeKeys": {
+        "nxtPtelegramId": "nxtPtelegramId"
+      },
+      "namedRegex": "^/api/cabinet/teacher/students/(?<nxtPtelegramId>[^/]+?)/notes(?:/)?$"
+    },
+    {
+      "page": "/cabinet/lesson/[lessonId]",
+      "regex": "^/cabinet/lesson/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPlessonId": "nxtPlessonId"
+      },
+      "namedRegex": "^/cabinet/lesson/(?<nxtPlessonId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/studio/[[...tool]]",
+      "regex": "^/studio(?:/(.+?))?(?:/)?$",
+      "routeKeys": {
+        "nxtPtool": "nxtPtool"
+      },
+      "namedRegex": "^/studio(?:/(?<nxtPtool>.+?))?(?:/)?$"
+    }
+  ],
+  "staticRoutes": [
+    {
+      "page": "/",
+      "regex": "^/(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/(?:/)?$"
+    },
+    {
+      "page": "/_global-error",
+      "regex": "^/_global\\-error(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_global\\-error(?:/)?$"
+    },
+    {
+      "page": "/_not-found",
+      "regex": "^/_not\\-found(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/account",
+      "regex": "^/account(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/account(?:/)?$"
+    },
+    {
+      "page": "/api/auth/otp/request",
+      "regex": "^/api/auth/otp/request(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/auth/otp/request(?:/)?$"
+    },
+    {
+      "page": "/api/auth/otp/verify",
+      "regex": "^/api/auth/otp/verify(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/auth/otp/verify(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/booking/requests",
+      "regex": "^/api/cabinet/booking/requests(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/booking/requests(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/booking/slots",
+      "regex": "^/api/cabinet/booking/slots(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/booking/slots(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/enroll",
+      "regex": "^/api/cabinet/course/enroll(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/course/enroll(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/map-progress",
+      "regex": "^/api/cabinet/course/map\\-progress(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/course/map\\-progress(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/course/view",
+      "regex": "^/api/cabinet/course/view(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/course/view(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/data",
+      "regex": "^/api/cabinet/curator/data(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/curator/data(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/homework/approve",
+      "regex": "^/api/cabinet/curator/homework/approve(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/curator/homework/approve(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/curator/homework/reject",
+      "regex": "^/api/cabinet/curator/homework/reject(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/curator/homework/reject(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/lessons/schedule",
+      "regex": "^/api/cabinet/lessons/schedule(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/lessons/schedule(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/profile",
+      "regex": "^/api/cabinet/profile(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/profile(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/purchase/fulfill",
+      "regex": "^/api/cabinet/purchase/fulfill(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/purchase/fulfill(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/staff/data",
+      "regex": "^/api/cabinet/staff/data(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/staff/data(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/staff/teacher-data",
+      "regex": "^/api/cabinet/staff/teacher\\-data(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/staff/teacher\\-data(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/day-slots",
+      "regex": "^/api/cabinet/teacher/day\\-slots(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/teacher/day\\-slots(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/groups",
+      "regex": "^/api/cabinet/teacher/groups(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/teacher/groups(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/reschedule",
+      "regex": "^/api/cabinet/teacher/reschedule(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/teacher/reschedule(?:/)?$"
+    },
+    {
+      "page": "/api/cabinet/teacher/schedule",
+      "regex": "^/api/cabinet/teacher/schedule(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cabinet/teacher/schedule(?:/)?$"
+    },
+    {
+      "page": "/api/cron/broadcast-dispatch",
+      "regex": "^/api/cron/broadcast\\-dispatch(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cron/broadcast\\-dispatch(?:/)?$"
+    },
+    {
+      "page": "/api/cron/homework-deadlines",
+      "regex": "^/api/cron/homework\\-deadlines(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cron/homework\\-deadlines(?:/)?$"
+    },
+    {
+      "page": "/api/cron/lives-monthly-restore",
+      "regex": "^/api/cron/lives\\-monthly\\-restore(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cron/lives\\-monthly\\-restore(?:/)?$"
+    },
+    {
+      "page": "/api/cron/webinar-reminders",
+      "regex": "^/api/cron/webinar\\-reminders(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/cron/webinar\\-reminders(?:/)?$"
+    },
+    {
+      "page": "/api/debug/env-status",
+      "regex": "^/api/debug/env\\-status(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/debug/env\\-status(?:/)?$"
+    },
+    {
+      "page": "/api/draft-mode/disable",
+      "regex": "^/api/draft\\-mode/disable(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/draft\\-mode/disable(?:/)?$"
+    },
+    {
+      "page": "/api/draft-mode/enable",
+      "regex": "^/api/draft\\-mode/enable(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/draft\\-mode/enable(?:/)?$"
+    },
+    {
+      "page": "/api/payments/create-token",
+      "regex": "^/api/payments/create\\-token(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/payments/create\\-token(?:/)?$"
+    },
+    {
+      "page": "/api/payments/webhook",
+      "regex": "^/api/payments/webhook(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/payments/webhook(?:/)?$"
+    },
+    {
+      "page": "/api/revalidate",
+      "regex": "^/api/revalidate(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/revalidate(?:/)?$"
+    },
+    {
+      "page": "/api/submit",
+      "regex": "^/api/submit(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/submit(?:/)?$"
+    },
+    {
+      "page": "/api/telegram/webhook",
+      "regex": "^/api/telegram/webhook(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/telegram/webhook(?:/)?$"
+    },
+    {
+      "page": "/auth/cabinet",
+      "regex": "^/auth/cabinet(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/auth/cabinet(?:/)?$"
+    },
+    {
+      "page": "/cabinet",
+      "regex": "^/cabinet(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet(?:/)?$"
+    },
+    {
+      "page": "/cabinet/checkout",
+      "regex": "^/cabinet/checkout(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet/checkout(?:/)?$"
+    },
+    {
+      "page": "/cabinet/curator",
+      "regex": "^/cabinet/curator(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet/curator(?:/)?$"
+    },
+    {
+      "page": "/cabinet/pick",
+      "regex": "^/cabinet/pick(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet/pick(?:/)?$"
+    },
+    {
+      "page": "/cabinet/staff",
+      "regex": "^/cabinet/staff(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet/staff(?:/)?$"
+    },
+    {
+      "page": "/cabinet-preview",
+      "regex": "^/cabinet\\-preview(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/cabinet\\-preview(?:/)?$"
+    },
+    {
+      "page": "/favicon.ico",
+      "regex": "^/favicon\\.ico(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/favicon\\.ico(?:/)?$"
+    },
+    {
+      "page": "/individual",
+      "regex": "^/individual(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/individual(?:/)?$"
+    },
+    {
+      "page": "/login",
+      "regex": "^/login(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/login(?:/)?$"
+    },
+    {
+      "page": "/opengraph-image",
+      "regex": "^/opengraph\\-image(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/opengraph\\-image(?:/)?$"
+    },
+    {
+      "page": "/privacy-policy",
+      "regex": "^/privacy\\-policy(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/privacy\\-policy(?:/)?$"
+    },
+    {
+      "page": "/public-offer",
+      "regex": "^/public\\-offer(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/public\\-offer(?:/)?$"
+    },
+    {
+      "page": "/register",
+      "regex": "^/register(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/register(?:/)?$"
+    },
+    {
+      "page": "/robots.txt",
+      "regex": "^/robots\\.txt(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/robots\\.txt(?:/)?$"
+    },
+    {
+      "page": "/sitemap.xml",
+      "regex": "^/sitemap\\.xml(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/sitemap\\.xml(?:/)?$"
+    }
+  ],
+  "dataRoutes": [],
+  "rsc": {
+    "header": "rsc",
+    "varyHeader": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "prefetchHeader": "next-router-prefetch",
+    "didPostponeHeader": "x-nextjs-postponed",
+    "contentTypeHeader": "text/x-component",
+    "suffix": ".rsc",
+    "prefetchSegmentHeader": "next-router-segment-prefetch",
+    "prefetchSegmentSuffix": ".segment.rsc",
+    "prefetchSegmentDirSuffix": ".segments",
+    "clientParamParsing": false,
+    "dynamicRSCPrerender": false
+  },
+  "rewriteHeaders": {
+    "pathHeader": "x-nextjs-rewritten-path",
+    "queryHeader": "x-nextjs-rewritten-query"
+  }
+}

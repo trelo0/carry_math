@@ -110,7 +110,8 @@ function lessonReadyForSubmit(
   if (lesson.lessonType === 'webinar') {
     return homeworkWebinarOpened(progress);
   }
-  const effective = sessionStatus ?? resolveWebinarSessionStatus(lesson.scheduledAt, null);
+  const effective =
+    sessionStatus ?? resolveWebinarSessionStatus(lesson.scheduledAt, null, lesson.recordingUrl);
   if (effective !== 'completed' && !hasWatchedProgress(progress)) return false;
   return true;
 }

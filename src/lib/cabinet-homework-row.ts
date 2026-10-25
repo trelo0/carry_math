@@ -56,10 +56,7 @@ export function homeworkLockedActionHint(label: string, stop?: CabinetCourseStop
     if (stop?.kind === 'webinar' && !webinarDone) {
       return 'Откроется после вебинара';
     }
-    if (stop?.isFirstChainGate) {
-      return 'После предыдущего занятия';
-    }
-    return 'Откроется после вебинара';
+    return 'После предыдущего';
   }
   return 'Откроется после вебинара';
 }

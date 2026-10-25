@@ -85,10 +85,7 @@ async function resolveCourseIdForMentorQuestion(
 
   const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
   if (enrollments.length === 1) return enrollments[0]!.courseId;
-  if (enrollments.length === 0) {
-    const ctx = await resolveStudentCourseContext(admin, telegramId, null);
-    return ctx?.courseId ?? null;
-  }
+  if (enrollments.length === 0) return null;
   return null;
 }
 
@@ -176,9 +173,15 @@ async function finalizeMentorQuestionStart(
   let staffRole: StaffMessageRole | undefined;
 
   if (courseId != null) {
-    const checker = await getStudentCheckStaff(admin, telegramId, courseId);
-    mentor = checker;
-    if (checker) staffRole = 'check';
+    if (options.homework) {
+      const checker = await getStudentCheckStaff(admin, telegramId, courseId);
+      mentor = checker;
+      if (checker) staffRole = 'check';
+    } else {
+      const curator = await getStudentCurator(admin, telegramId, { courseId });
+      mentor = curator;
+      if (curator) staffRole = 'curator';
+    }
   } else {
     const teacher = await getStudentTeacher(admin, telegramId, mentorCourseOpts);
     const curator = await getStudentCurator(admin, telegramId, mentorCourseOpts);
@@ -319,6 +322,18 @@ export async function beginStudentMentorQuestion(
   }
 
   const courseId = await resolveCourseIdForMentorQuestion(admin, telegramId, options);
+  if (needsCourse && courseId == null) {
+    const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
+    if (enrollments.length > 1) {
+      await promptCoursePickerForMentor(admin, telegramId, chatId, options);
+      return;
+    }
+    await sendAdminMessage(
+      chatId,
+      'Не удалось определить курс. Оформите доступ к курсу или выберите курс в меню.',
+    );
+    return;
+  }
   let courseSlug = options.courseSlug ?? null;
   if (courseId != null && !courseSlug) {
     const enrollments = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);

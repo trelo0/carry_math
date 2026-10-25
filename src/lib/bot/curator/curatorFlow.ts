@@ -23,7 +23,8 @@ import {
   isCuratorNotificationRead,
   listCuratorStudentLabel,
   listCuratorSubmissionNotifications,
-  loadCuratorStudents,
+  loadCuratorStudentsForBot,
+  resolveCuratorBotCourseScope,
   markCuratorNotificationRead,
   summarizeCuratorStudent,
   summarizeCuratorStudents,
@@ -34,7 +35,7 @@ import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { loadStaffCapabilities } from '../staff/capabilities';
 import {
   deliverStaffToStudent,
-  listCuratorThreads,
+  listCuratorThreadsForCourse,
   loadCuratorThreadMessages,
   markCuratorThreadRead,
   staffStudentLabel,
@@ -146,7 +147,7 @@ async function curatorHomeworkCourseOptions(
 
 export { STAFF_CURATOR_REPLY_STEP } from '../staff/staff-steps';
 
-type CuratorReplyPayload = AdminPayload & { studentTelegramId?: number };
+type CuratorReplyPayload = AdminPayload & { studentTelegramId?: number; courseId?: number };
 
 export const CURATOR_MENU_LABELS = CURATOR_BOT_MENU_LABELS;
 
@@ -223,6 +224,15 @@ async function beginCuratorReply(
   chatId: number,
   studentTelegramId: number,
 ): Promise<void> {
+  const scope = await resolveCuratorBotCourseScope(admin, curatorTelegramId);
+  if (scope) {
+    const { isStudentOnCourse } = await import('../education/student-course-context');
+    const onCourse = await isStudentOnCourse(admin, studentTelegramId, scope.courseId);
+    if (!onCourse) {
+      await sendAdminMessage(chatId, 'Ученик не на выбранном курсе.');
+      return;
+    }
+  }
   await clearConflictingStaffStates(admin, curatorTelegramId, 'curator_reply');
   try {
     await saveState(
@@ -230,7 +240,7 @@ async function beginCuratorReply(
       curatorTelegramId,
       { chatId, messageId: 0 },
       STAFF_CURATOR_REPLY_STEP as never,
-      { studentTelegramId } as never,
+      { studentTelegramId, courseId: scope?.courseId } as never,
     );
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
@@ -686,17 +696,54 @@ export async function handleCuratorMessage(
       return true;
     }
     try {
+      const courseId = payload.courseId ?? (await resolveCuratorBotCourseScope(admin, telegramId))?.courseId;
       await deliverStaffToStudent(admin, {
         staffTelegramId: telegramId,
         staffRole: 'curator',
         studentTelegramId: studentId,
         body: text.trim(),
+        courseId: courseId ?? null,
       });
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, '✅ Сообщение отправлено ученику.');
     } catch (error) {
       await sendAdminMessage(chatId, error instanceof Error ? error.message : 'Не удалось отправить.');
     }
+    return true;
+  }
+
+  if (state && step === (await import('@/lib/bot/staff/staff-steps')).CURATOR_STU_SEARCH_STEP) {
+    const payload = state.payload as { courseId?: number };
+    const courseId = payload.courseId;
+    if (isStaffMenuLabel(text, caps)) {
+      await clearStateIfAvailable(admin, telegramId);
+      return false;
+    }
+    if (/^отмена$/i.test(text.trim()) || !courseId) {
+      await clearStateIfAvailable(admin, telegramId);
+      const { sendCuratorSectionForCourse } = await import('@/lib/bot/staff/curator-bot-handlers');
+      await sendCuratorSectionForCourse(admin, chatId, telegramId, 'stu', courseId!);
+      return true;
+    }
+    const { setCuratorStudentSearchQuery } = await import('@/lib/bot/staff/curator-bot-handlers');
+    setCuratorStudentSearchQuery(courseId, telegramId, text.trim());
+    await clearStateIfAvailable(admin, telegramId);
+    const { loadCuratorBotCabinet, assertCuratorCourseAccess } = await import(
+      '@/lib/bot/staff/curator-bot-access'
+    );
+    const ctx = await assertCuratorCourseAccess(admin, telegramId, courseId);
+    const loaded = await loadCuratorBotCabinet(admin, telegramId, courseId);
+    if (!loaded || !ctx) return true;
+    const { loadCuratorCourseStudents } = await import('@/lib/curator/students');
+    const { renderCuratorStudentsList } = await import('@/lib/bot/staff/curator-bot-screens');
+    const { students } = await loadCuratorCourseStudents(admin, telegramId, {
+      courseId,
+      courseSlug: ctx.slug,
+    });
+    const q = text.trim().toLowerCase();
+    const filtered = students.filter((s) => s.name.toLowerCase().includes(q));
+    const screen = renderCuratorStudentsList(courseId, loaded.data.courseTitle, filtered);
+    await sendAdminMessage(chatId, screen.text, screen.keyboard);
     return true;
   }
 
@@ -716,7 +763,11 @@ export async function handleCuratorMessage(
     }
     if (/^отмена$/i.test(text.trim())) {
       await clearStateIfAvailable(admin, telegramId);
-      await sendAdminMessage(chatId, 'Назначение даты отменено.');
+      const courseId = payload.courseId;
+      if (courseId != null) {
+        const { sendCuratorSectionForCourse } = await import('@/lib/bot/staff/curator-bot-handlers');
+        await sendCuratorSectionForCourse(admin, chatId, telegramId, 'cal', courseId);
+      }
       return true;
     }
     const parsed = parseCuratorScheduleInput(text);
@@ -727,36 +778,54 @@ export async function handleCuratorMessage(
       );
       return true;
     }
+    const when = formatLessonDateTimeRu(parsed.scheduledAtIso);
     try {
-      await applyCuratorLessonSchedule(
+      const { CURATOR_SCHEDULE_CONFIRM_STEP } = await import('@/lib/bot/staff/staff-steps');
+      await saveState(
         admin,
-        sanityLessonId,
-        parsed.scheduledAtIso,
-        parsed.lessonDate,
-      );
-      await clearStateIfAvailable(admin, telegramId);
-      const when = formatLessonDateTimeRu(parsed.scheduledAtIso);
-      const courseId = payload.courseId;
-      const backCal = courseId != null ? `c:cal:${courseId}` : 'c:hub';
-      await sendAdminMessage(
-        chatId,
-        `✅ Дата сохранена в Sanity и на сайте.\n\n` +
-          `${payload.lessonTitle ?? 'Урок'}\n${when}`,
+        telegramId,
+        { chatId, messageId: 0 },
+        CURATOR_SCHEDULE_CONFIRM_STEP as never,
         {
-          inline_keyboard: [
-            ...(courseId != null
-              ? [[{ text: '📅 Расписание курса', callback_data: backCal }]]
-              : []),
-            [{ text: '🏠 Главная', callback_data: 'c:hub' }],
-          ],
-        },
+          ...payload,
+          pendingScheduledAtIso: parsed.scheduledAtIso,
+          pendingLessonDate: parsed.lessonDate,
+        } as never,
       );
     } catch (error) {
-      await sendAdminMessage(
-        chatId,
-        error instanceof Error ? error.message : 'Не удалось сохранить дату.',
-      );
+      if (!isConversationStateTableError(error)) throw error;
     }
+    const courseId = payload.courseId;
+    const lessonNum = payload.lessonNumber;
+    await sendAdminMessage(
+      chatId,
+      [
+        '📅 Подтвердите дату занятия',
+        '',
+        payload.lessonTitle ?? 'Урок',
+        when,
+      ].join('\n'),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: '✅ Назначить',
+              callback_data:
+                courseId != null && lessonNum != null
+                  ? `c:sd:ok:${courseId}:${lessonNum}`
+                  : 'noop',
+            },
+          ],
+          [
+            {
+              text: '⬅️ Отмена',
+              callback_data:
+                courseId != null ? `c:cal:${courseId}` : 'c:hub',
+            },
+          ],
+        ],
+      },
+    );
     return true;
   }
 
@@ -766,7 +835,7 @@ export async function handleCuratorMessage(
     const payload = state.payload as RejectPayload;
     const studentId = payload.studentId ?? '';
     const hwNumber = payload.hwNumber ?? 0;
-    const students = await loadCuratorStudents(admin, telegramId);
+    const students = await loadCuratorStudentsForBot(admin, telegramId);
     const student = getCuratorStudentRecord(students, studentId);
     if (!student) {
       await sendAdminMessage(chatId, 'Не удалось найти работу.');
@@ -862,6 +931,7 @@ export async function handleCuratorAttachment(
     const studentId = payload.studentTelegramId;
     if (!studentId) return false;
     try {
+      const courseId = payload.courseId ?? (await resolveCuratorBotCourseScope(admin, telegramId))?.courseId;
       await deliverStaffToStudent(admin, {
         staffTelegramId: telegramId,
         staffRole: 'curator',
@@ -869,6 +939,7 @@ export async function handleCuratorAttachment(
         body: '',
         attachmentRef: formatTelegramFileRef(fileId),
         attachmentKind: kind,
+        courseId: courseId ?? null,
       });
       await clearStateIfAvailable(admin, telegramId);
       await sendAdminMessage(chatId, '✅ Вложение отправлено ученику.');
@@ -893,7 +964,7 @@ export async function handleCuratorAttachment(
   const payload = state.payload as RejectPayload;
   const studentId = payload.studentId ?? '';
   const hwNumber = payload.hwNumber ?? 0;
-  const students = await loadCuratorStudents(admin, telegramId);
+  const students = await loadCuratorStudentsForBot(admin, telegramId);
   const student = getCuratorStudentRecord(students, studentId);
   if (!student) {
     await sendAdminMessage(chatId, 'Не удалось найти работу.');
@@ -1095,7 +1166,7 @@ async function routeCuratorCallback(
           await sendAdminMessage(message.chatId, '✅ −1 жизнь списана.');
         }
         // Обновить карточку если возможно
-        const students = await loadCuratorStudents(admin, telegramId);
+        const students = await loadCuratorStudentsForBot(admin, telegramId);
         const student = getCuratorStudentRecord(students, String(studentTelegramId));
         if (student) {
           const { students: courseViews } = await loadCuratorCourseStudents(admin, telegramId);
@@ -1131,7 +1202,7 @@ async function routeCuratorCallback(
     case 'hw': {
       if (id === 'q' && subId) {
         const queue = subId as CuratorHomeworkQueueKind;
-        const students = await loadCuratorStudents(admin, telegramId);
+        const students = await loadCuratorStudentsForBot(admin, telegramId);
         const items = collectCuratorHomeworkQueue(students, queue);
         const screen = renderCuratorHomeworkList(queue, items, cabinetUrl, hwNav);
         await editCuratorScreen(message, screen.text, screen.keyboard);
@@ -1161,7 +1232,7 @@ async function routeCuratorCallback(
         return true;
       }
       if (id === 'review') {
-        const students = await loadCuratorStudents(admin, telegramId);
+        const students = await loadCuratorStudentsForBot(admin, telegramId);
         const screen = renderCuratorActivityReviewList(
           pendingHomeworkFromStudents(students),
           cabinetUrl,
@@ -1176,14 +1247,20 @@ async function routeCuratorCallback(
     }
 
     case 'msg': {
+      const msgCourse = await resolveCuratorBotCourseScope(admin, telegramId);
+      const msgCourseId = msgCourse?.courseId ?? null;
       if (id === 'l') {
-        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+        const { threads, storageEnabled } = msgCourseId
+          ? await listCuratorThreadsForCourse(admin, telegramId, msgCourseId)
+          : { threads: [], storageEnabled: true };
         const screen = renderCuratorMessagesInbox(threads, storageEnabled, cabinetUrl, msgNav);
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
       }
       if (id === 'u') {
-        const { threads, storageEnabled } = await listCuratorThreads(admin, telegramId);
+        const { threads, storageEnabled } = msgCourseId
+          ? await listCuratorThreadsForCourse(admin, telegramId, msgCourseId)
+          : { threads: [], storageEnabled: true };
         const screen = renderCuratorUnreadThreadsInbox(threads, storageEnabled, cabinetUrl, msgNav);
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
@@ -1193,7 +1270,13 @@ async function routeCuratorCallback(
         if (!Number.isFinite(studentId)) return true;
         await markCuratorThreadRead(admin, telegramId, studentId);
         const label = await staffStudentLabel(admin, studentId);
-        const { messages, storageEnabled } = await loadCuratorThreadMessages(admin, telegramId, studentId);
+        const { messages, storageEnabled } = await loadCuratorThreadMessages(
+          admin,
+          telegramId,
+          studentId,
+          25,
+          msgCourseId,
+        );
         const screen = renderCuratorMessageThread(
           label,
           messages,
@@ -1256,13 +1339,13 @@ async function routeCuratorCallback(
         await editCuratorScreen(message, screen.text, screen.keyboard);
         return true;
       }
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const screen = renderCuratorStudentsList(students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'sp': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       let student = id ? getCuratorStudentRecord(students, id) : undefined;
       // id может быть telegramId строкой (ученики курса)
       if (!student && id && Number.isFinite(Number(id))) {
@@ -1300,7 +1383,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'shw': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
       if (!student || !homework) {
@@ -1313,7 +1396,7 @@ async function routeCuratorCallback(
     }
 
     case 'vieww': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
       if (!student || !homework) {
@@ -1334,7 +1417,7 @@ async function routeCuratorCallback(
     }
 
     case 'appr': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       if (!student) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
@@ -1412,7 +1495,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'rejskip': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       if (!student) {
         await editCuratorScreen(message, 'Работа не найдена.', notFoundKeyboard('Назад', 'c:stud'));
@@ -1449,7 +1532,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'lded': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
       if (!student || !homework) {
@@ -1505,7 +1588,7 @@ async function routeCuratorCallback(
 
     case 'rejc': {
       await clearStateIfAvailable(admin, telegramId);
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const student = id ? getCuratorStudentRecord(students, id) : undefined;
       const homework = student && subId ? getCuratorHomeworkRecord(student, hwNumber) : undefined;
       if (!student || !homework) {
@@ -1518,14 +1601,14 @@ async function routeCuratorCallback(
     }
 
     case 'notif': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const screen = await renderCuratorNotifications(admin, telegramId, students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
     case 'notv': {
       const notificationId = [id, subId].filter(Boolean).join(':');
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const screen = notificationId
         ? await renderCuratorNotificationView(admin, telegramId, students, notificationId)
         : null;
@@ -1537,7 +1620,7 @@ async function routeCuratorCallback(
       return true;
     }
     case 'pre': {
-      const students = await loadCuratorStudents(admin, telegramId);
+      const students = await loadCuratorStudentsForBot(admin, telegramId);
       const screen = renderCuratorPreLesson(students);
       await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;

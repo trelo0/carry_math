@@ -196,9 +196,7 @@ export async function handleCheckMessage(
   const { STAFF_COURSE_MANAGEMENT_LABEL } = await import('@/lib/bot/staff/staff-menu');
   if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
     const { exitStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
-    const { sendStaffCourseManagementList } = await import('@/lib/bot/staff/staff-course-hub-flow');
     await exitStaffCourseWorkspace(admin, telegramId, chatId);
-    await sendStaffCourseManagementList(admin, chatId, telegramId);
     return true;
   }
 

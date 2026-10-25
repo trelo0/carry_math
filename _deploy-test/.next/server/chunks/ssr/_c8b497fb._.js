@@ -1,0 +1,3 @@
+module.exports=[93797,a=>{a.v(a=>Promise.resolve().then(()=>a(753405)))},740932,a=>{a.v(b=>Promise.all(["server/chunks/ssr/[externals]_next_dist_compiled_@opentelemetry_api_2f2eda7e._.js","server/chunks/ssr/node_modules_next_699f8f68._.js"].map(b=>a.l(b))).then(()=>b(441231)))},859682,a=>{a.v(b=>Promise.all(["server/chunks/ssr/src_lib_bot_education_course-homework-submission-history_ts_2387bc66._.js"].map(b=>a.l(b))).then(()=>b(591708)))},535930,a=>{a.v(a=>Promise.resolve().then(()=>a(219745)))}];
+
+//# sourceMappingURL=_c8b497fb._.js.map

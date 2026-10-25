@@ -1,0 +1,12 @@
+module.exports=[235617,e=>{"use strict";function t(e){let t=new Date(e),a=e=>String(e).padStart(2,"0");return{date:`${a(t.getDate())}.${a(t.getMonth()+1)}.${t.getFullYear()}`,time:`${a(t.getHours())}:${a(t.getMinutes())}`}}function a(e){return new Date(e).toLocaleString("ru-RU",{timeZone:"Europe/Minsk",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})}e.s(["formatLessonDateTime",()=>t,"formatLessonDateTimeRu",()=>a])},217212,e=>{"use strict";var t=e.i(927837),a=e.i(235617);async function i(e,t){let{data:a,error:i}=await e.from("bot_members").select("chat_id").eq("telegram_id",t).maybeSingle();if(i)throw i;let n=a?.chat_id;return"number"==typeof n?n:null}async function n(e,n,r){let s=await i(e,n);if(!s)return;let o=(0,a.formatLessonDateTimeRu)(r.startsAt);await (0,t.telegramSend)("sendMessage",{chat_id:s,text:`📝 Преподаватель добавил домашнее задание
+
+Занятие: ${r.topic}
+Дата: ${o}`,reply_markup:{inline_keyboard:[[{text:"Открыть задание",callback_data:`cl:hw:open:${r.lessonId}`}],[{text:"Перейти к занятию",callback_data:`cl:less:v:${r.lessonId}:menu`}]]}})}async function r(e,n,r){let{data:s,error:o}=await e.from("scheduled_lessons").select("topic, starts_at, teacher_telegram_id").eq("id",n).maybeSingle();if(o)throw o;if(!s?.teacher_telegram_id)return;let l=await i(e,s.teacher_telegram_id);if(!l)return;let{data:m}=await e.from("bot_members").select("full_name, phone").eq("telegram_id",r).maybeSingle(),c=m?.full_name?.trim()||m?.phone?.trim()||`ID ${r}`;await (0,t.telegramSend)("sendMessage",{chat_id:l,text:`📝 Домашняя работа на проверке
+
+👤 ${c}
+📚 ${s.topic}
+🕐 ${(0,a.formatLessonDateTimeRu)(s.starts_at)}
+
+Откройте занятие в кабинете преподавателя.`})}async function s(a,n,r){let s=await i(a,n);if(!s)return;let o=[r.approved?"✅ Домашнее задание принято":"🔄 Нужна доработка","",r.topic];r.comment&&o.push("",r.comment),o.push("","Откройте карточку занятия для деталей.");let{studentNotifyKeyboard:l}=await e.A(337386);await (0,t.telegramSend)("sendMessage",{chat_id:s,text:o.join("\n"),reply_markup:l([[{text:"Открыть задание",callback_data:`cl:hw:open:${r.lessonId}`}]])})}e.s(["notifyStudentLessonHomeworkAssigned",()=>n,"notifyStudentLessonHomeworkReviewed",()=>s,"notifyTeacherLessonHomeworkSubmitted",()=>r])}];
+
+//# sourceMappingURL=src_lib_b7cae9ad._.js.map

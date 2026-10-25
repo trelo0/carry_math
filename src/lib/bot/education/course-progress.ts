@@ -6,6 +6,7 @@ import type {
 import {
   defaultWebinarSessionStatus,
   loadSanityLessonSessionMap,
+  isWebinarScheduleCurrentlyActive,
   resolveWebinarSessionStatus,
   type SanityWebinarSessionStatus,
 } from '@/lib/curator/lesson-session';
@@ -219,13 +220,15 @@ export function computeMapAccessState(params: {
   isTrialFree: boolean;
   courseState: CourseCabinetState;
   sessionStatus: WebinarSessionStatus | null;
+  sessionStartsAt?: string | null;
   stopStatus: CourseMapStopStatus;
   /** Занятие входит в оплаченную квоту пакета (не только строка access). */
   inPackageQuota?: boolean;
 }): { mapAccessState: CourseMapAccessState; isScheduleActive: boolean } {
   const sessionPast = params.sessionStatus === 'completed';
   const isScheduleActive =
-    params.sessionStatus === 'live' || params.sessionStatus === 'waiting';
+    params.sessionStatus != null &&
+    isWebinarScheduleCurrentlyActive(params.sessionStartsAt ?? null, params.sessionStatus);
 
   const trialPreviewOnly =
     params.isTrialFree &&
@@ -593,6 +596,7 @@ export async function buildCourseMapStopsFromContent(
         ? resolveWebinarSessionStatus(
             lesson.scheduledAt,
             sessionMap.get(lesson.sanityId),
+            lesson.recordingUrl,
           )
         : null;
     const rawAccessStatus = accessMap.get(lesson.sanityId) ?? null;
@@ -623,6 +627,7 @@ export async function buildCourseMapStopsFromContent(
       isTrialFree: lesson.isTrialFree,
       courseState: options.courseState,
       sessionStatus,
+      sessionStartsAt: lesson.scheduledAt,
       stopStatus: status,
       inPackageQuota,
     });
@@ -727,7 +732,7 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
       numInModule += 1;
       const sessionStatus =
         lesson.lessonType === 'webinar'
-          ? defaultWebinarSessionStatus(lesson.scheduledAt)
+          ? defaultWebinarSessionStatus(lesson.scheduledAt, Date.now(), lesson.recordingUrl)
           : null;
       out.push({
         sanityLessonId: lesson.sanityId,
@@ -772,7 +777,9 @@ export function buildCourseStructureStopsFromContent(content: DistrictCourseCont
           url: m.url,
         })),
         mapAccessState: 'locked_unpaid',
-        isScheduleActive: sessionStatus === 'live' || sessionStatus === 'waiting',
+        isScheduleActive:
+          sessionStatus != null &&
+          isWebinarScheduleCurrentlyActive(lesson.scheduledAt, sessionStatus),
         isFirstChainGate: false,
         isJoinArchive: false,
         isStreamActiveModule: false,
@@ -881,6 +888,7 @@ export async function buildCourseMapStops(
       isTrialFree: Boolean(lesson.is_trial_free),
       courseState: 'full',
       sessionStatus: session?.status ?? null,
+      sessionStartsAt: session?.starts_at ?? null,
       stopStatus: status,
     });
 

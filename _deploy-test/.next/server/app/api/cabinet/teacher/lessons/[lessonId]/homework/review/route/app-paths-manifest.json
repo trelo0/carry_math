@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/teacher/lessons/[lessonId]/homework/review/route": "app/api/cabinet/teacher/lessons/[lessonId]/homework/review/route.js"
+}

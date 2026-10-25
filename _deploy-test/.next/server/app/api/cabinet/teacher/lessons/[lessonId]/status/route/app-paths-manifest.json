@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/teacher/lessons/[lessonId]/status/route": "app/api/cabinet/teacher/lessons/[lessonId]/status/route.js"
+}

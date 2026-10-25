@@ -73,6 +73,7 @@ function sessionStatusForLesson(
   return resolveWebinarSessionStatus(
     lesson.scheduledAt,
     sessionMap.get(lesson.sanityId),
+    lesson.recordingUrl,
   );
 }
 

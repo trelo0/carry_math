@@ -529,14 +529,32 @@ async function consumeCoursePackageCredit(
   }
 
   try {
-    const { data, error } = await admin.rpc('deduct_course_package_credit', {
+    const rpcArgs: Record<string, unknown> = {
       p_telegram_id: telegramId,
       p_package_id: packageToUse,
-    });
+    };
+    if (courseId != null) rpcArgs.p_course_id = courseId;
+    const { data, error } = await admin.rpc('deduct_course_package_credit', rpcArgs);
     if (error) throw error;
-    return data as number | null;
+    if (data != null) return data as number;
+    if (packageToUse) return null;
+    throw new Error('RPC_EMPTY');
   } catch (rpcError) {
-    console.warn('[consumeCoursePackageCredit] RPC not available, using fallback:', rpcError);
+    const rpcEmpty = rpcError instanceof Error && rpcError.message === 'RPC_EMPTY';
+    if (!rpcEmpty) {
+      if (courseId != null && packageToUse) {
+        try {
+          const { data, error } = await admin.rpc('deduct_course_package_credit', {
+            p_telegram_id: telegramId,
+            p_package_id: packageToUse,
+          });
+          if (!error && data != null) return data as number;
+        } catch {
+          /* старая сигнатура RPC на проде до миграции */
+        }
+      }
+      console.warn('[consumeCoursePackageCredit] RPC not available, using fallback:', rpcError);
+    }
 
     if (packageToUse) {
       return deductOnePackageCreditFallback(admin, telegramId, packageToUse);
@@ -638,6 +656,10 @@ async function resolveActiveCoursePackageId(
   if (preferredPackageId) {
     const preferred = matching.find((row) => row.id === preferredPackageId);
     if (preferred?.id) return preferred.id as number;
+  }
+  const withCourseId = matching.filter((row) => row.course_id != null);
+  if (withCourseId.length > 0) {
+    return (withCourseId[0]?.id as number | undefined) ?? null;
   }
   return (matching[0]?.id as number | undefined) ?? null;
 }
@@ -974,10 +996,13 @@ export async function grantPackageLessonAccess(
     .order('lesson_index', { ascending: true });
   if (allError) throw allError;
 
+  const courseLessonIds = (allLessons ?? []).map((l) => l.id as number);
+
   const { data: granted, error: grantedError } = await admin
     .from('course_lesson_access')
     .select('course_lesson_id, access_status')
-    .eq('telegram_id', telegramId);
+    .eq('telegram_id', telegramId)
+    .in('course_lesson_id', courseLessonIds);
   if (grantedError) throw grantedError;
 
   const availableIds = new Set(
@@ -990,6 +1015,7 @@ export async function grantPackageLessonAccess(
     .from('course_lesson_student_progress')
     .select('course_lesson_id')
     .eq('telegram_id', telegramId)
+    .in('course_lesson_id', courseLessonIds)
     .not('completed_at', 'is', null);
   const completedIds = new Set(
     (completed ?? []).map((r) => r.course_lesson_id as number).filter((id) => id != null),

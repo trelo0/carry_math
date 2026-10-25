@@ -106,6 +106,7 @@ export function renderCheckHomeworkHub(
     keyboard: {
       inline_keyboard: [
         [back('🔴 На проверку', `k:hw:${courseId}:pend:0`)],
+        [back('🔄 На доработке', `k:hw:${courseId}:rev:0`)],
         [back('📁 Архив', `k:hw:${courseId}:arch:0`)],
         [back('🏠 На главную', `k:home:${courseId}`)],
       ],
@@ -122,7 +123,7 @@ const ARCHIVE_STATUS_LABELS: Record<CheckArchiveStatusFilter, string> = {
   overdue: 'Просрочено',
 };
 
-export type CheckHwListMode = 'pending' | 'archive';
+export type CheckHwListMode = 'pending' | 'revision' | 'archive';
 
 export type CheckHwListOrigin = {
   mode: CheckHwListMode;
@@ -140,7 +141,8 @@ function filterSuffix(filters: CheckHwListFilters): string {
 }
 
 export function encodeListCallback(courseId: number, origin: CheckHwListOrigin): string {
-  const mode = origin.mode === 'archive' ? 'arch' : 'pend';
+  const mode =
+    origin.mode === 'archive' ? 'arch' : origin.mode === 'revision' ? 'rev' : 'pend';
   return `k:hw:${courseId}:${mode}:${origin.page}${filterSuffix(origin.filters)}`;
 }
 
@@ -177,8 +179,13 @@ export function parseListFilters(parts: string[], startIndex: number): CheckHwLi
 
 export function parseListOrigin(parts: string[], startIndex: number): CheckHwListOrigin {
   const token = parts[startIndex];
-  if (token === 'pend' || token === 'arch' || token === 'a') {
-    const mode: CheckHwListMode = token === 'pend' ? 'pending' : 'archive';
+  if (token === 'pend' || token === 'arch' || token === 'rev' || token === 'a') {
+    const mode: CheckHwListMode =
+      token === 'arch' || token === 'a'
+        ? 'archive'
+        : token === 'rev'
+          ? 'revision'
+          : 'pending';
     const page = Number(parts[startIndex + 1] ?? 0) || 0;
     return { mode, page, filters: parseListFilters(parts, startIndex + 2) };
   }
@@ -186,7 +193,8 @@ export function parseListOrigin(parts: string[], startIndex: number): CheckHwLis
 }
 
 export function originSuffix(origin: CheckHwListOrigin): string {
-  const mode = origin.mode === 'archive' ? 'arch' : 'pend';
+  const mode =
+    origin.mode === 'archive' ? 'arch' : origin.mode === 'revision' ? 'rev' : 'pend';
   return `${mode}:${origin.page}${filterSuffix(origin.filters)}`;
 }
 
@@ -198,22 +206,29 @@ export function parseOriginFromParts(parts: string[], startIndex: number): Check
 function withOrigin(base: string, origin: CheckHwListOrigin): string {
   const full = `${base}:${originSuffix(origin)}`;
   if (full.length <= 64) return full;
-  const short = `${base}:${origin.mode === 'archive' ? 'arch' : 'pend'}:${origin.page}`;
+  const modeToken =
+    origin.mode === 'archive' ? 'arch' : origin.mode === 'revision' ? 'rev' : 'pend';
+  const short = `${base}:${modeToken}:${origin.page}`;
   return short.length <= 64 ? short : base;
 }
 
 export function encodeHwItemCallback(
-  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd' | 'vr' | 'hs',
+  action: 'i' | 'v' | 'ok' | 'rej' | 'cmt' | 'vd' | 'vr' | 'hs' | 'hsv',
   courseId: number,
   studentId: string,
   hwNumber: number,
   origin: CheckHwListOrigin,
+  sequenceNo?: number,
 ): string {
-  return withOrigin(`k:hw:${courseId}:${action}:${studentId}:${hwNumber}`, origin);
+  const base =
+    action === 'hsv' && sequenceNo != null
+      ? `k:hw:${courseId}:${action}:${studentId}:${hwNumber}:${sequenceNo}`
+      : `k:hw:${courseId}:${action}:${studentId}:${hwNumber}`;
+  return withOrigin(base, origin);
 }
 
 export function isArchiveHwOrigin(origin: CheckHwListOrigin): boolean {
-  return origin.mode === 'archive';
+  return origin.mode === 'archive' || origin.mode === 'revision';
 }
 
 export function encodeRejCallback(
@@ -267,11 +282,18 @@ export function renderCheckHomeworkList(
   const totalPages = options?.totalPages ?? 1;
   const filters = options?.filters ?? {};
   const origin: CheckHwListOrigin = { mode, page, filters };
-  const title = mode === 'pending' ? `🔴 На проверку · ${courseTitle}` : `📁 Архив · ${courseTitle}`;
+  const title =
+    mode === 'pending'
+      ? `🔴 На проверку · ${courseTitle}`
+      : mode === 'revision'
+        ? `🔄 На доработке · ${courseTitle}`
+        : `📁 Архив · ${courseTitle}`;
   const intro =
     mode === 'pending'
-      ? 'Все домашние задания, которые ждут проверки.'
-      : 'Проверенные работы: одобрено и на доработке.';
+      ? 'Домашние задания, которые ждут проверки.'
+      : mode === 'revision'
+        ? 'Работы со статусом «на доработке».'
+        : 'Только одобренные работы.';
   const parts = [title, '', intro];
   const totalCount = options?.totalCount ?? items.length;
   if (totalCount === 0) {
@@ -332,7 +354,7 @@ export function renderCheckArchiveStatusFilters(
   page: number,
   origin: CheckHwListOrigin,
 ): { text: string; keyboard: InlineKeyboard } {
-  const statuses: CheckArchiveStatusFilter[] = ['all', 'approved', 'revision', 'overdue'];
+  const statuses: CheckArchiveStatusFilter[] = ['all', 'approved', 'overdue'];
   return {
     text: '📌 Статус в архиве',
     keyboard: {
@@ -403,11 +425,13 @@ export function renderCheckHomeworkCard(
     parts.push('', 'Архив — только просмотр, статус не меняется.');
   }
 
-  const canLife = !archive && overdue && !options?.lifeDeducted && homework.status === 'submitted';
+  const readOnlyList = origin.mode === 'revision' || origin.mode === 'archive';
+  const canLife =
+    !readOnlyList && overdue && !options?.lifeDeducted && homework.status === 'submitted';
   const rows: InlineKeyboard['inline_keyboard'] = [
     [
       {
-        text: '👀 Посмотреть работу',
+        text: origin.mode === 'revision' ? '👀 Посмотреть ДЗ' : '👀 Посмотреть работу',
         callback_data: encodeHwItemCallback('v', courseId, student.id, homework.number, origin),
       },
     ],
@@ -426,7 +450,14 @@ export function renderCheckHomeworkCard(
       },
     ]);
   }
-  if (archive && (homework.status === 'revision' || homework.status === 'approved')) {
+  if (origin.mode === 'revision' || (archive && homework.status === 'revision')) {
+    rows.push([
+      {
+        text: '📄 Посмотреть вердикт',
+        callback_data: encodeHwItemCallback('vr', courseId, student.id, homework.number, origin),
+      },
+    ]);
+  } else if (archive && homework.status === 'approved') {
     rows.push([
       {
         text: '📄 Посмотреть вердикт',
@@ -436,7 +467,7 @@ export function renderCheckHomeworkCard(
   }
   rows.push([
     {
-      text: '📜 История сдач',
+      text: '📜 История проверок',
       callback_data: encodeHwItemCallback('hs', courseId, student.id, homework.number, origin),
     },
   ]);
@@ -498,31 +529,31 @@ export function renderCheckHomeworkSubmissionHistory(
   student: CuratorStudentRecord,
   homework: CuratorHomeworkRecord,
   origin: CheckHwListOrigin,
-  timelineLines: string[],
+  entries: { submitIndex: number; sequenceNo: number; statusLabel: string }[],
 ): { text: string; keyboard: InlineKeyboard } {
   const lines = [
-    '📜 История сдач',
+    '📜 История проверок ДЗ',
     '',
     `👤 ${student.name}`,
     `📚 ДЗ №${homework.number}: ${homework.title}`,
-    ...timelineLines,
+    '',
+    entries.length > 0 ? 'Выберите сдачу:' : 'Записей пока нет.',
   ];
-  if (timelineLines.length === 0) {
-    lines.push('', 'Записей пока нет.');
-  }
+  const keyboard: InlineKeyboard['inline_keyboard'] = entries.map((e) => [
+    back(
+      `${e.submitIndex} сдача · ${e.statusLabel}`.slice(0, 58),
+      encodeHwItemCallback('hsv', courseId, student.id, homework.number, origin, e.sequenceNo),
+    ),
+  ]);
+  keyboard.push([
+    back(
+      '⬅️ Назад',
+      encodeHwItemCallback('i', courseId, student.id, homework.number, origin),
+    ),
+  ]);
   return {
     text: lines.join('\n').slice(0, 3900),
-    keyboard: {
-      inline_keyboard: [
-        [
-          back(
-            '⬅️ К карточке',
-            encodeHwItemCallback('i', courseId, student.id, homework.number, origin),
-          ),
-        ],
-        [back('⬅️ К списку', encodeListCallback(courseId, origin))],
-      ],
-    },
+    keyboard: { inline_keyboard: keyboard },
   };
 }
 
@@ -992,10 +1023,7 @@ export function renderCheckLibraryTasks(
   tasks: CuratorLibraryTask[],
   moduleIndex: number,
 ): { text: string; keyboard: InlineKeyboard } {
-  const parts = [`📚 ${webinarTitle}`, '', 'Материалы (кнопки ниже):', ''];
-  for (const t of tasks) {
-    parts.push(`• ${t.title}`, t.condition.slice(0, 500), '');
-  }
+  const parts = [`📚 ${webinarTitle}`, '', 'Материалы для занятия (кнопки ниже):', ''];
   const rows: InlineKeyboard['inline_keyboard'] = tasks
     .filter((t) => t.fileUrl?.startsWith('http'))
     .map((t) => [{ text: t.title.slice(0, 58), url: t.fileUrl! }]);

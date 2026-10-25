@@ -120,8 +120,7 @@ export function renderCuratorSchedulePrompt(lesson: CuratorLessonView): {
     ].join('\n'),
     keyboard: {
       inline_keyboard: [
-        [backButton('⬅️ К списку уроков', 'c:sch:list')],
-        [backButton('⬅️ На главную', 'c:home')],
+        [backButton('⬅️ Отмена', 'c:sch:list')],
       ],
     },
   };

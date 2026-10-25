@@ -924,9 +924,8 @@ button:focus-visible {
     display: none;
   }
 
-  .ind-principles-bg-num {
-    font-size: 100px;
-    stroke-width: 1.15;
+  .ind-principles-bg {
+    display: none;
   }
 
   .ind-process-ghost {
@@ -1556,20 +1555,48 @@ button:focus-visible {
   .ind-teacher .teacher-hud-photo {
     order: -1;
     width: 100%;
-    height: clamp(240px, 62vw, 300px);
+    height: 196px;
     min-height: 0;
-    max-height: none;
+    max-height: 196px;
     border-left: none;
     border-bottom: none;
-    padding: 0;
+    padding: 10px 16px 0;
+    align-items: flex-end;
+    justify-content: center;
+    background: radial-gradient(
+      ellipse 85% 65% at 50% 100%,
+      rgba(0, 140, 220, 0.14),
+      transparent 70%
+    );
   }
 
   .ind-teacher .teacher-hud-photo img {
+    position: absolute;
+    left: 50%;
     bottom: 0;
+    transform: translateX(-50%);
+    width: auto;
     height: 100%;
+    max-width: min(100%, 280px);
+    max-height: 100%;
+    margin: 0;
+    object-fit: contain;
+    object-position: center bottom;
+  }
+
+  .ind-teacher .teacher-hud-photo .teacher-hud-photo-img {
+    inset: 10px 16px 0;
+    width: 100% !important;
+    height: 100% !important;
     max-width: none;
     max-height: none;
-    margin: 0;
+    transform: none;
+    object-fit: contain;
+    object-position: center bottom;
+  }
+
+  .ind-teacher .teacher-hud-photo > span:has(.teacher-hud-photo-img) {
+    inset: 10px 16px 0 !important;
   }
 
   .ind-teacher .teacher-hud-body {

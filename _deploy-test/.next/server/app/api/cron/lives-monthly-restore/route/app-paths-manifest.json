@@ -1,0 +1,3 @@
+{
+  "/api/cron/lives-monthly-restore/route": "app/api/cron/lives-monthly-restore/route.js"
+}

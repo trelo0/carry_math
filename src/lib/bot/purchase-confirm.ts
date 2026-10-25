@@ -2,9 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { fulfillPurchase } from './purchase-fulfillment';
+import { recordPayment } from './packages';
 import {
   getPurchaseRequest,
   markPurchaseRequestResolved,
+  setPurchaseRequestStatus,
   type PurchaseRequestRow,
 } from './purchase-requests';
 import { refreshClientMenu } from './client-flow';
@@ -95,11 +97,11 @@ export async function confirmPurchaseRequest(
     throw new Error('Заявка не найдена');
   }
 
-  if (request.status === 'approved') {
+  if (request.status === 'approved' || request.status === 'paid') {
     return {
       alreadyProcessed: true,
-      alreadyFulfilled: true,
-      note: 'Заявка уже подтверждена.',
+      alreadyFulfilled: request.status === 'approved',
+      note: request.status === 'paid' ? 'Оплата уже зафиксирована. Выдайте занятия вручную.' : 'Заявка уже подтверждена.',
       verificationLines: [],
       request,
     };
@@ -115,8 +117,48 @@ export async function confirmPurchaseRequest(
     };
   }
 
+  const manualPaidOnly =
+    request.product === 'trial' ||
+    request.order_kind === 'trial' ||
+    request.product === 'individual' ||
+    request.product === 'group';
+
+  if (manualPaidOnly && request.product !== 'course') {
+    await setPurchaseRequestStatus(admin, request.id, 'paid', adminTelegramId);
+    try {
+      if (request.product === 'trial') {
+        await admin.from('payments').insert({
+          telegram_id: request.telegram_id,
+          product: 'trial',
+          amount_byn: Number(request.amount_byn),
+          external_id: purchaseRequestExternalId(request.id),
+        });
+      } else {
+        await recordPayment(
+          admin,
+          request.telegram_id,
+          request.product as 'individual' | 'group',
+          Number(request.amount_byn),
+          undefined,
+          purchaseRequestExternalId(request.id),
+        );
+      }
+    } catch {
+      /* payments table optional */
+    }
+    const updated = (await getPurchaseRequest(admin, requestId)) ?? request;
+    await notifyStudentPurchasePaidOnly(admin, updated);
+    return {
+      alreadyProcessed: false,
+      alreadyFulfilled: false,
+      note: '✅ Оплата зафиксирована. Выдайте занятия или запишите на пробное.',
+      verificationLines: [],
+      request: updated,
+    };
+  }
+
   const result = await fulfillPurchase(admin, request.telegram_id, {
-    product: request.product,
+    product: request.product as 'course',
     packageIndex: request.package_index,
     teacherId: request.teacher_id ?? undefined,
     courseSlug: request.course_slug ?? undefined,
@@ -157,6 +199,25 @@ export async function confirmPurchaseRequest(
     verificationLines: result.verificationLines,
     request: updated,
   };
+}
+
+async function notifyStudentPurchasePaidOnly(
+  admin: SupabaseClient,
+  request: PurchaseRequestRow,
+): Promise<void> {
+  const { data } = await admin
+    .from('bot_members')
+    .select('chat_id')
+    .eq('telegram_id', request.telegram_id)
+    .maybeSingle();
+  const chatId = data?.chat_id as number | undefined;
+  if (!chatId) return;
+  const { studentNotifyKeyboard } = await import('./student-push-notify');
+  await telegramSend('sendMessage', {
+    chat_id: chatId,
+    text: ['✅ Оплата подтверждена', '', request.title, '', 'Администратор завершит оформление.'].join('\n'),
+    reply_markup: studentNotifyKeyboard(),
+  });
 }
 
 export async function rejectPurchaseRequest(

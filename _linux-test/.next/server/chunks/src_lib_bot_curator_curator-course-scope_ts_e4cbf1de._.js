@@ -1,0 +1,3 @@
+module.exports=[334021,e=>{"use strict";var r=e.i(720802);async function u(e,u,l){let t=await (0,r.resolveCuratorCourseContext)(e,u,{courseId:l?.courseId,courseSlug:l?.courseSlug});return t?{courseId:t.courseId,slug:t.slug}:null}function l(e,r,u){return`c:life:${e}:${r}:${u}`}function t(e){if("life"!==e[1])return null;let r=e[2];if("g"!==r&&"d"!==r)return null;let u=Number(e[3]);if(!Number.isFinite(u))return null;let l=e[4],t=null!=l&&""!==l?Number(l):NaN;return{op:r,studentTelegramId:u,courseId:Number.isFinite(t)&&t>0?t:null}}e.s(["curatorLifeCallback",()=>l,"parseCuratorLifeCallback",()=>t,"resolveCuratorBotCourseScope",()=>u])}];
+
+//# sourceMappingURL=src_lib_bot_curator_curator-course-scope_ts_e4cbf1de._.js.map

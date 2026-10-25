@@ -12,6 +12,7 @@ import {
   editAdminMessage,
   getState,
   homeButton,
+  homeOnlyKeyboard,
   saveState,
   sendAdminMessage,
 } from './core';
@@ -23,15 +24,20 @@ import {
   rescheduleTrialLesson,
   syncTrialLessonConducted,
   trialPrefillFromLead,
+  resolveTrialPriceByn,
   type LeadTrialLessonRow,
 } from './lead-trial';
+import { findPaidTrialOrderForLead } from '@/lib/bot/purchase-requests';
 import {
   createTrialPaymentRequest,
   skipTrialPayment,
   notifyClientTrialPaymentRequest,
-  notifyClientTrialConfirmed,
-  notifyAdminsTrialPaid,
 } from './lead-payments';
+import {
+  createTrialOrderForLead,
+  getTrialOrderContext,
+  resendTrialOrderPayment,
+} from './lead-trial-order';
 import { logLeadEvent } from './lead-events';
 import {
   type LeadRow,
@@ -123,6 +129,45 @@ async function startTrialWizard(
   if (!linked) {
     await editAdminMessage(message, 'Нужен Telegram клиента (заявка из бота или привязанный телефон).', {
       inline_keyboard: [[{ text: '◀️ Назад', callback_data: `al:l:${lead.id}:${nav}` }], [homeButton()]],
+    });
+    return;
+  }
+
+  const orderCtx = await getTrialOrderContext(admin, lead.id);
+  if (orderCtx.pending) {
+    await editAdminMessage(
+      message,
+      [
+        '💳 Заказ на пробное · ожидает оплаты',
+        '',
+        orderCtx.pending.title,
+        `Сумма: ${orderCtx.pending.amount_byn} BYN`,
+        '',
+        'Отправьте ссылку клиенту или дождитесь webhook bePaid.',
+      ].join('\n'),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: '🔗 Отправить ссылку снова',
+              callback_data: `al:tr:rsend:${orderCtx.pending.id}:${nav}:${lead.id}`.slice(0, 64),
+            },
+          ],
+          [{ text: '◀️ К заявке', callback_data: `al:l:${lead.id}:${nav}` }],
+          [homeButton()],
+        ],
+      },
+    );
+    return;
+  }
+  if (!orderCtx.paid) {
+    await editAdminMessage(message, '🎓 Пробное занятие\n\nСначала создайте заказ на оплату:', {
+      inline_keyboard: [
+        [{ text: '👤 Индивидуальное', callback_data: `al:tr:fmt:i:${lead.id}:${nav}` }],
+        [{ text: '👥 Групповое', callback_data: `al:tr:fmt:g:${lead.id}:${nav}` }],
+        [{ text: '◀️ К заявке', callback_data: `al:l:${lead.id}:${nav}` }],
+        [homeButton()],
+      ],
     });
     return;
   }
@@ -371,6 +416,31 @@ export async function handleLeadTrialAction(
       await deliver('У преподавателя нет Telegram ID.', { inline_keyboard: [[homeButton()]] });
       return true;
     }
+    const st = await getState(admin, actorTelegramId);
+    if (st?.step === 'admin:lead:trial:order') {
+      const lead = await getLead(admin, leadId, LEAD_SELECT_COLUMNS);
+      if (!lead) return true;
+      const linked = await resolveLinkedTelegramId(admin, lead);
+      if (!linked) return true;
+      const format = (st.payload.leadTrialOrderFormat as 'individual' | 'group' | undefined) ?? 'individual';
+      const price = await resolveTrialPriceByn(teacher.teacherId);
+      await createTrialOrderForLead(admin, {
+        lead,
+        clientTelegramId: linked,
+        lessonFormat: format,
+        amountByn: price,
+        teacherId: teacher.teacherId,
+        teacherTelegramId: tg,
+        groupId: st.payload.leadTrialGroupId ?? null,
+        subject,
+        actorTelegramId,
+      });
+      await clearState(admin, actorTelegramId);
+      await deliver('✅ Заказ на пробное создан. Клиенту отправлена ссылка bePaid.', {
+        inline_keyboard: [[{ text: '◀️ К заявке', callback_data: `al:l:${leadId}:${nav}` }], [homeButton()]],
+      });
+      return true;
+    }
     await saveState(admin, actorTelegramId, message, 'admin:lead:trial:datetime', {
       leadTrialLeadId: leadId,
       leadTrialNav: nav,
@@ -401,6 +471,76 @@ export async function handleLeadTrialAction(
     return true;
   }
 
+  if (data.startsWith('al:tr:rsend:')) {
+    const tail = data.slice('al:tr:rsend:'.length);
+    const parts = tail.split(':');
+    const requestId = parts[0]!;
+    const nav = `${parts[1] ?? 'a'}:${parts[2] ?? '0'}`;
+    const leadId = parts.slice(3).join(':') || '';
+    try {
+      await resendTrialOrderPayment(admin, requestId);
+      await deliver('🔗 Ссылка на оплату отправлена клиенту.', {
+        inline_keyboard: [
+          [{ text: '◀️ К заявке', callback_data: leadId ? `al:l:${leadId}:${nav}` : 'al:menu' }],
+          [homeButton()],
+        ],
+      });
+    } catch (error) {
+      await deliver(error instanceof Error ? error.message : 'Ошибка отправки.', homeOnlyKeyboard());
+    }
+    return true;
+  }
+
+  if (data.startsWith('al:tr:fmt:')) {
+    const m = data.match(/^al:tr:fmt:([ig]):([^:]+):(.+)$/);
+    if (!m) return true;
+    const format = m[1] === 'g' ? 'group' : 'individual';
+    const leadId = m[2]!;
+    const nav = m[3]!;
+    const lead = await getLead(admin, leadId, LEAD_SELECT_COLUMNS);
+    if (!lead) return true;
+    const linked = await resolveLinkedTelegramId(admin, lead);
+    if (!linked) {
+      await deliver('Нужен Telegram клиента.', { inline_keyboard: [[homeButton()]] });
+      return true;
+    }
+    const subject = trialPrefillFromLead(lead).subject;
+    await saveState(admin, actorTelegramId, message, 'admin:lead:trial:order', {
+      leadTrialLeadId: leadId,
+      leadTrialNav: nav,
+      leadTrialSubject: subject,
+      leadTrialOrderFormat: format,
+    });
+    if (format === 'group') {
+      const { data: groups } = await admin.from('groups').select('id, title').eq('status', 'active').limit(30);
+      const keyboard: InlineButton[][] = (groups ?? []).map((g) => [
+        { text: (g as { title: string }).title, callback_data: `al:tr:grp:${leadId}:${nav}:${g.id}` },
+      ]);
+      keyboard.push([{ text: '◀️ Назад', callback_data: `al:tr:${leadId}:${nav}` }], [homeButton()]);
+      await editAdminMessage(message, '👥 Выберите группу для пробного:', { inline_keyboard: keyboard });
+      return true;
+    }
+    await renderTeacherPicker(admin, message, leadId, nav, subject);
+    return true;
+  }
+
+  if (data.startsWith('al:tr:grp:')) {
+    const parsed = parseLeadNavCallback(data, 'al:tr:grp:');
+    if (!parsed) return true;
+    const groupId = Number(parsed.rest[0]);
+    const st = await getState(admin, actorTelegramId);
+    await saveState(admin, actorTelegramId, message, st?.step ?? 'admin:lead:trial:order', {
+      ...st?.payload,
+      leadTrialGroupId: groupId,
+      leadTrialLeadId: parsed.leadId,
+      leadTrialNav: parsed.nav,
+    });
+    const lead = await getLead(admin, parsed.leadId, LEAD_SELECT_COLUMNS);
+    if (!lead) return true;
+    await renderTeacherPicker(admin, message, parsed.leadId, parsed.nav, trialPrefillFromLead(lead).subject);
+    return true;
+  }
+
   if (data.startsWith('al:tr:go:')) {
     const parsed = parseLeadNavCallback(data, 'al:tr:go:');
     if (!parsed) return true;
@@ -425,6 +565,13 @@ export async function handleLeadTrialAction(
     }
     const pricing = await getCabinetPricing();
     const teacher = pricing.teachers.find((t) => t.telegramId === teacherTg);
+    const paidOrder = await findPaidTrialOrderForLead(admin, lead.id);
+    if (!paidOrder) {
+      await deliver('Сначала дождитесь оплаты заказа на пробное.', {
+        inline_keyboard: [[{ text: '◀️ К заявке', callback_data: `al:l:${leadId}:${nav}` }], [homeButton()]],
+      });
+      return true;
+    }
     try {
       const { lessonId } = await createTrialLessonForLead(admin, {
         lead,
@@ -434,6 +581,9 @@ export async function handleLeadTrialAction(
         startsAt,
         topic: lead.service?.trim() || trialPrefillFromLead(lead).subject,
         actorTelegramId,
+        purchaseRequestId: paidOrder.id,
+        groupId: paidOrder.group_id,
+        trialPriceByn: Number(paidOrder.amount_byn),
       });
       await setLeadStatus(admin, lead.id, 'in_progress', actorTelegramId);
       await clearState(admin, actorTelegramId);
@@ -609,6 +759,9 @@ export async function handleLeadTrialAction(
     rest.startsWith('ed:') ||
     rest.startsWith('pay:') ||
     rest.startsWith('sk:') ||
+    rest.startsWith('rsend:') ||
+    rest.startsWith('fmt:') ||
+    rest.startsWith('grp:') ||
     rest.startsWith('rs:') ||
     rest.startsWith('cx') ||
     rest.startsWith('o:') ||

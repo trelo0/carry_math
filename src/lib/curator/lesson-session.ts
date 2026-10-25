@@ -25,20 +25,55 @@ export function isSanitySessionTableError(error: unknown): boolean {
   return message.includes('sanity_lesson_sessions') || message.includes('Could not find');
 }
 
+/** После scheduledAt — окно «ждём старт куратора»; дальше слот считаем прошедшим без строки в БД. */
+export const WEBINAR_WAITING_WINDOW_MS = 4 * 60 * 60 * 1000;
+
+export function isWebinarWaitingStale(
+  scheduledAt: string | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!scheduledAt) return false;
+  const start = Date.parse(scheduledAt);
+  if (Number.isNaN(start)) return false;
+  return nowMs - start > WEBINAR_WAITING_WINDOW_MS;
+}
+
 /** Статус по умолчанию, если куратор ещё не трогал занятие. */
-export function defaultWebinarSessionStatus(scheduledAt: string | null): SanityWebinarSessionStatus {
+export function defaultWebinarSessionStatus(
+  scheduledAt: string | null,
+  nowMs: number = Date.now(),
+  recordingUrl?: string | null,
+): SanityWebinarSessionStatus {
   if (!scheduledAt) return 'scheduled';
   const start = Date.parse(scheduledAt);
   if (Number.isNaN(start)) return 'scheduled';
-  return start > Date.now() ? 'scheduled' : 'waiting';
+  if (start > nowMs) return 'scheduled';
+  if (nowMs - start <= WEBINAR_WAITING_WINDOW_MS) return 'waiting';
+  return recordingUrl?.trim() ? 'completed' : 'waiting';
 }
 
 export function resolveWebinarSessionStatus(
   scheduledAt: string | null,
   row: Pick<SanityLessonSessionRow, 'status'> | null | undefined,
+  recordingUrl?: string | null,
 ): SanityWebinarSessionStatus {
-  if (row?.status) return row.status;
-  return defaultWebinarSessionStatus(scheduledAt);
+  if (row?.status === 'cancelled') return 'cancelled';
+  const base = row?.status ?? defaultWebinarSessionStatus(scheduledAt, Date.now(), recordingUrl);
+  if (base === 'waiting' && isWebinarWaitingStale(scheduledAt)) {
+    return recordingUrl?.trim() ? 'completed' : 'waiting';
+  }
+  return base;
+}
+
+/** Пульс «идёт слот» на карте — только live или свежий waiting. */
+export function isWebinarScheduleCurrentlyActive(
+  scheduledAt: string | null,
+  status: SanityWebinarSessionStatus,
+  nowMs: number = Date.now(),
+): boolean {
+  if (status === 'live') return true;
+  if (status !== 'waiting') return false;
+  return !isWebinarWaitingStale(scheduledAt, nowMs);
 }
 
 export async function loadSanityLessonSessionMap(

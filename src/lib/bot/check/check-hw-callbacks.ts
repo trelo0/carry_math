@@ -40,6 +40,7 @@ import {
   collectCheckArchive,
   collectCheckPending,
   collectCheckQueue,
+  collectCheckRevision,
   loadCheckHomeworkStudents,
   loadCourseModuleLessonMap,
 } from './check-data';
@@ -91,7 +92,9 @@ function parseCourseId(raw: string | undefined): number | null {
 }
 
 export function originFromPayload(payload: Record<string, unknown> | undefined): CheckHwListOrigin {
-  const mode = payload?.listMode === 'archive' ? 'archive' : 'pending';
+  const modeRaw = payload?.listMode;
+  const mode: CheckHwListMode =
+    modeRaw === 'archive' ? 'archive' : modeRaw === 'revision' ? 'revision' : 'pending';
   return {
     mode,
     page: Number(payload?.listPage ?? 0) || 0,
@@ -147,8 +150,13 @@ function collectModeItems(
         (i.homework.status === 'waiting' || i.homework.status === 'upcoming'),
     );
   }
-  const raw = mode === 'archive' ? collectCheckArchive(students) : collectCheckPending(students);
-  return attachMetaToQueueItems(raw, metaMap);
+  if (mode === 'archive') {
+    return attachMetaToQueueItems(collectCheckArchive(students), metaMap);
+  }
+  if (mode === 'revision') {
+    return attachMetaToQueueItems(collectCheckRevision(students), metaMap);
+  }
+  return attachMetaToQueueItems(collectCheckPending(students), metaMap);
 }
 
 async function showList(
@@ -246,9 +254,19 @@ export async function handleCheckHomeworkFamily(
       return true;
     }
 
-    if (parts[3] === 'pend' || parts[3] === 'arch' || parts[3] === 'a' || parts[3] === 'p') {
+    if (
+      parts[3] === 'pend' ||
+      parts[3] === 'arch' ||
+      parts[3] === 'rev' ||
+      parts[3] === 'a' ||
+      parts[3] === 'p'
+    ) {
       const mode: CheckHwListMode =
-        parts[3] === 'pend' || parts[3] === 'p' ? 'pending' : 'archive';
+        parts[3] === 'arch' || parts[3] === 'a'
+          ? 'archive'
+          : parts[3] === 'rev'
+            ? 'revision'
+            : 'pending';
       const maybeFilter = parts[4];
       const oldStatus =
         maybeFilter === 'all' ||
@@ -281,14 +299,16 @@ export async function handleCheckHomeworkFamily(
         parts[3] === 'ok' ||
         parts[3] === 'rej' ||
         parts[3] === 'cmt' ||
-        parts[3] === 'hs') &&
+        parts[3] === 'hs' ||
+        parts[3] === 'hsv') &&
       parts[4] &&
       parts[5]
     ) {
       const student = getCuratorStudentRecord(students, parts[4]);
       const hwNum = Number(parts[5]);
       const homework = student ? getCuratorHomeworkRecord(student, hwNum) : undefined;
-      const origin = parseOriginFromParts(parts, 6);
+      const originStart = parts[3] === 'hsv' ? 7 : 6;
+      const origin = parseOriginFromParts(parts, originStart);
       if (!student || !homework) {
         await editScreen(message, 'Работа не найдена.', { inline_keyboard: [] });
         return true;
@@ -319,23 +339,74 @@ export async function handleCheckHomeworkFamily(
       if (parts[3] === 'hs') {
         const {
           listCourseHomeworkSubmissionEvents,
-          formatCourseHomeworkSubmissionTimeline,
+          buildHomeworkSubmissionHistoryEntries,
         } = await import('@/lib/bot/education/course-homework-submission-history');
-        const { formatCheckHwWhen } = await import('./check-homework-meta');
         const events = await listCourseHomeworkSubmissionEvents(
           admin,
           student.telegramId,
           homework.sanityLessonId,
         );
-        const timelineLines = formatCourseHomeworkSubmissionTimeline(events, formatCheckHwWhen);
+        const entries = buildHomeworkSubmissionHistoryEntries(events).map((e) => ({
+          submitIndex: e.submitIndex,
+          sequenceNo: e.sequenceNo,
+          statusLabel: e.statusLabel,
+        }));
         const screen = renderCheckHomeworkSubmissionHistory(
           courseId,
           student,
           homework,
           origin,
-          timelineLines,
+          entries,
         );
         await editScreen(message, screen.text, screen.keyboard);
+        return true;
+      }
+
+      if (parts[3] === 'hsv' && parts[6]) {
+        const sequenceNo = Number(parts[6]);
+        const {
+          listCourseHomeworkSubmissionEvents,
+        } = await import('@/lib/bot/education/course-homework-submission-history');
+        const events = await listCourseHomeworkSubmissionEvents(
+          admin,
+          student.telegramId,
+          homework.sanityLessonId,
+        );
+        const ev = events.find((e) => e.sequenceNo === sequenceNo);
+        if (!ev) {
+          await editScreen(message, 'Сдача не найдена.', { inline_keyboard: [] });
+          return true;
+        }
+        try {
+          await sendSubmissionToCurator(admin, telegramId, {
+            studentName: student.name,
+            lessonNumber: homework.number,
+            title: homework.title,
+            fileUrl: ev.submissionFileUrl ?? homework.submissionFileUrl,
+            note: ev.submissionNote ?? homework.submissionNote,
+          });
+        } catch (error) {
+          await sendAdminMessage(
+            chatId,
+            error instanceof Error ? error.message : 'Не удалось открыть работу.',
+          );
+        }
+        await sendAdminMessage(chatId, `📎 Сдача №${sequenceNo}`, {
+          inline_keyboard: [
+            [
+              {
+                text: '📄 Посмотреть вердикт',
+                callback_data: encodeHwItemCallback('vr', courseId, student.id, hwNum, origin),
+              },
+            ],
+            [
+              {
+                text: '⬅️ Назад',
+                callback_data: encodeHwItemCallback('hs', courseId, student.id, hwNum, origin),
+              },
+            ],
+          ],
+        });
         return true;
       }
 
@@ -375,7 +446,7 @@ export async function handleCheckHomeworkFamily(
               inline_keyboard: [
                 [
                   {
-                    text: '📜 История сдач',
+                    text: '📜 История проверок',
                     callback_data: encodeHwItemCallback('hs', courseId, student.id, hwNum, origin),
                   },
                 ],

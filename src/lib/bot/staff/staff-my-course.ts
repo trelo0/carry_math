@@ -33,20 +33,38 @@ export async function loadStaffMyCourseRows(
   return staffCourseRowsFromOptions(options);
 }
 
+export function renderMyCourseRolePicker(
+  courseTitle: string,
+  courseId: number,
+): { text: string; keyboard: InlineKeyboard } {
+  return {
+    text: [`🎓 ${courseTitle}`, '', 'Войти как:'].join('\n'),
+    keyboard: {
+      inline_keyboard: [
+        [back('📡 Куратор', `c:mc:${courseId}:curator`)],
+        [back('📝 Проверяющий ДЗ', `c:mc:${courseId}:check`)],
+        [back('⬅️ К списку курсов', 'c:mc')],
+      ],
+    },
+  };
+}
+
 export function renderMyCourseListScreen(
   rows: StaffCourseAssignmentRow[],
-  options?: { backCallback?: string; backLabel?: string },
+  options?: { backCallback?: string; backLabel?: string; showBack?: boolean },
 ): {
   text: string;
   keyboard: InlineKeyboard;
 } {
   const backCb = options?.backCallback ?? 's:menu';
   const backLabel = options?.backLabel ?? '⬅️ Главное меню';
+  const showBack = options?.showBack ?? true;
 
   if (rows.length === 0) {
+    const kb: InlineKeyboard['inline_keyboard'] = showBack ? [[back(backLabel, backCb)]] : [];
     return {
       text: CURATOR_NO_COURSES_TEXT,
-      keyboard: { inline_keyboard: [[back('⬅️ Закрыть', backCb)]] },
+      keyboard: { inline_keyboard: kb },
     };
   }
 
@@ -61,12 +79,11 @@ export function renderMyCourseListScreen(
       ]);
       continue;
     }
-    keyboard.push([
-      { text: `📡 ${group.title} · вебинары`, callback_data: `c:mc:${group.courseId}:curator` },
-      { text: '📝 ДЗ', callback_data: `c:mc:${group.courseId}:check` },
-    ]);
+    keyboard.push([back(group.title, `c:mc:${group.courseId}:pick`)]);
   }
-  keyboard.push([back(backLabel, backCb)]);
+  if (showBack) {
+    keyboard.push([back(backLabel, backCb)]);
+  }
 
   return { text: lines.join('\n'), keyboard: { inline_keyboard: keyboard } };
 }

@@ -49,7 +49,14 @@ export type ResolvedPurchaseOffer = {
 export class PurchaseFulfillError extends Error {
   constructor(
     message: string,
-    readonly code: 'INVALID_PRODUCT' | 'INVALID_PACKAGE' | 'INVALID_TEACHER' | 'INVALID_PRICE' | 'ALREADY_FULFILLED' | 'NOT_LINKED',
+    readonly code:
+      | 'INVALID_PRODUCT'
+      | 'INVALID_PACKAGE'
+      | 'INVALID_TEACHER'
+      | 'INVALID_PRICE'
+      | 'ALREADY_FULFILLED'
+      | 'NOT_LINKED'
+      | 'MISSING_COURSE',
   ) {
     super(message);
     this.name = 'PurchaseFulfillError';
@@ -271,6 +278,12 @@ export async function fulfillPurchase(
           }
         }
       }
+    }
+    if (!resolvedCourseId && !courseSlug?.trim()) {
+      throw new PurchaseFulfillError(
+        'Покупка курса: укажите course_slug (курс в Sanity и строка courses).',
+        'MISSING_COURSE',
+      );
     }
   }
 

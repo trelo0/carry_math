@@ -1,0 +1,3 @@
+{
+  "/api/cabinet/teacher/lessons/[lessonId]/reschedule/route": "app/api/cabinet/teacher/lessons/[lessonId]/reschedule/route.js"
+}

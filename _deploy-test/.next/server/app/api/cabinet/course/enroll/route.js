@@ -1,0 +1,11 @@
+var R=require("../../../../../chunks/[turbopack]_runtime.js")("server/app/api/cabinet/course/enroll/route.js")
+R.c("server/chunks/[root-of-the-server]__6104c028._.js")
+R.c("server/chunks/node_modules_next_92aaecbe._.js")
+R.c("server/chunks/node_modules_e95b3bed._.js")
+R.c("server/chunks/src_lib_supabase_admin_ts_291ac0f7._.js")
+R.c("server/chunks/[root-of-the-server]__e41d6d2a._.js")
+R.c("server/chunks/node_modules_next_afec86a9._.js")
+R.c("server/chunks/node_modules_next_dist_e6406c48._.js")
+R.c("server/chunks/_next-internal_server_app_api_cabinet_course_enroll_route_actions_a6b52b5c.js")
+R.m(398092)
+module.exports=R.m(398092).exports

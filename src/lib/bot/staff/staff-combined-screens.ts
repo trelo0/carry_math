@@ -142,7 +142,7 @@ export function renderCombinedCourseSchedule(
     rows.push([{ text: '📅 Назначить дату следующего', callback_data: `c:sch:pick:${nextSanityId}` }]);
   }
   rows.push([{ text: '📅 Выбрать занятие для даты', callback_data: 'c:sch:list' }]);
-  rows.push([backButton('⬅️ К расписанию', 's:sch')]);
+  rows.push([backButton('⬅️ На главную', 's:menu')]);
 
   return {
     text: ['🎓 Расписание курса', '', lastLine, nextLine, '', 'Назначьте дату эфира/урока:'].join('\n'),
