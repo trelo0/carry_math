@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 
 function subscribeMinute(onChange: () => void): () => void {
   const id = window.setInterval(onChange, 30_000);
@@ -15,7 +15,34 @@ export function useNowMs(): number {
 }
 
 const MOBILE_QUERY = '(max-width: 768px)';
-const COMPACT_PANEL_QUERY = '(max-width: 1200px)';
+
+export type ScheduleSize = 'wide' | 'mid' | 'narrow';
+
+/** Размер по ширине самого блока расписания (а не окна): сайдбар кабинета занимает место. */
+export const SCHEDULE_WIDE_MIN = 960;
+export const SCHEDULE_MID_MIN = 640;
+
+export function scheduleSizeFor(width: number): ScheduleSize {
+  if (width >= SCHEDULE_WIDE_MIN) return 'wide';
+  if (width >= SCHEDULE_MID_MIN) return 'mid';
+  return 'narrow';
+}
+
+/** Ширина элемента через ResizeObserver; 0 до первого замера. */
+export function useElementWidth<T extends HTMLElement>(): [RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setWidth(Math.round(el.getBoundingClientRect().width));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
+}
 
 function subscribeMediaQuery(query: string, onChange: () => void): () => void {
   const mq = window.matchMedia(query);
@@ -27,15 +54,6 @@ export function useIsMobile(): boolean {
   return useSyncExternalStore(
     (onChange) => subscribeMediaQuery(MOBILE_QUERY, onChange),
     () => window.matchMedia(MOBILE_QUERY).matches,
-    () => false,
-  );
-}
-
-/** Панель дня — выезжающий drawer, не колонка в сетке (≤1200px). */
-export function useScheduleCompactPanel(): boolean {
-  return useSyncExternalStore(
-    (onChange) => subscribeMediaQuery(COMPACT_PANEL_QUERY, onChange),
-    () => window.matchMedia(COMPACT_PANEL_QUERY).matches,
     () => false,
   );
 }

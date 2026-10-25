@@ -21,6 +21,7 @@ import {
 import ScheduleAddModal from './ScheduleAddModal';
 import ScheduleDayAgenda from './ScheduleDayAgenda';
 import ScheduleDayHoursModal from './ScheduleDayHoursModal';
+import ScheduleDayTimeline from './ScheduleDayTimeline';
 import {
   ScheduleCancelModal,
   ScheduleCompleteModal,
@@ -34,7 +35,7 @@ import ScheduleWeekBoard from './ScheduleWeekBoard';
 import ScheduleWorkingHoursModal from './ScheduleWorkingHoursModal';
 import ScheduleToastStack from './ScheduleToastStack';
 import { IconClockRef, IconPlusRef } from './ScheduleRefIcons';
-import { useIsMobile, useNowMs, useScheduleCompactPanel } from './schedule-hooks';
+import { scheduleSizeFor, useElementWidth, useIsMobile, useNowMs } from './schedule-hooks';
 
 type Props = {
   teacherData?: TeacherCabinetData;
@@ -86,14 +87,17 @@ export default function TeacherSchedulePanel({
   runAction,
 }: Props) {  const filters = useMemo(() => getScheduleFilters(), []);
   const isMobile = useIsMobile();
-  const compactPanel = useScheduleCompactPanel();
+  const [rootRef, rootWidth] = useElementWidth<HTMLDivElement>();
+  const size = rootWidth > 0 ? scheduleSizeFor(rootWidth) : 'wide';
+  const compactPanel = size !== 'wide';
   const nowMs = useNowMs();
 
   const [viewMode, setViewMode] = useState<ScheduleViewMode>(() => readStoredViewMode());
   const [filter, setFilter] = useState<ScheduleFilter>('all');
   const [selectedDay, setSelectedDay] = useState(() => new Date());
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [expandedDay, setExpandedDay] = useState<Date | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addDraft, setAddDraft] = useState<AddDraft | null>(null);
   const [lessonModal, setLessonModal] = useState<LessonModal | null>(null);
@@ -110,10 +114,6 @@ export default function TeacherSchedulePanel({
       /* ignore */
     }
   }, [viewMode]);
-
-  useEffect(() => {
-    setPanelOpen(!compactPanel);
-  }, [compactPanel]);
 
   const effectiveView: ScheduleViewMode = isMobile && viewMode === 'week' ? 'day' : viewMode;
   const activeFilter = isScheduleFilterValid(filter) ? filter : 'all';
@@ -193,18 +193,24 @@ export default function TeacherSchedulePanel({
   const openEvent = (event: ScheduleEvent) => {
     setSelectedEventId(event.id);
     setSelectedDay(new Date(event.startsAt));
-    if (compactPanel) setPanelOpen(true);
+    if (compactPanel) setDrawerOpen(true);
   };
 
   // Смена дня сбрасывает открытое занятие: в сайдбаре снова список дня.
   const pickDay = (day: Date) => {
     setSelectedDay(day);
     setSelectedEventId(null);
-    if (compactPanel) setPanelOpen(true);
+  };
+
+  // Месяц: клик по дню раскрывает горизонтальное расписание под неделей, повторный клик — сворачивает.
+  const toggleMonthDay = (day: Date) => {
+    pickDay(day);
+    setExpandedDay((prev) => (prev && isSameDay(prev, day) ? null : day));
   };
 
   const shift = (delta: number) => {
     setSelectedEventId(null);
+    setExpandedDay(null);
     setSelectedDay((prev) =>
       effectiveView === 'month'
         ? shiftMonth(prev, delta)
@@ -227,19 +233,22 @@ export default function TeacherSchedulePanel({
   };
 
   return (
-    <div className="sr-root sched-page" data-panel={panelOpen ? 'open' : 'closed'}>
+    <div ref={rootRef} className="sr-root sched-page" data-size={size} data-panel={drawerOpen ? 'open' : 'closed'}>
       <ScheduleTopbar
         viewMode={effectiveView}
         isMobile={isMobile}
         periodLabel={formatPeriodLabel(effectiveView, selectedDay, weekStart)}
         showToday={showToday}
         nowMs={nowMs}
-        panelOpen={panelOpen}
+        panelOpen={drawerOpen}
         onPrev={() => shift(-1)}
         onNext={() => shift(1)}
         onToday={() => pickDay(new Date())}
-        onChangeView={setViewMode}
-        onTogglePanel={() => setPanelOpen((prev) => !prev)}
+        onChangeView={(mode) => {
+          setViewMode(mode);
+          setExpandedDay(null);
+        }}
+        onTogglePanel={() => setDrawerOpen((prev) => !prev)}
       />
 
       <div className="sr-filters-row">
@@ -294,7 +303,24 @@ export default function TeacherSchedulePanel({
             events={calendarEvents}
             selectedDay={selectedDay}
             nowMs={nowMs}
-            onSelectDay={pickDay}
+            expandedDay={expandedDay}
+            onToggleDay={toggleMonthDay}
+            renderExpanded={(day) => (
+              <ScheduleDayTimeline
+                day={day}
+                events={calendarEvents}
+                daySlots={daySlots}
+                workingHours={teacherData?.workingHours}
+                selectedEventId={selectedEventId}
+                nowMs={nowMs}
+                canCreate={canCreate}
+                showHeading
+                onSelectEvent={openEvent}
+                onCreateAt={(d, startTime, endTime) =>
+                  openAdd({ date: d, startTime, endTime, kind: 'individual' })
+                }
+              />
+            )}
           />
         ) : isMobile ? (
           <ScheduleDayAgenda
@@ -308,9 +334,25 @@ export default function TeacherSchedulePanel({
             onSelectEvent={openEvent}
             onCreate={() => openAdd({ date: selectedDay, kind: 'individual' })}
           />
+        ) : effectiveView === 'day' ? (
+          <div className="sr-board sr-board--single sr-dt-board">
+            <ScheduleDayTimeline
+              day={selectedDay}
+              events={calendarEvents}
+              daySlots={daySlots}
+              workingHours={teacherData?.workingHours}
+              selectedEventId={selectedEventId}
+              nowMs={nowMs}
+              canCreate={canCreate}
+              onSelectEvent={openEvent}
+              onCreateAt={(day, startTime, endTime) =>
+                openAdd({ date: day, startTime, endTime, kind: 'individual' })
+              }
+            />
+          </div>
         ) : (
           <ScheduleWeekBoard
-            days={effectiveView === 'week' ? weekDays : [selectedDay]}
+            days={weekDays}
             events={calendarEvents}
             daySlots={daySlots}
             workingHours={teacherData?.workingHours}
@@ -350,12 +392,12 @@ export default function TeacherSchedulePanel({
         );
 
         if (compactPanel) {
-          return panelOpen ? (
+          return drawerOpen ? (
             <div className="sr-drawer-layer" role="dialog" aria-modal="true" aria-label="Панель дня">
               <button
                 type="button"
                 className="sr-drawer-backdrop"
-                onClick={() => setPanelOpen(false)}
+                onClick={() => setDrawerOpen(false)}
                 aria-label="Закрыть панель"
               />
               <div className="sr-drawer sr-drawer--schedule">{rightPanel}</div>
@@ -363,7 +405,7 @@ export default function TeacherSchedulePanel({
           ) : null;
         }
 
-        return panelOpen ? rightPanel : null;
+        return rightPanel;
       })()}
 
       {lessonModal && modalEvent && teacherData ? (
@@ -499,6 +541,8 @@ export default function TeacherSchedulePanel({
     </div>
   );
 }
+
+
 
 
 

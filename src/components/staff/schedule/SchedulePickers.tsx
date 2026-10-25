@@ -186,6 +186,17 @@ export function ScheduleDateSelect({
     if (value) setViewMonth(parseDateKey(value));
   }, [value]);
 
+  // На узких экранах календарь раскрывается в потоке — прокручиваем модалку к нему.
+  useEffect(() => {
+    if (!open) return;
+    const id = window.requestAnimationFrame(() => {
+      rootRef.current
+        ?.querySelector('.sr-date-cal-panel')
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [open]);
+
   const shiftMonth = (delta: number) => {
     setViewMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
   };
