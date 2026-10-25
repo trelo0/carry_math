@@ -3,9 +3,12 @@ import { getCourse } from '@/lib/bot/education/courses';
 import {
   assignCourseStaffFromAdmin,
   listActiveCourseStaff,
+  safeSyncCourseStaff,
   type CourseStaffRole,
 } from '@/lib/bot/education/course-staff';
 import { getMember } from '@/lib/bot/roles';
+import { getDistrictCourseContent } from '@/lib/studio/courseContent';
+import { isSanityWriteConfigured, patchCourseStaffIds } from '@/lib/studio/courseContentWrite';
 import {
   type AdminMessage,
   type InlineButton,
@@ -47,6 +50,9 @@ export async function renderCourseStaffMenu(
     return;
   }
 
+  const problems = await safeSyncCourseStaff(admin, { force: true });
+  const courseProblems = problems;
+
   const [curatorLine, checkLine] = await Promise.all([
     activeStaffLine(admin, courseId, 'curator'),
     activeStaffLine(admin, courseId, 'check'),
@@ -62,7 +68,8 @@ export async function renderCourseStaffMenu(
     `📝 Проверяющий ДЗ:`,
     checkLine,
     '',
-    'Sanity: districtCourse → curatorTelegramId / checkTelegramId (синхрон при загрузке курса).',
+    'Sanity: districtCourse → curatorTelegramId / checkTelegramId (синхронизация при каждом открытии).',
+    ...courseProblems.map((p) => `⚠️ ${p}`),
   ];
 
   const keyboard: InlineButton[][] = [
@@ -166,6 +173,16 @@ export async function handleCourseStaffAdminAction(
     const role = setMatch[2] as 'curator' | 'check';
     const staffId = Number(setMatch[3]);
     try {
+      // Источник правды — Sanity: сначала пишем туда, иначе синхронизация откатит выбор.
+      if (!isSanityWriteConfigured()) {
+        throw new Error('Sanity не настроен на запись (SANITY_API_WRITE_TOKEN). Назначьте в Studio.');
+      }
+      const course = await getCourse(admin, courseId);
+      const content = course ? await getDistrictCourseContent(course.slug, { fresh: true }) : null;
+      if (!content) throw new Error('Курс не найден в Sanity.');
+      await patchCourseStaffIds(content.sanityId, {
+        [role === 'curator' ? 'curatorTelegramId' : 'checkTelegramId']: staffId,
+      });
       await assignCourseStaffFromAdmin(admin, courseId, staffId, role);
       const label = await staffLabel(admin, staffId);
       await editAdminMessage(

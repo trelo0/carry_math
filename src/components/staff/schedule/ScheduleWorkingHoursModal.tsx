@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
@@ -108,7 +108,6 @@ export default function ScheduleWorkingHoursModal({
   events,
   busy,
   runAction,
-  report,
   patchTeacher,
   onAddOffDay,
   onClose,
@@ -266,6 +265,10 @@ export default function ScheduleWorkingHoursModal({
         </header>
 
         <div className="sr-modal-body">
+          <p className="sr-modal-intro">
+            Включите рабочие дни и интервалы — они повторяются каждую неделю. Исключения на одну дату (выходной или
+            особые часы) задайте в календаре: карандаш у выбранного дня в боковой панели.
+          </p>
           <ul className="sr-week-list">
             {WEEKDAYS.map((day) => {
               const draft = drafts[day.id];
@@ -343,8 +346,11 @@ export default function ScheduleWorkingHoursModal({
             </section>
           ) : null}
 
-          <section className="sr-modal-section">
-            <h3 className="sr-modal-section-title">Выходные и отпуск</h3>
+          <section className="sr-modal-section sr-modal-section--muted">
+            <h3 className="sr-modal-section-title">Ближайшие выходные (шаблон)</h3>
+            <p className="sr-modal-hint">
+              Быстро отметить дату выходным. Точная настройка дня — в календаре через «карандаш» у дня.
+            </p>
             <div className="sr-field-row sr-field-row--end">
               <label className="sr-field">
                 <span>Дата</span>

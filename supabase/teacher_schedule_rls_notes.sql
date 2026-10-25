@@ -1,0 +1,9 @@
+-- Кабинет преподавателя: все мутации идут через Next.js API с service role (createAdminClient).
+-- RLS на scheduled_lessons, schedule_students, teacher_availability, teacher_day_slots включён
+-- в базовых миграциях; политики для anon/authenticated в репозитории не дублируются.
+--
+-- Перед добавлением широких POLICY убедитесь, что JWT содержит teacher_telegram_id.
+-- Не ослабляйте RLS до «authenticated = true» без привязки к владельцу.
+--
+-- Серверная изоляция: src/lib/teacher/lesson-ownership.ts + фильтр teacher_telegram_id
+-- из getStaffAuth().telegramId на всех /api/cabinet/teacher/* маршрутах.

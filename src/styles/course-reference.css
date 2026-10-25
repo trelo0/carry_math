@@ -1,0 +1,1671 @@
+/* Страница «Курс» куратора — референс District (тёмное стекло, неоновые рамки). Префикс cr-. */
+
+.staff-cabinet .curator-main--course {
+  min-width: 0;
+  padding: 18px 22px 30px;
+  background:
+    radial-gradient(1000px 460px at 72% -12%, rgba(28, 92, 230, 0.3), transparent 62%),
+    radial-gradient(760px 420px at 4% 108%, rgba(18, 70, 190, 0.2), transparent 60%),
+    #0e2254;
+}
+
+.staff-cabinet .cr-root {
+  --cr-card: linear-gradient(180deg, rgba(28, 56, 126, 0.82), rgba(19, 41, 102, 0.88));
+  --cr-card-flat: rgba(26, 54, 122, 0.62);
+  --cr-border: rgba(82, 146, 255, 0.55);
+  --cr-border-soft: rgba(82, 140, 250, 0.34);
+  --cr-glow: rgba(40, 110, 255, 0.18);
+  --cr-cyan: #3cc4ff;
+  --cr-text: #eaf1ff;
+  --cr-soft: #bcd0f4;
+  --cr-muted: #9db6e2;
+  --cr-green: 52, 211, 153;
+  --cr-amber: 251, 191, 36;
+  --cr-red: 248, 113, 113;
+
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  color: var(--cr-text);
+}
+
+.staff-cabinet .cr-root,
+.staff-cabinet .cr-root *,
+.staff-cabinet .cr-drawer,
+.staff-cabinet .cr-drawer * {
+  font-family: 'Inter', 'Manrope', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  box-sizing: border-box;
+}
+
+/* ---------- Шапка ---------- */
+.staff-cabinet .cr-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.staff-cabinet .cr-back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cr-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.staff-cabinet .cr-back:hover {
+  color: #fff;
+}
+
+.staff-cabinet .cr-hero-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.staff-cabinet .cr-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-facts,
+.staff-cabinet .cr-meta-row,
+.staff-cabinet .cr-course-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.staff-cabinet .cr-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card-flat);
+  color: var(--cr-soft);
+  font-size: 13px;
+}
+
+.staff-cabinet .cr-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cr-soft);
+  font-size: 13px;
+}
+
+/* ---------- Вкладки и тело ---------- */
+.staff-cabinet .cr-tabbar {
+  display: flex;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: 16px;
+  border: 1px solid var(--cr-border);
+  background: var(--cr-card);
+  box-shadow: 0 0 22px var(--cr-glow);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.staff-cabinet .cr-tab {
+  position: relative;
+  padding: 16px 20px 15px;
+  border: 0;
+  background: transparent;
+  color: var(--cr-soft);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.staff-cabinet .cr-tab:hover {
+  color: #fff;
+}
+
+.staff-cabinet .cr-tab.is-active {
+  color: var(--cr-cyan);
+  font-weight: 600;
+}
+
+.staff-cabinet .cr-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cr-cyan);
+  box-shadow: 0 0 10px rgba(60, 196, 255, 0.9);
+}
+
+.staff-cabinet .cr-body {
+  min-width: 0;
+  padding: 20px;
+  border-radius: 18px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card);
+  box-shadow: 0 14px 40px rgba(0, 0, 12, 0.4);
+}
+
+.staff-cabinet .cr-card {
+  min-width: 0;
+  border-radius: 16px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card-flat);
+}
+
+.staff-cabinet .cr-h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-kicker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cr-cyan);
+}
+
+.staff-cabinet .cr-muted {
+  margin: 0;
+  color: var(--cr-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.staff-cabinet .cr-empty {
+  margin: 14px 0 0;
+  padding: 22px 16px;
+  border-radius: 14px;
+  border: 1px dashed var(--cr-border-soft);
+  color: var(--cr-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.staff-cabinet .cr-empty--inline {
+  margin: 6px 0 0;
+}
+
+/* ---------- Кнопки, чипы, статусы ---------- */
+.staff-cabinet .cr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border);
+  background: rgba(36, 74, 158, 0.7);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+
+.staff-cabinet .cr-btn:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+
+.staff-cabinet .cr-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.staff-cabinet .cr-btn--sm {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+.staff-cabinet .cr-btn--primary {
+  border-color: rgba(110, 180, 255, 0.8);
+  background: linear-gradient(180deg, #3c88ff, #1e5fe6);
+  box-shadow: 0 0 22px rgba(46, 120, 255, 0.55);
+}
+
+.staff-cabinet .cr-btn--outline {
+  background: transparent;
+  border-color: rgba(100, 170, 255, 0.65);
+}
+
+.staff-cabinet .cr-btn--ghost {
+  background: rgba(42, 88, 178, 0.55);
+}
+
+.staff-cabinet .cr-chip,
+.staff-cabinet .cr-chip-static {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(24, 50, 114, 0.85);
+  color: var(--cr-soft);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.staff-cabinet .cr-chip:hover {
+  color: #fff;
+  border-color: var(--cr-border);
+}
+
+.staff-cabinet .cr-chip.is-active {
+  color: #fff;
+  border-color: rgba(90, 170, 255, 0.95);
+  background: linear-gradient(180deg, rgba(40, 110, 255, 0.35), rgba(20, 70, 200, 0.28));
+  box-shadow: 0 0 16px rgba(46, 120, 255, 0.45);
+}
+
+.staff-cabinet .cr-chip-static {
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: default;
+  font-size: 12px;
+}
+
+.staff-cabinet .cr-pill {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 180, 235, 0.4);
+  background: rgba(150, 180, 235, 0.1);
+  color: var(--cr-soft);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.staff-cabinet .cr-pill.is-planned {
+  border-color: rgba(70, 150, 255, 0.7);
+  background: rgba(40, 110, 255, 0.18);
+  color: #a9d0ff;
+}
+
+.staff-cabinet .cr-pill.is-done {
+  border-color: rgba(var(--cr-green), 0.65);
+  background: rgba(var(--cr-green), 0.14);
+  color: #aef2d6;
+}
+
+.staff-cabinet .cr-pill.is-live {
+  border-color: rgba(var(--cr-red), 0.75);
+  background: rgba(var(--cr-red), 0.18);
+  color: #ffd0d0;
+}
+
+.staff-cabinet .cr-pill.is-waiting,
+.staff-cabinet .cr-pill.is-warn {
+  border-color: rgba(var(--cr-amber), 0.65);
+  background: rgba(var(--cr-amber), 0.14);
+  color: #fde7a6;
+}
+
+.staff-cabinet .cr-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  border-radius: 9px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(36, 74, 158, 0.7);
+  color: var(--cr-soft);
+  cursor: pointer;
+}
+
+.staff-cabinet .cr-icon-btn:hover {
+  color: #fff;
+  border-color: var(--cr-border);
+}
+
+.staff-cabinet .cr-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cr-cyan);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.staff-cabinet .cr-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.staff-cabinet .cr-link:disabled {
+  opacity: 0.45;
+}
+
+.staff-cabinet .cr-link--danger {
+  color: #fca5a5;
+}
+
+/* ---------- Прогресс ---------- */
+.staff-cabinet .cr-progress {
+  flex: 1 1 auto;
+  height: 8px;
+  min-width: 60px;
+  border-radius: 999px;
+  background: rgba(14, 34, 88, 0.9);
+  border: 1px solid rgba(52, 110, 235, 0.25);
+  overflow: hidden;
+}
+
+.staff-cabinet .cr-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2b72ff, #3cc4ff);
+  box-shadow: 0 0 10px rgba(60, 196, 255, 0.7);
+}
+
+/* ---------- Занятия ---------- */
+.staff-cabinet .cr-lessons-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.staff-cabinet .cr-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.staff-cabinet .cr-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.staff-cabinet .cr-select {
+  min-height: 38px;
+  max-width: 100%;
+  padding: 7px 34px 7px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(24, 50, 114, 0.85);
+  color: var(--cr-soft);
+  font-size: 13px;
+  cursor: pointer;
+  color-scheme: dark;
+}
+
+.staff-cabinet .cr-lesson-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-cabinet .cr-lesson {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) auto 36px;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 16px 12px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(22, 46, 106, 0.7);
+  color: var(--cr-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.staff-cabinet .cr-lesson:hover {
+  border-color: var(--cr-border);
+  box-shadow: 0 0 18px var(--cr-glow);
+}
+
+.staff-cabinet .cr-lesson.is-selected {
+  border-color: rgba(90, 170, 255, 0.95);
+  box-shadow: 0 0 22px rgba(46, 120, 255, 0.4);
+}
+
+.staff-cabinet .cr-lesson-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 56px;
+  border-right: 1px solid var(--cr-border-soft);
+  line-height: 1.1;
+}
+
+.staff-cabinet .cr-lesson-date strong {
+  font-size: 21px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-lesson-date em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--cr-soft);
+}
+
+.staff-cabinet .cr-lesson-date small {
+  font-size: 11px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-lesson-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-lesson-time {
+  font-size: 12.5px;
+  color: var(--cr-cyan);
+  font-variant-numeric: tabular-nums;
+}
+
+.staff-cabinet .cr-lesson-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-cabinet .cr-lesson-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-lesson-go {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(90, 160, 255, 0.7);
+  background: rgba(30, 90, 230, 0.35);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(46, 120, 255, 0.35);
+}
+
+.staff-cabinet .cr-statbar {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(22, 46, 106, 0.7);
+}
+
+.staff-cabinet .cr-statbar-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-statbar-row {
+  display: grid;
+  grid-template-columns: repeat(2, auto) minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px 32px;
+}
+
+.staff-cabinet .cr-statbar-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--cr-muted);
+  font-size: 13px;
+}
+
+.staff-cabinet .cr-statbar-item strong {
+  font-size: 20px;
+  color: #fff;
+}
+
+.staff-cabinet .cr-statbar-progress {
+  align-items: center;
+}
+
+/* ---------- Обзор ---------- */
+.staff-cabinet .cr-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.staff-cabinet .cr-ov-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 14px;
+}
+
+.staff-cabinet .cr-next {
+  position: relative;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid rgba(90, 165, 255, 0.7);
+  background:
+    radial-gradient(520px 200px at 0 0, rgba(46, 120, 255, 0.4), transparent 70%),
+    linear-gradient(180deg, rgba(38, 80, 178, 0.9), rgba(22, 48, 118, 0.92));
+  box-shadow: 0 0 30px rgba(40, 110, 255, 0.25);
+}
+
+.staff-cabinet .cr-next.is-live {
+  border-color: rgba(var(--cr-red), 0.8);
+  box-shadow: 0 0 30px rgba(var(--cr-red), 0.22);
+}
+
+.staff-cabinet .cr-next--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.staff-cabinet .cr-next-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 92px;
+  border-radius: 16px;
+  border: 1px solid rgba(110, 180, 255, 0.5);
+  background: rgba(16, 38, 98, 0.6);
+  color: var(--cr-cyan);
+  line-height: 1.1;
+}
+
+.staff-cabinet .cr-next-date strong {
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-next-date em {
+  font-style: normal;
+  font-size: 14px;
+  color: var(--cr-soft);
+}
+
+.staff-cabinet .cr-next-date small {
+  font-size: 12px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-next-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-next-title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-ov-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 20px;
+  border-radius: 18px;
+  border: 1px solid var(--cr-border);
+  background: var(--cr-card-flat);
+  text-align: center;
+}
+
+.staff-cabinet .cr-ov-progress-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.staff-cabinet .cr-ov-progress-text strong {
+  font-size: 18px;
+  color: #fff;
+}
+
+.staff-cabinet .cr-ring {
+  position: relative;
+  width: 124px;
+  height: 124px;
+}
+
+.staff-cabinet .cr-ring svg {
+  width: 100%;
+  height: 100%;
+}
+
+.staff-cabinet .cr-ring-bg,
+.staff-cabinet .cr-ring-fg {
+  fill: none;
+  stroke-width: 10;
+}
+
+.staff-cabinet .cr-ring-bg {
+  stroke: rgba(52, 110, 235, 0.25);
+}
+
+.staff-cabinet .cr-ring-fg {
+  stroke: #3cc4ff;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px rgba(60, 196, 255, 0.8));
+}
+
+.staff-cabinet .cr-ring strong {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  color: #fff;
+}
+
+.staff-cabinet .cr-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.staff-cabinet .cr-stat {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card-flat);
+}
+
+.staff-cabinet .cr-stat div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-stat strong {
+  font-size: 28px;
+  line-height: 1;
+  color: #fff;
+}
+
+.staff-cabinet .cr-stat div > span {
+  font-size: 13px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-stat-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(60, 150, 255, 0.5);
+  background: rgba(40, 110, 255, 0.16);
+  color: var(--cr-cyan);
+}
+
+.staff-cabinet .cr-stat-icon.is-green {
+  border-color: rgba(var(--cr-green), 0.5);
+  background: rgba(var(--cr-green), 0.12);
+  color: rgb(var(--cr-green));
+}
+
+.staff-cabinet .cr-stat-icon.is-amber {
+  border-color: rgba(var(--cr-amber), 0.5);
+  background: rgba(var(--cr-amber), 0.12);
+  color: rgb(var(--cr-amber));
+}
+
+.staff-cabinet .cr-last {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card-flat);
+}
+
+.staff-cabinet .cr-last-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto 34px;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 10px 14px 10px 8px;
+  border-radius: 14px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(22, 46, 106, 0.7);
+  color: var(--cr-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.staff-cabinet .cr-last-row:hover {
+  border-color: var(--cr-border);
+  box-shadow: 0 0 18px var(--cr-glow);
+}
+
+.staff-cabinet .cr-last-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border-right: 1px solid var(--cr-border-soft);
+  line-height: 1.1;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-last-date strong {
+  font-size: 19px;
+  color: #fff;
+}
+
+.staff-cabinet .cr-last-date em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--cr-soft);
+}
+
+.staff-cabinet .cr-last-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-last-main strong {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Ученики ---------- */
+.staff-cabinet .cr-student-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-cabinet .cr-student {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(22, 46, 106, 0.7);
+}
+
+.staff-cabinet .cr-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(110, 180, 255, 0.6);
+  background: linear-gradient(180deg, #2f7bff, #1a4fd0);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.staff-cabinet .cr-student-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-student-name {
+  font-size: 14.5px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-cabinet .cr-student-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.staff-cabinet .cr-student-side strong {
+  font-size: 18px;
+  color: #fff;
+}
+
+/* ---------- Настройка занятия (центр и панель) ---------- */
+.staff-cabinet .cr-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.staff-cabinet .cr-detail-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.staff-cabinet .cr-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.staff-cabinet .cr-settings--page {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero {
+  grid-column: 1 / -1;
+}
+
+.staff-cabinet .cr-side-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(22, 46, 106, 0.7);
+}
+
+.staff-cabinet .cr-side-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.staff-cabinet .cr-side-title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.staff-cabinet .cr-settings--page .cr-side-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.staff-cabinet .cr-side-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.staff-cabinet .cr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-field input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(14, 34, 90, 0.8);
+  color: #fff;
+  font-size: 13.5px;
+  color-scheme: dark;
+}
+
+.staff-cabinet .cr-field input:focus {
+  outline: none;
+  border-color: rgba(90, 170, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(46, 120, 255, 0.25);
+}
+
+.staff-cabinet .cr-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-cabinet .cr-file {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(14, 34, 90, 0.6);
+}
+
+.staff-cabinet .cr-file-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-file-name {
+  font-size: 13px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staff-cabinet .cr-file-state {
+  flex: none;
+  font-size: 11px;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-file-state.is-on {
+  color: #86efc8;
+}
+
+.staff-cabinet .cr-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.staff-cabinet .cr-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* ---------- Выезжающая панель ---------- */
+.staff-cabinet .cr-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.staff-cabinet .cr-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: rgba(6, 14, 44, 0.5);
+  cursor: default;
+  animation: cr-fade 0.18s ease-out;
+}
+
+.staff-cabinet .cr-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(430px, 100vw);
+  padding: 14px;
+  overflow-y: auto;
+  border-left: 1px solid var(--cr-border);
+  background:
+    radial-gradient(420px 220px at 100% 0, rgba(40, 110, 255, 0.22), transparent 70%),
+    #142c70;
+  box-shadow: -18px 0 50px rgba(0, 0, 14, 0.6);
+  scrollbar-width: thin;
+  animation: cr-slide 0.22s ease-out;
+}
+
+@keyframes cr-slide {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes cr-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- Список курсов ---------- */
+.staff-cabinet .cr-root--list {
+  display: flex;
+}
+
+.staff-cabinet .cr-course-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-cabinet .cr-course-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  padding: 22px;
+  border-radius: 18px;
+  border: 1px solid var(--cr-border);
+  background: var(--cr-card);
+  box-shadow: 0 0 22px var(--cr-glow);
+  color: var(--cr-text);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.staff-cabinet .cr-course-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(100, 180, 255, 0.9);
+  box-shadow: 0 0 30px rgba(46, 120, 255, 0.4);
+}
+
+.staff-cabinet .cr-course-name {
+  font-size: 19px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #fff;
+}
+
+.staff-cabinet .cr-course-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  color: var(--cr-cyan);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* ---------- Адаптив ---------- */
+@media (max-width: 1000px) {
+  .staff-cabinet .cr-ov-top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .staff-cabinet .cr-ov-progress {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .staff-cabinet .cr-settings--page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .staff-cabinet .curator-main--course {
+    padding: 12px 12px 24px;
+  }
+  .staff-cabinet .cr-title {
+    font-size: 24px;
+  }
+  .staff-cabinet .cr-next {
+    grid-template-columns: 76px minmax(0, 1fr);
+    padding: 16px;
+    gap: 14px;
+  }
+  .staff-cabinet .cr-next-date {
+    min-height: 76px;
+  }
+  .staff-cabinet .cr-next-cta {
+    grid-column: 1 / -1;
+  }
+  .staff-cabinet .cr-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .staff-cabinet .cr-statbar-row {
+    grid-template-columns: repeat(2, auto);
+  }
+  .staff-cabinet .cr-statbar-progress {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .staff-cabinet .cr-body {
+    padding: 12px;
+  }
+  .staff-cabinet .cr-tabbar {
+    padding: 0 6px;
+  }
+  .staff-cabinet .cr-tab {
+    padding: 14px 14px 13px;
+  }
+  .staff-cabinet .cr-lesson {
+    grid-template-columns: 54px minmax(0, 1fr) 30px;
+    gap: 10px;
+  }
+  .staff-cabinet .cr-lesson .cr-pill {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .staff-cabinet .cr-lesson-go {
+    grid-column: 3;
+    grid-row: 1;
+    width: 30px;
+    height: 30px;
+  }
+  .staff-cabinet .cr-last-row {
+    grid-template-columns: 48px minmax(0, 1fr) 30px;
+    gap: 10px;
+  }
+  .staff-cabinet .cr-last-row .cr-pill {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .staff-cabinet .cr-last-row .cr-lesson-go {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .staff-cabinet .cr-student {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+  .staff-cabinet .cr-student-side {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+}
+
+.staff-cabinet .cr-settings--page .cr-side-top .cr-h2 {
+  display: none;
+}
+
+/* ---------- Список курсов: карточки (v2) ---------- */
+.staff-cabinet .cr-course-grid {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.staff-cabinet .cr-course-card {
+  position: relative;
+  gap: 16px;
+  padding: 22px 22px 18px;
+  border-radius: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(60, 150, 255, 0.22), transparent 60%),
+    var(--cr-card);
+}
+
+.staff-cabinet .cr-course-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.staff-cabinet .cr-course-badge {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: 1px solid var(--cr-border);
+  background: linear-gradient(135deg, rgba(60, 130, 255, 0.45), rgba(60, 196, 255, 0.18));
+  color: #fff;
+  font-size: 21px;
+  font-weight: 800;
+  box-shadow: 0 0 16px var(--cr-glow);
+}
+
+.staff-cabinet .cr-course-role {
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--cr-border-soft);
+  background: rgba(60, 196, 255, 0.1);
+  color: var(--cr-cyan);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.staff-cabinet .cr-course-name {
+  font-size: 20px;
+  line-height: 1.25;
+  min-height: 2.5em;
+}
+
+.staff-cabinet .cr-course-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+}
+
+.staff-cabinet .cr-course-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--cr-border-soft);
+  background: var(--cr-card-flat);
+  color: var(--cr-muted);
+  font-size: 13px;
+}
+
+.staff-cabinet .cr-course-stat b {
+  color: #fff;
+  font-size: 16px;
+}
+
+.staff-cabinet .cr-course-go {
+  width: 100%;
+  justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--cr-border-soft);
+}
+
+.staff-cabinet .cr-course-card:hover .cr-course-go {
+  color: #fff;
+}
+
+/* ---------- Скелетон загрузки курса ---------- */
+.staff-cabinet .cr-skel {
+  border-radius: 16px;
+  border: 1px solid var(--cr-border-soft);
+  background: linear-gradient(
+    100deg,
+    rgba(28, 56, 126, 0.6) 30%,
+    rgba(40, 90, 200, 0.28) 50%,
+    rgba(28, 56, 126, 0.6) 70%
+  );
+  background-size: 220% 100%;
+  animation: cr-skel-shimmer 1.3s linear infinite;
+}
+
+.staff-cabinet .cr-skel--title {
+  height: 40px;
+  width: min(420px, 70%);
+}
+
+.staff-cabinet .cr-skel--tabs {
+  height: 44px;
+}
+
+.staff-cabinet .cr-skel--block {
+  height: 190px;
+}
+
+.staff-cabinet .cr-skel--short {
+  height: 110px;
+}
+
+@keyframes cr-skel-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+/* ============ v3: светлее, чипы по центру, панель-карточка, настройка занятия ============ */
+.staff-cabinet .curator-main--course {
+  background:
+    radial-gradient(1000px 480px at 72% -12%, rgba(60, 130, 255, 0.34), transparent 62%),
+    radial-gradient(760px 420px at 4% 108%, rgba(40, 110, 230, 0.26), transparent 60%),
+    #0e2254;
+}
+
+/* чипы статуса в карточке занятия — по центру по вертикали */
+.staff-cabinet .cr-lesson > .cr-pill {
+  align-self: center;
+}
+
+.staff-cabinet .cr-lesson {
+  background: rgba(24, 50, 116, 0.66);
+}
+
+/* ---------- Выезжающая панель: округлая карточка, 2 столбца ---------- */
+.staff-cabinet .cr-drawer {
+  top: 14px;
+  right: 14px;
+  bottom: 14px;
+  width: min(880px, calc(100vw - 28px));
+  padding: 18px;
+  border: 1px solid var(--cr-border);
+  border-radius: 26px;
+  background:
+    radial-gradient(520px 260px at 100% 0, rgba(70, 150, 255, 0.26), transparent 70%),
+    linear-gradient(180deg, #1a377f, #132b6c);
+  box-shadow: 0 24px 70px rgba(2, 8, 36, 0.65), 0 0 36px rgba(60, 130, 255, 0.22);
+}
+
+.staff-cabinet .cr-settings--drawer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    'hero links'
+    'mats hw'
+    'notify notify';
+  align-items: stretch;
+  gap: 14px;
+}
+
+.staff-cabinet .cr-settings--page {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    'hero hero'
+    'links notify'
+    'mats hw';
+  align-items: stretch;
+  gap: 14px;
+}
+
+.staff-cabinet .cr-area-hero {
+  grid-area: hero;
+}
+.staff-cabinet .cr-area-links {
+  grid-area: links;
+}
+.staff-cabinet .cr-area-mats {
+  grid-area: mats;
+}
+.staff-cabinet .cr-area-hw {
+  grid-area: hw;
+}
+.staff-cabinet .cr-area-notify {
+  grid-area: notify;
+}
+
+/* карточки настроек */
+.staff-cabinet .cr-side-card {
+  padding: 18px;
+  border-radius: 18px;
+  gap: 12px;
+  background: rgba(22, 46, 108, 0.62);
+  border: 1px solid var(--cr-border-soft);
+}
+
+.staff-cabinet .cr-side-card > .cr-h3,
+.staff-cabinet .cr-side-card-head .cr-h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.staff-cabinet .cr-side-card > .cr-h3::before,
+.staff-cabinet .cr-side-card-head .cr-h3::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--cr-cyan);
+  box-shadow: 0 0 10px rgba(60, 196, 255, 0.7);
+}
+
+.staff-cabinet .cr-side-hero {
+  background:
+    radial-gradient(420px 200px at 0 0, rgba(60, 140, 255, 0.34), transparent 70%),
+    linear-gradient(180deg, rgba(38, 80, 176, 0.72), rgba(22, 48, 118, 0.78));
+  border-color: rgba(110, 175, 255, 0.6);
+}
+
+.staff-cabinet .cr-side-hero .cr-side-title {
+  font-size: 19px;
+}
+
+.staff-cabinet .cr-field input {
+  min-height: 42px;
+  border-radius: 12px;
+  background: rgba(10, 26, 74, 0.72);
+}
+
+.staff-cabinet .cr-file {
+  background: rgba(12, 30, 84, 0.6);
+}
+
+/* уведомления — отдельная полоса */
+.staff-cabinet .cr-area-notify {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 16px;
+}
+
+.staff-cabinet .cr-settings--drawer .cr-area-notify .cr-side-actions,
+.staff-cabinet .cr-settings--page .cr-area-notify .cr-side-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.staff-cabinet .cr-settings--page .cr-area-notify {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.staff-cabinet .cr-settings--page .cr-area-notify .cr-side-actions {
+  margin-left: 0;
+}
+
+/* ---------- Настройка занятия в центре: герой-баннер ---------- */
+.staff-cabinet .cr-settings--page > .cr-side-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: 28px;
+  row-gap: 8px;
+  padding: 24px 26px;
+  border-radius: 20px;
+  box-shadow: 0 0 32px rgba(60, 130, 255, 0.28);
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero > * {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero > .cr-side-actions {
+  grid-column: 2;
+  grid-row: 1 / span 5;
+  align-self: center;
+  flex-direction: column;
+  min-width: 220px;
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero .cr-side-top {
+  justify-content: flex-start;
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero .cr-side-title {
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.staff-cabinet .cr-detail-head {
+  gap: 10px;
+}
+
+/* мобильные */
+@media (max-width: 760px) {
+  .staff-cabinet .cr-drawer {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: calc(100vw - 16px);
+    padding: 12px;
+    border-radius: 20px;
+  }
+  .staff-cabinet .cr-settings--drawer,
+  .staff-cabinet .cr-settings--page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'hero'
+      'links'
+      'mats'
+      'hw'
+      'notify';
+  }
+  .staff-cabinet .cr-settings--page > .cr-side-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .staff-cabinet .cr-settings--page > .cr-side-hero > .cr-side-actions {
+    grid-column: 1;
+    grid-row: auto;
+    min-width: 0;
+  }
+}
+
+.staff-cabinet .cr-settings--page .cr-area-notify {
+  align-self: start;
+}
+
+.staff-cabinet .cr-settings--page > .cr-side-hero > .cr-pill {
+  justify-self: start;
+}
+
+/* ---------- v4: уведомления в один ряд, чип в «последнем занятии» ---------- */
+.staff-cabinet .cr-last-row > .cr-pill {
+  align-self: center;
+}
+
+.staff-cabinet .cr-area-notify {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.staff-cabinet .cr-notify-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.staff-cabinet .cr-notify-text .cr-h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.staff-cabinet .cr-notify-text .cr-h3::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--cr-cyan);
+  box-shadow: 0 0 10px rgba(60, 196, 255, 0.7);
+}
+
+.staff-cabinet .cr-notify-desc {
+  margin: 0;
+  padding-left: 13px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--cr-muted);
+}
+
+.staff-cabinet .cr-area-notify .cr-side-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-left: auto;
+}
+
+.staff-cabinet .cr-area-notify > .cabinet-feedback,
+.staff-cabinet .cr-area-notify > :not(.cr-notify-text):not(.cr-side-actions) {
+  flex-basis: 100%;
+}

@@ -24,6 +24,7 @@ export default async function StaffCabinetPage({
 }: {
   searchParams: Promise<{
     section?: string;
+    tab?: string;
     lesson?: string;
     login?: string;
     courseId?: string;
@@ -105,6 +106,7 @@ export default async function StaffCabinetPage({
     <StaffShell
       data={data}
       initialSection={parseSection(sp.section)}
+      initialTab={sp.tab}
       initialLessonId={sp.lesson}
       initialCourseId={
         sp.courseId && Number.isFinite(Number(sp.courseId)) ? Number(sp.courseId) : undefined

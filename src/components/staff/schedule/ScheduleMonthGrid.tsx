@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import {
   countEventsOnDay,
@@ -19,6 +19,7 @@ type Props = {
   /** Развёрнутый день: под его неделей рисуется renderExpanded. */
   expandedDay: Date | null;
   onToggleDay: (day: Date) => void;
+  expandRef?: RefObject<HTMLDivElement | null>;
   renderExpanded: (day: Date) => ReactNode;
 };
 
@@ -29,6 +30,7 @@ export default function ScheduleMonthGrid({
   nowMs,
   expandedDay,
   onToggleDay,
+  expandRef,
   renderExpanded,
 }: Props) {
   const monthStart = startOfMonth(month);
@@ -42,6 +44,7 @@ export default function ScheduleMonthGrid({
 
   return (
     <div className="sr-month">
+      <p className="sr-month-hint">Нажмите на день — под строкой недели откроется расписание этого дня.</p>
       <div className="sr-month-weekdays">
         {WEEKDAYS_SHORT.map((label) => (
           <span key={label}>{label}</span>
@@ -76,7 +79,9 @@ export default function ScheduleMonthGrid({
                 })}
               </div>
               {expandedInWeek ? (
-                <div className="sr-month-expand">{renderExpanded(expandedInWeek)}</div>
+                <div className="sr-month-expand" ref={expandRef}>
+                  {renderExpanded(expandedInWeek)}
+                </div>
               ) : null}
             </div>
           );

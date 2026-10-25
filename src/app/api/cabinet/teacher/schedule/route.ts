@@ -2,13 +2,7 @@
 import { revalidatePath } from 'next/cache';
 import { getStaffAuth } from '@/lib/cabinet-auth';
 import { canManageTeacherCabinet } from '@/lib/bot/roles';
-import { assignTeacher, getStudentAssignments } from '@/lib/bot/education/assignments';
-import { scheduleLesson } from '@/lib/bot/lessons';
-import { assertLessonCreditAvailable, LessonCreditError } from '@/lib/bot/lesson-credits';
-import { notifyStudentLessonScheduled } from '@/lib/bot/student-notifications';
-import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 import { ScheduleValidationError, validateLessonSlot } from '@/lib/teacher/schedule-validation';
-import { formatScheduleOverlapDbError, isScheduleOverlapDbError } from '@/lib/teacher/schedule-rpc';
 import { insertIndividualLessonAtomic } from '@/lib/teacher/insert-individual-lesson';
 import { durationFromRange } from '@/lib/teacher/schedule-utils';
 
@@ -19,34 +13,36 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json()) as {
-    studentTelegramId?: number;
     participantName?: string;
     scheduleStudentId?: number;
     kind?: 'individual' | 'group';
     startsAt?: string;
     topic?: string;
-    packageId?: number;
-    meetUrl?: string;
-    groupId?: number;
     durationMinutes?: number;
     endTime?: string;
     lessonPlan?: string;
     fromSlotId?: number;
     replacesLessonId?: number;
+    /** Legacy — не используется в кабинете расписания. */
+    studentTelegramId?: number;
+    groupId?: number;
+    packageId?: number;
+    meetUrl?: string;
   };
 
   const { admin, telegramId } = auth;
 
-  async function ensureTeacherAssignment(studentTelegramId: number) {
-    const assignments = await getStudentAssignments(admin, studentTelegramId, 'teacher');
-    const linked = assignments.some((a) => a.mentor_telegram_id === telegramId);
-    if (!linked) {
-      try {
-        await assignTeacher(admin, studentTelegramId, telegramId);
-      } catch {
-        /* назначение не блокирует запись занятия */
-      }
-    }
+  if (body.studentTelegramId != null && Number.isFinite(body.studentTelegramId)) {
+    return NextResponse.json(
+      { error: 'Занятия с Telegram-учениками в этом расписании не поддерживаются' },
+      { status: 400 },
+    );
+  }
+  if (body.groupId != null && Number.isFinite(body.groupId)) {
+    return NextResponse.json(
+      { error: 'Используйте групповое занятие с названием, без привязки к группе из CRM' },
+      { status: 400 },
+    );
   }
 
   async function consumeReplacedLesson(replacesLessonId?: number) {
@@ -111,7 +107,7 @@ export async function POST(request: Request) {
     rosterName = rosterStudent.name as string;
   }
 
-  if (kind === 'individual' && !body.studentTelegramId) {
+  if (kind === 'individual') {
     try {
       const { id } = await insertIndividualLessonAtomic(auth.admin, {
         teacherTelegramId: auth.telegramId,
@@ -134,186 +130,27 @@ export async function POST(request: Request) {
     }
   }
 
-  if (kind === 'group' && !body.groupId && !body.studentTelegramId) {
-    const { data, error } = await auth.admin
-      .from('scheduled_lessons')
-      .insert({
-        telegram_id: null,
-        kind: 'group',
-        group_id: null,
-        teacher_telegram_id: auth.telegramId,
-        starts_at: startsAt,
-        duration_minutes: durationMinutes,
-        topic,
-        status: 'scheduled',
-        package_id: null,
-        lesson_plan: body.lessonPlan?.trim() || null,
-        participant_name: body.participantName?.trim() || null,
-      })
-      .select('id')
-      .single();
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    await consumeFreeSlot(body.fromSlotId);
-    await consumeReplacedLesson(body.replacesLessonId);
-    revalidatePath('/cabinet/staff');
-    revalidatePath('/cabinet');
-    return NextResponse.json({ lessonId: data.id });
-  }
-
-  if (kind === 'group' && body.groupId && !body.studentTelegramId) {
-    const groupId = body.groupId;
-    const { data: group } = await auth.admin
-      .from('groups')
-      .select('id')
-      .eq('id', groupId)
-      .eq('teacher_telegram_id', auth.telegramId)
-      .maybeSingle();
-    if (!group) {
-      return NextResponse.json({ error: 'Группа не найдена' }, { status: 404 });
-    }
-
-    const { data: members } = await auth.admin
-      .from('group_members')
-      .select('telegram_id')
-      .eq('group_id', groupId)
-      .eq('status', 'active');
-    if (!members?.length) {
-      return NextResponse.json({ error: 'В группе нет активных учеников' }, { status: 400 });
-    }
-
-    const lessonIds: number[] = [];
-    const skipped: string[] = [];
-
-    for (const member of members) {
-      const telegramId = member.telegram_id as number;
-      let packageId: number;
-      try {
-        ({ packageId } = await assertLessonCreditAvailable(
-          auth.admin,
-          telegramId,
-          'group',
-          body.packageId,
-        ));
-      } catch (error) {
-        if (error instanceof LessonCreditError) {
-          skipped.push(String(telegramId));
-          continue;
-        }
-        throw error;
-      }
-      try {
-        const lessonId = await scheduleLesson(auth.admin, {
-          telegramId,
-          kind: 'group',
-          startsAt,
-          topic,
-          packageId,
-          teacherTelegramId: auth.telegramId,
-          groupId,
-          meetUrl: body.meetUrl,
-          durationMinutes,
-        });
-        lessonIds.push(lessonId);
-        await ensureTeacherAssignment(telegramId);
-        if (body.lessonPlan?.trim()) {
-          await auth.admin
-            .from('scheduled_lessons')
-            .update({ lesson_plan: body.lessonPlan.trim() })
-            .eq('id', lessonId);
-        }
-        await notifyStudentLessonScheduled(auth.admin, telegramId, {
-          kind: 'group',
-          topic,
-          startsAt,
-          meetUrl: body.meetUrl,
-        });
-      } catch (error) {
-        skipped.push(
-          error instanceof Error ? error.message : String(telegramId),
-        );
-      }
-    }
-
-    if (lessonIds.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            skipped.length > 0
-              ? 'Не удалось назначить ни одному ученику группы (нет пакетов или ошибка)'
-              : 'Не удалось назначить занятие',
-        },
-        { status: 400 },
-      );
-    }
-
-    await consumeFreeSlot(body.fromSlotId);
-    await consumeReplacedLesson(body.replacesLessonId);
-    revalidatePath('/cabinet/staff');
-    revalidatePath('/cabinet');
-    return NextResponse.json({ lessonIds, skippedCount: skipped.length });
-  }
-
-  const studentTelegramId = body.studentTelegramId;
-  if (!studentTelegramId) {
-    return NextResponse.json({ error: 'studentTelegramId required' }, { status: 400 });
-  }
-
-  const ownsStudent = await teacherOwnsStudent(auth.admin, auth.telegramId, studentTelegramId);
-  if (!ownsStudent) {
-    return NextResponse.json({ error: 'Нет доступа к этому ученику' }, { status: 403 });
-  }
-
-  let packageId: number;
-  try {
-    ({ packageId } = await assertLessonCreditAvailable(
-      auth.admin,
-      studentTelegramId,
-      kind,
-      body.packageId,
-    ));
-  } catch (error) {
-    if (error instanceof LessonCreditError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
-
-  try {
-    await ensureTeacherAssignment(studentTelegramId);
-    const lessonId = await scheduleLesson(auth.admin, {
-      telegramId: studentTelegramId,
-      kind,
-      startsAt,
+  const { data, error } = await auth.admin
+    .from('scheduled_lessons')
+    .insert({
+      telegram_id: null,
+      kind: 'group',
+      group_id: null,
+      teacher_telegram_id: auth.telegramId,
+      starts_at: startsAt,
+      duration_minutes: durationMinutes,
       topic,
-      packageId,
-      teacherTelegramId: auth.telegramId,
-      groupId: body.groupId,
-      meetUrl: body.meetUrl,
-      durationMinutes,
-    });
-    if (body.lessonPlan?.trim()) {
-      await auth.admin
-        .from('scheduled_lessons')
-        .update({ lesson_plan: body.lessonPlan.trim() })
-        .eq('id', lessonId);
-    }
-    await notifyStudentLessonScheduled(auth.admin, studentTelegramId, {
-      kind,
-      topic,
-      startsAt,
-      meetUrl: body.meetUrl,
-    });
-    await consumeFreeSlot(body.fromSlotId);
-    await consumeReplacedLesson(body.replacesLessonId);
-    revalidatePath('/cabinet/staff');
-    revalidatePath('/cabinet');
-    return NextResponse.json({ lessonId });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Schedule failed' },
-      { status: 400 },
-    );
-  }
+      status: 'scheduled',
+      package_id: null,
+      lesson_plan: body.lessonPlan?.trim() || null,
+      participant_name: body.participantName?.trim() || null,
+    })
+    .select('id')
+    .single();
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  await consumeFreeSlot(body.fromSlotId);
+  await consumeReplacedLesson(body.replacesLessonId);
+  revalidatePath('/cabinet/staff');
+  revalidatePath('/cabinet');
+  return NextResponse.json({ lessonId: data.id });
 }
-
-

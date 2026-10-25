@@ -24,6 +24,7 @@ import {
   workBandsLabel,
 } from '@/lib/teacher/schedule-reference-utils';
 import type { TeacherWorkingHoursData } from '@/lib/teacher/working-hours';
+import { teacherLessonPaymentChipShort, teacherLessonPaymentChipAria } from '@/lib/teacher/schedule-payment-labels';
 import {
   IconCheckRef,
   IconPalmRef,
@@ -48,6 +49,7 @@ type Props = {
   onSelectDay: (day: Date) => void;
   onSelectEvent: (event: ScheduleEvent) => void;
   onCreateAt: (day: Date, startTime: string, endTime: string) => void;
+  onSelectBlockSlot?: (slot: TeacherDaySlot) => void;
 };
 
 const KIND_SHORT: Record<ScheduleEvent['kind'], string> = {
@@ -65,7 +67,8 @@ export function eventHeadline(event: ScheduleEvent): string {
 export function eventSubline(event: ScheduleEvent): string {
   if (event.kind === 'course') return KIND_SHORT.course;
   const topic = event.title.trim();
-  return GENERIC_TOPICS.has(topic) ? KIND_SHORT[event.kind] : `${topic} · ${KIND_SHORT[event.kind]}`;
+  const base = GENERIC_TOPICS.has(topic) ? KIND_SHORT[event.kind] : `${topic} · ${KIND_SHORT[event.kind]}`;
+  return event.seriesId ? `${base} · Серия` : base;
 }
 
 export type EventTone = 'scheduled' | 'completed' | 'cancelled';
@@ -79,10 +82,10 @@ export function eventTone(event: ScheduleEvent): EventTone {
 
 export function eventPaymentLabel(event: ScheduleEvent): 'paid' | 'unpaid' | null {
   if (event.status !== 'scheduled') return null;
-  if (event.isPaid === true) return 'paid';
-  if (event.isPaid === false) return 'unpaid';
-  return null;
+  return teacherLessonPaymentChipShort(event.isPaid);
 }
+
+export { teacherLessonPaymentChipAria };
 
 export function EventKindIcon({ kind, size = 13 }: { kind: ScheduleEvent['kind']; size?: number }) {
   if (kind === 'group') return <IconUsersRef size={size} />;
@@ -110,6 +113,7 @@ export default function ScheduleWeekBoard({
   onSelectDay,
   onSelectEvent,
   onCreateAt,
+  onSelectBlockSlot,
 }: Props) {
   const range = computeHourRange(days, events, daySlots);
   const hours = Array.from({ length: Math.max(range.end - range.start, 1) }, (_, i) => range.start + i);
@@ -251,9 +255,12 @@ export default function ScheduleWeekBoard({
                     return (
                       <div
                         key={slot.id}
-                        className="sr-block"
+                        className={`sr-block${onSelectBlockSlot ? ' is-clickable' : ''}`}
                         style={{ top, height: Math.max(height, 18) }}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectBlockSlot?.(slot);
+                        }}
                       >
                         <span>{slot.slotKind === 'break' ? 'Перерыв' : slot.label?.trim() || 'Занято'}</span>
                       </div>
@@ -307,7 +314,7 @@ export default function ScheduleWeekBoard({
                         {payLabel ? (
                           <span
                             className={`sr-ev-pay sr-ev-pay--${payLabel}`}
-                            aria-label={payLabel === 'paid' ? 'Оплачено' : 'Не оплачено'}
+                            aria-label={teacherLessonPaymentChipAria(payLabel)}
                           >
                             {payLabel === 'paid' ? 'Опл.' : 'Ждёт'}
                           </span>

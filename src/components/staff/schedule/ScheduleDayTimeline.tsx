@@ -56,6 +56,7 @@ type Props = {
   showHeading?: boolean;
   onSelectEvent: (event: ScheduleEvent) => void;
   onCreateAt: (day: Date, startTime: string, endTime: string) => void;
+  onSelectBlockSlot?: (slot: TeacherDaySlot) => void;
 };
 
 function timeRange(event: ScheduleEvent): string {
@@ -77,6 +78,7 @@ export default function ScheduleDayTimeline({
   showHeading = true,
   onSelectEvent,
   onCreateAt,
+  onSelectBlockSlot,
 }: Props) {
   const dayEvents = useMemo(() => eventsForDay(events, day), [events, day]);
   const range = useMemo(() => computeHourRange([day], events, daySlots), [day, events, daySlots]);
@@ -189,9 +191,12 @@ export default function ScheduleDayTimeline({
               return (
                 <div
                   key={slot.id}
-                  className="sr-dt-block"
+                  className={`sr-dt-block${onSelectBlockSlot ? ' is-clickable' : ''}`}
                   style={{ left: `${left}%`, width: `${Math.max(width, 1)}%` }}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectBlockSlot?.(slot);
+                  }}
                 >
                   <span>{slot.slotKind === 'break' ? 'Перерыв' : slot.label?.trim() || 'Занято'}</span>
                 </div>

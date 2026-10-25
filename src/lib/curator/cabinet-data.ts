@@ -80,7 +80,10 @@ export type CuratorCourseListItem = {
 };
 
 export type CuratorCabinetData = {
+  /** Имя того, кто смотрит кабинет. */
   curatorName: string | null;
+  /** Имя назначенного куратора курса (course_staff_assignments → бот, иначе Sanity). */
+  courseCuratorName?: string | null;
   courseTitle: string;
   courseSlug: string | null;
   courseId: number | null;
@@ -169,6 +172,27 @@ export function normalizeCuratorCabinetData(data: CuratorCabinetData): CuratorCa
   };
 }
 
+/** Имя активного куратора курса из назначений + участника бота. */
+async function resolveCourseCuratorName(
+  admin: SupabaseClient,
+  courseId: number,
+): Promise<string | null> {
+  try {
+    const { listActiveCourseStaff } = await import('@/lib/bot/education/course-staff');
+    const rows = await listActiveCourseStaff(admin, courseId, 'curator');
+    const id = rows[0]?.staff_telegram_id;
+    if (id == null) return null;
+    const { data } = await admin
+      .from('bot_members')
+      .select('full_name')
+      .eq('telegram_id', id)
+      .maybeSingle();
+    return ((data?.full_name as string | null) ?? '').trim() || `ID ${id}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function getCuratorCabinetData(
   admin: SupabaseClient,
   curatorTelegramId: number,
@@ -178,6 +202,8 @@ export async function getCuratorCabinetData(
     courseSlug?: string | null;
     courseRole?: 'curator' | 'check' | null;
     fullPreview?: boolean;
+    /** Не считать список всех курсов (клиент уже его имеет) — заметно быстрее. */
+    skipCourseList?: boolean;
   },
 ): Promise<CuratorCabinetData> {
   const { listStaffCourseAssignmentOptions, resolveStaffCourseContext } = await import(
@@ -191,6 +217,7 @@ export async function getCuratorCabinetData(
     courseSlug: options?.courseSlug,
     courseRole: options?.courseRole,
     fullPreview: options?.fullPreview,
+    preloaded: courseOptions,
   });
   if (!options?.fullPreview && activeCourse?.role === 'check') {
     activeCourse = await resolveStaffCourseContext(admin, curatorTelegramId, {
@@ -198,9 +225,24 @@ export async function getCuratorCabinetData(
       courseSlug: options?.courseSlug ?? activeCourse.slug,
       courseRole: 'curator',
       fullPreview: false,
+      preloaded: courseOptions,
     });
   }
   const activeCourseRole = activeCourse?.role ?? null;
+
+  // Ученики курса грузятся параллельно с контентом/файлами/сессиями (меньше последовательных запросов).
+  const studentsPromise =
+    activeCourse && activeCourse.courseId && activeCourse.slug
+      ? loadCuratorCourseStudents(admin, curatorTelegramId, {
+          courseId: activeCourse.courseId,
+          courseSlug: activeCourse.slug,
+          skipStaffCheck: options?.fullPreview,
+        })
+      : Promise.resolve({ courseId: null, students: [] as CuratorStudentView[] });
+
+  const curatorNamePromise = activeCourse?.courseId
+    ? resolveCourseCuratorName(admin, activeCourse.courseId)
+    : Promise.resolve(null);
 
   const content = activeCourse
     ? await getDistrictCourseContent(activeCourse.slug)
@@ -251,39 +293,41 @@ export async function getCuratorCabinetData(
   }
 
   const courseId = activeCourse?.courseId ?? null;
-  const { students } =
-    courseId && courseSlug
-      ? await loadCuratorCourseStudents(admin, curatorTelegramId, {
-          courseId,
-          courseSlug,
-          skipStaffCheck: options?.fullPreview,
-        })
-      : { students: [] as CuratorStudentView[] };
+  const { students } = await studentsPromise;
 
-  const assignedCourses: CuratorCourseListItem[] = [];
-  for (const pick of courseOptions) {
-    if (!options?.fullPreview && pick.role === 'check') continue;
-    const summaryContent = await getDistrictCourseContent(pick.slug).catch(() => null);
-    const lessonCount = summaryContent
-      ? summaryContent.modules.reduce(
-          (n, m) => n + m.lessons.filter((l) => l.publicationStatus !== 'archived').length,
-          0,
-        )
-      : 0;
-    const { students: pickStudents } = await loadCuratorCourseStudents(admin, curatorTelegramId, {
-      courseId: pick.courseId,
-      courseSlug: pick.slug,
-      skipStaffCheck: options?.fullPreview,
-    });
-    assignedCourses.push({
-      courseId: pick.courseId,
-      slug: pick.slug,
-      title: pick.title,
-      studentCount: pickStudents.length,
-      lessonCount,
-      role: pick.role,
-    });
-  }
+  const countLessons = (c: NonNullable<typeof content>) =>
+    c.modules.reduce(
+      (n, m) => n + m.lessons.filter((l) => l.publicationStatus !== 'archived').length,
+      0,
+    );
+  // Параллельно; активный курс переиспользует уже загруженные контент и учеников.
+  const assignedCourses: CuratorCourseListItem[] = await Promise.all(
+    (options?.skipCourseList ? [] : courseOptions)
+      .filter((pick) => options?.fullPreview || pick.role !== 'check')
+      .map(async (pick): Promise<CuratorCourseListItem> => {
+        const isActive = activeCourse != null && pick.courseId === activeCourse.courseId;
+        const [summaryContent, pickStudents] = await Promise.all([
+          isActive && content
+            ? Promise.resolve(content)
+            : getDistrictCourseContent(pick.slug).catch(() => null),
+          isActive
+            ? Promise.resolve(students)
+            : loadCuratorCourseStudents(admin, curatorTelegramId, {
+                courseId: pick.courseId,
+                courseSlug: pick.slug,
+                skipStaffCheck: options?.fullPreview,
+              }).then((r) => r.students),
+        ]);
+        return {
+          courseId: pick.courseId,
+          slug: pick.slug,
+          title: pick.title,
+          studentCount: pickStudents.length,
+          lessonCount: summaryContent ? countLessons(summaryContent) : 0,
+          role: pick.role,
+        };
+      }),
+  );
 
   const hwSummary = summarizeHomework(students);
   const homeworkBoard = buildHomeworkBoard(students, content);
@@ -292,8 +336,11 @@ export async function getCuratorCabinetData(
     (l) => l.sessionStatus === 'scheduled' || l.sessionStatus === 'waiting',
   ).length;
 
+  const courseCuratorName = (await curatorNamePromise) ?? content?.curatorName ?? null;
+
   return normalizeCuratorCabinetData({
     curatorName,
+    courseCuratorName,
     courseTitle,
     courseSlug,
     courseId,

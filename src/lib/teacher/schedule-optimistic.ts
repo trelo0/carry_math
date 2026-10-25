@@ -62,6 +62,7 @@ export function createOptimisticLesson(input: {
     cancelReason: null,
     durationMinutes: input.durationMinutes,
     isUpcoming: endMs > Date.now(),
+    isPaid: false,
     scheduleStudentId: input.scheduleStudentId ?? null,
     seriesId: input.seriesId ?? null,
   };
@@ -205,6 +206,34 @@ export function removeRosterStudent(data: TeacherCabinetData, studentId: number)
     roster: data.roster.filter((item) => item.id !== studentId),
     archivedRoster,
   };
+}
+
+export function removeRosterStudentCompletely(
+  data: TeacherCabinetData,
+  studentId: number,
+  removedLessonIds: number[] = [],
+): TeacherCabinetData {
+  const ids = new Set(removedLessonIds);
+  const base = removeRosterStudent(data, studentId);
+  if (ids.size === 0) return base;
+  return recomputeTeacherDerived(
+    base,
+    base.allLessons.filter((lesson) => !ids.has(lesson.id)),
+  );
+}
+
+export function cancelLessonsByIds(
+  data: TeacherCabinetData,
+  lessonIds: number[],
+  cancelReason: string,
+): TeacherCabinetData {
+  const ids = new Set(lessonIds);
+  const allLessons = data.allLessons.map((lesson) =>
+    ids.has(lesson.id)
+      ? { ...lesson, status: 'cancelled' as const, cancelReason }
+      : lesson,
+  );
+  return recomputeTeacherDerived(data, allLessons);
 }
 
 export function setRosterArchiveState(

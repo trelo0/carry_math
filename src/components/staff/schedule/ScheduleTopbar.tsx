@@ -1,7 +1,6 @@
 'use client';
 
 import type { ScheduleViewMode } from '@/lib/teacher/schedule-types';
-import { formatClock } from '@/lib/teacher/schedule-reference-utils';
 import {
   IconCalendarRef,
   IconChevronLeftRef,
@@ -14,8 +13,8 @@ type Props = {
   isMobile: boolean;
   periodLabel: string;
   showToday: boolean;
-  nowMs: number;
   panelOpen: boolean;
+  compactTopbar?: boolean;
   onPrev: () => void;
   onNext: () => void;
   onToday: () => void;
@@ -34,23 +33,22 @@ export default function ScheduleTopbar({
   isMobile,
   periodLabel,
   showToday,
-  nowMs,
   panelOpen,
+  compactTopbar = false,
   onPrev,
   onNext,
   onToday,
   onChangeView,
   onTogglePanel,
 }: Props) {
-  const clock = formatClock(nowMs);
-  const tabs = isMobile ? VIEW_TABS.filter((tab) => tab.id !== 'week') : VIEW_TABS;
+  const tabs = VIEW_TABS;
 
   return (
     <header className="sr-topbar">
       <div className="sr-topbar-left">
         <div className="sr-title-block">
           <h1 className="sr-title">Расписание</h1>
-          <p className="sr-subtitle">Ваши занятия и доступное время</p>
+          {!compactTopbar ? <p className="sr-subtitle">Ваши занятия и доступное время</p> : null}
         </div>
 
         <div className="sr-period">
@@ -99,15 +97,11 @@ export default function ScheduleTopbar({
           className={`sr-panel-toggle${panelOpen ? ' is-active' : ''}`}
           onClick={onTogglePanel}
           aria-pressed={panelOpen}
-          aria-label="Панель дня"
-          title="Панель дня"
+          aria-label="Панель дня и ученики"
+          title="Панель дня и ученики"
         >
           <IconPanelRef size={18} />
         </button>
-        <div className="sr-clock" aria-live="off">
-          <strong>{clock.time}</strong>
-          <span>{clock.date}</span>
-        </div>
       </div>
     </header>
   );

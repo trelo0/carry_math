@@ -2,6 +2,8 @@ import type { StaffCourseAssignmentRole } from '@/lib/staff/course-assignment-ui
 
 export type StaffCabinetUrlParams = {
   section?: string;
+  /** Вкладка экрана курса: overview | lessons | students. */
+  tab?: string;
   lesson?: string;
   courseId?: number | null;
   courseRole?: StaffCourseAssignmentRole | null;
@@ -10,6 +12,7 @@ export type StaffCabinetUrlParams = {
 export function buildStaffCabinetPath(params: StaffCabinetUrlParams): string {
   const sp = new URLSearchParams();
   if (params.section) sp.set('section', params.section);
+  if (params.tab) sp.set('tab', params.tab);
   if (params.lesson) sp.set('lesson', params.lesson);
   if (params.courseId != null && Number.isFinite(params.courseId)) {
     sp.set('courseId', String(params.courseId));

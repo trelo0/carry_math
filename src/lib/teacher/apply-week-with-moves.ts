@@ -14,6 +14,11 @@ import { rpcTeacherApplyWeeklySchedule } from '@/lib/teacher/schedule-rpc';
 import { proposedWorkingHours, lessonsConflictingWithWeekly } from '@/lib/teacher/weekly-schedule-conflicts';
 import type { DayMoveInput } from './apply-day-with-moves';
 import { dateKey } from '@/lib/teacher/schedule-utils';
+import {
+  assertTeacherOwnsLessonMoves,
+  restoreTeacherOwnedScheduledLessonSlot,
+  updateTeacherOwnedScheduledLessonSlot,
+} from '@/lib/teacher/lesson-ownership';
 
 export async function applyWeekWithMoves(
   admin: SupabaseClient,
@@ -37,6 +42,8 @@ export async function applyWeekWithMoves(
     );
   }
 
+  const originalStarts = await assertTeacherOwnsLessonMoves(admin, teacherTelegramId, moves);
+
   const proposed = proposedWorkingHours(workingHours, weekly);
   for (const move of moves) {
     await validateLessonSlot(admin, teacherTelegramId, {
@@ -47,17 +54,6 @@ export async function applyWeekWithMoves(
     });
   }
 
-  const originalStarts = new Map<number, { startsAt: string; durationMinutes: number }>();
-  for (const move of moves) {
-    const lesson = lessons.find((item) => item.id === move.lessonId);
-    if (lesson) {
-      originalStarts.set(move.lessonId, {
-        startsAt: lesson.startsAt,
-        durationMinutes: lesson.durationMinutes,
-      });
-    }
-  }
-
   const rpc = await rpcTeacherApplyWeeklySchedule(admin, teacherTelegramId, weekly, moves);
   if (rpc.ok) {
     return loadTeacherWorkingHours(admin, teacherTelegramId);
@@ -66,17 +62,7 @@ export async function applyWeekWithMoves(
   const applied: number[] = [];
   try {
     for (const move of moves) {
-      const { error } = await admin
-        .from('scheduled_lessons')
-        .update({
-          starts_at: move.startsAt,
-          duration_minutes: move.durationMinutes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', move.lessonId)
-        .eq('teacher_telegram_id', teacherTelegramId)
-        .eq('status', 'scheduled');
-      if (error) throw new ScheduleValidationError(error.message);
+      await updateTeacherOwnedScheduledLessonSlot(admin, teacherTelegramId, move);
       applied.push(move.lessonId);
     }
     await saveTeacherWeeklyHours(admin, teacherTelegramId, weekly);
@@ -84,14 +70,13 @@ export async function applyWeekWithMoves(
     for (const lessonId of applied) {
       const orig = originalStarts.get(lessonId);
       if (!orig) continue;
-      await admin
-        .from('scheduled_lessons')
-        .update({
-          starts_at: orig.startsAt,
-          duration_minutes: orig.durationMinutes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', lessonId);
+      await restoreTeacherOwnedScheduledLessonSlot(
+        admin,
+        teacherTelegramId,
+        lessonId,
+        orig.startsAt,
+        orig.durationMinutes,
+      );
     }
     throw error;
   }

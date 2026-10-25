@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getStaffAuth } from '@/lib/cabinet-auth';
-import { canManageTeacherCabinet, hasFullStaffPreview } from '@/lib/bot/roles';
-import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
+import { canManageTeacherCabinet } from '@/lib/bot/roles';
 import { completeScheduledLesson } from '@/lib/bot/lessons';
+import { loadTeacherOwnedLesson } from '@/lib/teacher/lesson-ownership';
 
 export async function POST(
   request: Request,
@@ -26,24 +26,13 @@ export async function POST(
     return NextResponse.json({ error: 'status must be completed' }, { status: 400 });
   }
 
-  const { data: lesson } = await auth.admin
-    .from('scheduled_lessons')
-    .select('id, teacher_telegram_id, telegram_id, status')
-    .eq('id', id)
-    .maybeSingle();
+  const lesson = await loadTeacherOwnedLesson(
+    auth.admin,
+    auth.telegramId,
+    id,
+    'id, status',
+  );
   if (!lesson) return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
-  const lessonTeacherId = lesson.teacher_telegram_id as number | null;
-  const studentId = lesson.telegram_id as number | null;
-  const isLessonTeacher = lessonTeacherId === auth.telegramId;
-  const staffPreview = hasFullStaffPreview(auth.roles, auth.telegramId);
-  if (!isLessonTeacher && !staffPreview) {
-    const ownsStudent =
-      typeof studentId === 'number' &&
-      (await teacherOwnsStudent(auth.admin, auth.telegramId, studentId));
-    if (!ownsStudent) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-  }
   if (lesson.status === 'completed') {
     return NextResponse.json({ ok: true, alreadyCompleted: true });
   }
@@ -55,7 +44,9 @@ export async function POST(
   }
 
   try {
-    await completeScheduledLesson(auth.admin, id, auth.telegramId);
+    await completeScheduledLesson(auth.admin, id, auth.telegramId, {
+      ownerTeacherTelegramId: auth.telegramId,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Complete failed' },

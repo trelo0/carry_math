@@ -28,6 +28,7 @@ export async function GET(request: Request) {
         courseId: Number.isFinite(courseId) ? courseId : undefined,
         courseSlug,
         courseRole,
+        light: url.searchParams.get('light') === '1',
       },
     );
     return NextResponse.json(data);

@@ -105,11 +105,15 @@ export async function resolveStaffCourseContext(
   staffTelegramId: number,
   options?: PickStaffCourseOptions & {
     fullPreview?: boolean;
+    /** Уже загруженный список назначений — экономит запросы. */
+    preloaded?: StaffCourseAssignmentOption[];
   },
 ): Promise<StaffCourseAssignmentOption | null> {
-  const courses = await listStaffCourseAssignmentOptions(admin, staffTelegramId, {
-    fullPreview: options?.fullPreview,
-  });
+  const courses =
+    options?.preloaded ??
+    (await listStaffCourseAssignmentOptions(admin, staffTelegramId, {
+      fullPreview: options?.fullPreview,
+    }));
   if (courses.length === 0) return null;
 
   const fullPreview = options?.fullPreview ?? false;

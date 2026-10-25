@@ -1,8 +1,9 @@
-﻿'use client';
+'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
-import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
+import type { TeacherCabinetData, TeacherDaySlot, TeacherRosterStudent } from '@/lib/teacher/cabinet-data';
+import { setRosterArchiveState } from '@/lib/teacher/schedule-optimistic';
 import { getScheduleFilters, isScheduleFilterValid } from '@/lib/teacher/schedule-config';
 import type { ScheduleEvent, ScheduleFilter, ScheduleViewMode } from '@/lib/teacher/schedule-types';
 import {
@@ -22,14 +23,11 @@ import ScheduleAddModal from './ScheduleAddModal';
 import ScheduleDayAgenda from './ScheduleDayAgenda';
 import ScheduleDayHoursModal from './ScheduleDayHoursModal';
 import ScheduleDayTimeline from './ScheduleDayTimeline';
-import {
-  ScheduleCancelModal,
-  ScheduleCompleteModal,
-  ScheduleRescheduleModal,
-} from './ScheduleLessonActionModals';
+import { ScheduleCancelModal, ScheduleRescheduleModal } from './ScheduleLessonActionModals';
+import ScheduleDaySlotModal from './ScheduleDaySlotModal';
 import ScheduleMonthGrid from './ScheduleMonthGrid';
 import ScheduleRightPanel from './ScheduleRightPanel';
-import { RosterScheduleModal, RosterStudentModal } from './ScheduleRosterModals';
+import { RosterListModal, RosterScheduleModal, RosterStudentModal } from './ScheduleRosterModals';
 import ScheduleTopbar from './ScheduleTopbar';
 import ScheduleWeekBoard from './ScheduleWeekBoard';
 import ScheduleWorkingHoursModal from './ScheduleWorkingHoursModal';
@@ -58,7 +56,8 @@ type AddDraft = {
 
 type RosterModal = { type: 'new' } | { type: 'edit' | 'schedule'; id: number };
 
-type LessonModal = { type: 'reschedule' | 'cancel' | 'complete'; eventId: string };
+type LessonModal = { type: 'reschedule' | 'cancel'; eventId: string };
+type SlotModalState = { day: Date; existing?: TeacherDaySlot };
 
 const SCHEDULE_VIEW_STORAGE_KEY = 'district-teacher-schedule-view';
 
@@ -105,7 +104,10 @@ export default function TeacherSchedulePanel({
   const [hoursOpen, setHoursOpen] = useState(false);
   const [dayHours, setDayHours] = useState<{ day: Date; mode?: 'work' | 'off'; note?: string } | null>(null);
   const [handledFocus, setHandledFocus] = useState<number | null>(null);
+  const [slotModal, setSlotModal] = useState<SlotModalState | null>(null);
+  const [rosterListOpen, setRosterListOpen] = useState(false);
   const [notice, setNotice] = useState<ActionFeedback | null>(null);
+  const monthExpandRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -115,7 +117,7 @@ export default function TeacherSchedulePanel({
     }
   }, [viewMode]);
 
-  const effectiveView: ScheduleViewMode = isMobile && viewMode === 'week' ? 'day' : viewMode;
+  const effectiveView: ScheduleViewMode = viewMode;
   const activeFilter = isScheduleFilterValid(filter) ? filter : 'all';
   const canCreate = Boolean(teacherData);
 
@@ -131,27 +133,44 @@ export default function TeacherSchedulePanel({
     [teacherData?.allLessons],
   );
 
-  // Отменённые занятия скрыты у преподавателя; админ видит их полупрозрачными.
   const calendarEvents = useMemo(
     () =>
       filterScheduleEvents(allEvents, activeFilter).filter(
-        (event) => event.kind !== 'course' && (showCancelled || event.status !== 'cancelled'),
+        (event) =>
+          event.kind !== 'course' &&
+          event.status !== 'completed' &&
+          (showCancelled || event.status !== 'cancelled'),
       ),
     [allEvents, activeFilter, showCancelled],
   );
 
-  // Фокус на занятии из другого раздела (применяется один раз при смене focusLessonId).
-  if (focusLessonId != null && focusLessonId !== handledFocus) {
+  useEffect(() => {
+    if (focusLessonId == null || focusLessonId === handledFocus) {
+      if (focusLessonId != null) onFocusLessonHandled?.();
+      return;
+    }
     setHandledFocus(focusLessonId);
     const match = allEvents.find((event) => event.lessonId === focusLessonId);
     if (match) {
       setSelectedDay(new Date(match.startsAt));
       setSelectedEventId(match.id);
     }
-  }
+    onFocusLessonHandled?.();
+  }, [focusLessonId, handledFocus, allEvents, onFocusLessonHandled]);
+
   useEffect(() => {
-    if (focusLessonId != null) onFocusLessonHandled?.();
-  }, [focusLessonId, onFocusLessonHandled]);
+    if (!expandedDay) return;
+    const el = monthExpandRef.current;
+    if (!el) return;
+    const t = window.setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [expandedDay]);
+
+  useEffect(() => {
+    if (compactPanel && selectedEventId) setDrawerOpen(true);
+  }, [compactPanel, selectedEventId]);
 
   const selectedEvent = useMemo(
     () => calendarEvents.find((event) => event.id === selectedEventId) ?? null,
@@ -200,12 +219,14 @@ export default function TeacherSchedulePanel({
   const pickDay = (day: Date) => {
     setSelectedDay(day);
     setSelectedEventId(null);
+    if (compactPanel) setDrawerOpen(true);
   };
 
   // Месяц: клик по дню раскрывает горизонтальное расписание под неделей, повторный клик — сворачивает.
   const toggleMonthDay = (day: Date) => {
     pickDay(day);
     setExpandedDay((prev) => (prev && isSameDay(prev, day) ? null : day));
+    if (compactPanel) setDrawerOpen(true);
   };
 
   const shift = (delta: number) => {
@@ -232,15 +253,30 @@ export default function TeacherSchedulePanel({
     if (selectedEvent) setLessonModal({ type, eventId: selectedEvent.id });
   };
 
+  const openBlockSlot = (slot: TeacherDaySlot) => {
+    const [y, m, d] = slot.slotDate.split('-').map(Number);
+    setSlotModal({ day: new Date(y, (m || 1) - 1, d || 1), existing: slot });
+  };
+
+  const openNewBlockSlot = () => {
+    setSlotModal({ day: selectedDay });
+  };
+
   return (
-    <div ref={rootRef} className="sr-root sched-page" data-size={size} data-panel={drawerOpen ? 'open' : 'closed'}>
+    <div
+      ref={rootRef}
+      className="sr-root sched-page"
+      data-size={size}
+      data-mobile={isMobile ? 'true' : 'false'}
+      data-panel={drawerOpen ? 'open' : 'closed'}
+    >
       <ScheduleTopbar
         viewMode={effectiveView}
         isMobile={isMobile}
         periodLabel={formatPeriodLabel(effectiveView, selectedDay, weekStart)}
         showToday={showToday}
-        nowMs={nowMs}
         panelOpen={drawerOpen}
+        compactTopbar={compactPanel}
         onPrev={() => shift(-1)}
         onNext={() => shift(1)}
         onToday={() => pickDay(new Date())}
@@ -305,6 +341,7 @@ export default function TeacherSchedulePanel({
             nowMs={nowMs}
             expandedDay={expandedDay}
             onToggleDay={toggleMonthDay}
+            expandRef={monthExpandRef}
             renderExpanded={(day) => (
               <ScheduleDayTimeline
                 day={day}
@@ -319,10 +356,11 @@ export default function TeacherSchedulePanel({
                 onCreateAt={(d, startTime, endTime) =>
                   openAdd({ date: d, startTime, endTime, kind: 'individual' })
                 }
+                onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
               />
             )}
           />
-        ) : isMobile ? (
+        ) : effectiveView === 'day' && isMobile ? (
           <ScheduleDayAgenda
             weekDays={weekDays}
             day={selectedDay}
@@ -348,6 +386,7 @@ export default function TeacherSchedulePanel({
               onCreateAt={(day, startTime, endTime) =>
                 openAdd({ date: day, startTime, endTime, kind: 'individual' })
               }
+              onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
             />
           </div>
         ) : (
@@ -365,6 +404,7 @@ export default function TeacherSchedulePanel({
             onCreateAt={(day, startTime, endTime) =>
               openAdd({ date: day, startTime, endTime, kind: 'individual' })
             }
+            onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
           />
         )}
       </div>
@@ -382,11 +422,36 @@ export default function TeacherSchedulePanel({
             onBack={() => setSelectedEventId(null)}
             onEditDay={canCreate ? () => setDayHours({ day: selectedDay }) : undefined}
             onReschedule={() => openLessonModal('reschedule')}
-            onComplete={() => openLessonModal('complete')}
             onCancel={() => openLessonModal('cancel')}
-            onAddLesson={canCreate ? () => openAdd({ date: selectedDay, kind: 'individual' }) : undefined}
+            showCancelled={showCancelled}
             onAddStudent={canCreate ? () => setRosterModal({ type: 'new' }) : undefined}
+            onViewAllRoster={
+              (teacherData?.roster.length ?? 0) > 0 ? () => setRosterListOpen(true) : undefined
+            }
             onOpenStudent={(student) => setRosterModal({ type: 'edit', id: student.id })}
+            onAddBlockSlot={canCreate ? openNewBlockSlot : undefined}
+            onRestoreArchived={
+              canCreate
+                ? async (student) => {
+                    const res = await fetch('/api/cabinet/teacher/roster/archive', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ id: student.id, restore: true }),
+                    });
+                    const body = (await res.json()) as { error?: string; student?: TeacherRosterStudent };
+                    if (!res.ok || !body.student) {
+                      setNotice({
+                        type: 'error',
+                        message: body.error ?? 'Не удалось восстановить',
+                      });
+                      return;
+                    }
+                    patchTeacher?.((prev) => setRosterArchiveState(prev, body.student!, false));
+                    setNotice({ type: 'success', message: 'Ученик восстановлен' });
+                  }
+                : undefined
+            }
+            allEvents={allEvents}
             stats={weekStats}
           />
         );
@@ -431,17 +496,7 @@ export default function TeacherSchedulePanel({
             onFinished={onLessonFinished}
             onClose={() => setLessonModal(null)}
           />
-        ) : (
-          <ScheduleCompleteModal
-            event={modalEvent}
-            busy={busy}
-            runAction={scheduleRunAction}
-            report={setNotice}
-            patchTeacher={patchTeacher}
-            onFinished={onLessonFinished}
-            onClose={() => setLessonModal(null)}
-          />
-        )
+        ) : null
       ) : null}
 
       {addOpen && teacherData ? (
@@ -463,6 +518,26 @@ export default function TeacherSchedulePanel({
           patchTeacher={patchTeacher}
           onClose={closeAdd}
           runAction={scheduleRunAction}
+        />
+      ) : null}
+
+      {rosterListOpen && teacherData ? (
+        <RosterListModal
+          data={teacherData}
+          nowMs={nowMs}
+          onClose={() => setRosterListOpen(false)}
+          onOpenStudent={(student) => {
+            setRosterListOpen(false);
+            setRosterModal({ type: 'edit', id: student.id });
+          }}
+          onAddStudent={
+            canCreate
+              ? () => {
+                  setRosterListOpen(false);
+                  setRosterModal({ type: 'new' });
+                }
+              : undefined
+          }
         />
       ) : null}
 
@@ -518,6 +593,18 @@ export default function TeacherSchedulePanel({
             setDayHours({ day: new Date(y, m - 1, d), mode: 'off', note });
           }}
           onClose={() => setHoursOpen(false)}
+        />
+      ) : null}
+
+      {slotModal && teacherData ? (
+        <ScheduleDaySlotModal
+          day={slotModal.day}
+          existing={slotModal.existing}
+          busy={busy}
+          runAction={scheduleRunAction}
+          report={setNotice}
+          patchTeacher={patchTeacher}
+          onClose={() => setSlotModal(null)}
         />
       ) : null}
 

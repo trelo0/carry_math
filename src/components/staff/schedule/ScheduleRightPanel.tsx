@@ -1,7 +1,8 @@
-﻿'use client';
+'use client';
 
 import type { TeacherCabinetData, TeacherRosterStudent } from '@/lib/teacher/cabinet-data';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
+import { teacherLessonPaymentStatusLabel } from '@/lib/teacher/schedule-payment-labels';
 import {
   eventsForDay,
   formatLessonDateTimeLine,
@@ -20,12 +21,10 @@ import ScheduleWeekStats from './ScheduleWeekStats';
 import { EventKindIcon, eventHeadline, eventSubline, eventTone } from './ScheduleWeekBoard';
 import {
   IconCalendarRef,
-  IconCheckRef,
   IconChevronLeftRef,
   IconPalmRef,
   IconPencilRef,
   IconSwapRef,
-  IconPlusRef,
   IconUserPlusRef,
   IconXRef,
 } from './ScheduleRefIcons';
@@ -41,19 +40,27 @@ type Props = {
   onBack: () => void;
   onEditDay?: () => void;
   onReschedule: () => void;
-  onComplete: () => void;
   onCancel: () => void;
-  onAddLesson?: () => void;
   onAddStudent?: () => void;
   onOpenStudent?: (student: TeacherRosterStudent) => void;
+  onAddBlockSlot?: () => void;
+  onRestoreArchived?: (student: TeacherRosterStudent) => void | Promise<void>;
+  allEvents?: ScheduleEvent[];
+  showCancelled?: boolean;
+  onViewAllRoster?: () => void;
   stats: WeekStats;
 };
 
+const ROSTER_SIDEBAR_PREVIEW = 5;
+
 function paymentLabel(event: ScheduleEvent): string | null {
   if (event.status === 'cancelled') return null;
-  if (event.isPaid === true) return 'Оплачено';
-  if (event.isPaid === false) return 'Ожидает оплаты';
-  return null;
+  return teacherLessonPaymentStatusLabel(event.isPaid);
+}
+
+function seriesScheduledCount(events: ScheduleEvent[], seriesId: string | null | undefined): number {
+  if (!seriesId) return 0;
+  return events.filter((e) => e.seriesId === seriesId && e.status === 'scheduled').length;
 }
 
 export default function ScheduleRightPanel({
@@ -67,17 +74,21 @@ export default function ScheduleRightPanel({
   onBack,
   onEditDay,
   onReschedule,
-  onComplete,
   onCancel,
-  onAddLesson,
   onAddStudent,
   onOpenStudent,
+  onAddBlockSlot,
+  onRestoreArchived,
+  allEvents = [],
+  showCancelled = false,
+  onViewAllRoster,
   stats,
 }: Props) {
   const work = getDayWorkState(teacherData?.workingHours, day);
   const roster = teacherData?.roster ?? [];
+  const rosterPreview = roster.slice(0, ROSTER_SIDEBAR_PREVIEW);
   const dayEvents = eventsForDay(events, day)
-    .filter((event) => event.status !== 'cancelled')
+    .filter((event) => showCancelled || event.status !== 'cancelled')
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 
   const canAct = selectedEvent != null && selectedEvent.status === 'scheduled';
@@ -118,14 +129,24 @@ export default function ScheduleRightPanel({
                 <dt>{selectedEvent.kind === 'group' ? 'Группа' : 'Ученик'}</dt>
                 <dd>{selectedEvent.participantLabel}</dd>
               </div>
-              <div>
-                <dt>Тип</dt>
-                <dd>{eventSubline(selectedEvent)}</dd>
-              </div>
+              {selectedEvent.sourceLesson?.lessonPlan?.trim() ? (
+                <div>
+                  <dt>Комментарий</dt>
+                  <dd>{selectedEvent.sourceLesson.lessonPlan.trim()}</dd>
+                </div>
+              ) : null}
               {payment ? (
                 <div>
                   <dt>Оплата</dt>
                   <dd>{payment}</dd>
+                </div>
+              ) : null}
+              {selectedEvent.seriesId ? (
+                <div>
+                  <dt>Серия</dt>
+                  <dd>
+                    {seriesScheduledCount(allEvents, selectedEvent.seriesId)} запланированных в этой серии
+                  </dd>
                 </div>
               ) : null}
               {selectedEvent.status === 'cancelled' && selectedEvent.cancelReason ? (
@@ -221,19 +242,6 @@ export default function ScheduleRightPanel({
               type="button"
               className="sr-quick"
               disabled={!canAct || busy}
-              onClick={onComplete}
-            >
-              <span className="sr-quick-ico">
-                <IconCheckRef size={16} />
-              </span>
-              Завершить занятие
-            </button>
-          </li>
-          <li>
-            <button
-              type="button"
-              className="sr-quick"
-              disabled={!canAct || busy}
               onClick={onCancel}
             >
               <span className="sr-quick-ico">
@@ -242,18 +250,13 @@ export default function ScheduleRightPanel({
               Отменить занятие
             </button>
           </li>
-          {onAddLesson ? (
-            <li>
-              <button type="button" className="sr-quick" onClick={onAddLesson}>
-                <span className="sr-quick-ico">
-                  <IconPlusRef size={16} />
-                </span>
-                Добавить занятие
-              </button>
-            </li>
-          ) : null}
         </ul>
         <p className="sr-muted sr-quick-hint">{targetHint}</p>
+        {onAddBlockSlot && !selectedEvent ? (
+          <button type="button" className="sr-btn sr-btn--ghost sr-btn--block" onClick={onAddBlockSlot}>
+            Перерыв или блокировка времени
+          </button>
+        ) : null}
       </section>
 
       <section className="sr-card">
@@ -268,28 +271,59 @@ export default function ScheduleRightPanel({
         {roster.length === 0 ? (
           <p className="sr-muted">Добавьте учеников, чтобы выбирать их в расписании</p>
         ) : (
-          <ul className="sr-student-list">
-            {roster.map((student) => {
-              const info = rosterLessonSummary(teacherData?.allLessons ?? [], student.id, nowMs);
-              return (
-                <li key={student.id}>
-                  <button type="button" className="sr-student" onClick={() => onOpenStudent?.(student)}>
-                    <span className={`sr-avatar sr-avatar--${student.id % 4}`}>{initialsOf(student.name)}</span>
-                    <span className="sr-student-text">
-                      <strong>{student.name}</strong>
-                      <span>
-                        {[student.classLabel ? `${student.classLabel} кл.` : null, info.slots || 'нет занятий']
-                          .filter(Boolean)
-                          .join(' · ')}
+          <>
+            <ul className="sr-student-list">
+              {rosterPreview.map((student) => {
+                const info = rosterLessonSummary(teacherData?.allLessons ?? [], student.id, nowMs);
+                return (
+                  <li key={student.id}>
+                    <button type="button" className="sr-student" onClick={() => onOpenStudent?.(student)}>
+                      <span className={`sr-avatar sr-avatar--${student.id % 4}`}>{initialsOf(student.name)}</span>
+                      <span className="sr-student-text">
+                        <strong>{student.name}</strong>
+                        <span>
+                          {[student.classLabel ? `${student.classLabel} кл.` : null, info.slots || 'нет занятий']
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {onViewAllRoster && roster.length > 0 ? (
+              <button type="button" className="sr-link sr-roster-all" onClick={onViewAllRoster}>
+                {roster.length > ROSTER_SIDEBAR_PREVIEW
+                  ? `Показать всех (${roster.length})`
+                  : 'Открыть список учеников'}
+              </button>
+            ) : null}
+          </>
         )}
       </section>
+
+      {(teacherData?.archivedRoster?.length ?? 0) > 0 ? (
+        <section className="sr-card">
+          <h2 className="sr-card-title sr-card-title--plain">
+            Архив ({teacherData?.archivedRoster?.length ?? 0})
+          </h2>
+          <ul className="sr-student-list sr-student-list--compact">
+            {(teacherData?.archivedRoster ?? []).map((student) => (
+              <li key={student.id}>
+                <span className="sr-student-text">
+                  <strong>{student.name}</strong>
+                </span>
+                {onRestoreArchived ? (
+                  <button type="button" className="sr-btn sr-btn--ghost sr-btn--sm" onClick={() => void onRestoreArchived(student)}>
+                    Восстановить
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <ScheduleWeekStats stats={stats} />
     </aside>

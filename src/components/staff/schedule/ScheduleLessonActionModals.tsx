@@ -284,7 +284,7 @@ export function ScheduleCancelModal({ event, busy, runAction, report, patchTeach
   return (
     <Shell
       title="Отменить занятие"
-      subtitle="Занятие пропадёт из календаря, ученик получит уведомление"
+      subtitle="Занятие пропадёт из календаря"
       onClose={onClose}
       footer={
         <>
@@ -315,60 +315,5 @@ export function ScheduleCancelModal({ event, busy, runAction, report, patchTeach
     </Shell>
   );
 }
-
-/* ---------- Завершение ---------- */
-
-export function ScheduleCompleteModal({ event, busy, runAction, report, patchTeacher, onClose, onFinished }: Common & {
-  onFinished?: (lessonId: number) => void;
-}) {
-  const submit = () => {
-    if (event.lessonId == null || busy) return;
-    const lessonId = event.lessonId;
-    const prevStatus = event.status;
-    runLessonMutationAsync(runAction, report, {
-      successMessage: 'Занятие завершено',
-      onClose: () => {
-        onFinished?.(lessonId);
-        onClose();
-      },
-      applyOptimistic: () => {
-        patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: 'completed' }));
-      },
-      request: async () => {
-        const res = await fetch(`/api/cabinet/teacher/lessons/${lessonId}/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'completed' }),
-        });
-        if (!res.ok) {
-          patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { status: prevStatus }));
-          const body = await readJson<{ error: string }>(res);
-          throw new Error(formatScheduleApiError(body.error, 'Не удалось завершить занятие', res.status));
-        }
-      },
-    });
-  };
-
-  return (
-    <Shell
-      title="Завершить занятие"
-      subtitle="Занятие станет проведённым и позеленеет в календаре"
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="sr-btn sr-btn--ghost" onClick={onClose}>
-            Назад
-          </button>
-          <button type="button" className="sr-btn sr-btn--primary" disabled={busy} onClick={submit}>
-            Завершить
-          </button>
-        </>
-      }
-    >
-      <LessonSummary event={event} />
-    </Shell>
-  );
-}
-
 
 

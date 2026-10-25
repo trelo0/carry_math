@@ -64,15 +64,16 @@ export function ScheduleDropdown({
   }, [options, query, searchable]);
 
   useEffect(() => {
-    if (!open) {
-      setQuery('');
-      return;
-    }
+    if (!open) return;
     const onDoc = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      // Закрытие списка сбрасывает поиск.
+      setQuery('');
+    };
   }, [open]);
 
   return (
@@ -182,9 +183,12 @@ export function ScheduleDateSelect({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  useEffect(() => {
+  // Синхронизация отображаемого месяца с выбранной датой (без эффекта).
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (value !== syncedValue) {
+    setSyncedValue(value);
     if (value) setViewMonth(parseDateKey(value));
-  }, [value]);
+  }
 
   // На узких экранах календарь раскрывается в потоке — прокручиваем модалку к нему.
   useEffect(() => {

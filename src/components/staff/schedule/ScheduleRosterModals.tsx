@@ -13,6 +13,8 @@ import {
   nextOptimisticLessonId,
   reconcileSeriesLessons,
   removeTeacherLessons,
+  cancelLessonsByIds,
+  removeRosterStudentCompletely,
   setRosterArchiveState,
   upsertRosterStudent,
 } from '@/lib/teacher/schedule-optimistic';
@@ -26,6 +28,7 @@ import {
 } from '@/lib/teacher/schedule-utils';
 import { buildSeriesOccurrences, SERIES_DEFAULT_WEEKS, weekdayIndex } from '@/lib/teacher/lesson-series';
 import {
+  initialsOf,
   rosterLessonSummary,
   validatePlacement,
   WEEKDAY_SHORT,
@@ -67,6 +70,9 @@ export function RosterStudentModal({
   const [notes, setNotes] = useState(student?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [cancelFutureOnArchive, setCancelFutureOnArchive] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteWithLessons, setDeleteWithLessons] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [feedback, setFeedback] = useState<ActionFeedback | null>(null);
 
@@ -124,17 +130,31 @@ export function RosterStudentModal({
         const res = await fetch('/api/cabinet/teacher/roster/archive', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: student.id }),
+          body: JSON.stringify({
+            id: student.id,
+            cancelFutureLessons: cancelFutureOnArchive && (summary?.upcoming ?? 0) > 0,
+          }),
         });
-        const body = await readJson<{ error: string; student: TeacherRosterStudent }>(res);
+        const body = await readJson<{
+          error: string;
+          student: TeacherRosterStudent;
+          cancelledLessonIds?: number[];
+        }>(res);
         const saved = body.student;
         if (!res.ok || !saved) {
           throw new Error(formatScheduleApiError(body.error, 'Не удалось архивировать ученика', res.status));
         }
-        patchTeacher?.((prev) => setRosterArchiveState(prev, saved, true));
+        patchTeacher?.((prev) => {
+          let next = setRosterArchiveState(prev, saved, true);
+          const cancelled = body.cancelledLessonIds ?? [];
+          if (cancelled.length > 0) {
+            next = cancelLessonsByIds(next, cancelled, 'Архив ученика');
+          }
+          return next;
+        });
       },
       'Ученик в архиве',
-      { refresh: 'teacher' },
+      { refresh: 'none' },
     )
       .then((result) => {
         if (result?.type === 'success') {
@@ -170,6 +190,36 @@ export function RosterStudentModal({
     }
   };
 
+  const deleteStudent = () => {
+    if (!student) return;
+    setSaving(true);
+    void runWithFeedback(
+      runAction,
+      setFeedback,
+      async () => {
+        const qs = new URLSearchParams({ id: String(student.id) });
+        if (deleteWithLessons) qs.set('withLessons', '1');
+        const res = await fetch(`/api/cabinet/teacher/roster?${qs}`, { method: 'DELETE' });
+        const body = await readJson<{ error: string; removedLessonIds?: number[] }>(res);
+        if (!res.ok) {
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось удалить ученика', res.status));
+        }
+        patchTeacher?.((prev) =>
+          removeRosterStudentCompletely(prev, student.id, body.removedLessonIds ?? []),
+        );
+      },
+      'Ученик удалён',
+      { refresh: 'none' },
+    )
+      .then((result) => {
+        if (result?.type === 'success') {
+          report(result);
+          onClose();
+        }
+      })
+      .finally(() => setSaving(false));
+  };
+
   const archivedList = data.archivedRoster ?? [];
 
   return (
@@ -186,13 +236,39 @@ export function RosterStudentModal({
       footer={
         <>
           {student ? (
-            confirmArchive ? (
+            confirmDelete ? (
               <div className="sr-modal-foot-left sr-confirm">
-                <span>
-                  {summary && summary.upcoming > 0
-                    ? `Архивировать? Будущих занятий: ${summary.upcoming} — они останутся в календаре.`
-                    : 'Архивировать ученика?'}
-                </span>
+                <span>Удалить ученика без возможности восстановления?</span>
+                {summary && summary.upcoming > 0 ? (
+                  <label className="sr-check">
+                    <input
+                      type="checkbox"
+                      checked={deleteWithLessons}
+                      onChange={(e) => setDeleteWithLessons(e.target.checked)}
+                    />
+                    <span>Удалить также {summary.upcoming} будущих занятий</span>
+                  </label>
+                ) : null}
+                <button type="button" className="sr-btn sr-btn--danger" disabled={saving || busy} onClick={deleteStudent}>
+                  Удалить
+                </button>
+                <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmDelete(false)}>
+                  Нет
+                </button>
+              </div>
+            ) : confirmArchive ? (
+              <div className="sr-modal-foot-left sr-confirm">
+                <span>Архивировать ученика?</span>
+                {summary && summary.upcoming > 0 ? (
+                  <label className="sr-check">
+                    <input
+                      type="checkbox"
+                      checked={cancelFutureOnArchive}
+                      onChange={(e) => setCancelFutureOnArchive(e.target.checked)}
+                    />
+                    <span>Отменить {summary.upcoming} будущих занятий в календаре</span>
+                  </label>
+                ) : null}
                 <button type="button" className="sr-btn sr-btn--danger" disabled={saving || busy} onClick={archive}>
                   Архивировать
                 </button>
@@ -209,6 +285,9 @@ export function RosterStudentModal({
                 ) : null}
                 <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmArchive(true)}>
                   Архивировать
+                </button>
+                <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmDelete(true)}>
+                  Удалить
                 </button>
               </div>
             )
@@ -621,4 +700,87 @@ export function RosterScheduleModal({
   );
 }
 
+export function RosterListModal({
+  data,
+  nowMs,
+  onClose,
+  onOpenStudent,
+  onAddStudent,
+}: {
+  data: TeacherCabinetData;
+  nowMs: number;
+  onClose: () => void;
+  onOpenStudent: (student: TeacherRosterStudent) => void;
+  onAddStudent?: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const roster = data.roster ?? [];
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return roster;
+    return roster.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.phone ?? '').includes(q) ||
+        (s.classLabel ?? '').toLowerCase().includes(q),
+    );
+  }, [roster, query]);
+
+  return (
+    <Shell
+      title="Мои ученики"
+      subtitle={`${roster.length} в активном списке`}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          {onAddStudent ? (
+            <button type="button" className="sr-btn sr-btn--ghost" onClick={onAddStudent}>
+              Добавить ученика
+            </button>
+          ) : null}
+          <button type="button" className="sr-btn sr-btn--primary" onClick={onClose}>
+            Закрыть
+          </button>
+        </>
+      }
+    >
+      <input
+        type="text"
+        className="sr-roster-search"
+        value={query}
+        placeholder="Поиск: имя, телефон, класс"
+        aria-label="Поиск ученика"
+        onChange={(e) => setQuery(e.target.value)}
+        autoFocus
+      />
+      {filtered.length === 0 ? (
+        <p className="sr-muted sr-roster-empty">{query.trim() ? 'Никого не найдено' : 'Список пуст'}</p>
+      ) : (
+        <ul className="sr-roster-list">
+          {filtered.map((student) => {
+            const info = rosterLessonSummary(data.allLessons, student.id, nowMs);
+            const meta = [student.classLabel ? `${student.classLabel} кл.` : null, student.phone]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <li key={student.id}>
+                <button type="button" className="sr-roster-row" onClick={() => onOpenStudent(student)}>
+                  <span className={`sr-avatar sr-avatar--${student.id % 4}`}>{initialsOf(student.name)}</span>
+                  <span className="sr-roster-main">
+                    <strong>{student.name}</strong>
+                    {meta ? <span>{meta}</span> : null}
+                  </span>
+                  <span className={`sr-roster-slots${info.slots ? '' : ' is-empty'}`}>
+                    {info.slots || 'нет занятий'}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Shell>
+  );
+}
 

@@ -59,11 +59,14 @@ export async function POST(
       .update({ cancel_reason: cancelReason, updated_at: new Date().toISOString() })
       .eq('id', id);
   }
-  await notifyStudentLessonCancelled(auth.admin, lesson.telegram_id as number, {
-    kind: lesson.kind as 'individual' | 'group',
-    topic: lesson.topic as string,
-    startsAt: lesson.starts_at as string,
-  });
+  const studentTg = lesson.telegram_id as number | null;
+  if (typeof studentTg === 'number' && studentTg > 0) {
+    await notifyStudentLessonCancelled(auth.admin, studentTg, {
+      kind: lesson.kind as 'individual' | 'group',
+      topic: lesson.topic as string,
+      startsAt: lesson.starts_at as string,
+    });
+  }
 
   revalidatePath('/cabinet/staff');
   revalidatePath('/cabinet');

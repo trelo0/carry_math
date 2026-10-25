@@ -1331,7 +1331,7 @@ export async function getCabinetData(
             courseClosed: summary.courseClosed,
             curatorName: summary.curatorName,
             curatorTelegramId: summary.curatorTelegramId,
-            checkTelegramId: null,
+            checkTelegramId: summary.checkTelegramId,
             priceByn: null,
             grantedLessons: null,
             pricingCardText: null,

@@ -6,7 +6,7 @@ import {
   memberHasRole,
   type BotRole,
 } from '@/lib/bot/roles';
-import { listCoursesForStaff } from '@/lib/bot/education/course-staff';
+import { listCoursesForStaff, safeSyncCourseStaff } from '@/lib/bot/education/course-staff';
 import { buildStaffCabinetPath } from '@/lib/staff/staff-cabinet-url';
 
 /** Доступ к /cabinet/staff: teacher/admin/creator или staff с назначением curator (не check-only). */
@@ -19,6 +19,7 @@ export async function memberCanAccessStaffCabinetWeb(
   if (isCreatorTelegramId(telegramId) || memberHasRole(r, 'admin')) return true;
   if (memberHasRole(r, 'teacher')) return true;
 
+  await safeSyncCourseStaff(admin);
   const assignments = await listCoursesForStaff(admin, telegramId);
   const hasCurator = assignments.some((a) => a.role === 'curator');
   if (!hasCurator) return false;

@@ -5,7 +5,7 @@ import {
   type CourseLessonContent,
 } from '@/lib/studio/courseContent';
 import { resolveCourseIdForContent } from '@/lib/bot/education/course-record';
-import { getEnrollmentLives, isLivesTableError } from '@/lib/bot/education/lives';
+import { getEnrollmentLivesBatch, isLivesTableError } from '@/lib/bot/education/lives';
 import { mapProgressToCuratorStatus } from '@/lib/bot/education/course-homework';
 import type { CourseLessonStudentProgress } from '@/lib/bot/education/course-progress';
 import type { CuratorHomeworkRecord, CuratorStudentRecord } from '@/lib/bot/curator/curatorData';
@@ -33,16 +33,28 @@ function mapToCuratorHwStatus(
   return 'waiting';
 }
 
-async function studentDisplayName(admin: SupabaseClient, telegramId: number): Promise<string> {
-  const [{ data: profile }, { data: member }] = await Promise.all([
-    admin.from('student_profiles').select('display_name').eq('telegram_id', telegramId).maybeSingle(),
-    admin.from('bot_members').select('full_name, phone').eq('telegram_id', telegramId).maybeSingle(),
+/** Отображаемые имена для списка учеников — двумя запросами вместо 2×N. */
+async function loadStudentDisplayNames(
+  admin: SupabaseClient,
+  telegramIds: number[],
+): Promise<Map<number, string>> {
+  const [{ data: profiles }, { data: members }] = await Promise.all([
+    admin.from('student_profiles').select('telegram_id, display_name').in('telegram_id', telegramIds),
+    admin.from('bot_members').select('telegram_id, full_name').in('telegram_id', telegramIds),
   ]);
-  return (
-    (profile?.display_name as string | undefined) ||
-    (member?.full_name as string | undefined) ||
-    `Ученик ${telegramId}`
-  );
+  const profileName = new Map<number, string>();
+  for (const row of profiles ?? []) {
+    if (row.display_name) profileName.set(row.telegram_id as number, row.display_name as string);
+  }
+  const memberName = new Map<number, string>();
+  for (const row of members ?? []) {
+    if (row.full_name) memberName.set(row.telegram_id as number, row.full_name as string);
+  }
+  const out = new Map<number, string>();
+  for (const id of telegramIds) {
+    out.set(id, profileName.get(id) || memberName.get(id) || `Ученик ${id}`);
+  }
+  return out;
 }
 
 /** Ученики с активным доступом к курсу (покупка / зачисление). */
@@ -131,9 +143,18 @@ export async function loadCuratorCourseStudents(
   const homeworkLessons = publishedLessons.filter((l) => l.mandatoryHomework || l.homework);
   const sanityIds = publishedLessons.map((l) => l.sanityId);
 
-  const sessionMap = await loadSanityLessonSessionMap(admin, sanityIds);
-
-  const [{ data: accessRows }, { data: progressRows }, { data: members }] = await Promise.all([
+  // Один параллельный пакет запросов вместо цепочки (задержка до БД ~0.4 с на запрос).
+  const [
+    sessionMap,
+    { data: accessRows },
+    { data: progressRows },
+    { data: members },
+    { data: enrollmentDates },
+    { data: packageRows },
+    nameMap,
+    livesMap,
+  ] = await Promise.all([
+    loadSanityLessonSessionMap(admin, sanityIds),
     admin
       .from('course_lesson_access')
       .select('telegram_id, sanity_lesson_id, access_status')
@@ -148,8 +169,24 @@ export async function loadCuratorCourseStudents(
       .from('bot_members')
       .select('telegram_id, full_name, phone, chat_id')
       .in('telegram_id', studentIds),
+    admin
+      .from('course_enrollments')
+      .select('telegram_id, started_at')
+      .eq('course_id', courseId)
+      .in('telegram_id', studentIds),
+    admin
+      .from('lesson_packages')
+      .select('telegram_id, remaining_lessons, course_id')
+      .in('telegram_id', studentIds)
+      .eq('product', 'course')
+      .eq('status', 'active')
+      .gt('remaining_lessons', 0),
+    loadStudentDisplayNames(admin, studentIds),
+    getEnrollmentLivesBatch(admin, studentIds, courseId).catch((error) => {
+      if (!isLivesTableError(error)) throw error;
+      return new Map() as Awaited<ReturnType<typeof getEnrollmentLivesBatch>>;
+    }),
   ]);
-
   const accessMap = new Map<string, string>();
   for (const row of accessRows ?? []) {
     accessMap.set(`${row.telegram_id}:${row.sanity_lesson_id}`, row.access_status as string);
@@ -162,24 +199,10 @@ export async function loadCuratorCourseStudents(
     (members ?? []).map((m) => [m.telegram_id as number, m as { phone: string | null; chat_id: number | null }]),
   );
 
-  const { data: enrollmentDates } = await admin
-    .from('course_enrollments')
-    .select('telegram_id, started_at')
-    .eq('course_id', courseId)
-    .in('telegram_id', studentIds);
-
   const enrolledAtMap = new Map<number, string>();
   for (const row of enrollmentDates ?? []) {
     enrolledAtMap.set(row.telegram_id as number, row.started_at as string);
   }
-
-  const { data: packageRows } = await admin
-    .from('lesson_packages')
-    .select('telegram_id, remaining_lessons, course_id')
-    .in('telegram_id', studentIds)
-    .eq('product', 'course')
-    .eq('status', 'active')
-    .gt('remaining_lessons', 0);
 
   const remainingPaidByStudent = new Map<number, number>();
   for (const id of studentIds) remainingPaidByStudent.set(id, 0);
@@ -217,20 +240,11 @@ export async function loadCuratorCourseStudents(
       };
     });
 
-    let livesCurrent: number | null = null;
-    let livesMax: number | null = null;
-    let accessBlocked = false;
-    let fullyBlocked = false;
-    try {
-      const lives = await getEnrollmentLives(admin, telegramId, courseId);
-      livesCurrent = lives?.lives_current ?? null;
-      livesMax = lives?.lives_max ?? null;
-      accessBlocked = Boolean(lives?.access_blocked);
-      fullyBlocked = Boolean(lives?.fully_blocked);
-    } catch (error) {
-      if (!isLivesTableError(error)) throw error;
-    }
-
+    const lives = livesMap.get(telegramId);
+    const livesCurrent: number | null = lives?.lives_current ?? null;
+    const livesMax: number | null = lives?.lives_max ?? null;
+    const accessBlocked = Boolean(lives?.access_blocked);
+    const fullyBlocked = Boolean(lives?.fully_blocked);
     const completedLessons = publishedLessons.filter((lesson) => {
       const p = progressMap.get(`${telegramId}:${lesson.sanityId}`);
       return Boolean(p?.completed_at);
@@ -297,7 +311,7 @@ export async function loadCuratorCourseStudents(
     students.push({
       id: String(telegramId),
       telegramId,
-      name: await studentDisplayName(admin, telegramId),
+      name: nameMap.get(telegramId) ?? `Ученик ${telegramId}`,
       homeworks,
       livesCurrent,
       livesMax,

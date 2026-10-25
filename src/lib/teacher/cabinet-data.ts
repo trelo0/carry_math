@@ -1,4 +1,4 @@
-﻿import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BotRole } from '@/lib/bot/roles';
 import { hasFullStaffPreview, memberHasRole } from '@/lib/bot/roles';
 import {
@@ -478,14 +478,24 @@ export async function getStaffCabinetData(
     courseId?: number | null;
     courseSlug?: string | null;
     courseRole?: 'curator' | 'check' | null;
+    /** Лёгкая перезагрузка: без списка курсов, расписания и синхронизации сотрудников. */
+    light?: boolean;
   },
 ): Promise<StaffCabinetData> {
   const fullStaffPreview = hasFullStaffPreview(roles, telegramId);
-  const { listCoursesForStaff } = await import('@/lib/bot/education/course-staff');
-  const assignments = await listCoursesForStaff(admin, telegramId);
-  const hasCuratorAssignment = assignments.some((a) => a.role === 'curator');
+  const { listCoursesForStaff, safeSyncCourseStaff } = await import(
+    '@/lib/bot/education/course-staff'
+  );
+  // Лёгкая перезагрузка не синхронизирует сотрудников (синк — при входе на страницу и в боте).
+  if (!options?.light) await safeSyncCourseStaff(admin);
+  // Лёгкая перезагрузка: права на курс проверяет сам getCuratorCabinetData — лишний запрос не нужен.
+  const hasCuratorAssignment =
+    options?.light || fullStaffPreview
+      ? true
+      : (await listCoursesForStaff(admin, telegramId)).some((a) => a.role === 'curator');
   const loadCurator = fullStaffPreview || hasCuratorAssignment;
-  const loadTeacher = fullStaffPreview || memberHasRole(roles, 'teacher');
+  // Лёгкая перезагрузка курса не трогает расписание преподавателя (грузится отдельно).
+  const loadTeacher = !options?.light && (fullStaffPreview || memberHasRole(roles, 'teacher'));
 
   const [curator, teacher] = await Promise.all([
     loadCurator
@@ -493,6 +503,7 @@ export async function getStaffCabinetData(
           courseId: options?.courseId,
           courseSlug: options?.courseSlug,
           courseRole: options?.courseRole,
+          skipCourseList: options?.light,
           fullPreview: fullStaffPreview,
         })
       : Promise.resolve(null),

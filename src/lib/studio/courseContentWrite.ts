@@ -44,6 +44,34 @@ export function isSanityWriteConfigured(): boolean {
   return Boolean(process.env.SANITY_API_WRITE_TOKEN);
 }
 
+/** Записать куратора/проверяющего в districtCourse (и в черновик, если он есть в Studio). */
+export async function patchCourseStaffIds(
+  sanityCourseId: string,
+  fields: { curatorTelegramId?: number | null; checkTelegramId?: number | null },
+): Promise<void> {
+  const client = getWriteClient();
+  const set: Record<string, number> = {};
+  const unset: string[] = [];
+  for (const key of ['curatorTelegramId', 'checkTelegramId'] as const) {
+    const value = fields[key];
+    if (value === undefined) continue;
+    if (value === null) unset.push(key);
+    else set[key] = value;
+  }
+  if (Object.keys(set).length === 0 && unset.length === 0) return;
+
+  const publishedId = sanityCourseId.replace(/^drafts\./, '');
+  const apply = async (id: string) => {
+    let p = client.patch(id);
+    if (Object.keys(set).length) p = p.set(set);
+    if (unset.length) p = p.unset(unset);
+    await p.commit();
+  };
+  await apply(publishedId);
+  const draft = await client.getDocument(`drafts.${publishedId}`);
+  if (draft) await apply(`drafts.${publishedId}`);
+}
+
 export async function patchCourseLesson(
   sanityLessonId: string,
   fields: LessonPatchFields,

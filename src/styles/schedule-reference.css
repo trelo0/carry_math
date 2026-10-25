@@ -314,6 +314,11 @@
   white-space: nowrap;
 }
 
+.sr-btn--block {
+  width: 100%;
+  margin-top: 10px;
+}
+
 .sr-btn--ghost:hover {
   border-color: rgba(100, 160, 255, 0.5);
 }
@@ -737,6 +742,16 @@
   color: #fff;
 }
 
+.sr-block.is-clickable,
+.sr-dt-block.is-clickable {
+  cursor: pointer;
+}
+
+.sr-block.is-clickable:hover,
+.sr-dt-block.is-clickable:hover {
+  filter: brightness(1.08);
+}
+
 .sr-block {
   position: absolute;
   left: 6px;
@@ -753,6 +768,146 @@
   color: #9aa8bd;
   font-size: 10.5px;
   overflow: hidden;
+}
+
+.sr-month-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--sr-muted, #9aa8bd);
+  line-height: 1.4;
+}
+
+.sr-modal-intro {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--sr-text);
+}
+
+.sr-roster-all {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.staff-cabinet .sr-modal input.sr-roster-search {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 170, 255, 0.3);
+  background: rgba(8, 20, 56, 0.55);
+  color: #fff;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.staff-cabinet .sr-modal input.sr-roster-search::placeholder {
+  color: #8fa6d1;
+}
+
+.sr-roster-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.sr-roster-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  color: inherit;
+  border: 1px solid rgba(120, 170, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(20, 44, 100, 0.35);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sr-roster-row:hover {
+  background: rgba(40, 80, 160, 0.38);
+  border-color: rgba(120, 190, 255, 0.45);
+}
+
+.sr-roster-row .sr-avatar {
+  width: 40px;
+  height: 40px;
+  font-size: 13px;
+}
+
+.sr-roster-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sr-roster-main strong {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-roster-main span {
+  font-size: 12px;
+  color: var(--sr-muted, #9aa8bd);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-roster-slots {
+  max-width: 160px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.14);
+  color: #7ee8da;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sr-roster-slots.is-empty {
+  background: rgba(148, 163, 184, 0.12);
+  color: #9aa8bd;
+  font-weight: 500;
+}
+
+.sr-roster-empty {
+  margin: 14px 0 0;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .sr-roster-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .sr-roster-slots {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+  }
+}
+
+.staff-cabinet .sr-root[data-mobile='true'] .sr-board-grid {
+  min-width: 520px;
 }
 
 /* ---------- Месяц ---------- */
@@ -2820,6 +2975,12 @@
 .staff-cabinet .sr-modal-section-title {
   font-size: 14px;
   font-weight: 700;
+}
+
+.staff-cabinet .sr-modal-section--muted {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
 }
 
 .staff-cabinet .sr-exc-list {

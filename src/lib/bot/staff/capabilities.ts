@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { usesClientBotUi } from '@/lib/bot/client-state';
-import { listCoursesForStaff } from '@/lib/bot/education/course-staff';
+import { listCoursesForStaff, safeSyncCourseStaff } from '@/lib/bot/education/course-staff';
 import {
   canManageTeacherCabinet,
   hasFullStaffPreview,
@@ -57,6 +57,7 @@ export async function loadStaffCapabilities(
   const member: MemberInfo = { role: primaryRole, viewRole };
   const effectiveRole = resolveEffectiveRole(member, telegramId);
 
+  await safeSyncCourseStaff(admin);
   const assignments = await listCoursesForStaff(admin, telegramId).catch(() => []);
   const { hasCuratorAssignment, hasCourseStaffAssignment } = courseAssignmentFlags(assignments);
   const fullPreview = hasFullStaffPreview(roles, telegramId);

@@ -395,6 +395,27 @@ export async function getEnrollmentLives(
   return data ? normalizeState(data as CourseEnrollmentState) : null;
 }
 
+/** Состояние жизней для многих учеников одним запросом. */
+export async function getEnrollmentLivesBatch(
+  admin: SupabaseClient,
+  telegramIds: number[],
+  courseId: number,
+): Promise<Map<number, CourseEnrollmentState>> {
+  const out = new Map<number, CourseEnrollmentState>();
+  if (telegramIds.length === 0) return out;
+  const { data, error } = await admin
+    .from('course_enrollment_state')
+    .select('*')
+    .eq('course_id', courseId)
+    .in('telegram_id', telegramIds);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    const state = normalizeState(row as CourseEnrollmentState);
+    out.set((row as { telegram_id: number }).telegram_id, state);
+  }
+  return out;
+}
+
 export async function hasLifeDeductedForLesson(
   admin: SupabaseClient,
   telegramId: number,

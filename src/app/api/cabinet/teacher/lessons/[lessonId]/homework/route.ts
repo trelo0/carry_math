@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getStaffAuth } from '@/lib/cabinet-auth';
 import { canManageTeacherCabinet } from '@/lib/bot/roles';
-import { getLessonHomework, upsertTeacherLessonHomework } from '@/lib/lesson-homework';
+import { getTeacherLessonHomework, upsertTeacherLessonHomework } from '@/lib/lesson-homework';
+import { TeacherLessonAccessError } from '@/lib/teacher/lesson-ownership';
 
 export async function GET(
   _request: Request,
@@ -19,9 +20,12 @@ export async function GET(
   }
 
   try {
-    const homework = await getLessonHomework(auth.admin, id);
+    const homework = await getTeacherLessonHomework(auth.admin, auth.telegramId, id);
     return NextResponse.json({ homework });
   } catch (error) {
+    if (error instanceof TeacherLessonAccessError) {
+      return NextResponse.json({ error: 'Lesson not found' }, { status: 404 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to load homework' },
       { status: 500 },

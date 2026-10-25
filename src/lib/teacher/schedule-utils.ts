@@ -319,8 +319,7 @@ export function mapTeacherLessonToEvent(lesson: TeacherLessonView): ScheduleEven
   const participantLabel =
     lesson.kind === 'group'
       ? lesson.groupTitle ?? (lesson.groupId ? 'Группа' : 'Без группы')
-      : lesson.studentName ??
-        (lesson.studentTelegramId ? `Ученик ${lesson.studentTelegramId}` : 'Без ученика');
+      : lesson.studentName?.trim() || 'Без ученика';
 
   return {
     id: `lesson-${lesson.id}`,
@@ -339,6 +338,7 @@ export function mapTeacherLessonToEvent(lesson: TeacherLessonView): ScheduleEven
     lessonPlan: lesson.lessonPlan,
     cancelReason: lesson.cancelReason,
     isPaid: lesson.isPaid ?? null,
+    seriesId: lesson.seriesId ?? null,
     sourceLesson: lesson,
   };
 }

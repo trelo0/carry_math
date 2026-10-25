@@ -158,14 +158,14 @@ export type CoursePaymentOffer = {
   purchaseScenarios?: PurchaseScenarios | null;
 };
 
-type FetchOptions = { preview?: boolean; includeDrafts?: boolean };
+type FetchOptions = { preview?: boolean; includeDrafts?: boolean; /** Без кеша Next (синхронизация сотрудников). */ fresh?: boolean };
 
 function getClient({ preview, includeDrafts }: FetchOptions = {}) {
   return getSanityClient({ preview, includeDrafts: includeDrafts ?? Boolean(preview) });
 }
 
-function getSanityFetchOptions({ preview }: FetchOptions) {
-  if (preview) return { cache: 'no-store' as const };
+function getSanityFetchOptions({ preview, fresh }: FetchOptions) {
+  if (preview || fresh) return { cache: 'no-store' as const };
   return {
     next: { revalidate: 120, tags: ['sanity:course-content'] },
   };
@@ -710,6 +710,7 @@ export type DistrictCourseSummary = {
   previewAudience: string | null;
   curatorName: string | null;
   curatorTelegramId: number | null;
+  checkTelegramId: number | null;
   moduleCount: number;
   totalLessons: number;
   modulePreviews: {
@@ -756,6 +757,10 @@ export const listDistrictCourseSummaries = cache(async function listDistrictCour
       curatorTelegramId:
         typeof raw.curatorTelegramId === 'number' && Number.isFinite(raw.curatorTelegramId)
           ? (raw.curatorTelegramId as number)
+          : null,
+      checkTelegramId:
+        typeof raw.checkTelegramId === 'number' && Number.isFinite(raw.checkTelegramId)
+          ? (raw.checkTelegramId as number)
           : null,
       moduleCount:
         typeof raw.moduleCount === 'number' && Number.isFinite(raw.moduleCount)

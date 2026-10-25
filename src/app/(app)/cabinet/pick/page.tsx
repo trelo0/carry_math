@@ -69,7 +69,7 @@ export default async function CabinetPickPage({
               <strong>Ученик</strong>
               <span>Курс, занятия, оплата</span>
             </Link>
-            <Link href="/cabinet/staff?section=course-overview" className="cab-btn cab-btn--join cab-pick-card">
+            <Link href="/cabinet/staff?section=course" className="cab-btn cab-btn--join cab-pick-card">
               <strong>Staff</strong>
               <span>Куратор / преподаватель</span>
             </Link>

@@ -1,61 +1,44 @@
 ﻿'use client';
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { memberHasRole } from '@/lib/bot/roles';
-import {
-  canReviewHomeworkOnCourse,
-  canViewHomeworkProgressOnCourse,
-  defaultWebSectionForCourseRole,
-  webNavSectionsForCourseRole,
-  webSectionNavLabel,
-} from '@/lib/staff/course-assignment-ui';
 import { buildStaffCabinetPath } from '@/lib/staff/staff-cabinet-url';
 import type { StaffCabinetData } from '@/lib/teacher/cabinet-data';
-import {
-  normalizeCuratorCabinetData,
-  type CuratorHomeworkQueueItem,
-} from '@/lib/curator/cabinet-data';
-import CuratorDashboard from '@/components/curator/CuratorDashboard';
-import CuratorLessonsPanel from '@/components/curator/CuratorLessonsPanel';
-import CuratorStudentsPanel from '@/components/curator/CuratorStudentsPanel';
-import CuratorHomeworkPanel from '@/components/curator/CuratorHomeworkPanel';
-import CourseHistoryPanel from './CourseHistoryPanel';
+import { normalizeCuratorCabinetData, type CuratorCabinetData } from '@/lib/curator/cabinet-data';
 import CourseListPanel from './CourseListPanel';
-import StaffContextHeader from './StaffContextHeader';
+import CourseScreen from './course/CourseScreen';
+import {
+  legacySectionTab,
+  parseCourseTab,
+  type CourseTab,
+} from './course/course-utils';
 import TeacherLiveBanner from './TeacherLiveBanner';
 import TeacherSchedulePanel from './schedule/TeacherSchedulePanel';
 import {
   IconCalendarRef,
-  IconChartRef,
-  IconCheckRef,
   IconChevronLeftRef,
   IconChevronRightRef,
-  IconNoteRef,
   IconPanelRef,
-  IconUserRef,
 } from './schedule/ScheduleRefIcons';
 import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
 import type { StaffRefreshScope, StaffRunAction } from '@/lib/staff/run-action';
 
-export type StaffSection =
-  | 'teacher-calendar'
-  | 'course-list'
-  | 'course-overview'
-  | 'course-students'
-  | 'course-lessons'
-  | 'course-history'
-  | 'course-homework';
+/** Два раздела: расписание и единая страница «Курс» (вкладки внутри). */
+export type StaffSection = 'teacher-calendar' | 'course';
 
 const SECTION_ICONS: Record<StaffSection, ReactNode> = {
   'teacher-calendar': <IconCalendarRef size={18} />,
-  'course-list': <IconPanelRef size={18} />,
-  'course-overview': <IconChartRef size={18} />,
-  'course-students': <IconUserRef size={18} />,
-  'course-lessons': <IconCalendarRef size={18} />,
-  'course-history': <IconNoteRef size={18} />,
-  'course-homework': <IconCheckRef size={18} />,
+  course: <IconPanelRef size={18} />,
 };
 
 const SIDEBAR_KEY = 'staff-sidebar-collapsed';
@@ -91,15 +74,7 @@ function setSidebarCollapsed(collapsed: boolean) {
 type NavItem = { id: StaffSection; label: string; badge?: number; indent?: boolean };
 type NavGroup = { label: string; items: NavItem[]; subLabel?: string };
 
-const STAFF_SECTIONS: StaffSection[] = [
-  'teacher-calendar',
-  'course-list',
-  'course-overview',
-  'course-students',
-  'course-lessons',
-  'course-history',
-  'course-homework',
-];
+const STAFF_SECTIONS: StaffSection[] = ['teacher-calendar', 'course'];
 
 const LEGACY_SECTION_MAP: Record<string, StaffSection> = {
   'teacher-home': 'teacher-calendar',
@@ -107,29 +82,26 @@ const LEGACY_SECTION_MAP: Record<string, StaffSection> = {
   'teacher-availability': 'teacher-calendar',
   'teacher-working-hours': 'teacher-calendar',
   'teacher-hours': 'teacher-calendar',
-  dashboard: 'course-overview',
-  lessons: 'course-lessons',
-  students: 'course-students',
-  homework: 'course-homework',
-  'curator-dashboard': 'course-overview',
-  'curator-lessons': 'course-lessons',
-  'curator-students': 'course-students',
-  'curator-homework': 'course-homework',
-  'course-schedule': 'course-lessons',
+  dashboard: 'course',
+  lessons: 'course',
+  students: 'course',
+  homework: 'course',
+  'curator-dashboard': 'course',
+  'curator-lessons': 'course',
+  'curator-students': 'course',
+  'curator-homework': 'course',
+  'course-list': 'course',
+  'course-overview': 'course',
+  'course-lessons': 'course',
+  'course-students': 'course',
+  'course-history': 'course',
+  'course-homework': 'course',
+  'course-schedule': 'course',
   'teacher-students': 'teacher-calendar',
   'teacher-groups': 'teacher-calendar',
   'teacher-history': 'teacher-calendar',
   settings: 'teacher-calendar',
 };
-
-const COURSE_SECTIONS = new Set<StaffSection>([
-  'course-list',
-  'course-overview',
-  'course-students',
-  'course-lessons',
-  'course-history',
-  'course-homework',
-]);
 
 function canShowTeacher(data: StaffCabinetData): boolean {
   return Boolean(
@@ -150,18 +122,9 @@ function canShowCuratorCourseTools(data: StaffCabinetData): boolean {
   return data.curator.activeCourseRole === 'curator';
 }
 
-function canReviewCourseHomework(data: StaffCabinetData): boolean {
-  return canReviewHomeworkOnCourse(
-    data.curator?.activeCourseRole ?? null,
-    data.fullStaffPreview,
-  );
-}
-
-function canViewCourseHomeworkProgress(data: StaffCabinetData): boolean {
-  return canViewHomeworkProgressOnCourse(
-    data.curator?.activeCourseRole ?? null,
-    data.fullStaffPreview,
-  );
+/** Курсы, где сотрудник — куратор (роль «проверка ДЗ» живёт только в Telegram). */
+function curatorCourses(data: StaffCabinetData) {
+  return (data.curator?.assignedCourses ?? []).filter((c) => c.role === 'curator');
 }
 
 function canShowSchedule(data: StaffCabinetData): boolean {
@@ -190,31 +153,11 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
     });
   }
 
-  if (showCourseNav && data.curator) {
-    const courseTitle = data.curator.courseTitle;
-    const role = data.curator.activeCourseRole;
-    const courseItems: NavItem[] = [{ id: 'course-list', label: 'Мои курсы' }];
+  if (showCourseNav) {
     groups.push({
       label: 'Курсы',
-      items: courseItems,
-      subLabel: data.curator.courseId ? courseTitle : undefined,
+      items: [{ id: 'course', label: 'Курсы' }],
     });
-    if (data.curator.courseId && role) {
-      const sectionIds = webNavSectionsForCourseRole(role, {
-        fullPreview: data.fullStaffPreview,
-      });
-      const subItems: NavItem[] = sectionIds.map((id) => ({
-        id: id as StaffSection,
-        label: webSectionNavLabel(id, role),
-        indent: true,
-      }));
-      if (subItems.length > 0) {
-        groups.push({
-          label: courseTitle,
-          items: subItems,
-        });
-      }
-    }
   }
 
   return groups;
@@ -222,13 +165,7 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
 
 function defaultSection(data: StaffCabinetData): StaffSection {
   if (canShowSchedule(data)) return 'teacher-calendar';
-  if (hasCourseAssignments(data) && data.curator?.activeCourseRole) {
-    const sec = defaultWebSectionForCourseRole(data.curator.activeCourseRole, {
-      fullPreview: data.fullStaffPreview,
-    });
-    return sec === 'course-list' ? 'course-list' : sec;
-  }
-  return 'course-list';
+  return 'course';
 }
 
 function resolveInitialSection(data: StaffCabinetData, initial?: string): StaffSection {
@@ -239,7 +176,7 @@ function resolveInitialSection(data: StaffCabinetData, initial?: string): StaffS
 }
 
 function isCourseSection(section: StaffSection): boolean {
-  return COURSE_SECTIONS.has(section);
+  return section === 'course';
 }
 
 function normalizeStaffData(data: StaffCabinetData): StaffCabinetData {
@@ -247,18 +184,30 @@ function normalizeStaffData(data: StaffCabinetData): StaffCabinetData {
   return { ...data, curator: normalizeCuratorCabinetData(data.curator) };
 }
 
+/** Лёгкий ответ приходит без списка курсов — оставляем прежний. */
+function mergeLight(prev: StaffCabinetData, next: StaffCabinetData): StaffCabinetData {
+  if (!next.curator || !prev.curator) return { ...next, teacher: next.teacher ?? prev.teacher };
+  return {
+    ...next,
+    teacher: next.teacher ?? prev.teacher,
+    curator: { ...next.curator, assignedCourses: prev.curator.assignedCourses },
+  };
+}
+
 async function reloadData(
   courseId?: number | null,
   courseRole?: 'curator' | 'check' | null,
 ): Promise<StaffCabinetData> {
   const params = new URLSearchParams();
+  params.set('light', '1');
   if (courseId != null && Number.isFinite(courseId)) {
     params.set('courseId', String(courseId));
   }
   if (courseRole === 'curator' || courseRole === 'check') {
     params.set('courseRole', courseRole);
   }
-  const qs = params.toString() ? `?${params.toString()}` : '';
+
+  const qs = `?${params.toString()}`;
   const res = await fetch(`/api/cabinet/staff/data${qs}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Не удалось обновить данные');
   const json = (await res.json()) as StaffCabinetData;
@@ -274,6 +223,7 @@ async function reloadTeacherData(): Promise<TeacherCabinetData> {
 type Props = {
   data: StaffCabinetData;
   initialSection?: string;
+  initialTab?: string;
   initialLessonId?: string;
   initialCourseId?: number | null;
   initialCourseRole?: 'curator' | 'check' | null;
@@ -283,6 +233,7 @@ type Props = {
 export default function StaffShell({
   data: initialData,
   initialSection,
+  initialTab,
   initialLessonId,
   initialCourseId,
   initialCourseRole,
@@ -300,43 +251,55 @@ export default function StaffShell({
     resolveInitialSection(initialData, initialSection),
   );
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
+  const [courseTab, setCourseTab] = useState<CourseTab>(
+    () =>
+      parseCourseTab(initialTab) ??
+      (initialLessonId ? 'lessons' : null) ??
+      legacySectionTab(initialSection) ??
+      'overview',
+  );
+  // Несколько курсов: сначала список, потом экран курса. Один курс — сразу экран.
+  const [courseOpen, setCourseOpen] = useState(
+    () => curatorCourses(initialData).length <= 1 || initialCourseId != null,
+  );
   const [scheduleFocusLessonId, setScheduleFocusLessonId] = useState<number | null>(null);
   const [, setStartedLessonIds] = useState<Set<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
-  const [rejectNote, setRejectNote] = useState('');
-  const [rejectTarget, setRejectTarget] = useState<CuratorHomeworkQueueItem | null>(null);
+  const [courseLoading, setCourseLoading] = useState(false);
+  const [courseError, setCourseError] = useState<string | null>(null);
 
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, getSidebarCollapsed, () => true);
   const navGroups = useMemo(() => buildStaffNav(data), [data]);
-  const courseTitle = data.curator?.courseTitle ?? 'Курс';
+  const ownCourses = useMemo(() => curatorCourses(data), [data]);
+  const showCourseList = !courseOpen && ownCourses.length > 1;
 
   const syncStaffUrl = useCallback(
     (patch: {
       section?: StaffSection;
       courseId?: number | null;
       courseRole?: 'curator' | 'check' | null;
+      tab?: CourseTab | null;
       lesson?: string | null;
     }) => {
       const nextSection = patch.section ?? section;
       const nextCourseId = patch.courseId !== undefined ? patch.courseId : activeCourseId;
       const nextRole = patch.courseRole !== undefined ? patch.courseRole : activeCourseRole;
+      const isCourse = nextSection === 'course';
+      const tab = patch.tab !== undefined ? patch.tab : isCourse ? courseTab : null;
       const lesson =
-        patch.lesson !== undefined
-          ? patch.lesson
-          : nextSection === 'course-lessons' && selectedLessonId
-            ? selectedLessonId
-            : null;
+        patch.lesson !== undefined ? patch.lesson : isCourse && selectedLessonId ? selectedLessonId : null;
       router.replace(
         buildStaffCabinetPath({
           section: nextSection,
-          courseId: nextCourseId,
-          courseRole: nextRole,
+          courseId: isCourse ? nextCourseId : null,
+          courseRole: isCourse ? nextRole : null,
+          tab: tab ?? undefined,
           lesson: lesson ?? undefined,
         }),
         { scroll: false },
       );
     },
-    [section, activeCourseId, activeCourseRole, selectedLessonId, router],
+    [section, activeCourseId, activeCourseRole, courseTab, selectedLessonId, router],
   );
 
   const refresh = useCallback(async (scope: StaffRefreshScope = 'full') => {
@@ -347,7 +310,7 @@ export default function StaffShell({
       return;
     }
     const next = await reloadData(activeCourseId, activeCourseRole);
-    setData(next);
+    setData((prev) => mergeLight(prev, next));
     if (next.curator?.courseId != null) setActiveCourseId(next.curator.courseId);
     if (next.curator?.activeCourseRole) setActiveCourseRole(next.curator.activeCourseRole);
   }, [activeCourseId, activeCourseRole]);
@@ -397,10 +360,87 @@ export default function StaffShell({
     });
   }, []);
 
-  const openCourseLesson = useCallback((sanityId: string) => {
-    setSection('course-lessons');
-    setSelectedLessonId(sanityId);
-  }, []);
+  /** Выезжающая панель настроек занятия — открывается поверх текущей вкладки (вкладка не меняется). */
+  const openCourseLesson = useCallback(
+    (sanityId: string) => {
+      setSelectedLessonId(sanityId);
+      syncStaffUrl({ section: 'course', lesson: sanityId });
+    },
+    [syncStaffUrl],
+  );
+
+  const closeCourseLesson = useCallback(() => {
+    setSelectedLessonId(null);
+    syncStaffUrl({ section: 'course', lesson: null });
+  }, [syncStaffUrl]);
+
+  const changeCourseTab = useCallback(
+    (tab: CourseTab) => {
+      setCourseTab(tab);
+      setSelectedLessonId(null);
+      syncStaffUrl({ section: 'course', tab, lesson: null });
+    },
+    [syncStaffUrl],
+  );
+
+  const courseCache = useRef(new Map<number, CuratorCabinetData>());
+  useEffect(() => {
+    const c = data.curator;
+    if (c?.courseId != null) courseCache.current.set(c.courseId, c);
+  }, [data.curator]);
+
+  const openCourse = useCallback(
+    (courseId: number, role: 'curator' | 'check') => {
+      // Экран курса открываем сразу (скелетон), данные подгружаем в фоне.
+      setActiveCourseId(courseId);
+      setActiveCourseRole(role);
+      setSelectedLessonId(null);
+      setCourseTab('overview');
+      setCourseError(null);
+      // Уже открывали этот курс — показываем сразу, обновляем в фоне.
+      const cached = courseCache.current.get(courseId);
+      if (cached) {
+        setData((prev) =>
+          prev.curator ? { ...prev, curator: { ...cached, assignedCourses: prev.curator.assignedCourses } } : prev,
+        );
+        setCourseLoading(false);
+      } else {
+        setCourseLoading(true);
+      }
+      setCourseOpen(true);
+      syncStaffUrl({
+        section: 'course',
+        courseId,
+        courseRole: role,
+        tab: 'overview',
+        lesson: null,
+      });
+      void reloadData(courseId, role)
+        .then((next) => setData((prev) => mergeLight(prev, next)))
+        .catch(() => {
+          setCourseError('Не удалось загрузить курс. Попробуйте ещё раз.');
+          setCourseOpen(false);
+        })
+        .finally(() => setCourseLoading(false));
+    },
+    [syncStaffUrl],
+  );
+
+  // Единственный курс всегда открыт; данные подгружаем, если сервер отдал другой курс.
+  const autoLoadedCourse = useRef<number | null>(null);
+  useEffect(() => {
+    if (section !== 'course' || ownCourses.length !== 1) return;
+    const only = ownCourses[0];
+    if (data.curator?.courseId === only.courseId || autoLoadedCourse.current === only.courseId) return;
+    autoLoadedCourse.current = only.courseId;
+    void reloadData(only.courseId, 'curator')
+      .then((next) => {
+        setData((prev) => mergeLight(prev, next));
+        setActiveCourseId(only.courseId);
+        setActiveCourseRole('curator');
+      })
+      .catch(() => undefined);
+  }, [section, ownCourses, data.curator?.courseId]);
 
   const showTeacherLive =
     Boolean(data.teacher?.currentLesson) &&
@@ -424,24 +464,26 @@ export default function StaffShell({
     if (isCourseSection(section) && !hasCourseAssignments(data)) {
       setSection(defaultSection(data));
     }
-    if (section === 'course-overview' && !canShowCuratorCourseTools(data)) {
-      setSection(canViewCourseHomeworkProgress(data) ? 'course-homework' : 'course-list');
-    }
-    if (
-      (section === 'course-students' || section === 'course-lessons' || section === 'course-history') &&
-      !canShowCuratorCourseTools(data)
-    ) {
-      setSection('course-list');
-    }
-    if (section === 'course-homework' && !canViewCourseHomeworkProgress(data)) {
-      setSection(defaultSection(data));
-    }
   }, [section, data]);
 
   const handleNavClick = (itemId: StaffSection) => {
     setSection(itemId);
-    if (itemId !== 'course-lessons') setSelectedLessonId(null);
-    syncStaffUrl({ section: itemId, lesson: itemId === 'course-lessons' ? selectedLessonId : null });
+    if (itemId === 'course') {
+      // Клик по «Курсы» при нескольких курсах возвращает к списку.
+      const backToList = ownCourses.length > 1;
+      if (backToList) {
+        setCourseOpen(false);
+        setSelectedLessonId(null);
+      }
+      syncStaffUrl({
+        section: 'course',
+        courseId: backToList ? null : activeCourseId,
+        tab: backToList ? null : courseTab,
+        lesson: backToList ? null : selectedLessonId,
+      });
+      return;
+    }
+    syncStaffUrl({ section: itemId });
   };
 
   return (
@@ -502,7 +544,9 @@ export default function StaffShell({
         </div>
       </aside>
 
-      <main className={`curator-main${section === 'teacher-calendar' ? ' curator-main--schedule' : ''}`}>
+      <main
+        className={`curator-main${section === 'teacher-calendar' ? ' curator-main--schedule' : ''}${isCourseSection(section) ? ' curator-main--course' : ''}`}
+      >
         {showTeacherLive && data.teacher?.currentLesson ? (
           <TeacherLiveBanner
             lesson={data.teacher.currentLesson}
@@ -522,8 +566,8 @@ export default function StaffShell({
           <>
             <TeacherSchedulePanel
               teacherData={data.teacher ?? undefined}
-              onLessonFinished={markLessonFinished}
               showCancelled={data.fullStaffPreview}
+              onLessonFinished={markLessonFinished}
               focusLessonId={scheduleFocusLessonId}
               onFocusLessonHandled={() => setScheduleFocusLessonId(null)}
               patchTeacher={patchTeacher}
@@ -533,106 +577,57 @@ export default function StaffShell({
           </>
         ) : null}
 
-        {section === 'course-list' && data.curator ? (
-          <div className="course-page">
-            <CourseListPanel
-              courses={
-                data.curator.assignedCourses.length > 0
-                  ? data.curator.assignedCourses.map((c) => ({
-                      courseId: c.courseId,
-                      title: c.title,
-                      studentCount: c.studentCount,
-                      lessonCount: c.lessonCount,
-                      role: c.role,
-                    }))
-                  : data.curator.courseId && data.curator.activeCourseRole
-                    ? [
-                        {
-                          courseId: data.curator.courseId,
-                          title: courseTitle,
-                          studentCount: data.curator.students.length,
-                          lessonCount: data.curator.lessons.length,
-                          role: data.curator.activeCourseRole,
-                        },
-                      ]
-                    : []
-              }
-              onOpenCourse={(courseId, role) => {
-                setActiveCourseId(courseId);
-                setActiveCourseRole(role);
-                void reloadData(courseId, role)
-                  .then((next) => {
-                    setData(next);
-                    const sec = defaultWebSectionForCourseRole(role, {
-                      fullPreview: next.fullStaffPreview,
-                    }) as StaffSection;
-                    setSection(sec);
-                    syncStaffUrl({ section: sec, courseId, courseRole: role, lesson: null });
-                  })
-                  .catch(() => undefined);
-              }}
-            />
+        {isCourseSection(section) && data.curator && showCourseList ? (
+          <CourseListPanel
+            courses={ownCourses.map((c) => ({
+              courseId: c.courseId,
+              title: c.title,
+              studentCount: c.studentCount,
+              lessonCount: c.lessonCount,
+              role: c.role,
+            }))}
+            onOpenCourse={openCourse}
+          />
+        ) : null}
+
+        {isCourseSection(section) && courseError && showCourseList ? (
+          <div className="curator-warn">{courseError}</div>
+        ) : null}
+
+        {isCourseSection(section) && courseLoading ? (
+          <div className="cr-root" aria-busy="true" aria-label="Загрузка курса">
+            <div className="cr-skel cr-skel--title" />
+            <div className="cr-skel cr-skel--tabs" />
+            <div className="cr-skel cr-skel--block" />
+            <div className="cr-skel cr-skel--block cr-skel--short" />
           </div>
         ) : null}
 
-        {section === 'course-overview' && data.curator && canShowCuratorCourseTools(data) ? (
-          <div className="course-page">
-            <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CuratorDashboard
-              data={data.curator}
-              onOpenHomework={() => setSection('course-homework')}
-              onOpenStudents={() => setSection('course-students')}
-              onOpenLesson={(id) => {
-                setSection('course-lessons');
-                setSelectedLessonId(id);
-              }}
-            />
-          </div>
-        ) : null}
-
-        {section === 'course-students' && data.curator && canShowCuratorCourseTools(data) ? (
-          <div className="course-page">
-            <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CuratorStudentsPanel students={data.curator.students} />
-          </div>
-        ) : null}
-
-        {section === 'course-lessons' && data.curator && canShowCuratorCourseTools(data) ? (
-          <div className="course-page">
-            <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CuratorLessonsPanel
-              data={data.curator}
-              selectedLessonId={selectedLessonId}
-              onSelectLesson={setSelectedLessonId}
-              onBack={() => setSelectedLessonId(null)}
-              busy={busy}
-              runAction={runAction}
-            />
-          </div>
-        ) : null}
-
-        {section === 'course-history' && data.curator && canShowCuratorCourseTools(data) ? (
-          <div className="course-page">
-            <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CourseHistoryPanel lessons={data.curator.lessons} onOpenLesson={openCourseLesson} />
-          </div>
-        ) : null}
-
-        {section === 'course-homework' && data.curator && canViewCourseHomeworkProgress(data) ? (
-          <>
-            <StaffContextHeader area="course" courseTitle={courseTitle} />
-            <CuratorHomeworkPanel
-              board={data.curator.homeworkBoard}
-              courseId={data.curator.courseId}
-              busy={busy}
-              runAction={runAction}
-              rejectTarget={rejectTarget}
-              rejectNote={rejectNote}
-              onRejectNote={setRejectNote}
-              onRejectTarget={setRejectTarget}
-              readOnly={!canReviewCourseHomework(data)}
-            />
-          </>
+        {isCourseSection(section) &&
+        !courseLoading &&
+        data.curator &&
+        !showCourseList &&
+        canShowCuratorCourseTools(data) ? (
+          <CourseScreen
+            key={data.curator.courseId ?? 'course'}
+            data={data.curator}
+            tab={courseTab}
+            onTabChange={changeCourseTab}
+            drawerLessonId={selectedLessonId}
+            onOpenDrawer={openCourseLesson}
+            onCloseDrawer={closeCourseLesson}
+            onBack={
+              ownCourses.length > 1
+                ? () => {
+                    setCourseOpen(false);
+                    setSelectedLessonId(null);
+                    syncStaffUrl({ section: 'course', courseId: null, tab: null, lesson: null });
+                  }
+                : undefined
+            }
+            busy={busy}
+            runAction={runAction}
+          />
         ) : null}
 
       </main>

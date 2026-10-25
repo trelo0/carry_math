@@ -33,6 +33,7 @@ export type ScheduleEvent = {
   cancelReason?: string | null;
   /** Оплачено ли занятие; null/undefined — неизвестно. */
   isPaid?: boolean | null;
+  seriesId?: string | null;
   sourceLesson?: TeacherLessonView;
   sourceCourseLesson?: CuratorLessonView;
 };

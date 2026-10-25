@@ -8,12 +8,16 @@ export async function completeScheduledLesson(
   admin: SupabaseClient,
   lessonId: number,
   completedByTelegramId: number,
+  options?: { ownerTeacherTelegramId?: number },
 ): Promise<{ consumed: boolean }> {
-  const { data: lesson, error: loadError } = await admin
+  let loadQuery = admin
     .from('scheduled_lessons')
-    .select('id, status, package_id, consumed_at')
-    .eq('id', lessonId)
-    .maybeSingle();
+    .select('id, status, package_id, consumed_at, teacher_telegram_id')
+    .eq('id', lessonId);
+  if (options?.ownerTeacherTelegramId != null) {
+    loadQuery = loadQuery.eq('teacher_telegram_id', options.ownerTeacherTelegramId);
+  }
+  const { data: lesson, error: loadError } = await loadQuery.maybeSingle();
   if (loadError) throw loadError;
   if (!lesson) throw new Error(`Занятие ${lessonId} не найдено.`);
   if (lesson.status === 'completed') {
@@ -24,7 +28,7 @@ export async function completeScheduledLesson(
   }
   const now = new Date().toISOString();
 
-  const { data: updated, error: updateError } = await admin
+  let updateQuery = admin
     .from('scheduled_lessons')
     .update({
       status: 'completed',
@@ -35,9 +39,11 @@ export async function completeScheduledLesson(
     })
     .eq('id', lessonId)
     .eq('status', 'scheduled')
-    .is('consumed_at', null)
-    .select('id, package_id')
-    .maybeSingle();
+    .is('consumed_at', null);
+  if (options?.ownerTeacherTelegramId != null) {
+    updateQuery = updateQuery.eq('teacher_telegram_id', options.ownerTeacherTelegramId);
+  }
+  const { data: updated, error: updateError } = await updateQuery.select('id, package_id').maybeSingle();
   if (updateError) throw updateError;
   if (!updated) {
     const { data: current } = await admin

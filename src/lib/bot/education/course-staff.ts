@@ -119,21 +119,50 @@ export async function endActiveCourseStaffForRole(
   if (error && !String(error.message).includes('course_staff_assignments')) throw error;
 }
 
-async function endStaffAssignmentForMemberOnCourse(
+export type CourseStaffSyncIds = {
+  curator: number | null | undefined;
+  check: number | null | undefined;
+};
+
+function normalizeStaffId(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) ? Math.floor(value) : null;
+}
+
+/**
+ * Привести назначения курса в БД к значениям из Sanity.
+ * Пустое поле в Sanity — снять назначение. Если новый сотрудник не прошёл проверку,
+ * старый остаётся (курс не остаётся без сотрудника), а причина возвращается в problems.
+ */
+export async function syncCourseStaffIds(
   admin: SupabaseClient,
   courseId: number,
-  staffTelegramId: number,
-  role: 'curator' | 'check',
-): Promise<void> {
-  const now = new Date().toISOString();
-  const { error } = await admin
-    .from('course_staff_assignments')
-    .update({ status: 'completed', ended_at: now, updated_at: now })
-    .eq('course_id', courseId)
-    .eq('staff_telegram_id', staffTelegramId)
-    .eq('role', role)
-    .eq('status', 'active');
-  if (error && !String(error.message).includes('course_staff_assignments')) throw error;
+  ids: CourseStaffSyncIds,
+  courseLabel = `курс #${courseId}`,
+): Promise<string[]> {
+  const problems: string[] = [];
+  const roleLabels = { curator: 'куратор', check: 'проверяющий ДЗ' } as const;
+
+  for (const role of ['curator', 'check'] as const) {
+    const id = normalizeStaffId(role === 'curator' ? ids.curator : ids.check);
+    if (id == null) {
+      await endActiveCourseStaffForRole(admin, courseId, role, null);
+      continue;
+    }
+    try {
+      if (!(await isRegisteredBotMember(admin, id))) {
+        problems.push(
+          `${courseLabel}: ${roleLabels[role]} ${id} из Sanity не найден в боте (нужен /start).`,
+        );
+        continue;
+      }
+      await upsertCourseStaffAssignment(admin, courseId, id, role);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      problems.push(`${courseLabel}: ${roleLabels[role]} ${id} — ${reason}`);
+      console.warn(`[course-staff] ${role} sync failed:`, e);
+    }
+  }
+  return problems;
 }
 
 /** Из Sanity/CMS: куратор курса и проверяющий ДЗ. */
@@ -144,74 +173,101 @@ export async function syncCourseStaffFromContent(
   options?: { courseSlug?: string },
 ): Promise<void> {
   if (!courseId || !content) return;
-
-  const assignFromSanity = async (
-    telegramId: number | null | undefined,
-    role: 'curator' | 'check',
-  ): Promise<void> => {
-    if (telegramId == null || !Number.isFinite(telegramId)) return;
-    const id = Math.floor(telegramId);
-    if (!(await isRegisteredBotMember(admin, id))) return;
-    try {
-      await upsertCourseStaffAssignment(admin, courseId, id, role);
-    } catch (e) {
-      console.warn(`[course-staff] ${role} sync failed:`, e);
-    }
-  };
-
-  const curatorKeep =
-    content.curatorTelegramId != null && Number.isFinite(content.curatorTelegramId)
-      ? Math.floor(content.curatorTelegramId)
-      : null;
-  const checkKeep =
-    content.checkTelegramId != null && Number.isFinite(content.checkTelegramId)
-      ? Math.floor(content.checkTelegramId)
-      : null;
-
-  await endActiveCourseStaffForRole(admin, courseId, 'curator', curatorKeep);
-  await endActiveCourseStaffForRole(admin, courseId, 'check', checkKeep);
-
-  await assignFromSanity(content.curatorTelegramId, 'curator');
-  await assignFromSanity(content.checkTelegramId, 'check');
+  await syncCourseStaffIds(
+    admin,
+    courseId,
+    { curator: content.curatorTelegramId, check: content.checkTelegramId },
+    options?.courseSlug ?? content.slug,
+  );
 }
 
-/** Подтянуть назначения из Sanity по всем курсам + гарантировать строки courses. */
+const SYNC_TTL_MS = 15_000;
+let lastSyncAt = 0;
+let lastSyncProblems: string[] = [];
+let inflightSync: Promise<string[]> | null = null;
+
+/**
+ * Синхронизировать сотрудников ВСЕХ курсов из Sanity (свежие данные, без кеша Next).
+ * Троттлинг 15 с; параллельные вызовы делят один запуск.
+ */
+export async function syncAllCourseStaffFromSanity(
+  admin: SupabaseClient,
+  options?: { force?: boolean },
+): Promise<{ problems: string[] }> {
+  if (!options?.force && Date.now() - lastSyncAt < SYNC_TTL_MS) {
+    return { problems: lastSyncProblems };
+  }
+  if (inflightSync) return { problems: await inflightSync };
+
+  inflightSync = (async () => {
+    const { listDistrictCourseSummaries, getDistrictCourseContent } = await import(
+      '@/lib/studio/courseContent'
+    );
+    const { ensureDistrictCourseRecord, lookupCourseIdsBySlugs } = await import('./course-record');
+
+    const summaries = await listDistrictCourseSummaries({ fresh: true }).catch((e) => {
+      console.warn('[course-staff] sanity summaries failed:', e);
+      return null;
+    });
+    if (!summaries) return lastSyncProblems;
+
+    const idBySlug = await lookupCourseIdsBySlugs(
+      admin,
+      summaries.map((s) => s.slug),
+    ).catch(() => new Map<string, number>());
+
+    const results = await Promise.all(
+      summaries.map(async (summary) => {
+        const courseId = idBySlug.get(summary.slug);
+        if (courseId != null) {
+          return syncCourseStaffIds(
+            admin,
+            courseId,
+            { curator: summary.curatorTelegramId, check: summary.checkTelegramId },
+            summary.title,
+          );
+        }
+        // Курса ещё нет в БД: создаём запись (staff синхронизируется внутри).
+        const content = await getDistrictCourseContent(summary.slug, { fresh: true }).catch(
+          () => null,
+        );
+        if (content) await ensureDistrictCourseRecord(admin, content).catch(() => null);
+        return [] as string[];
+      }),
+    );
+
+    const problems = results.flat();
+    lastSyncAt = Date.now();
+    lastSyncProblems = problems;
+    return problems;
+  })();
+
+  try {
+    return { problems: await inflightSync };
+  } finally {
+    inflightSync = null;
+  }
+}
+
+/** Синхронизация без выброса ошибок — для горячих путей (кабинет, бот). */
+export async function safeSyncCourseStaff(
+  admin: SupabaseClient,
+  options?: { force?: boolean },
+): Promise<string[]> {
+  try {
+    return (await syncAllCourseStaffFromSanity(admin, options)).problems;
+  } catch (e) {
+    console.warn('[course-staff] sync failed:', e);
+    return [];
+  }
+}
+
+/** @deprecated используй syncAllCourseStaffFromSanity */
 export async function refreshStaffCourseAssignmentsForMember(
   admin: SupabaseClient,
-  staffTelegramId: number,
+  _staffTelegramId: number,
 ): Promise<void> {
-  const { listDistrictCourseSummaries, getDistrictCourseContent } = await import(
-    '@/lib/studio/courseContent'
-  );
-  const { ensureDistrictCourseRecord } = await import('./course-record');
-  const id = Math.floor(staffTelegramId);
-  if (!Number.isFinite(id)) return;
-
-  const summaries = await listDistrictCourseSummaries().catch(() => []);
-  for (const summary of summaries) {
-    const content = await getDistrictCourseContent(summary.slug).catch(() => null);
-    if (!content) continue;
-    const courseId = await ensureDistrictCourseRecord(admin, content).catch(() => null);
-    if (courseId == null) continue;
-    if (content.curatorTelegramId === id) {
-      await upsertCourseStaffAssignment(admin, courseId, id, 'curator').catch((e) =>
-        console.warn('[course-staff] refresh curator failed:', e),
-      );
-    } else {
-      await endStaffAssignmentForMemberOnCourse(admin, courseId, id, 'curator').catch((e) =>
-        console.warn('[course-staff] refresh end curator failed:', e),
-      );
-    }
-    if (content.checkTelegramId === id) {
-      await upsertCourseStaffAssignment(admin, courseId, id, 'check').catch((e) =>
-        console.warn('[course-staff] refresh check failed:', e),
-      );
-    } else {
-      await endStaffAssignmentForMemberOnCourse(admin, courseId, id, 'check').catch((e) =>
-        console.warn('[course-staff] refresh end check failed:', e),
-      );
-    }
-  }
+  await syncAllCourseStaffFromSanity(admin);
 }
 
 /** Назначение из админ-бота (с проверкой роли в bot_members). */

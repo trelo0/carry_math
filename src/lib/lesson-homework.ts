@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isExternalFileUrl } from '@/lib/cabinet-lesson-files';
+import { assertTeacherOwnsScheduledLesson } from '@/lib/teacher/lesson-ownership';
 
 export type LessonHomeworkReviewStatus =
   | 'pending'
@@ -63,15 +64,14 @@ async function assertTeacherOwnsLesson(
   teacherTelegramId: number,
   lessonId: number,
 ): Promise<{ telegramId: number; startsAt: string; topic: string }> {
+  await assertTeacherOwnsScheduledLesson(admin, teacherTelegramId, lessonId);
   const { data, error } = await admin
     .from('scheduled_lessons')
-    .select('id, telegram_id, starts_at, topic, teacher_telegram_id')
+    .select('telegram_id, starts_at, topic')
     .eq('id', lessonId)
-    .maybeSingle();
+    .eq('teacher_telegram_id', teacherTelegramId)
+    .single();
   if (error) throw error;
-  if (!data || data.teacher_telegram_id !== teacherTelegramId) {
-    throw new Error('Lesson not found');
-  }
   return {
     telegramId: data.telegram_id as number,
     startsAt: data.starts_at as string,
@@ -93,6 +93,15 @@ export async function getHomeworkById(
   if (error) throw error;
   if (!data) return null;
   return mapRow(data as Record<string, unknown>);
+}
+
+export async function getTeacherLessonHomework(
+  admin: SupabaseClient,
+  teacherTelegramId: number,
+  lessonId: number,
+): Promise<LessonHomeworkRow | null> {
+  await assertTeacherOwnsScheduledLesson(admin, teacherTelegramId, lessonId);
+  return getLessonHomework(admin, lessonId);
 }
 
 export async function getLessonHomework(

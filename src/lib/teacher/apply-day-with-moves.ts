@@ -6,8 +6,13 @@ import {
   setTeacherDayOverride,
   type TeacherWorkingHoursData,
 } from '@/lib/teacher/working-hours';
-import { ScheduleValidationError, validateLessonSlot } from '@/lib/teacher/schedule-validation';
+import { validateLessonSlot } from '@/lib/teacher/schedule-validation';
 import { rpcTeacherApplyDaySchedule } from '@/lib/teacher/schedule-rpc';
+import {
+  assertTeacherOwnsLessonMoves,
+  restoreTeacherOwnedScheduledLessonSlot,
+  updateTeacherOwnedScheduledLessonSlot,
+} from '@/lib/teacher/lesson-ownership';
 
 export type DayMoveInput = { lessonId: number; startsAt: string; durationMinutes: number };
 
@@ -27,24 +32,8 @@ export async function applyDayWithMoves(
   input: ApplyDayInput,
 ): Promise<TeacherWorkingHoursData> {
   const moves = input.moves ?? [];
-  const originalStarts = new Map<number, { startsAt: string; durationMinutes: number }>();
-
+  const originalStarts = await assertTeacherOwnsLessonMoves(admin, teacherTelegramId, moves);
   for (const move of moves) {
-    const { data: lesson } = await admin
-      .from('scheduled_lessons')
-      .select('id, teacher_telegram_id, status, starts_at, duration_minutes')
-      .eq('id', move.lessonId)
-      .maybeSingle();
-    if (!lesson || lesson.teacher_telegram_id !== teacherTelegramId) {
-      throw new ScheduleValidationError('Занятие не найдено');
-    }
-    if (lesson.status !== 'scheduled') {
-      throw new ScheduleValidationError('Перенести можно только запланированное занятие');
-    }
-    originalStarts.set(move.lessonId, {
-      startsAt: lesson.starts_at as string,
-      durationMinutes: (lesson.duration_minutes as number) ?? move.durationMinutes,
-    });
     await validateLessonSlot(admin, teacherTelegramId, {
       startsAt: move.startsAt,
       durationMinutes: move.durationMinutes,
@@ -60,17 +49,7 @@ export async function applyDayWithMoves(
   const applied: number[] = [];
   try {
     for (const move of moves) {
-      const { error } = await admin
-        .from('scheduled_lessons')
-        .update({
-          starts_at: move.startsAt,
-          duration_minutes: move.durationMinutes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', move.lessonId)
-        .eq('teacher_telegram_id', teacherTelegramId)
-        .eq('status', 'scheduled');
-      if (error) throw new ScheduleValidationError(error.message);
+      await updateTeacherOwnedScheduledLessonSlot(admin, teacherTelegramId, move);
       applied.push(move.lessonId);
     }
 
@@ -83,14 +62,13 @@ export async function applyDayWithMoves(
     for (const lessonId of applied) {
       const orig = originalStarts.get(lessonId);
       if (!orig) continue;
-      await admin
-        .from('scheduled_lessons')
-        .update({
-          starts_at: orig.startsAt,
-          duration_minutes: orig.durationMinutes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', lessonId);
+      await restoreTeacherOwnedScheduledLessonSlot(
+        admin,
+        teacherTelegramId,
+        lessonId,
+        orig.startsAt,
+        orig.durationMinutes,
+      );
     }
     throw error;
   }
