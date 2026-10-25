@@ -3,7 +3,7 @@ import { telegramSend } from '@/lib/telegram';
 import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
 import { resolvePurchaseOffer } from '@/lib/bot/purchase-fulfillment';
 import { createPurchaseRequest } from '@/lib/bot/purchase-requests';
-import { sendPurchaseRequestPaymentLink } from '@/lib/bot/purchase-order-pay';
+import { buildPayStartPayload } from '@/lib/bot/studentPurchaseFlow';
 import { getActiveCourses, enrollStudent } from '@/lib/bot/education/courses';
 import { resolveMemberChatId } from '../staff/messaging';
 import {
@@ -191,12 +191,6 @@ export async function handleLeadEnrollmentAction(
       teacherId: teacher?.teacherId ?? null,
       title: offer.title,
       amountByn: offer.amountByn,
-      lessonsCount: offer.lessons,
-      leadId,
-      orderKind: 'package',
-      lessonFormat: product,
-      serviceDescription: offer.title,
-      teacherTelegramId: teacher?.telegramId ?? null,
     });
     await logLeadEvent(admin, {
       leadId,
@@ -204,12 +198,17 @@ export async function handleLeadEnrollmentAction(
       actorTelegramId,
       detail: { request_id: request.id, product },
     });
-    try {
-      await sendPurchaseRequestPaymentLink(admin, request);
-    } catch (error) {
-      console.error('[lead-enrollment] bePaid link failed', error);
+    const chatId = await resolveMemberChatId(admin, tg);
+    const payPayload = buildPayStartPayload(product, pkgIndex, teacherIndex);
+    const botUser = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+    const payLink = botUser ? `https://t.me/${botUser}?start=${payPayload}` : payPayload;
+    if (chatId) {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: `💳 ${offer.title}\nСумма: ${offer.amountByn} BYN\n\nДля оплаты перейдите в бот:\n${payLink}`,
+      });
     }
-    await deliver(`✅ Заказ создан (#${request.id.slice(0, 8)}).\nКлиенту отправлена ссылка bePaid.`, {
+    await deliver(`✅ Заявка на оплату создана (#${request.id.slice(0, 8)}).\nКлиенту отправлена ссылка на оплату.`, {
       inline_keyboard: [
         [{ text: '💳 Оплаты админ', callback_data: 'ap:menu' }],
         [{ text: '◀️ Оформление', callback_data: `al:en:hub:${leadId}:${nav}` }],

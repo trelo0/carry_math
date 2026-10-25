@@ -1,51 +1,58 @@
-'use client';
+﻿'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
-import type { ScheduleEvent, ScheduleFormKind } from '@/lib/teacher/schedule-types';
-import { formatScheduleApiError } from '@/lib/teacher/schedule-api-errors';
+import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
+import { formatScheduleApiError, readJson } from '@/lib/teacher/schedule-api-errors';
 import {
   buildLocalIso,
   dateKey,
   durationFromRange,
-  findDaySlotConflict,
-  validateLessonPlacementClient,
+  minutesToTime,
+  timeToMinutes,
 } from '@/lib/teacher/schedule-utils';
-import { formatPackageCreditLine } from '@/lib/teacher/package-credits';
 import {
-  addTeacherDaySlot,
   addTeacherLesson,
+  addTeacherLessons,
   createOptimisticLesson,
+  nextOptimisticLessonId,
+  reconcileSeriesLessons,
   removeTeacherLesson,
+  removeTeacherLessons,
+  replaceTeacherLessonId,
 } from '@/lib/teacher/schedule-optimistic';
+import { runLessonMutationAsync } from '@/lib/teacher/schedule-lesson-async';
+import { buildSeriesOccurrences, SERIES_DEFAULT_WEEKS, weekdayIndex } from '@/lib/teacher/lesson-series';
+import {
+  getDayWorkState,
+  isLessonOverlapPlacementError,
+  LESSON_OVERLAP_ERROR_TEXT,
+  validatePlacement,
+  workBandsLabel,
+} from '@/lib/teacher/schedule-reference-utils';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
-import { runWithFeedback } from '@/lib/staff/action-feedback';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
+import { IconXRef } from './ScheduleRefIcons';
+import FreeTimePicker from './FreeTimePicker';
+import { ScheduleDateSelect, ScheduleRosterSelect, ScheduleTimeField } from './SchedulePickers';
 
 type Props = {
   data: TeacherCabinetData;
   events: ScheduleEvent[];
   daySlots: TeacherDaySlot[];
   initialDate?: Date;
-  initialKind?: ScheduleFormKind;
+  initialKind?: 'individual' | 'group';
   initialStartTime?: string;
   initialEndTime?: string;
-  initialStudentId?: string;
-  initialGroupId?: string;
-  replacesLessonId?: number;
   busy: boolean;
+  report: Dispatch<SetStateAction<ActionFeedback | null>>;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   onClose: () => void;
   runAction: StaffRunAction;
 };
 
-const TITLES: Record<ScheduleFormKind, string> = {
-  individual: 'Добавить занятие',
-  group: 'Групповое занятие',
-  free: 'Свободный слот',
-  break: 'Перерыв',
-  busy: 'Занято',
-};
+const WEEK_OPTIONS = [4, 8, 12, 24];
+const WEEKDAYS_FULL = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
 
 export default function ScheduleAddModal({
   data,
@@ -55,272 +62,341 @@ export default function ScheduleAddModal({
   initialKind = 'individual',
   initialStartTime,
   initialEndTime,
-  initialStudentId = '',
-  initialGroupId = '',
-  replacesLessonId,
   busy,
+  report,
   patchTeacher,
   onClose,
   runAction,
 }: Props) {
-  const [formKind, setFormKind] = useState<ScheduleFormKind>(initialKind);
-  const [slotDate, setSlotDate] = useState(dateKey(initialDate ?? new Date()));
+  const [kind, setKind] = useState<'individual' | 'group'>(initialKind);
+  const [slotDate, setSlotDate] = useState(() => dateKey(initialDate ?? new Date()));
   const [startTime, setStartTime] = useState(initialStartTime ?? '10:00');
-  const [endTime, setEndTime] = useState(initialEndTime ?? '11:00');
-  const [studentId, setStudentId] = useState(initialStudentId);
-  const [groupId, setGroupId] = useState(initialGroupId);
-
-  useEffect(() => {
-    setFormKind(initialKind);
-    setSlotDate(dateKey(initialDate ?? new Date()));
-    setStartTime(initialStartTime ?? '10:00');
-    setEndTime(initialEndTime ?? '11:00');
-    setStudentId(initialStudentId);
-    setGroupId(initialGroupId);
-  }, [
-    initialDate,
-    initialKind,
-    initialStartTime,
-    initialEndTime,
-    initialStudentId,
-    initialGroupId,
-  ]);
+  const [endTime, setEndTime] = useState(initialEndTime ?? '11:15');
+  const [participant, setParticipant] = useState('');
+  const [rosterId, setRosterId] = useState('');
+  const [repeat, setRepeat] = useState(false);
+  const [weeks, setWeeks] = useState(SERIES_DEFAULT_WEEKS);
   const [topic, setTopic] = useState('');
   const [comment, setComment] = useState('');
-  const [busyLabel, setBusyLabel] = useState('Занято');
+  const [showError, setShowError] = useState(false);
   const [feedback, setFeedback] = useState<ActionFeedback | null>(null);
+  const [todayKey] = useState(() => dateKey(new Date()));
 
-  const selectedStudent =
-    formKind === 'individual' && studentId
-      ? data.students.find((s) => String(s.telegramId) === studentId)
-      : undefined;
+  const day = useMemo(() => {
+    const [y, m, d] = slotDate.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+  }, [slotDate]);
+  const work = getDayWorkState(data.workingHours, day);
 
-  const submit = () => {
-    if (startTime >= endTime) {
-      setFeedback({ type: 'error', message: 'Время окончания должно быть позже начала' });
-      return;
-    }
-
-    if (formKind === 'free' || formKind === 'break' || formKind === 'busy') {
-      const slotKind = formKind === 'free' ? 'extra' : formKind === 'break' ? 'break' : 'blocked';
-      const slotConflict = findDaySlotConflict(slotDate, startTime, endTime, events, daySlots);
-      if (slotConflict) {
-        setFeedback({ type: 'error', message: slotConflict });
-        return;
-      }
-      void runWithFeedback(runAction, setFeedback, async () => {
-        const res = await fetch('/api/cabinet/teacher/day-slots', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            slotDate,
-            startTime,
-            endTime,
-            slotKind,
-            label: formKind === 'busy' ? busyLabel.trim() || 'Занято' : formKind === 'break' ? 'Перерыв' : null,
-          }),
-        });
-        const body = (await res.json()) as { error?: string; slot?: TeacherDaySlot };
-        if (!res.ok) {
-          throw new Error(formatScheduleApiError(body.error, 'Не удалось сохранить', res.status));
-        }
-        if (body.slot) {
-          patchTeacher?.((prev) => addTeacherDaySlot(prev, body.slot!));
-        }
-        onClose();
-      }, 'Сохранено', { refresh: 'none' });
-      return;
-    }
-
-    const placementError = validateLessonPlacementClient({
+  const error = useMemo(() => {
+    if (!slotDate || !startTime || !endTime) return 'Укажите дату и время';
+    return validatePlacement({
       slotDate,
       startTime,
       endTime,
       events,
       daySlots,
+      workingHours: data.workingHours,
     });
-    if (placementError) {
-      setFeedback({ type: 'error', message: placementError });
+  }, [slotDate, startTime, endTime, events, daySlots, data.workingHours]);
+
+  const overlapError = isLessonOverlapPlacementError(error);
+  const showPlacementError = Boolean(error && (showError || (slotDate && startTime && endTime)));
+
+  const duration = startTime && endTime ? timeToMinutes(endTime) - timeToMinutes(startTime) : 0;
+
+  const pickStart = (time: string) => {
+    const length = duration > 0 ? duration : 60;
+    setStartTime(time);
+    setEndTime(minutesToTime(Math.min(timeToMinutes(time) + length, 24 * 60 - 1)));
+  };
+
+  const rosterStudent =
+    kind === 'individual' && rosterId ? data.roster.find((s) => String(s.id) === rosterId) : undefined;
+
+  const submit = () => {
+    if (error) {
+      setShowError(true);
+      return;
+    }
+    const startsAt = buildLocalIso(slotDate, startTime);
+    const durationMinutes = durationFromRange(startTime, endTime);
+    const participantName = kind === 'individual' ? (rosterStudent?.name ?? '') : participant.trim();
+
+    const lessonFields = {
+      kind,
+      durationMinutes,
+      topic: topic.trim() || 'Занятие',
+      studentName: kind === 'individual' ? participantName || null : null,
+      groupTitle: kind === 'group' ? participantName || null : null,
+      lessonPlan: comment.trim() || null,
+      scheduleStudentId: rosterStudent?.id ?? null,
+    };
+
+    if (repeat) {
+      const occurrences = buildSeriesOccurrences({
+        fromDate: slotDate,
+        weekdays: [weekdayIndex(day)],
+        startTime,
+        weeks,
+      });
+      const tempIdByStartsAt = new Map<string, number>();
+      const tempIds: number[] = [];
+      for (const occStartsAt of occurrences) {
+        const tempId = nextOptimisticLessonId();
+        tempIdByStartsAt.set(occStartsAt, tempId);
+        tempIds.push(tempId);
+      }
+
+      runLessonMutationAsync(runAction, (msg) => {
+        setFeedback(msg);
+        if (msg) report(msg);
+      }, {
+        successMessage: `Добавлено в календарь: ${occurrences.length}`,
+        onClose,
+        applyOptimistic: () => {
+          patchTeacher?.((prev) =>
+            addTeacherLessons(
+              prev,
+              occurrences.map((occStartsAt) =>
+                createOptimisticLesson({
+                  id: tempIdByStartsAt.get(occStartsAt)!,
+                  startsAt: occStartsAt,
+                  ...lessonFields,
+                }),
+              ),
+            ),
+          );
+        },
+        request: async () => {
+          const res = await fetch('/api/cabinet/teacher/schedule/series', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              kind,
+              scheduleStudentId: rosterStudent?.id,
+              participantName: kind === 'group' ? participantName || undefined : undefined,
+              topic: topic.trim() || undefined,
+              lessonPlan: comment.trim() || undefined,
+              occurrences,
+              endTime,
+            }),
+          });
+          const body = await readJson<{
+            error: string;
+            seriesId: string;
+            lessons: { id: number; startsAt: string }[];
+            skipped: { startsAt: string; reason: string }[];
+          }>(res);
+          if (!res.ok) {
+            patchTeacher?.((prev) => removeTeacherLessons(prev, tempIds));
+            throw new Error(formatScheduleApiError(body.error, 'Не удалось создать занятия', res.status));
+          }
+          const created = body.lessons ?? [];
+          patchTeacher?.((prev) => reconcileSeriesLessons(prev, tempIdByStartsAt, created, body.seriesId));
+          const skipped = body.skipped ?? [];
+          if (skipped.length > 0) {
+            return `Создано: ${created.length}. Пропущено дат: ${skipped.length}`;
+          }
+          return undefined;
+        },
+      });
       return;
     }
 
-    const startsAt = buildLocalIso(slotDate, startTime);
-
-    const durationMinutes = durationFromRange(startTime, endTime);
-    const student = formKind === 'individual' ? data.students.find((s) => s.telegramId === Number(studentId)) : undefined;
-    const group = formKind === 'group' ? data.groups.find((g) => g.id === Number(groupId)) : undefined;
-
-    void runWithFeedback(runAction, setFeedback, async () => {
-      const payload: Record<string, unknown> = {
-        kind: formKind,
-        startsAt,
-        endTime,
-        topic: topic.trim() || undefined,
-        lessonPlan: comment.trim() || undefined,
-      };
-      if (formKind === 'individual' && studentId) {
-        payload.studentTelegramId = Number(studentId);
-      }
-      if (formKind === 'group' && groupId) {
-        payload.groupId = Number(groupId);
-      }
-      if (replacesLessonId) {
-        payload.replacesLessonId = replacesLessonId;
-      }
-
-      const res = await fetch('/api/cabinet/teacher/schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const body = (await res.json()) as { error?: string; lessonId?: number; lessonIds?: number[] };
-      if (!res.ok) {
-        throw new Error(formatScheduleApiError(body.error, 'Не удалось создать занятие', res.status));
-      }
-      const lessonId = body.lessonId ?? body.lessonIds?.[0];
-      if (lessonId && patchTeacher) {
-        patchTeacher((prev) => {
-          let next = addTeacherLesson(
+    const tempId = nextOptimisticLessonId();
+    runLessonMutationAsync(runAction, (msg) => {
+      setFeedback(msg);
+      if (msg) report(msg);
+    }, {
+      successMessage: 'Занятие добавлено',
+      onClose,
+      applyOptimistic: () => {
+        patchTeacher?.((prev) =>
+          addTeacherLesson(
             prev,
             createOptimisticLesson({
-              id: lessonId,
-              kind: formKind as 'individual' | 'group',
+              id: tempId,
               startsAt,
-              durationMinutes,
-              topic: topic.trim() || 'Занятие',
-              studentTelegramId: student?.telegramId ?? null,
-              studentName: student?.name ?? null,
-              groupId: group?.id ?? null,
-              groupTitle: group?.title ?? null,
-              lessonPlan: comment.trim() || null,
+              ...lessonFields,
             }),
-          );
-          if (replacesLessonId) {
-            next = removeTeacherLesson(next, replacesLessonId);
-          }
-          return next;
+          ),
+        );
+      },
+      request: async () => {
+        const payload: Record<string, unknown> = {
+          kind,
+          startsAt,
+          endTime,
+          topic: topic.trim() || undefined,
+          lessonPlan: comment.trim() || undefined,
+          participantName: participantName || undefined,
+          scheduleStudentId: rosterStudent?.id,
+        };
+        const res = await fetch('/api/cabinet/teacher/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
-      }
-      onClose();
-    }, 'Занятие создано');
+        const body = await readJson<{ error: string; lessonId: number; lessonIds: number[] }>(res);
+        if (!res.ok) {
+          patchTeacher?.((prev) => removeTeacherLesson(prev, tempId));
+          throw new Error(formatScheduleApiError(body.error, 'Не удалось создать занятие', res.status));
+        }
+        const lessonId = body.lessonId ?? body.lessonIds?.[0];
+        if (lessonId) {
+          patchTeacher?.((prev) => replaceTeacherLessonId(prev, tempId, lessonId));
+        }
+      },
+    });
   };
-
   return (
-    <div className="schedule-modal-overlay" role="dialog" aria-modal="true">
-      <div className="schedule-modal sched-modal">
-        <header className="schedule-modal-head">
-          <h2>{replacesLessonId ? 'Новое занятие вместо отменённого' : TITLES[formKind]}</h2>
-          <button type="button" className="sched-icon-btn" onClick={onClose} aria-label="Закрыть">
-            ✕
+    <div className="sr-modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sr-modal sr-modal--wide" onClick={(e) => e.stopPropagation()}>
+        <header className="sr-modal-head">
+          <div>
+            <h2 className="sr-modal-title">Новое занятие</h2>
+            <p className="sr-modal-sub">
+              {work.kind === 'work'
+                ? `Рабочее время: ${workBandsLabel(work.bands)}`
+                : work.kind === 'off'
+                  ? 'В выбранный день выходной'
+                  : 'Рабочее время не задано'}
+            </p>
+          </div>
+          <button type="button" className="sr-icon-btn" onClick={onClose} aria-label="Закрыть">
+            <IconXRef size={14} />
           </button>
         </header>
 
-        <div className="schedule-modal-form">
-          {formKind === 'individual' || formKind === 'group' ? (
-            <div className="sched-modal-kind-switch">
-              <button
-                type="button"
-                className={`sched-filter${formKind === 'individual' ? ' is-active' : ''}`}
-                onClick={() => setFormKind('individual')}
-              >
-                Индивидуальное
-              </button>
-              <button
-                type="button"
-                className={`sched-filter${formKind === 'group' ? ' is-active' : ''}`}
-                onClick={() => setFormKind('group')}
-              >
-                Групповое
-              </button>
-            </div>
-          ) : null}
-
-          <label>
-            Дата
-            <input type="date" value={slotDate} onChange={(e) => setSlotDate(e.target.value)} />
-          </label>
-          <div className="schedule-modal-row">
-            <label>
-              Начало
-              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-            </label>
-            <label>
-              Окончание
-              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-            </label>
+        <div className="sr-modal-body">
+          <div className="sr-seg" role="tablist" aria-label="Тип занятия">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={kind === 'individual'}
+              className={`sr-seg-btn${kind === 'individual' ? ' is-active' : ''}`}
+              onClick={() => setKind('individual')}
+            >
+              Индивидуальное
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={kind === 'group'}
+              className={`sr-seg-btn${kind === 'group' ? ' is-active' : ''}`}
+              onClick={() => setKind('group')}
+            >
+              Групповое
+            </button>
           </div>
 
-          {formKind === 'busy' ? (
-            <label>
-              Подпись
+          <div className={`sr-time-block${overlapError && showPlacementError ? ' is-conflict' : ''}`}>
+            <div className="sr-field-row">
+              <label className="sr-field sr-field--grow">
+                <span>Дата</span>
+                <ScheduleDateSelect value={slotDate} minKey={todayKey} onChange={setSlotDate} />
+              </label>
+              <label className="sr-field">
+                <span>Начало</span>
+                <ScheduleTimeField value={startTime} onChange={pickStart} aria-label="Начало" />
+              </label>
+              <label className="sr-field">
+                <span>Конец</span>
+                <ScheduleTimeField value={endTime} onChange={setEndTime} aria-label="Конец" />
+              </label>
+            </div>
+            {overlapError && showPlacementError ? (
+              <p className="sr-time-conflict" role="alert">
+                {LESSON_OVERLAP_ERROR_TEXT}
+              </p>
+            ) : null}
+            <FreeTimePicker
+              day={day}
+              events={events}
+              daySlots={daySlots}
+              workingHours={data.workingHours}
+              durationMinutes={duration > 0 ? duration : 60}
+              startTime={startTime}
+              onPick={pickStart}
+            />
+          </div>
+
+          {kind === 'individual' ? (
+            <label className="sr-field">
+              <span>Ученик</span>
+              <ScheduleRosterSelect value={rosterId} roster={data.roster} onChange={setRosterId} />
+              {data.roster.length === 0 ? (
+                <small className="sr-modal-hint">Список пуст — добавьте учеников в блоке «Мои ученики».</small>
+              ) : null}
+            </label>
+          ) : (
+            <label className="sr-field">
+              <span>Группа</span>
               <input
                 type="text"
-                value={busyLabel}
-                onChange={(e) => setBusyLabel(e.target.value)}
-                placeholder="Занято, встреча…"
+                value={participant}
+                placeholder="Название группы"
+                onChange={(e) => setParticipant(e.target.value)}
               />
             </label>
-          ) : null}
+          )}
+          <label className="sr-field">
+            <span>Тема</span>
+            <input
+              type="text"
+              value={topic}
+              placeholder="Например, Алгебра"
+              onChange={(e) => setTopic(e.target.value)}
+            />
+          </label>
+          <label className="sr-field">
+            <span>Комментарий</span>
+            <textarea
+              value={comment}
+              rows={2}
+              placeholder="Необязательно"
+              onChange={(e) => setComment(e.target.value)}
+            />
+          </label>
 
-          {formKind === 'individual' ? (
-            <>
-              <label>
-                Ученик <span className="sched-optional">(необязательно)</span>
-                <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-                  <option value="">Без ученика</option>
-                  {data.students.map((s) => (
-                    <option key={s.telegramId} value={s.telegramId}>
-                      {s.name ?? s.telegramId}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {selectedStudent ? (
-                <p className="sched-aside-muted">
-                  {formatPackageCreditLine(selectedStudent.packageCredits.individual, 'Пакет')}
-                </p>
-              ) : null}
-              <label>
-                Предмет / тема
-                <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} />
-              </label>
-              <label>
-                Комментарий
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} placeholder="Необязательно" />
-              </label>
-            </>
+          <label className="sr-check">
+            <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+            <span>Повторять каждую неделю ({WEEKDAYS_FULL[weekdayIndex(day)]})</span>
+          </label>
+          {repeat ? (
+            <div className="sr-chips" aria-label="Количество недель">
+              {WEEK_OPTIONS.map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  className={`sr-chip${weeks === count ? ' is-active' : ''}`}
+                  onClick={() => setWeeks(count)}
+                >
+                  {count} нед.
+                </button>
+              ))}
+            </div>
           ) : null}
-
-          {formKind === 'group' ? (
-            <>
-              <label>
-                Группа <span className="sched-optional">(необязательно)</span>
-                <select value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-                  <option value="">Без группы</option>
-                  {data.groups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Предмет / тема
-                <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} />
-              </label>
-              <label>
-                Комментарий
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} placeholder="Необязательно" />
-              </label>
-            </>
+          {showPlacementError && error && !overlapError ? (
+            <p className="sr-form-error">{error}</p>
           ) : null}
-
           <CabinetFeedback feedback={feedback} />
-          <button type="button" className="sched-btn sched-btn--primary" disabled={busy} onClick={submit}>
-            Сохранить
-          </button>
         </div>
+
+        <footer className="sr-modal-foot">
+          <button type="button" className="sr-btn sr-btn--ghost" onClick={onClose}>
+            Отмена
+          </button>
+          <button type="button" className="sr-btn sr-btn--primary" disabled={busy || Boolean(error)} onClick={submit}>
+            Добавить занятие
+          </button>
+        </footer>
       </div>
     </div>
   );
 }
+
+
+
+

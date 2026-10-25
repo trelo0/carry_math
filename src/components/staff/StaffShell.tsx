@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { memberHasRole } from '@/lib/bot/roles';
@@ -13,55 +13,100 @@ import {
 } from '@/lib/staff/course-assignment-ui';
 import { buildStaffCabinetPath } from '@/lib/staff/staff-cabinet-url';
 import type { StaffCabinetData } from '@/lib/teacher/cabinet-data';
-import type { CuratorHomeworkQueueItem } from '@/lib/curator/cabinet-data';
+import {
+  normalizeCuratorCabinetData,
+  type CuratorHomeworkQueueItem,
+} from '@/lib/curator/cabinet-data';
 import CuratorDashboard from '@/components/curator/CuratorDashboard';
 import CuratorLessonsPanel from '@/components/curator/CuratorLessonsPanel';
 import CuratorStudentsPanel from '@/components/curator/CuratorStudentsPanel';
 import CuratorHomeworkPanel from '@/components/curator/CuratorHomeworkPanel';
-import CuratorSettingsPanel from '@/components/curator/CuratorSettingsPanel';
 import CourseHistoryPanel from './CourseHistoryPanel';
 import CourseListPanel from './CourseListPanel';
 import StaffContextHeader from './StaffContextHeader';
-import TeacherGroupsPanel from './TeacherGroupsPanel';
 import TeacherLiveBanner from './TeacherLiveBanner';
-import StaffStudentsPanel from './StaffStudentsPanel';
 import TeacherSchedulePanel from './schedule/TeacherSchedulePanel';
-import { resolveStaffScheduleMode } from '@/lib/teacher/schedule-config';
-import type { TeacherCabinetData, TeacherLessonView } from '@/lib/teacher/cabinet-data';
+import {
+  IconCalendarRef,
+  IconChartRef,
+  IconCheckRef,
+  IconChevronLeftRef,
+  IconChevronRightRef,
+  IconNoteRef,
+  IconPanelRef,
+  IconUserRef,
+} from './schedule/ScheduleRefIcons';
+import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
 import type { StaffRefreshScope, StaffRunAction } from '@/lib/staff/run-action';
 
 export type StaffSection =
   | 'teacher-calendar'
-  | 'teacher-students'
-  | 'teacher-groups'
   | 'course-list'
   | 'course-overview'
   | 'course-students'
   | 'course-lessons'
   | 'course-history'
-  | 'course-homework'
-  | 'settings';
+  | 'course-homework';
+
+const SECTION_ICONS: Record<StaffSection, ReactNode> = {
+  'teacher-calendar': <IconCalendarRef size={18} />,
+  'course-list': <IconPanelRef size={18} />,
+  'course-overview': <IconChartRef size={18} />,
+  'course-students': <IconUserRef size={18} />,
+  'course-lessons': <IconCalendarRef size={18} />,
+  'course-history': <IconNoteRef size={18} />,
+  'course-homework': <IconCheckRef size={18} />,
+};
+
+const SIDEBAR_KEY = 'staff-sidebar-collapsed';
+const sidebarListeners = new Set<() => void>();
+
+function subscribeSidebar(listener: () => void) {
+  sidebarListeners.add(listener);
+  window.addEventListener('storage', listener);
+  return () => {
+    sidebarListeners.delete(listener);
+    window.removeEventListener('storage', listener);
+  };
+}
+
+/** По умолчанию свёрнута; '0' в localStorage = развёрнута. */
+function getSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function setSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+  sidebarListeners.forEach((listener) => listener());
+}
 
 type NavItem = { id: StaffSection; label: string; badge?: number; indent?: boolean };
 type NavGroup = { label: string; items: NavItem[]; subLabel?: string };
 
 const STAFF_SECTIONS: StaffSection[] = [
   'teacher-calendar',
-  'teacher-students',
-  'teacher-groups',
   'course-list',
   'course-overview',
   'course-students',
   'course-lessons',
   'course-history',
   'course-homework',
-  'settings',
 ];
 
 const LEGACY_SECTION_MAP: Record<string, StaffSection> = {
   'teacher-home': 'teacher-calendar',
   'teacher-schedule': 'teacher-calendar',
   'teacher-availability': 'teacher-calendar',
+  'teacher-working-hours': 'teacher-calendar',
+  'teacher-hours': 'teacher-calendar',
   dashboard: 'course-overview',
   lessons: 'course-lessons',
   students: 'course-students',
@@ -71,6 +116,10 @@ const LEGACY_SECTION_MAP: Record<string, StaffSection> = {
   'curator-students': 'course-students',
   'curator-homework': 'course-homework',
   'course-schedule': 'course-lessons',
+  'teacher-students': 'teacher-calendar',
+  'teacher-groups': 'teacher-calendar',
+  'teacher-history': 'teacher-calendar',
+  settings: 'teacher-calendar',
 };
 
 const COURSE_SECTIONS = new Set<StaffSection>([
@@ -116,22 +165,13 @@ function canViewCourseHomeworkProgress(data: StaffCabinetData): boolean {
 }
 
 function canShowSchedule(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) || canShowCuratorCourseTools(data);
-}
-
-function canShowStudents(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) || canShowCuratorCourseTools(data);
-}
-
-function isCombinedStaff(data: StaffCabinetData): boolean {
-  return canShowTeacher(data) && hasCourseAssignments(data);
+  return canShowTeacher(data);
 }
 
 function buildStaffNav(data: StaffCabinetData): NavGroup[] {
   const groups: NavGroup[] = [];
   const showTeacher = canShowTeacher(data);
   const showCourseNav = hasCourseAssignments(data) && Boolean(data.curator);
-  const courseTools = canShowCuratorCourseTools(data);
   const combined = showTeacher && showCourseNav;
 
   if (combined) {
@@ -139,25 +179,13 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
       label: 'Моя работа',
       items: [
         { id: 'teacher-calendar', label: 'Расписание' },
-        { id: 'teacher-students', label: 'Ученики' },
-        { id: 'teacher-groups', label: 'Группы' },
       ],
     });
   } else if (showTeacher) {
     groups.push({
-      label: 'Обычные занятия',
+      label: 'Кабинет преподавателя',
       items: [
         { id: 'teacher-calendar', label: 'Расписание' },
-        { id: 'teacher-students', label: 'Ученики' },
-        { id: 'teacher-groups', label: 'Группы' },
-      ],
-    });
-  } else if (showCourseNav && courseTools) {
-    groups.push({
-      label: 'Моя работа',
-      items: [
-        { id: 'teacher-calendar', label: 'Расписание' },
-        { id: 'teacher-students', label: 'Ученики' },
       ],
     });
   }
@@ -189,11 +217,6 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
     }
   }
 
-  groups.push({
-    label: 'Аккаунт',
-    items: [{ id: 'settings', label: 'Настройки' }],
-  });
-
   return groups;
 }
 
@@ -205,7 +228,7 @@ function defaultSection(data: StaffCabinetData): StaffSection {
     });
     return sec === 'course-list' ? 'course-list' : sec;
   }
-  return 'settings';
+  return 'course-list';
 }
 
 function resolveInitialSection(data: StaffCabinetData, initial?: string): StaffSection {
@@ -217,6 +240,11 @@ function resolveInitialSection(data: StaffCabinetData, initial?: string): StaffS
 
 function isCourseSection(section: StaffSection): boolean {
   return COURSE_SECTIONS.has(section);
+}
+
+function normalizeStaffData(data: StaffCabinetData): StaffCabinetData {
+  if (!data.curator) return data;
+  return { ...data, curator: normalizeCuratorCabinetData(data.curator) };
 }
 
 async function reloadData(
@@ -233,7 +261,8 @@ async function reloadData(
   const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await fetch(`/api/cabinet/staff/data${qs}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Не удалось обновить данные');
-  return res.json() as Promise<StaffCabinetData>;
+  const json = (await res.json()) as StaffCabinetData;
+  return normalizeStaffData(json);
 }
 
 async function reloadTeacherData(): Promise<TeacherCabinetData> {
@@ -260,7 +289,7 @@ export default function StaffShell({
   showCabinetPick,
 }: Props) {
   const router = useRouter();
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => normalizeStaffData(initialData));
   const [activeCourseId, setActiveCourseId] = useState<number | null>(
     initialCourseId ?? initialData.curator?.courseId ?? null,
   );
@@ -271,18 +300,15 @@ export default function StaffShell({
     resolveInitialSection(initialData, initialSection),
   );
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
-  const [selectedTeacherStudentId, setSelectedTeacherStudentId] = useState<number | null>(null);
-  const [selectedTeacherGroupId, setSelectedTeacherGroupId] = useState<number | null>(null);
   const [scheduleFocusLessonId, setScheduleFocusLessonId] = useState<number | null>(null);
-  const [startedLessonIds, setStartedLessonIds] = useState<Set<number>>(() => new Set());
+  const [, setStartedLessonIds] = useState<Set<number>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [rejectNote, setRejectNote] = useState('');
   const [rejectTarget, setRejectTarget] = useState<CuratorHomeworkQueueItem | null>(null);
 
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, getSidebarCollapsed, () => true);
   const navGroups = useMemo(() => buildStaffNav(data), [data]);
   const courseTitle = data.curator?.courseTitle ?? 'Курс';
-  const scheduleMode = resolveStaffScheduleMode(canShowTeacher(data), canShowCuratorCourseTools(data));
-  const combinedStaff = isCombinedStaff(data);
 
   const syncStaffUrl = useCallback(
     (patch: {
@@ -335,7 +361,8 @@ export default function StaffShell({
 
   const runAction: StaffRunAction = useCallback(
     async (action, successText, options) => {
-      setBusy(true);
+      const silent = options?.silent === true;
+      if (!silent) setBusy(true);
       try {
         const resultText = await action();
         const refreshScope = options?.refresh ?? 'full';
@@ -355,34 +382,11 @@ export default function StaffShell({
           message: error instanceof Error ? error.message : 'Ошибка',
         };
       } finally {
-        setBusy(false);
+        if (!silent) setBusy(false);
       }
     },
     [refresh],
   );
-
-  const openTeacherStudent = useCallback((telegramId: number) => {
-    setSelectedTeacherStudentId(telegramId);
-    setSection('teacher-students');
-  }, []);
-
-  const openTeacherGroup = useCallback((groupId: number) => {
-    setSelectedTeacherGroupId(groupId);
-    setSection('teacher-groups');
-  }, []);
-
-  const openTeacherLessonInSchedule = useCallback((lesson: TeacherLessonView) => {
-    setScheduleFocusLessonId(lesson.id);
-    setSection('teacher-calendar');
-  }, []);
-
-  const markLessonStarted = useCallback((lessonId: number) => {
-    setStartedLessonIds((prev) => {
-      const next = new Set(prev);
-      next.add(lessonId);
-      return next;
-    });
-  }, []);
 
   const markLessonFinished = useCallback((lessonId: number) => {
     setStartedLessonIds((prev) => {
@@ -393,24 +397,15 @@ export default function StaffShell({
     });
   }, []);
 
-  const startTeacherLesson = useCallback(
-    (lesson: TeacherLessonView) => {
-      markLessonStarted(lesson.id);
-    },
-    [markLessonStarted],
-  );
-
   const openCourseLesson = useCallback((sanityId: string) => {
     setSection('course-lessons');
     setSelectedLessonId(sanityId);
   }, []);
 
   const showTeacherLive =
-    data.teacher?.currentLesson &&
-    (section === 'teacher-calendar' ||
-      section === 'teacher-students' ||
-      section === 'teacher-groups' ||
-      (!hasCourseAssignments(data) && section === 'settings'));
+    Boolean(data.teacher?.currentLesson) &&
+    !hasCourseAssignments(data) &&
+    section !== 'teacher-calendar';
 
   const roleLabel = useMemo(() => {
     if (data.fullStaffPreview) return 'Admin · preview';
@@ -424,13 +419,6 @@ export default function StaffShell({
 
   useEffect(() => {
     if (section === 'teacher-calendar' && !canShowSchedule(data)) {
-      setSection(defaultSection(data));
-    }
-    if (section === 'teacher-students' && !canShowStudents(data)) {
-      setSection(defaultSection(data));
-    }
-    const isTeacherOnlySection = section === 'teacher-groups';
-    if (isTeacherOnlySection && !canShowTeacher(data)) {
       setSection(defaultSection(data));
     }
     if (isCourseSection(section) && !hasCourseAssignments(data)) {
@@ -457,11 +445,22 @@ export default function StaffShell({
   };
 
   return (
-    <div className="curator-cabinet staff-cabinet">
-      <aside className="curator-sidebar">
-        <div className="curator-brand">
-          <span className="curator-brand-name">District</span>
-          <span className="curator-brand-role">{roleLabel}</span>
+    <div className={`curator-cabinet staff-cabinet${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
+      <aside className={`curator-sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
+        <div className="staff-sidebar-top">
+          <div className="curator-brand">
+            <span className="curator-brand-name">District</span>
+            <span className="curator-brand-role">{roleLabel}</span>
+          </div>
+          <button
+            type="button"
+            className="staff-sidebar-toggle"
+            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            aria-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+            data-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+          >
+            {sidebarCollapsed ? <IconChevronRightRef size={16} /> : <IconChevronLeftRef size={16} />}
+          </button>
         </div>
         <nav className="curator-nav">
           {navGroups.map((group, index) => (
@@ -476,8 +475,12 @@ export default function StaffShell({
                   type="button"
                   className={`curator-nav-btn${section === item.id ? ' is-active' : ''}${item.indent ? ' staff-nav-btn--indent' : ''}`}
                   onClick={() => handleNavClick(item.id)}
+                  title={sidebarCollapsed ? undefined : item.label}
+                  aria-label={item.label}
+                  data-label={item.label}
                 >
-                  {item.label}
+                  <span className="staff-nav-icon">{SECTION_ICONS[item.id]}</span>
+                  <span className="staff-nav-label">{item.label}</span>
                   {item.badge && item.badge > 0 ? (
                     <span className="curator-badge">{item.badge}</span>
                   ) : null}
@@ -492,11 +495,14 @@ export default function StaffShell({
               Выбор кабинета
             </Link>
           ) : null}
+          <span className="staff-sidebar-avatar" aria-hidden="true">
+            {(data.staffName ?? 'С').trim().charAt(0).toUpperCase()}
+          </span>
           <p>{data.staffName ?? 'Сотрудник'}</p>
         </div>
       </aside>
 
-      <main className="curator-main">
+      <main className={`curator-main${section === 'teacher-calendar' ? ' curator-main--schedule' : ''}`}>
         {showTeacherLive && data.teacher?.currentLesson ? (
           <TeacherLiveBanner
             lesson={data.teacher.currentLesson}
@@ -514,61 +520,15 @@ export default function StaffShell({
 
         {section === 'teacher-calendar' && canShowSchedule(data) ? (
           <>
-            <StaffContextHeader
-              area={combinedStaff || (canShowCuratorCourseTools(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
-            />
             <TeacherSchedulePanel
-              mode={scheduleMode}
               teacherData={data.teacher ?? undefined}
-              courseLessons={data.curator?.lessons ?? []}
-              courseTitle={courseTitle}
-              onOpenCourseLesson={openCourseLesson}
-              onStartLesson={startTeacherLesson}
               onLessonFinished={markLessonFinished}
-              onOpenStudent={openTeacherStudent}
-              onOpenGroup={openTeacherGroup}
-              startedLessonIds={startedLessonIds}
+              showCancelled={data.fullStaffPreview}
               focusLessonId={scheduleFocusLessonId}
               onFocusLessonHandled={() => setScheduleFocusLessonId(null)}
               patchTeacher={patchTeacher}
               busy={busy}
               runAction={runAction}
-            />
-          </>
-        ) : null}
-
-        {section === 'teacher-students' && canShowStudents(data) ? (
-          <>
-            <StaffContextHeader
-              area={combinedStaff || (canShowCuratorCourseTools(data) && !canShowTeacher(data)) ? 'work' : 'regular'}
-            />
-            <StaffStudentsPanel
-              key={selectedTeacherStudentId ?? 'staff-students'}
-              mode={scheduleMode}
-              teacherData={data.teacher ?? undefined}
-              courseStudents={data.curator?.students ?? []}
-              courseTitle={courseTitle}
-              busy={busy}
-              runAction={runAction}
-              initialStudentId={selectedTeacherStudentId}
-              onOpenLesson={openTeacherLessonInSchedule}
-              onOpenCourseSection={() => setSection('course-students')}
-            />
-          </>
-        ) : null}
-
-        {section === 'teacher-groups' && canShowTeacher(data) && data.teacher ? (
-          <>
-            <StaffContextHeader area={combinedStaff ? 'work' : 'regular'} />
-            <TeacherGroupsPanel
-              key={selectedTeacherGroupId ?? 'teacher-groups'}
-              data={data.teacher}
-              busy={busy}
-              runAction={runAction}
-              onOpenStudent={openTeacherStudent}
-              onOpenLesson={openTeacherLessonInSchedule}
-              onOpenSchedule={() => setSection('teacher-calendar')}
-              initialGroupId={selectedTeacherGroupId}
             />
           </>
         ) : null}
@@ -675,16 +635,14 @@ export default function StaffShell({
           </>
         ) : null}
 
-        {section === 'settings' ? (
-          <CuratorSettingsPanel
-            curatorName={data.staffName}
-            courseTitle={courseTitle}
-            sanityWriteEnabled={data.curator?.sanityWriteEnabled ?? false}
-            showTeacher={canShowTeacher(data)}
-            showCurator={canShowCuratorCourseTools(data) || hasCourseAssignments(data)}
-          />
-        ) : null}
       </main>
     </div>
   );
 }
+
+
+
+
+
+
+

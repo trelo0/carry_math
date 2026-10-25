@@ -205,6 +205,7 @@ export async function loadCuratorCourseStudents(
       const sessionStatus = resolveWebinarSessionStatus(
         lesson.scheduledAt,
         sessionMap.get(lesson.sanityId),
+        lesson.recordingUrl,
       );
       return {
         number: lesson.lessonNumber,

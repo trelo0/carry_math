@@ -15,12 +15,6 @@ import {
   type PurchaseRequestRow,
 } from '../purchase-requests';
 import {
-  grantLessonsFromPurchaseRequest,
-  isPaidLessonPackageOrder,
-  lessonsRemainingToDeliver,
-} from '../purchase-order-grant';
-import { sendPaymentLinkByRequestId } from '../purchase-order-pay';
-import {
   type AdminMessage,
   type Deliver,
   type InlineButton,
@@ -54,14 +48,8 @@ function formatMoney(amount: number): string {
 }
 
 function requestCard(request: PurchaseRequestRow, index: number): string {
-  const productLabel =
-    request.product in ACCESS_PRODUCT_LABELS
-      ? ACCESS_PRODUCT_LABELS[request.product as keyof typeof ACCESS_PRODUCT_LABELS]
-      : request.product === 'trial'
-        ? 'Пробное'
-        : request.product;
   return [
-    `${index}. ${productLabel}`,
+    `${index}. ${ACCESS_PRODUCT_LABELS[request.product]}`,
     `   ${request.title}`,
     `   💳 ${formatMoney(Number(request.amount_byn))} · 🕐 ${formatDateTime(request.created_at)}`,
   ].join('\n');
@@ -166,7 +154,7 @@ async function renderPurchasesScreen(
   for (const request of slice) {
     keyboard.push([
       {
-        text: `${request.status === 'pending' ? '⏳' : request.status === 'approved' ? '✅' : '❌'} ${request.product === 'trial' ? 'Пробное' : ACCESS_PRODUCT_LABELS[request.product as keyof typeof ACCESS_PRODUCT_LABELS] ?? request.product}`,
+        text: `${request.status === 'pending' ? '⏳' : request.status === 'approved' ? '✅' : '❌'} ${ACCESS_PRODUCT_LABELS[request.product]}`,
         callback_data: `ap:l:${request.id}:${filterCode}:${safePage}`,
       },
     ]);
@@ -226,13 +214,7 @@ async function renderPurchaseDetail(
 ): Promise<void> {
   const userLabel = await getMemberLabel(admin, request.telegram_id);
   const statusLabel =
-    request.status === 'pending'
-      ? '⏳ Ожидает оплаты'
-      : request.status === 'paid'
-        ? '💳 Оплачена'
-        : request.status === 'approved'
-          ? '✅ Завершена'
-          : '❌ Отклонена';
+    request.status === 'pending' ? '⏳ Ожидает' : request.status === 'approved' ? '✅ Одобрена' : '❌ Отклонена';
 
   const lines = [
     '💳 Заявка на покупку',
@@ -240,18 +222,12 @@ async function renderPurchaseDetail(
     `👤 ${userLabel}`,
     `📦 ${request.title}`,
     `💳 ${formatMoney(Number(request.amount_byn))}`,
-    `📚 ${request.product === 'trial' ? 'Пробное' : ACCESS_PRODUCT_LABELS[request.product as keyof typeof ACCESS_PRODUCT_LABELS] ?? request.product}`,
+    `📚 ${ACCESS_PRODUCT_LABELS[request.product]}`,
     '',
     `🕐 ${formatDateTime(request.created_at)}`,
     '',
     `Статус: ${statusLabel}`,
   ];
-
-  if (isPaidLessonPackageOrder(request)) {
-    const left = lessonsRemainingToDeliver(request);
-    lines.push('', `Выдано: ${request.lessons_delivered ?? 0}/${request.lessons_count ?? '?'}`);
-    if (left > 0) lines.push(`К выдаче: ${left}`);
-  }
 
   if (verificationLines.length) {
     lines.push('', ...verificationLines);
@@ -263,18 +239,9 @@ async function renderPurchaseDetail(
 
   if (request.status === 'pending') {
     keyboard.push(
-      [{ text: '🔗 Ссылка bePaid', callback_data: `ap:pay:${request.id}:${filterCode}:${page}` }],
-      [{ text: '✅ Оплата получена (вручную)', callback_data: `ap:ok:${request.id}:${filterCode}:${page}` }],
+      [{ text: '✅ Подтвердить оплату', callback_data: `ap:ok:${request.id}:${filterCode}:${page}` }],
       [{ text: '❌ Отклонить', callback_data: `ap:x:${request.id}:${filterCode}:${page}` }],
     );
-  }
-  if (isPaidLessonPackageOrder(request) && lessonsRemainingToDeliver(request) > 0) {
-    keyboard.push([
-      { text: '📦 Выдать все занятия', callback_data: `ap:ga:${request.id}:${filterCode}:${page}` },
-    ]);
-    keyboard.push([
-      { text: '📦 Выдать 1 занятие', callback_data: `ap:g1:${request.id}:${filterCode}:${page}` },
-    ]);
   }
   keyboard.push([back], [homeButton()]);
 
@@ -315,54 +282,6 @@ export async function handlePurchasesAction(
       }
       const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
       await renderPurchaseDetail(admin, message, request, filter, Math.max(0, Number(pageRaw) || 0));
-      return true;
-    }
-
-    if (data.startsWith('ap:pay:')) {
-      const [, , id, filterCode, pageRaw] = data.split(':');
-      const request = await getPurchaseRequest(admin, id);
-      if (!request) {
-        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
-        return true;
-      }
-      try {
-        await sendPaymentLinkByRequestId(admin, id);
-        await deliver('🔗 Ссылка на оплату отправлена ученику в Telegram.', {
-          inline_keyboard: [[{ text: '◀️ К заявке', callback_data: `ap:l:${id}:${filterCode}:${pageRaw}` }]],
-        });
-      } catch (error) {
-        await deliver(error instanceof Error ? error.message : 'Не удалось создать ссылку.', homeOnlyKeyboard());
-      }
-      return true;
-    }
-
-    if (data.startsWith('ap:ga:') || data.startsWith('ap:g1:')) {
-      const parts = data.split(':');
-      const id = parts[2]!;
-      const filterCode = parts[3]!;
-      const pageRaw = parts[4]!;
-      const request = await getPurchaseRequest(admin, id);
-      if (!request) {
-        await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
-        return true;
-      }
-      const count = data.startsWith('ap:g1:') ? 1 : lessonsRemainingToDeliver(request);
-      try {
-        const result = await grantLessonsFromPurchaseRequest(admin, id, count, adminTelegramId);
-        await logAdminAction(admin, {
-          actorTelegramId: adminTelegramId,
-          action: 'purchase.grant',
-          entityType: 'purchase_request',
-          entityId: id,
-          targetTelegramId: request.telegram_id,
-        });
-        const filter: PurchaseFilter = filterCode === FILTER_ALL_CODE ? 'all' : 'pending';
-        await renderPurchaseDetail(admin, message, result.request, filter, Math.max(0, Number(pageRaw) || 0), [
-          `✅ Выдано занятий: ${result.granted}`,
-        ]);
-      } catch (error) {
-        await deliver(error instanceof Error ? error.message : 'Не удалось выдать занятия.', homeOnlyKeyboard());
-      }
       return true;
     }
 

@@ -17,6 +17,14 @@ import {
   type CuratorHomeworkBoardItem,
   type CuratorStudentView,
 } from '@/lib/curator/students';
+import {
+  compareCuratorLessonsProgramOrder,
+  ensureCourseLessonIndices,
+  findLastCompletedCuratorLesson,
+  findNextProgramCuratorLesson,
+} from '@/lib/curator/lesson-program-order';
+
+export { compareCuratorLessonsProgramOrder } from '@/lib/curator/lesson-program-order';
 
 export type CuratorLessonSessionStatus = SanityWebinarSessionStatus;
 
@@ -30,6 +38,8 @@ export type CuratorLessonFileView = {
 export type CuratorLessonView = {
   sanityId: string;
   lessonNumber: number;
+  /** Сквозной № занятия в курсе (модули по порядку). */
+  courseLessonIndex: number;
   title: string;
   moduleTitle: string;
   moduleIndex: number;
@@ -99,12 +109,14 @@ function toLessonView(
   lesson: CourseLessonContent,
   moduleTitle: string,
   moduleIndex: number,
+  courseLessonIndex: number,
   sessionRow: SanityLessonSessionRow | undefined,
   files?: { materials: CuratorRawLessonFile[]; homeworkFiles: CuratorRawLessonFile[] },
 ): CuratorLessonView {
   return {
     sanityId: lesson.sanityId,
     lessonNumber: lesson.lessonNumber,
+    courseLessonIndex,
     title: lesson.title,
     moduleTitle,
     moduleIndex,
@@ -112,44 +124,16 @@ function toLessonView(
     scheduledAt: lesson.scheduledAt,
     liveUrl: lesson.liveUrl,
     recordingUrl: lesson.recordingUrl,
-    sessionStatus: resolveWebinarSessionStatus(lesson.scheduledAt, sessionRow),
+    sessionStatus: resolveWebinarSessionStatus(
+      lesson.scheduledAt,
+      sessionRow,
+      lesson.recordingUrl,
+    ),
     startedAt: sessionRow?.started_at ?? null,
     endedAt: sessionRow?.ended_at ?? null,
     materials: mapLessonFiles(files?.materials ?? []),
     homeworkFiles: mapLessonFiles(files?.homeworkFiles ?? []),
   };
-}
-
-function findLastCompletedLesson(lessons: CuratorLessonView[]): CuratorLessonView | null {
-  const completed = lessons
-    .filter((l) => l.sessionStatus === 'completed')
-    .sort((a, b) => {
-      const ta = a.endedAt
-        ? new Date(a.endedAt).getTime()
-        : a.scheduledAt
-          ? new Date(a.scheduledAt).getTime()
-          : 0;
-      const tb = b.endedAt
-        ? new Date(b.endedAt).getTime()
-        : b.scheduledAt
-          ? new Date(b.scheduledAt).getTime()
-          : 0;
-      return tb - ta;
-    });
-  return completed[0] ?? null;
-}
-
-function findNextLesson(lessons: CuratorLessonView[]): CuratorLessonView | null {
-  return (
-    [...lessons]
-      .sort((a, b) => a.lessonNumber - b.lessonNumber)
-      .find(
-        (l) =>
-          l.sessionStatus !== 'completed' &&
-          l.sessionStatus !== 'cancelled' &&
-          l.sessionStatus !== 'live',
-      ) ?? null
-  );
 }
 
 function summarizeHomework(students: CuratorStudentView[]) {
@@ -162,6 +146,27 @@ function summarizeHomework(students: CuratorStudentView[]) {
     revision += student.homeworks.filter((hw) => hw.status === 'revision').length;
   }
   return { awaitingReview, notSubmitted, revision };
+}
+
+/** Нормализация после SSR/кэша: сквозные № и блок «последнее / ближайшее». */
+export function normalizeCuratorCabinetData(data: CuratorCabinetData): CuratorCabinetData {
+  const lessons = ensureCourseLessonIndices(data.lessons);
+  const liveLessons = lessons.filter((l) => l.sessionStatus === 'live');
+  const upcomingCount = lessons.filter(
+    (l) => l.sessionStatus === 'scheduled' || l.sessionStatus === 'waiting',
+  ).length;
+  return {
+    ...data,
+    lessons,
+    dashboard: {
+      ...data.dashboard,
+      liveNow: liveLessons.length,
+      upcomingCount,
+      lastLesson: findLastCompletedCuratorLesson(lessons),
+      nextLesson: findNextProgramCuratorLesson(lessons),
+      liveLessons,
+    },
+  };
 }
 
 export async function getCuratorCabinetData(
@@ -225,21 +230,24 @@ export async function getCuratorCabinetData(
       loadSanityLessonSessionMap(admin, lessonIds),
     ]);
 
+    let courseLessonIndex = 0;
     content.modules.forEach((mod, moduleIndex) => {
       for (const lesson of mod.lessons) {
         if (lesson.publicationStatus === 'archived') continue;
+        courseLessonIndex += 1;
         lessons.push(
           toLessonView(
             lesson,
             mod.title,
             moduleIndex,
+            courseLessonIndex,
             sessionMap.get(lesson.sanityId),
             filesMap.get(lesson.sanityId),
           ),
         );
       }
     });
-    lessons.sort((a, b) => a.lessonNumber - b.lessonNumber);
+    lessons.sort(compareCuratorLessonsProgramOrder);
   }
 
   const courseId = activeCourse?.courseId ?? null;
@@ -284,7 +292,7 @@ export async function getCuratorCabinetData(
     (l) => l.sessionStatus === 'scheduled' || l.sessionStatus === 'waiting',
   ).length;
 
-  return {
+  return normalizeCuratorCabinetData({
     curatorName,
     courseTitle,
     courseSlug,
@@ -299,8 +307,8 @@ export async function getCuratorCabinetData(
       revision: hwSummary.revision,
       liveNow: liveLessons.length,
       upcomingCount,
-      lastLesson: findLastCompletedLesson(lessons),
-      nextLesson: findNextLesson(lessons),
+      lastLesson: findLastCompletedCuratorLesson(lessons),
+      nextLesson: findNextProgramCuratorLesson(lessons),
       liveLessons,
     },
     lessons,
@@ -308,7 +316,7 @@ export async function getCuratorCabinetData(
     students,
     homeworkBoard,
     homeworkQueue: homeworkBoard.filter((item) => item.status === 'submitted'),
-  };
+  });
 }
 
 export function getCuratorLessonById(

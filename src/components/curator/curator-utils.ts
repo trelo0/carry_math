@@ -1,4 +1,14 @@
-import type { CuratorLessonSessionStatus } from '@/lib/curator/cabinet-data';
+import type { CuratorLessonSessionStatus, CuratorLessonView } from '@/lib/curator/cabinet-data';
+export { compareCuratorLessonsProgramOrder } from '@/lib/curator/lesson-program-order';
+
+export function curatorLessonDisplayNo(
+  lesson: Pick<CuratorLessonView, 'courseLessonIndex' | 'lessonNumber'>,
+): number {
+  if (typeof lesson.courseLessonIndex === 'number' && lesson.courseLessonIndex > 0) {
+    return lesson.courseLessonIndex;
+  }
+  return lesson.lessonNumber;
+}
 import type { CuratorHwStatus } from '@/lib/bot/curator/curator-types';
 import { CURATOR_HW_STATUS_LABELS } from '@/lib/bot/curator/curator-types';
 

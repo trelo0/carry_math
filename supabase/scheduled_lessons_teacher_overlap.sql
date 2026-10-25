@@ -1,4 +1,6 @@
 -- Пересечения по времени — только внутри одного преподавателя.
+-- На PG17 tstzrange(starts_at, starts_at + interval) в EXCLUDE может быть недоступен (immutable).
+-- Для production используйте teacher_lesson_booking_lock.sql (advisory lock + RPC insert).
 -- Групповые занятия: несколько строк на одно время (ученики группы), constraint не применяется.
 -- Два индивидуальных scheduled у одного teacher в одном интервале — запрещено.
 

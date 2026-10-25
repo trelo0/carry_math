@@ -1,428 +1,505 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { StaffRunAction } from '@/lib/staff/run-action';
-import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
-import type { TeacherCabinetData, TeacherDaySlot, TeacherLessonView } from '@/lib/teacher/cabinet-data';
-import {
-  getScheduleFilters,
-  isScheduleFilterValid,
-  type StaffScheduleMode,
-} from '@/lib/teacher/schedule-config';
-import type { ScheduleEvent, ScheduleFilter, ScheduleFormKind, ScheduleViewMode } from '@/lib/teacher/schedule-types';
+import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
+import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
+import { getScheduleFilters, isScheduleFilterValid } from '@/lib/teacher/schedule-config';
+import type { ScheduleEvent, ScheduleFilter, ScheduleViewMode } from '@/lib/teacher/schedule-types';
 import {
   addDays,
-  buildScheduleEvents,
+  dateKey,
   filterScheduleEvents,
-  formatNavDateLong,
-  freeSlotsForDay,
-  hideReplacedCancelledEvents,
   getWeekDays,
+  isSameDay,
   mapTeacherLessonToEvent,
   startOfWeek,
 } from '@/lib/teacher/schedule-utils';
+import {
+  computeOrdinaryWeekStats,
+  formatPeriodLabel,
+} from '@/lib/teacher/schedule-reference-utils';
 import ScheduleAddModal from './ScheduleAddModal';
-import ScheduleLessonFromSlotModal from './ScheduleLessonFromSlotModal';
-import ScheduleAutoFillModal from './ScheduleAutoFillModal';
-import ScheduleDaySettingsPanel from './ScheduleDaySettingsPanel';
-import ScheduleDayGrid, { dayHeadingUpper } from './ScheduleDayGrid';
-import ScheduleGrid from './ScheduleGrid';
-import ScheduleSidePanel from './ScheduleSidePanel';
-import ScheduleSlotFormModal from './ScheduleSlotFormModal';
-import ScheduleSlotSidePanel from './ScheduleSlotSidePanel';
-import ScheduleWeekStrip from './ScheduleWeekStrip';
-import ScheduleHistoryList from './ScheduleHistoryList';
-import { IconCalendar } from './ScheduleIcons';
+import ScheduleDayAgenda from './ScheduleDayAgenda';
+import ScheduleDayHoursModal from './ScheduleDayHoursModal';
+import {
+  ScheduleCancelModal,
+  ScheduleCompleteModal,
+  ScheduleRescheduleModal,
+} from './ScheduleLessonActionModals';
+import ScheduleMonthGrid from './ScheduleMonthGrid';
+import ScheduleRightPanel from './ScheduleRightPanel';
+import { RosterScheduleModal, RosterStudentModal } from './ScheduleRosterModals';
+import ScheduleTopbar from './ScheduleTopbar';
+import ScheduleWeekBoard from './ScheduleWeekBoard';
+import ScheduleWorkingHoursModal from './ScheduleWorkingHoursModal';
+import ScheduleToastStack from './ScheduleToastStack';
+import { IconClockRef, IconPlusRef } from './ScheduleRefIcons';
+import { useIsMobile, useNowMs, useScheduleCompactPanel } from './schedule-hooks';
 
 type Props = {
-  mode: StaffScheduleMode;
   teacherData?: TeacherCabinetData;
-  courseLessons?: CuratorLessonView[];
-  courseTitle: string;
-  onOpenCourseLesson?: (sanityId: string) => void;
-  onStartLesson?: (lesson: TeacherLessonView) => void;
   onLessonFinished?: (lessonId: number) => void;
-  onOpenStudent?: (telegramId: number) => void;
-  onOpenGroup?: (groupId: number) => void;
-  startedLessonIds?: ReadonlySet<number>;
   focusLessonId?: number | null;
   onFocusLessonHandled?: () => void;
+  /** Админ видит отменённые занятия полупрозрачными карточками; преподаватель — нет. */
+  showCancelled?: boolean;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   busy: boolean;
   runAction: StaffRunAction;
 };
 
+type AddDraft = {
+  date: Date;
+  startTime?: string;
+  endTime?: string;
+  kind: 'individual' | 'group';
+};
+
+type RosterModal = { type: 'new' } | { type: 'edit' | 'schedule'; id: number };
+
+type LessonModal = { type: 'reschedule' | 'cancel' | 'complete'; eventId: string };
+
+const SCHEDULE_VIEW_STORAGE_KEY = 'district-teacher-schedule-view';
+
+function readStoredViewMode(): ScheduleViewMode {
+  if (typeof window === 'undefined') return 'week';
+  const stored = window.localStorage.getItem(SCHEDULE_VIEW_STORAGE_KEY);
+  if (stored === 'day' || stored === 'week' || stored === 'month') return stored;
+  return 'week';
+}
+
+function shiftMonth(date: Date, delta: number): Date {
+  const first = new Date(date.getFullYear(), date.getMonth() + delta, 1);
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  first.setDate(Math.min(date.getDate(), lastDay));
+  return first;
+}
+
 export default function TeacherSchedulePanel({
-  mode,
   teacherData,
-  courseLessons = [],
-  courseTitle,
-  onOpenCourseLesson,
-  onStartLesson,
   onLessonFinished,
-  onOpenStudent,
-  onOpenGroup,
-  startedLessonIds,
   focusLessonId,
   onFocusLessonHandled,
+  showCancelled = false,
   patchTeacher,
   busy,
   runAction,
-}: Props) {
-  const filters = useMemo(() => getScheduleFilters(mode), [mode]);
-  const [viewMode, setViewMode] = useState<ScheduleViewMode>('day');
+}: Props) {  const filters = useMemo(() => getScheduleFilters(), []);
+  const isMobile = useIsMobile();
+  const compactPanel = useScheduleCompactPanel();
+  const nowMs = useNowMs();
+
+  const [viewMode, setViewMode] = useState<ScheduleViewMode>(() => readStoredViewMode());
   const [filter, setFilter] = useState<ScheduleFilter>('all');
   const [selectedDay, setSelectedDay] = useState(() => new Date());
-  const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
-  const [selectedSlot, setSelectedSlot] = useState<TeacherDaySlot | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
-  const [addKind, setAddKind] = useState<ScheduleFormKind>('individual');
-  const [lessonFromSlot, setLessonFromSlot] = useState<TeacherDaySlot | null>(null);
-  const [slotFormOpen, setSlotFormOpen] = useState(false);
-  const [autoFillOpen, setAutoFillOpen] = useState(false);
-  const [replacementDraft, setReplacementDraft] = useState<{
-    date: Date;
-    startTime: string;
-    endTime: string;
-    kind: 'individual' | 'group';
-    studentTelegramId?: number | null;
-    groupId?: number | null;
-    replacesLessonId?: number;
-  } | null>(null);
-  const activeFilter = isScheduleFilterValid(mode, filter) ? filter : 'all';
+  const [addDraft, setAddDraft] = useState<AddDraft | null>(null);
+  const [lessonModal, setLessonModal] = useState<LessonModal | null>(null);
+  const [rosterModal, setRosterModal] = useState<RosterModal | null>(null);
+  const [hoursOpen, setHoursOpen] = useState(false);
+  const [dayHours, setDayHours] = useState<{ day: Date; mode?: 'work' | 'off'; note?: string } | null>(null);
+  const [handledFocus, setHandledFocus] = useState<number | null>(null);
+  const [notice, setNotice] = useState<ActionFeedback | null>(null);
 
-  const scheduleRunAction: StaffRunAction = useCallback(
-    (action, successText, options) =>
-      runAction(action, successText, { refresh: options?.refresh ?? 'teacher', awaitRefresh: false, ...options }),
-    [runAction],
-  );
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCHEDULE_VIEW_STORAGE_KEY, viewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    setPanelOpen(!compactPanel);
+  }, [compactPanel]);
+
+  const effectiveView: ScheduleViewMode = isMobile && viewMode === 'week' ? 'day' : viewMode;
+  const activeFilter = isScheduleFilterValid(filter) ? filter : 'all';
+  const canCreate = Boolean(teacherData);
 
   const weekStart = useMemo(() => startOfWeek(selectedDay), [selectedDay]);
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
-  const daySlots = teacherData?.daySlots ?? [];
+  const daySlots = useMemo(() => teacherData?.daySlots ?? [], [teacherData?.daySlots]);
 
-  const allEvents = useMemo(() => {
-    const ordinaryLessons = teacherData?.allLessons ?? [];
-    if (mode === 'teacher') {
-      return ordinaryLessons
+  const allEvents = useMemo(
+    () =>
+      (teacherData?.allLessons ?? [])
         .map(mapTeacherLessonToEvent)
-        .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-    }
-    return buildScheduleEvents(ordinaryLessons, courseLessons, courseTitle);
-  }, [mode, teacherData?.allLessons, courseLessons, courseTitle]);
-
-  useEffect(() => {
-    if (!selectedEvent) return;
-    const updated = allEvents.find((item) => item.id === selectedEvent.id);
-    if (updated) setSelectedEvent(updated);
-  }, [allEvents, selectedEvent?.id]);
-
-  useEffect(() => {
-    if (!selectedSlot) return;
-    const updated = daySlots.find((item) => item.id === selectedSlot.id);
-    if (updated) setSelectedSlot(updated);
-  }, [daySlots, selectedSlot?.id]);
-
-  useEffect(() => {
-    if (focusLessonId == null) return;
-    const match = allEvents.find((event) => event.lessonId === focusLessonId);
-    if (!match) {
-      onFocusLessonHandled?.();
-      return;
-    }
-    setViewMode('day');
-    setSelectedDay(new Date(match.startsAt));
-    setSelectedEvent(match);
-    setSelectedSlot(null);
-    onFocusLessonHandled?.();
-  }, [focusLessonId, allEvents, onFocusLessonHandled]);
-
-  const visibleEvents = useMemo(
-    () => filterScheduleEvents(allEvents, activeFilter),
-    [allEvents, activeFilter],
+        .sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
+    [teacherData?.allLessons],
   );
 
+  // Отменённые занятия скрыты у преподавателя; админ видит их полупрозрачными.
   const calendarEvents = useMemo(
-    () => hideReplacedCancelledEvents(visibleEvents),
-    [visibleEvents],
+    () =>
+      filterScheduleEvents(allEvents, activeFilter).filter(
+        (event) => event.kind !== 'course' && (showCancelled || event.status !== 'cancelled'),
+      ),
+    [allEvents, activeFilter, showCancelled],
   );
 
-  const freeSlots = useMemo(
-    () => freeSlotsForDay(daySlots, selectedDay, allEvents),
-    [daySlots, selectedDay, allEvents],
+  // Фокус на занятии из другого раздела (применяется один раз при смене focusLessonId).
+  if (focusLessonId != null && focusLessonId !== handledFocus) {
+    setHandledFocus(focusLessonId);
+    const match = allEvents.find((event) => event.lessonId === focusLessonId);
+    if (match) {
+      setSelectedDay(new Date(match.startsAt));
+      setSelectedEventId(match.id);
+    }
+  }
+  useEffect(() => {
+    if (focusLessonId != null) onFocusLessonHandled?.();
+  }, [focusLessonId, onFocusLessonHandled]);
+
+  const selectedEvent = useMemo(
+    () => calendarEvents.find((event) => event.id === selectedEventId) ?? null,
+    [calendarEvents, selectedEventId],
+  );
+  const modalEvent = useMemo(
+    () => (lessonModal ? (allEvents.find((event) => event.id === lessonModal.eventId) ?? null) : null),
+    [allEvents, lessonModal],
   );
 
-  const goToday = () => setSelectedDay(new Date());
+  const weekStats = useMemo(() => computeOrdinaryWeekStats(allEvents, weekStart), [allEvents, weekStart]);
 
-  const shift = (delta: number) => {
-    setSelectedDay((prev) => addDays(prev, viewMode === 'week' ? delta * 7 : delta));
+  const today = nowMs > 0 ? new Date(nowMs) : null;
+  const showToday = today
+    ? effectiveView === 'week'
+      ? !weekDays.some((d) => isSameDay(d, today))
+      : effectiveView === 'month'
+        ? today.getFullYear() !== selectedDay.getFullYear() || today.getMonth() !== selectedDay.getMonth()
+        : !isSameDay(today, selectedDay)
+    : false;
+
+  const weekHasEvents = calendarEvents.some((event) => {
+    const d = new Date(event.startsAt);
+    return dateKey(startOfWeek(d)) === dateKey(weekStart);
+  });
+  const hoursUnset = Boolean(teacherData) && (teacherData?.workingHours.weekly.length ?? 0) === 0;
+
+  const scheduleRunAction: StaffRunAction = useCallback(
+    (action, successText, options) =>
+      runAction(action, successText, {
+        refresh: options?.refresh ?? 'none',
+        awaitRefresh: false,
+        silent: true,
+        ...options,
+      }),
+    [runAction],
+  );
+
+  const openEvent = (event: ScheduleEvent) => {
+    setSelectedEventId(event.id);
+    setSelectedDay(new Date(event.startsAt));
+    if (compactPanel) setPanelOpen(true);
   };
 
+  // Смена дня сбрасывает открытое занятие: в сайдбаре снова список дня.
   const pickDay = (day: Date) => {
     setSelectedDay(day);
-    setSelectedEvent(null);
-    setSelectedSlot(null);
+    setSelectedEventId(null);
+    if (compactPanel) setPanelOpen(true);
   };
 
-  const selectEvent = (event: ScheduleEvent) => {
-    setSelectedEvent(event);
-    setSelectedSlot(null);
+  const shift = (delta: number) => {
+    setSelectedEventId(null);
+    setSelectedDay((prev) =>
+      effectiveView === 'month'
+        ? shiftMonth(prev, delta)
+        : addDays(prev, effectiveView === 'week' ? delta * 7 : delta),
+    );
   };
 
-  const selectSlot = (slot: TeacherDaySlot) => {
-    setSelectedSlot(slot);
-    setSelectedEvent(null);
+  const openAdd = (draft: AddDraft | null) => {
+    setAddDraft(draft);
+    setAddOpen(true);
   };
 
-  const openAddLessonFromSlot = (slot: TeacherDaySlot) => {
-    setLessonFromSlot(slot);
+  const closeAdd = () => {
+    setAddOpen(false);
+    setAddDraft(null);
   };
 
-  const isDayView = viewMode === 'day';
-  const isHistoryView = activeFilter === 'history';
-  const showTeacherSettings = Boolean(teacherData);
+  const openLessonModal = (type: LessonModal['type']) => {
+    if (selectedEvent) setLessonModal({ type, eventId: selectedEvent.id });
+  };
 
   return (
-    <div className="curator-panel sched-page has-aside">
-      <header className="sched-head">
-        <div className="sched-head-row">
-          <div className="sched-head-title-row">
-            <h1 className="sched-head-title">Расписание</h1>
-            <div className="sched-view-tabs sched-view-tabs--inline" role="tablist" aria-label="Режим">
-              <button
-                type="button"
-                className={`sched-view-tab${viewMode === 'week' ? ' is-active' : ''}`}
-                onClick={() => setViewMode('week')}
-              >
-                Неделя
-              </button>
-              <button
-                type="button"
-                className={`sched-view-tab${isDayView ? ' is-active' : ''}`}
-                onClick={() => setViewMode('day')}
-              >
-                День
-              </button>
-            </div>
-          </div>
+    <div className="sr-root sched-page" data-panel={panelOpen ? 'open' : 'closed'}>
+      <ScheduleTopbar
+        viewMode={effectiveView}
+        isMobile={isMobile}
+        periodLabel={formatPeriodLabel(effectiveView, selectedDay, weekStart)}
+        showToday={showToday}
+        nowMs={nowMs}
+        panelOpen={panelOpen}
+        onPrev={() => shift(-1)}
+        onNext={() => shift(1)}
+        onToday={() => pickDay(new Date())}
+        onChangeView={setViewMode}
+        onTogglePanel={() => setPanelOpen((prev) => !prev)}
+      />
 
-          <div className="sched-head-right">
-            <div className="sched-date-nav">
-              <button type="button" className="sched-icon-btn" onClick={() => shift(-1)} aria-label="Назад">
-                ←
-              </button>
-              <div className="sched-date-pill">
-                <IconCalendar />
-                <span>{formatNavDateLong(selectedDay)}</span>
-              </div>
-              <button type="button" className="sched-icon-btn" onClick={() => shift(1)} aria-label="Вперёд">
-                →
-              </button>
-            </div>
-            <button type="button" className="sched-btn sched-btn--accent" onClick={goToday}>
-              Сегодня
-            </button>
-            {showTeacherSettings ? (
-              <button
-                type="button"
-                className="sched-btn sched-btn--outline-teal"
-                onClick={() => {
-                  setReplacementDraft(null);
-                  setAddKind('individual');
-                  setAddOpen(true);
-                }}
-              >
-                + Занятие
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="sched-filters" role="tablist" aria-label="Фильтры">
+      <div className="sr-filters-row">
+        <div className="sr-filters" role="tablist" aria-label="Фильтры занятий">
           {filters.map((item) => (
             <button
               key={item.id}
               type="button"
               role="tab"
               aria-selected={activeFilter === item.id}
-              className={`sched-filter${activeFilter === item.id ? ' is-active' : ''}`}
+              className={`sr-filter${activeFilter === item.id ? ' is-active' : ''}`}
               onClick={() => setFilter(item.id)}
             >
               {item.label}
             </button>
           ))}
         </div>
-      </header>
-
-      <div className="sched-body">
-        <div className="sched-main">
-          {isHistoryView ? (
-            <div className="sched-day-card sched-history-card">
-              <header className="sched-day-card-head">
-                <h2>История</h2>
-                <p className="sched-history-lead">Завершённые, отменённые и прошедшие занятия</p>
-              </header>
-              <ScheduleHistoryList
-                events={calendarEvents}
-                selectedEventId={selectedEvent?.id ?? null}
-                onSelectEvent={selectEvent}
-              />
-            </div>
-          ) : isDayView ? (
-            <div className="sched-day-card">
-              <ScheduleWeekStrip
-                days={weekDays}
-                selectedDay={selectedDay}
-                events={calendarEvents}
-                onSelectDay={pickDay}
-              />
-              <header className="sched-day-card-head">
-                <h2>{dayHeadingUpper(selectedDay)}</h2>
-              </header>
-              <ScheduleDayGrid
-                day={selectedDay}
-                events={calendarEvents}
-                daySlots={daySlots}
-                selectedEventId={selectedEvent?.id ?? null}
-                selectedSlotId={selectedSlot?.id ?? null}
-                onSelectEvent={selectEvent}
-                onSelectFreeSlot={showTeacherSettings ? selectSlot : undefined}
-              />
-            </div>
-          ) : (
-            <ScheduleGrid
-              days={weekDays}
-              events={calendarEvents}
-              daySlots={daySlots}
-              selectedDay={selectedDay}
-              selectedEventId={selectedEvent?.id ?? null}
-              selectedSlotId={selectedSlot?.id ?? null}
-              onSelectDay={pickDay}
-              onSelectEvent={selectEvent}
-              onSelectFreeSlot={showTeacherSettings ? selectSlot : undefined}
-            />
-          )}
+        <div className="sr-actions">
+          {canCreate ? (
+            <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setHoursOpen(true)}>
+              <IconClockRef size={15} /> Рабочее время
+            </button>
+          ) : null}
+          {canCreate ? (
+            <button type="button" className="sr-btn sr-btn--primary" onClick={() => openAdd(null)}>
+              <IconPlusRef size={15} /> Добавить занятие
+            </button>
+          ) : null}
         </div>
+      </div>
 
-        {selectedEvent ? (
-          <ScheduleSidePanel
-            event={selectedEvent}
-            teacherData={teacherData}
-            patchTeacher={patchTeacher}
-            busy={busy}
-            startedLessonIds={startedLessonIds ?? new Set()}
-            onClose={() => setSelectedEvent(null)}
-            onOpenCourseLesson={onOpenCourseLesson}
-            daySlots={daySlots}
-            allEvents={allEvents}
-            onStartLesson={onStartLesson}
-            onLessonFinished={onLessonFinished}
-            onOpenStudent={onOpenStudent}
-            onOpenGroup={onOpenGroup}
-            onPlanReplacementLesson={(draft) => {
-              setReplacementDraft(draft);
-              setAddKind(draft.kind);
-              setAddOpen(true);
-              setSelectedEvent(null);
-            }}
-            runAction={scheduleRunAction}
+      <div className="sr-board-area">
+        {hoursUnset || (effectiveView === 'week' && !weekHasEvents) ? (
+          <div className="sr-notices">
+            {hoursUnset ? (
+              <p>
+                Рабочее время не задано.{' '}
+                {canCreate ? (
+                  <button type="button" className="sr-link" onClick={() => setHoursOpen(true)}>
+                    Настроить
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+            {effectiveView === 'week' && !weekHasEvents ? <p>На этой неделе занятий пока нет</p> : null}
+          </div>
+        ) : null}
+
+        {effectiveView === 'month' ? (
+          <ScheduleMonthGrid
+            month={selectedDay}
+            events={calendarEvents}
+            selectedDay={selectedDay}
+            nowMs={nowMs}
+            onSelectDay={pickDay}
           />
-        ) : selectedSlot && showTeacherSettings ? (
-          <ScheduleSlotSidePanel
-            slot={selectedSlot}
-            events={allEvents}
-            allDaySlots={daySlots}
-            busy={busy}
-            patchTeacher={patchTeacher}
-            runAction={scheduleRunAction}
-            onClose={() => setSelectedSlot(null)}
-            onDeleted={() => setSelectedSlot(null)}
-            onAddLesson={openAddLessonFromSlot}
-          />
-        ) : isHistoryView ? (
-          <aside className="sched-aside">
-            <p className="sched-aside-muted">Выберите занятие в списке, чтобы открыть детали.</p>
-          </aside>
-        ) : (
-          <ScheduleDaySettingsPanel
+        ) : isMobile ? (
+          <ScheduleDayAgenda
+            weekDays={weekDays}
             day={selectedDay}
-            freeSlots={freeSlots}
-            showSettings={showTeacherSettings}
-            onAddSlot={() => setSlotFormOpen(true)}
-            onAutoFill={() => setAutoFillOpen(true)}
-            onSelectSlot={selectSlot}
+            events={calendarEvents}
+            workingHours={teacherData?.workingHours}
+            selectedEventId={selectedEventId}
+            canCreate={canCreate}
+            onSelectDay={pickDay}
+            onSelectEvent={openEvent}
+            onCreate={() => openAdd({ date: selectedDay, kind: 'individual' })}
+          />
+        ) : (
+          <ScheduleWeekBoard
+            days={effectiveView === 'week' ? weekDays : [selectedDay]}
+            events={calendarEvents}
+            daySlots={daySlots}
+            workingHours={teacherData?.workingHours}
+            selectedDay={selectedDay}
+            selectedEventId={selectedEventId}
+            nowMs={nowMs}
+            canCreate={canCreate}
+            onSelectDay={pickDay}
+            onSelectEvent={openEvent}
+            onCreateAt={(day, startTime, endTime) =>
+              openAdd({ date: day, startTime, endTime, kind: 'individual' })
+            }
           />
         )}
       </div>
 
+      {(() => {
+        const rightPanel = (
+          <ScheduleRightPanel
+            day={selectedDay}
+            nowMs={nowMs}
+            events={calendarEvents}
+            teacherData={teacherData}
+            selectedEvent={selectedEvent}
+            busy={busy}
+            onSelectEvent={openEvent}
+            onBack={() => setSelectedEventId(null)}
+            onEditDay={canCreate ? () => setDayHours({ day: selectedDay }) : undefined}
+            onReschedule={() => openLessonModal('reschedule')}
+            onComplete={() => openLessonModal('complete')}
+            onCancel={() => openLessonModal('cancel')}
+            onAddLesson={canCreate ? () => openAdd({ date: selectedDay, kind: 'individual' }) : undefined}
+            onAddStudent={canCreate ? () => setRosterModal({ type: 'new' }) : undefined}
+            onOpenStudent={(student) => setRosterModal({ type: 'edit', id: student.id })}
+            stats={weekStats}
+          />
+        );
+
+        if (compactPanel) {
+          return panelOpen ? (
+            <div className="sr-drawer-layer" role="dialog" aria-modal="true" aria-label="Панель дня">
+              <button
+                type="button"
+                className="sr-drawer-backdrop"
+                onClick={() => setPanelOpen(false)}
+                aria-label="Закрыть панель"
+              />
+              <div className="sr-drawer sr-drawer--schedule">{rightPanel}</div>
+            </div>
+          ) : null;
+        }
+
+        return panelOpen ? rightPanel : null;
+      })()}
+
+      {lessonModal && modalEvent && teacherData ? (
+        lessonModal.type === 'reschedule' ? (
+          <ScheduleRescheduleModal
+            event={modalEvent}
+            events={allEvents}
+            daySlots={daySlots}
+            workingHours={teacherData.workingHours}
+            busy={busy}
+            runAction={scheduleRunAction}
+            report={setNotice}
+            patchTeacher={patchTeacher}
+            onClose={() => setLessonModal(null)}
+          />
+        ) : lessonModal.type === 'cancel' ? (
+          <ScheduleCancelModal
+            event={modalEvent}
+            busy={busy}
+            runAction={scheduleRunAction}
+            report={setNotice}
+            patchTeacher={patchTeacher}
+            onFinished={onLessonFinished}
+            onClose={() => setLessonModal(null)}
+          />
+        ) : (
+          <ScheduleCompleteModal
+            event={modalEvent}
+            busy={busy}
+            runAction={scheduleRunAction}
+            report={setNotice}
+            patchTeacher={patchTeacher}
+            onFinished={onLessonFinished}
+            onClose={() => setLessonModal(null)}
+          />
+        )
+      ) : null}
+
       {addOpen && teacherData ? (
         <ScheduleAddModal
           key={
-            replacementDraft
-              ? `replace-${replacementDraft.startTime}-${replacementDraft.endTime}`
-              : `add-${addKind}`
+            addDraft
+              ? `draft-${dateKey(addDraft.date)}-${addDraft.startTime ?? ''}-${addDraft.endTime ?? ''}`
+              : 'add'
           }
           data={teacherData}
           events={allEvents}
           daySlots={daySlots}
-          initialDate={replacementDraft?.date ?? selectedDay}
-          initialKind={replacementDraft?.kind ?? addKind}
-          initialStartTime={replacementDraft?.startTime}
-          initialEndTime={replacementDraft?.endTime}
-          initialStudentId={
-            replacementDraft?.studentTelegramId ? String(replacementDraft.studentTelegramId) : ''
-          }
-          initialGroupId={replacementDraft?.groupId ? String(replacementDraft.groupId) : ''}
-          replacesLessonId={replacementDraft?.replacesLessonId}
+          initialDate={addDraft?.date ?? selectedDay}
+          initialKind={addDraft?.kind ?? 'individual'}
+          initialStartTime={addDraft?.startTime}
+          initialEndTime={addDraft?.endTime}
           busy={busy}
+          report={setNotice}
           patchTeacher={patchTeacher}
-          onClose={() => {
-            setAddOpen(false);
-            setReplacementDraft(null);
+          onClose={closeAdd}
+          runAction={scheduleRunAction}
+        />
+      ) : null}
+
+      {rosterModal && teacherData
+        ? (() => {
+            const target =
+              rosterModal.type === 'new'
+                ? undefined
+                : teacherData.roster.find((student) => student.id === rosterModal.id);
+            if (rosterModal.type !== 'new' && !target) return null;
+            if (rosterModal.type === 'schedule' && target) {
+              return (
+                <RosterScheduleModal
+                  student={target}
+                  data={teacherData}
+                  events={allEvents}
+                  busy={busy}
+                  runAction={scheduleRunAction}
+                  report={setNotice}
+                  patchTeacher={patchTeacher}
+                  onClose={() => setRosterModal(null)}
+                />
+              );
+            }
+            return (
+              <RosterStudentModal
+                key={target?.id ?? 'new'}
+                student={target}
+                data={teacherData}
+                nowMs={nowMs}
+                busy={busy}
+                runAction={scheduleRunAction}
+                report={setNotice}
+                patchTeacher={patchTeacher}
+                onSchedule={(student) => setRosterModal({ type: 'schedule', id: student.id })}
+                onClose={() => setRosterModal(null)}
+              />
+            );
+          })()
+        : null}
+
+      {hoursOpen && teacherData ? (
+        <ScheduleWorkingHoursModal
+          workingHours={teacherData.workingHours}
+          events={calendarEvents}
+          busy={busy}
+          runAction={scheduleRunAction}
+          report={setNotice}
+          patchTeacher={patchTeacher}
+          onAddOffDay={(date, note) => {
+            const [y, m, d] = date.split('-').map(Number);
+            setHoursOpen(false);
+            setDayHours({ day: new Date(y, m - 1, d), mode: 'off', note });
           }}
-          runAction={scheduleRunAction}
+          onClose={() => setHoursOpen(false)}
         />
       ) : null}
 
-      {lessonFromSlot && teacherData ? (
-        <ScheduleLessonFromSlotModal
-          data={teacherData}
-          slot={lessonFromSlot}
+      {dayHours && teacherData ? (
+        <ScheduleDayHoursModal
+          key={dateKey(dayHours.day)}
+          day={dayHours.day}
+          initialMode={dayHours.mode}
+          initialNote={dayHours.note}
+          workingHours={teacherData.workingHours}
           events={allEvents}
-          daySlots={daySlots}
           busy={busy}
-          patchTeacher={patchTeacher}
-          onClose={() => {
-            setLessonFromSlot(null);
-            setSelectedSlot(null);
-          }}
           runAction={scheduleRunAction}
+          report={setNotice}
+          patchTeacher={patchTeacher}
+          onClose={() => setDayHours(null)}
         />
       ) : null}
 
-      {slotFormOpen && showTeacherSettings ? (
-        <ScheduleSlotFormModal
-          day={selectedDay}
-          events={allEvents}
-          daySlots={daySlots}
-          busy={busy}
-          patchTeacher={patchTeacher}
-          onClose={() => setSlotFormOpen(false)}
-          runAction={scheduleRunAction}
-        />
-      ) : null}
-
-      {autoFillOpen && showTeacherSettings ? (
-        <ScheduleAutoFillModal
-          day={selectedDay}
-          events={allEvents}
-          daySlots={daySlots}
-          busy={busy}
-          patchTeacher={patchTeacher}
-          onClose={() => setAutoFillOpen(false)}
-          runAction={scheduleRunAction}
-        />
-      ) : null}
+      <ScheduleToastStack feedback={notice} onDismiss={() => setNotice(null)} />
     </div>
   );
 }
+
+
+
+

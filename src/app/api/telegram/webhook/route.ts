@@ -68,7 +68,6 @@ import {
   handleCourseApplyPhoneMessage,
   tryCompleteCourseApplyAfterExternalLink,
 } from '@/lib/bot/courseApplyFlow';
-import { parseLeadApplyStartParam } from '@/lib/lead-apply-link';
 import { handlePrivilegedBotCommands } from '@/lib/bot/privilegedCommands';
 import { linkTelegramToPhone } from '@/lib/bot/telegram-account-link';
 import { isAccessProduct } from '@/lib/bot/accesses';
@@ -81,18 +80,12 @@ import {
   sendClientStart,
 } from '@/lib/bot/client-flow';
 import { isClientReplyLabel } from '@/lib/bot/client-menu';
-import { beginClientLeadForm, handleClientLeadMessage } from '@/lib/bot/client-lead-flow';
-import {
-  handleClientTrialPayCallback,
-  handleTrialPayDeepLink,
-  parseTrialPayStart,
-} from '@/lib/bot/client-trial-pay-flow';
 import { recordInboundClientMessage, recordInboundClientMedia } from '@/lib/bot/admin/lead-inbound';
-import {
-  handleClientLessonHomeworkAttachment,
-  handleClientLessonHomeworkMessage,
-} from '@/lib/bot/client-lesson-homework-flow';
 import { usesClientBotUi } from '@/lib/bot/client-state';
+import {
+  CLIENT_LESSONS_BOT_DISABLED_TEXT,
+  CLIENT_LESSONS_BOT_UI_ENABLED,
+} from '@/lib/bot/client-lessons-ui-flag';
 import { handleClientLegacyReply } from '@/lib/bot/client-legacy-reply';
 import { bridgeGuestCallbackForClient } from '@/lib/bot/client-guest-bridge';
 import { getState } from '@/lib/bot/admin/core';
@@ -334,10 +327,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // /start lead_it_kristina — заявка с /individual (формат + intent + препод).
-    if (startSource && update.message?.chat && update.message.from) {
+    if (CLIENT_LESSONS_BOT_UI_ENABLED && startSource && update.message?.chat && update.message.from) {
+      const { parseLeadApplyStartParam } = await import('@/lib/lead-apply-link');
       const leadApply = parseLeadApplyStartParam(startSource);
       if (leadApply) {
+        const { beginClientLeadForm } = await import('@/lib/bot/client-lead-flow');
         await ensureMember(
           admin,
           update.message.from.id,
@@ -351,9 +345,21 @@ export async function POST(request: Request) {
         });
         return NextResponse.json({ ok: true });
       }
+    } else if (startSource && update.message?.chat && update.message.from) {
+      const { parseLeadApplyStartParam } = await import('@/lib/lead-apply-link');
+      if (parseLeadApplyStartParam(startSource)) {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: CLIENT_LESSONS_BOT_DISABLED_TEXT,
+        });
+        return NextResponse.json({ ok: true });
+      }
     }
 
     if (startSource && update.message?.chat && update.message.from) {
+      const { parseTrialPayStart, handleTrialPayDeepLink } = await import(
+        '@/lib/bot/client-trial-pay-flow'
+      );
       const trialPayId = parseTrialPayStart(startSource);
       if (trialPayId) {
         await ensureMember(
@@ -361,7 +367,19 @@ export async function POST(request: Request) {
           update.message.from.id,
           memberPatch(update.message.from, update.message.chat.id),
         );
-        await handleTrialPayDeepLink(admin, update.message.from.id, update.message.chat.id, trialPayId);
+        if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+          await handleTrialPayDeepLink(
+            admin,
+            update.message.from.id,
+            update.message.chat.id,
+            trialPayId,
+          );
+        } else {
+          await telegramSend('sendMessage', {
+            chat_id: update.message.chat.id,
+            text: CLIENT_LESSONS_BOT_DISABLED_TEXT,
+          });
+        }
         return NextResponse.json({ ok: true });
       }
     }
@@ -378,8 +396,17 @@ export async function POST(request: Request) {
         memberPatch(update.message.from, update.message.chat.id),
       );
       const options = parsePayStartPayload(startSource);
-      if (options.product && isAccessProduct(options.product)) {
-        await beginStudentPurchase(admin, update.message.from.id, update.message.chat.id, options);
+      const product = options.product;
+      if (product && isAccessProduct(product)) {
+        const lessonProduct = product === 'individual' || product === 'group';
+        if (!CLIENT_LESSONS_BOT_UI_ENABLED && lessonProduct) {
+          await telegramSend('sendMessage', {
+            chat_id: update.message.chat.id,
+            text: CLIENT_LESSONS_BOT_DISABLED_TEXT,
+          });
+        } else {
+          await beginStudentPurchase(admin, update.message.from.id, update.message.chat.id, options);
+        }
       } else {
         await telegramSend('sendMessage', {
           chat_id: update.message.chat.id,
@@ -407,9 +434,16 @@ export async function POST(request: Request) {
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id, {
-        context: 'lessons',
-      });
+      if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+        await beginStudentMentorQuestion(admin, update.message.from.id, update.message.chat.id, {
+          context: 'lessons',
+        });
+      } else {
+        await telegramSend('sendMessage', {
+          chat_id: update.message.chat.id,
+          text: CLIENT_LESSONS_BOT_DISABLED_TEXT,
+        });
+      }
       return NextResponse.json({ ok: true });
     }
 
@@ -662,17 +696,22 @@ export async function POST(request: Request) {
       );
       if (studentDocHandled) return NextResponse.json({ ok: true });
 
-      const clientLessonHwDoc = await handleClientLessonHomeworkAttachment(
-        admin,
-        update.message.from.id,
-        update.message.chat.id,
-        {
-          fileId: update.message.document.file_id,
-          kind: 'document',
-          fileName: update.message.document.file_name,
-        },
-      );
-      if (clientLessonHwDoc) return NextResponse.json({ ok: true });
+      if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+        const { handleClientLessonHomeworkAttachment } = await import(
+          '@/lib/bot/client-lesson-homework-flow'
+        );
+        const clientLessonHwDoc = await handleClientLessonHomeworkAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          {
+            fileId: update.message.document.file_id,
+            kind: 'document',
+            fileName: update.message.document.file_name,
+          },
+        );
+        if (clientLessonHwDoc) return NextResponse.json({ ok: true });
+      }
 
       const teacherDocHandled = await handleTeacherAttachment(
         admin,
@@ -764,13 +803,18 @@ export async function POST(request: Request) {
         );
         if (studentPhotoHandled) return NextResponse.json({ ok: true });
 
-        const clientLessonHwPhoto = await handleClientLessonHomeworkAttachment(
-          admin,
-          update.message.from.id,
-          update.message.chat.id,
-          { fileId: largest.file_id, kind: 'photo' },
-        );
-        if (clientLessonHwPhoto) return NextResponse.json({ ok: true });
+        if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+          const { handleClientLessonHomeworkAttachment } = await import(
+            '@/lib/bot/client-lesson-homework-flow'
+          );
+          const clientLessonHwPhoto = await handleClientLessonHomeworkAttachment(
+            admin,
+            update.message.from.id,
+            update.message.chat.id,
+            { fileId: largest.file_id, kind: 'photo' },
+          );
+          if (clientLessonHwPhoto) return NextResponse.json({ ok: true });
+        }
 
         const checkPhotoHandled = await handleCheckAttachment(
           admin,
@@ -1032,13 +1076,16 @@ export async function POST(request: Request) {
       ).role;
 
       if (usesClientBotUi(effectiveClientRole)) {
-        const leadHandled = await handleClientLeadMessage(
-          admin,
-          update.message.from.id,
-          update.message.chat.id,
-          update.message.text,
-        );
-        if (leadHandled) return NextResponse.json({ ok: true });
+        if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+          const { handleClientLeadMessage } = await import('@/lib/bot/client-lead-flow');
+          const leadHandled = await handleClientLeadMessage(
+            admin,
+            update.message.from.id,
+            update.message.chat.id,
+            update.message.text,
+          );
+          if (leadHandled) return NextResponse.json({ ok: true });
+        }
 
         const leadInbound = await recordInboundClientMessage(
           admin,
@@ -1048,13 +1095,18 @@ export async function POST(request: Request) {
         );
         if (leadInbound) return NextResponse.json({ ok: true });
 
-        const lessonHwHandled = await handleClientLessonHomeworkMessage(
-          admin,
-          update.message.from.id,
-          update.message.chat.id,
-          update.message.text,
-        );
-        if (lessonHwHandled) return NextResponse.json({ ok: true });
+        if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+          const { handleClientLessonHomeworkMessage } = await import(
+            '@/lib/bot/client-lesson-homework-flow'
+          );
+          const lessonHwHandled = await handleClientLessonHomeworkMessage(
+            admin,
+            update.message.from.id,
+            update.message.chat.id,
+            update.message.text,
+          );
+          if (lessonHwHandled) return NextResponse.json({ ok: true });
+        }
 
         const clientHandled = await handleClientMessage(
           admin,
@@ -1252,8 +1304,11 @@ export async function POST(request: Request) {
       const courseHwCb = await handleCourseHomeworkCallback(admin, data, chatId, from.id, id);
       if (courseHwCb) return NextResponse.json({ ok: true });
 
-      const trialPayHandled = await handleClientTrialPayCallback(admin, data, chatId, from.id);
-      if (trialPayHandled) return NextResponse.json({ ok: true });
+      if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+        const { handleClientTrialPayCallback } = await import('@/lib/bot/client-trial-pay-flow');
+        const trialPayHandled = await handleClientTrialPayCallback(admin, data, chatId, from.id);
+        if (trialPayHandled) return NextResponse.json({ ok: true });
+      }
 
       const callbackMember = await ensureMember(
         admin,

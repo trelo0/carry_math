@@ -1,11 +1,16 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+﻿import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BotRole } from '@/lib/bot/roles';
 import { hasFullStaffPreview, memberHasRole } from '@/lib/bot/roles';
-import { getCuratorCabinetData, type CuratorCabinetData } from '@/lib/curator/cabinet-data';
+import {
+  getCuratorCabinetData,
+  normalizeCuratorCabinetData,
+  type CuratorCabinetData,
+} from '@/lib/curator/cabinet-data';
 import { formatLessonDateTime } from '@/lib/teacher/format';
 import { dedupeGroupLessons, findCurrentLesson } from '@/lib/teacher/lesson-utils';
 import type { StudentPackageCredits } from '@/lib/teacher/package-credits';
 import { loadStudentPackageCredits } from '@/lib/teacher/package-credits';
+import { loadTeacherWorkingHours, type TeacherWorkingHoursData } from '@/lib/teacher/working-hours';
 
 export type TeacherLessonView = {
   id: number;
@@ -25,6 +30,24 @@ export type TeacherLessonView = {
   cancelReason: string | null;
   durationMinutes: number;
   isUpcoming: boolean;
+  /** Оплачено ли занятие (scheduled_lessons.is_paid); null — неизвестно. */
+  isPaid?: boolean | null;
+  /** Ученик из списка «Мои ученики» (schedule_students). */
+  scheduleStudentId?: number | null;
+  /** Общий идентификатор серии еженедельных занятий. */
+  seriesId?: string | null;
+};
+
+/** Ученик расписания: добавляется вручную, без Telegram. */
+export type TeacherRosterStudent = {
+  id: number;
+  name: string;
+  phone: string | null;
+  classLabel: string | null;
+  initialScore: number | null;
+  notes: string;
+  /** null — ученик в активном списке. */
+  archivedAt?: string | null;
 };
 
 export type TeacherStudentView = {
@@ -71,8 +94,13 @@ export type TeacherCabinetData = {
   /** Все занятия включая отменённые — для календаря расписания. */
   allLessons: TeacherLessonView[];
   students: TeacherStudentView[];
+  /** Активные ученики расписания (выбор при новых занятиях). */
+  roster: TeacherRosterStudent[];
+  /** Архивные ученики — история занятий сохраняется. */
+  archivedRoster: TeacherRosterStudent[];
   groups: TeacherGroupView[];
   daySlots: TeacherDaySlot[];
+  workingHours: TeacherWorkingHoursData;
 };
 
 export type StaffCabinetData = {
@@ -94,8 +122,12 @@ type ScheduledRow = {
   meet_url: string | null;
   board_url: string | null;
   lesson_plan: string | null;
+  participant_name?: string | null;
   cancel_reason: string | null;
   duration_minutes: number;
+  is_paid?: boolean | null;
+  schedule_student_id?: number | null;
+  series_id?: string | null;
 };
 
 async function loadStudentNames(
@@ -132,6 +164,7 @@ function mapLessonRow(
   names: Map<number, { name: string | null; phone: string | null }>,
   groups: Map<number, string>,
   now: number,
+  rosterNames: Map<number, string> = new Map(),
 ): TeacherLessonView {
   const { date, time } = formatLessonDateTime(row.starts_at);
   const startsMs = new Date(row.starts_at).getTime();
@@ -144,15 +177,27 @@ function mapLessonRow(
     topic: row.topic,
     status: row.status as TeacherLessonView['status'],
     studentTelegramId: row.telegram_id,
-    studentName: row.telegram_id ? (names.get(row.telegram_id)?.name ?? null) : null,
+    studentName: row.telegram_id
+      ? (names.get(row.telegram_id)?.name ?? null)
+      : row.kind === 'individual'
+        ? ((row.schedule_student_id ? rosterNames.get(row.schedule_student_id) : null) ??
+          (row.participant_name?.trim() || null))
+        : null,
     groupId: row.group_id,
-    groupTitle: row.group_id ? (groups.get(row.group_id) ?? null) : null,
+    groupTitle: row.group_id
+      ? (groups.get(row.group_id) ?? null)
+      : row.kind === 'group'
+        ? (row.participant_name?.trim() || null)
+        : null,
     meetUrl: row.meet_url,
     boardUrl: row.board_url ?? null,
     lessonPlan: row.lesson_plan ?? null,
     cancelReason: row.cancel_reason ?? null,
     durationMinutes: row.duration_minutes ?? 60,
     isUpcoming: row.status === 'scheduled' && startsMs > now,
+    isPaid: row.is_paid ?? null,
+    scheduleStudentId: row.schedule_student_id ?? null,
+    seriesId: row.series_id ?? null,
   };
 }
 
@@ -163,7 +208,7 @@ export async function getTeacherCabinetData(
 ): Promise<TeacherCabinetData> {
   const now = Date.now();
   const lessonSelect =
-    'id, kind, starts_at, topic, status, telegram_id, group_id, meet_url, board_url, lesson_plan, cancel_reason, duration_minutes';
+    'id, kind, starts_at, topic, status, telegram_id, group_id, meet_url, board_url, lesson_plan, cancel_reason, duration_minutes, is_paid, participant_name, schedule_student_id, series_id';
 
   const lessonResult = await admin
     .from('scheduled_lessons')
@@ -176,6 +221,8 @@ export async function getTeacherCabinetData(
     { data: daySlotRows },
     { data: studentNoteRows },
     { data: groupNoteRows },
+    workingHours,
+    { data: rosterRows },
   ] = await Promise.all([
     admin
       .from('groups')
@@ -197,6 +244,12 @@ export async function getTeacherCabinetData(
       .from('teacher_group_notes')
       .select('group_id, notes')
       .eq('teacher_telegram_id', teacherTelegramId),
+    loadTeacherWorkingHours(admin, teacherTelegramId),
+    admin
+      .from('schedule_students')
+      .select('id, name, phone, class_label, initial_score, notes, archived_at')
+      .eq('teacher_telegram_id', teacherTelegramId)
+      .order('name'),
   ]);
 
   if (lessonResult.error) throw lessonResult.error;
@@ -258,7 +311,20 @@ export async function getTeacherCabinetData(
     loadGroupTitles(admin, groupIds),
   ]);
 
-  const lessons = rows.map((row) => mapLessonRow(row, names, groups, now));
+  const allRoster: TeacherRosterStudent[] = (rosterRows ?? []).map((row) => ({
+    id: row.id as number,
+    name: row.name as string,
+    phone: (row.phone as string | null) ?? null,
+    classLabel: (row.class_label as string | null) ?? null,
+    initialScore: row.initial_score == null ? null : Number(row.initial_score),
+    notes: (row.notes as string | null) ?? '',
+    archivedAt: (row.archived_at as string | null) ?? null,
+  }));
+  const roster = allRoster.filter((student) => !student.archivedAt);
+  const archivedRoster = allRoster.filter((student) => Boolean(student.archivedAt));
+  const rosterNames = new Map(allRoster.map((student) => [student.id, student.name]));
+
+  const lessons = rows.map((row) => mapLessonRow(row, names, groups, now, rosterNames));
   const activeLessons = lessons.filter((l) => l.status !== 'cancelled');
   const individualLessons = activeLessons.filter((l) => l.kind === 'individual');
   const groupLessons = activeLessons.filter((l) => l.kind === 'group');
@@ -395,8 +461,11 @@ export async function getTeacherCabinetData(
     groupLessons,
     allLessons: lessons,
     students,
+    roster,
+    archivedRoster,
     groups: groupsView,
     daySlots,
+    workingHours,
   };
 }
 
@@ -434,7 +503,10 @@ export async function getStaffCabinetData(
     memberRoles: roles,
     staffName,
     fullStaffPreview,
-    curator,
+    curator: curator ? normalizeCuratorCabinetData(curator) : null,
     teacher,
   };
 }
+
+
+

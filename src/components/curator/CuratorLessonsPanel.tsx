@@ -16,6 +16,7 @@ import {
   sessionLabel,
   sessionPillClass,
   toDatetimeLocal,
+  curatorLessonDisplayNo,
 } from './curator-utils';
 
 function FileBlock({
@@ -280,7 +281,7 @@ function LessonEditor({
       <header className="curator-lesson-head">
         <div>
           <p className="curator-kicker">{lesson.moduleTitle}</p>
-          <h1 className="curator-title">Занятие №{lesson.lessonNumber}</h1>
+          <h1 className="curator-title">Занятие №{curatorLessonDisplayNo(lesson)}</h1>
           <p className="curator-lesson-name">{lesson.title}</p>
         </div>
         <span className={`curator-pill curator-pill--lg ${sessionPillClass(lesson.sessionStatus)}`}>
@@ -505,7 +506,9 @@ export default function CuratorLessonsPanel({
                     className="curator-lesson-row"
                     onClick={() => onSelectLesson(lesson.sanityId)}
                   >
-                    <span className="curator-lesson-num">{String(lesson.lessonNumber).padStart(2, '0')}</span>
+                    <span className="curator-lesson-num">
+                      {String(curatorLessonDisplayNo(lesson)).padStart(2, '0')}
+                    </span>
                     <span className="curator-lesson-info">
                       <strong>{lesson.title}</strong>
                       <em>{formatDate(lesson.scheduledAt)}</em>

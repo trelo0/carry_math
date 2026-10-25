@@ -1,10 +1,10 @@
-import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
+﻿import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
 import type { TeacherLessonView } from '@/lib/teacher/cabinet-data';
 
 export type ScheduleEventKind = 'individual' | 'group' | 'course';
 export type ScheduleEventStatus = 'scheduled' | 'completed' | 'cancelled' | 'no_show';
 export type ScheduleFilter = 'all' | 'course' | 'ordinary' | 'individual' | 'group' | 'history';
-export type ScheduleViewMode = 'week' | 'day';
+export type ScheduleViewMode = 'week' | 'day' | 'month';
 
 export type TeacherAvailabilitySlot = {
   id: number;
@@ -31,6 +31,8 @@ export type ScheduleEvent = {
   boardUrl?: string | null;
   lessonPlan?: string | null;
   cancelReason?: string | null;
+  /** Оплачено ли занятие; null/undefined — неизвестно. */
+  isPaid?: boolean | null;
   sourceLesson?: TeacherLessonView;
   sourceCourseLesson?: CuratorLessonView;
 };
@@ -51,3 +53,4 @@ export type DayTimelineSegment =
   | { type: 'free'; startTime: string; endTime: string; slotId: number }
   | { type: 'busy'; startTime: string; endTime: string; slotId: number; label: string }
   | { type: 'lesson'; event: ScheduleEvent; startTime: string; endTime: string };
+

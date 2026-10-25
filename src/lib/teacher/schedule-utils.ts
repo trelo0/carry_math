@@ -1,4 +1,4 @@
-import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
+﻿import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
 import type { TeacherLessonView } from '@/lib/teacher/cabinet-data';
 import type { TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import type {
@@ -8,6 +8,7 @@ import type {
   ScheduleFilter,
   TeacherAvailabilitySlot,
 } from '@/lib/teacher/schedule-types';
+import { buildScheduleIso, wallClockFromIso } from '@/lib/teacher/schedule-wall-clock';
 
 export const SCHEDULE_HOUR_START = 7;
 export const SCHEDULE_HOUR_END = 22;
@@ -88,7 +89,7 @@ export function lessonEndIso(startsAt: string, durationMinutes: number): string 
 }
 
 export function buildLocalIso(dateKeyStr: string, time: string): string {
-  return new Date(`${dateKeyStr}T${time}:00`).toISOString();
+  return buildScheduleIso(dateKeyStr, time);
 }
 
 export function durationFromRange(startTime: string, endTime: string): number {
@@ -337,6 +338,7 @@ export function mapTeacherLessonToEvent(lesson: TeacherLessonView): ScheduleEven
     boardUrl: lesson.boardUrl,
     lessonPlan: lesson.lessonPlan,
     cancelReason: lesson.cancelReason,
+    isPaid: lesson.isPaid ?? null,
     sourceLesson: lesson,
   };
 }
@@ -358,7 +360,7 @@ export function mapCourseLessonToEvent(lesson: CuratorLessonView, courseTitle: s
     id: `course-${lesson.sanityId}`,
     kind: 'course',
     status: statusMap[lesson.sessionStatus] ?? 'scheduled',
-    title: `Урок ${lesson.lessonNumber} · ${lesson.title}`,
+    title: `Урок ${lesson.courseLessonIndex ?? lesson.lessonNumber} · ${lesson.title}`,
     startsAt,
     endsAt: lessonEndIso(startsAt, durationMinutes),
     durationMinutes,
@@ -586,8 +588,7 @@ export function gridTotalHeight(): number {
 }
 
 export function isoToTimeLabel(iso: string): string {
-  const d = new Date(iso);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return wallClockFromIso(iso).time;
 }
 
 export function formatTimeRange(startTime: string, endTime: string): string {
@@ -669,3 +670,60 @@ export function findNextUpcomingEvent(events: ScheduleEvent[], from: Date = new 
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   return upcoming[0] ?? null;
 }
+
+export type WeekScheduleStats = {
+  completed: number;
+  cancelled: number;
+  scheduled: number;
+};
+
+export function computeWeekStats(events: ScheduleEvent[], weekStart: Date): WeekScheduleStats {
+  const startMs = weekStart.getTime();
+  const endMs = addDays(weekStart, 7).getTime();
+  const inWeek = events.filter((event) => {
+    const t = new Date(event.startsAt).getTime();
+    return t >= startMs && t < endMs;
+  });
+  return {
+    completed: inWeek.filter((e) => e.status === 'completed').length,
+    cancelled: inWeek.filter((e) => e.status === 'cancelled').length,
+    scheduled: inWeek.filter((e) => e.status === 'scheduled').length,
+  };
+}
+
+export function startOfMonth(date: Date): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), 1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export function getMonthGridDays(month: Date): Date[] {
+  const first = startOfMonth(month);
+  const gridStart = startOfWeek(first);
+  return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+}
+
+export function formatMonthTitle(date: Date): string {
+  const months = [
+    'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
+  ];
+  return `${months[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+export function countEventsOnDay(events: ScheduleEvent[], day: Date): number {
+  const key = dateKey(day);
+  return events.filter((e) => dateKey(new Date(e.startsAt)) === key).length;
+}
+
+export function historyEvents(events: ScheduleEvent[]): ScheduleEvent[] {
+  const now = Date.now();
+  return events.filter(
+    (e) =>
+      e.status === 'completed' ||
+      e.status === 'cancelled' ||
+      e.status === 'no_show' ||
+      (e.status === 'scheduled' && new Date(e.startsAt).getTime() < now),
+  );
+}
+

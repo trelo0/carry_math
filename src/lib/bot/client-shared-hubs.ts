@@ -8,11 +8,10 @@ import {
   type ClientHubDeliverOptions,
 } from './client-nav';
 import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
-import { showClientPackageMenu } from './client-lessons-flow';
 import { showClientPurchaseHistory } from './client-purchase-history';
-import { showClientApplicationsHub } from './client-my-leads';
 import { buildClientReplyKeyboard } from './client-menu';
 import { resolveClientState } from './client-state';
+import { CLIENT_LESSONS_BOT_UI_ENABLED } from './client-lessons-ui-flag';
 
 export async function showClientPaymentsHub(
   admin: SupabaseClient,
@@ -21,13 +20,17 @@ export async function showClientPaymentsHub(
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
-  const lines = [
-    '💳 Финансы',
-    '',
-    state.hasActiveLessonProduct
-      ? 'Здесь остаток пакета занятий и продление / покупка другого формата.'
-      : 'Можно купить курс или пакет занятий с преподавателем.',
-  ];
+  const lines = ['💳 Финансы', '', 'Покупка и продление онлайн-курса — в кабинете или через бота.'];
+
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  if (CLIENT_LESSONS_BOT_UI_ENABLED && state.hasActiveLessonProduct) {
+    keyboard.push([{ text: '📦 Остаток пакетов', callback_data: 'cl:pay:pkg' }]);
+  }
+  keyboard.push(
+    [{ text: '🎓 Купить / продлить курс', callback_data: 'cl:buy:course' }],
+    [{ text: '🧾 История оплат', callback_data: 'cl:pay:hist' }],
+    [clientBackButton()],
+  );
 
   await deliverClientHubScreen(
     admin,
@@ -35,18 +38,7 @@ export async function showClientPaymentsHub(
     chatId,
     'payments-hub',
     lines.join('\n'),
-    {
-      inline_keyboard: [
-        ...(state.hasActiveLessonProduct ||
-        state.hasActiveCourse ||
-        state.hasLessonHistory
-          ? [[{ text: '📦 Остаток пакетов', callback_data: 'cl:pay:pkg' }]]
-          : []),
-        [{ text: '🎓 Купить / продлить обучение', callback_data: 'cl:buy:hub' }],
-        [{ text: '🧾 История оплат', callback_data: 'cl:pay:hist' }],
-        [clientBackButton()],
-      ],
-    },
+    { inline_keyboard: keyboard },
     deliver,
   );
 }
@@ -70,7 +62,7 @@ export async function showClientMiscHub(
         ...(state.hasActiveCourse
           ? [[{ text: '🎓 Связаться с куратором по курсу', callback_data: 'cl:misc:curator' }]]
           : []),
-        ...(state.hasActiveLessonProduct
+        ...(CLIENT_LESSONS_BOT_UI_ENABLED && state.hasActiveLessonProduct
           ? [[{ text: '👨‍🏫 Связаться с преподавателем', callback_data: 'cl:misc:teacher' }]]
           : []),
         [clientBackButton()],
@@ -88,7 +80,7 @@ export async function showClientContactHub(
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
   const rows: Array<Array<Record<string, string>>> = [];
-  if (state.hasActiveLessonProduct) {
+  if (CLIENT_LESSONS_BOT_UI_ENABLED && state.hasActiveLessonProduct) {
     rows.push([{ text: '👨‍🏫 Задать вопрос преподавателю', callback_data: 'cl:contact:teacher' }]);
   }
   if (state.hasActiveCourse) {
@@ -132,11 +124,12 @@ export async function handleClientSharedHubCallback(
   const state = await resolveClientState(admin, telegramId);
 
   if (data === 'cl:pay:pkg') {
+    if (!CLIENT_LESSONS_BOT_UI_ENABLED) return true;
+    const { showClientPackageMenu } = await import('./client-lessons-flow');
     await showClientPackageMenu(admin, telegramId, chatId, { editAt });
     return true;
   }
   if (data === 'cl:pay:hist' || data === 'cl:misc:hist') {
-    // cl:misc:hist — совместимость со старыми кнопками
     await showClientPurchaseHistory(admin, telegramId, chatId, { editAt });
     return true;
   }
@@ -183,15 +176,8 @@ export async function handleClientSharedHubCallback(
     });
     return true;
   }
-  if (data === 'cl:misc:teacher') {
-    await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
-    return true;
-  }
-  if (data === 'cl:misc:admin') {
-    await beginStudentSupport(admin, telegramId, chatId);
-    return true;
-  }
-  if (data === 'cl:contact:teacher') {
+  if (data === 'cl:misc:teacher' || data === 'cl:contact:teacher') {
+    if (!CLIENT_LESSONS_BOT_UI_ENABLED) return true;
     if (!state.hasActiveLessonProduct) {
       await telegramSend('sendMessage', {
         chat_id: chatId,
@@ -201,6 +187,10 @@ export async function handleClientSharedHubCallback(
       return true;
     }
     await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
+    return true;
+  }
+  if (data === 'cl:misc:admin') {
+    await beginStudentSupport(admin, telegramId, chatId);
     return true;
   }
   if (data === 'cl:contact:curator') {

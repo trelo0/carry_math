@@ -132,7 +132,8 @@ export async function showClientHomeworkMenu(
 ): Promise<void> {
   const state = await resolveClientState(admin, telegramId);
   const courses = await listStudentPurchasedVisibleCourseContexts(admin, telegramId);
-  const hasLessons = state.hasActiveLessonProduct;
+  const { CLIENT_LESSONS_BOT_UI_ENABLED } = await import('./client-lessons-ui-flag');
+  const hasLessons = CLIENT_LESSONS_BOT_UI_ENABLED && state.hasActiveLessonProduct;
 
   if (courses.length === 1 && !hasLessons) {
     await showClientCourseHomeworkHub(admin, telegramId, chatId, deliver, courses[0]!.slug);
@@ -800,6 +801,13 @@ export async function handleClientCourseHomeworkCallback(
     return true;
   }
   if (data === 'cl:chw:lesson') {
+    const { CLIENT_LESSONS_BOT_UI_ENABLED, CLIENT_LESSONS_BOT_DISABLED_TEXT } = await import(
+      './client-lessons-ui-flag'
+    );
+    if (!CLIENT_LESSONS_BOT_UI_ENABLED) {
+      await telegramSend('sendMessage', { chat_id: chatId, text: CLIENT_LESSONS_BOT_DISABLED_TEXT });
+      return true;
+    }
     const { showClientLessonHomeworkHub } = await import('./client-lesson-homework-flow');
     await showClientLessonHomeworkHub(admin, telegramId, chatId, { editAt, forcePush: true });
     return true;

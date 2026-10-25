@@ -1,4 +1,4 @@
-import type { ScheduleFilter } from '@/lib/teacher/schedule-types';
+﻿import type { ScheduleFilter } from '@/lib/teacher/schedule-types';
 
 export type StaffScheduleMode = 'teacher' | 'curator' | 'combined';
 
@@ -11,30 +11,17 @@ export function resolveStaffScheduleMode(
   return 'teacher';
 }
 
-export function getScheduleFilters(mode: StaffScheduleMode): { id: ScheduleFilter; label: string }[] {
-  if (mode === 'combined') {
-    return [
-      { id: 'all', label: 'Все' },
-      { id: 'individual', label: 'Индивидуальные' },
-      { id: 'group', label: 'Групповые' },
-      { id: 'history', label: 'История' },
-      { id: 'course', label: 'Курс' },
-    ];
-  }
-  if (mode === 'curator') {
-    return [
-      { id: 'all', label: 'Все' },
-      { id: 'course', label: 'Курс' },
-    ];
-  }
+/** Курсовые вебинары в календаре не показываются — только индивидуальные и групповые занятия. */
+export function getScheduleFilters(): { id: ScheduleFilter; label: string }[] {
   return [
     { id: 'all', label: 'Все' },
     { id: 'individual', label: 'Индивидуальные' },
     { id: 'group', label: 'Групповые' },
-    { id: 'history', label: 'История' },
   ];
 }
 
-export function isScheduleFilterValid(mode: StaffScheduleMode, filter: ScheduleFilter): boolean {
-  return getScheduleFilters(mode).some((item) => item.id === filter);
+export function isScheduleFilterValid(filter: ScheduleFilter): boolean {
+  return getScheduleFilters().some((item) => item.id === filter);
 }
+
+

@@ -1,6 +1,7 @@
 import { AuthModal } from '@/components';
 import '../../styles/cabinet.css';
 import '../../styles/schedule-calendar.css';
+import '../../styles/schedule-reference.css';
 
 /** Кабинет без маркетинговой шапки; вход — через CabinetLoginGate (?login=1). */
 export default function AppLayout({ children }: { children: React.ReactNode }) {

@@ -93,11 +93,11 @@ export function renderCuratorScheduleScreen(
     `🎓 ${courseTitle}`,
     '',
     last
-      ? `⏮ Последнее состоявшееся:\n   №${last.lessonNumber} ${last.title}\n   ${lessonWhen(last)}`
+      ? `⏮ Последнее состоявшееся:\n   №${last.courseLessonIndex} ${last.title}\n   ${lessonWhen(last)}`
       : '⏮ Последнее состоявшееся: пока нет завершённых занятий',
     '',
     next
-      ? `⏭ Следующее по программе:\n   №${next.lessonNumber} ${next.title}\n   ${lessonWhen(next)}`
+      ? `⏭ Следующее по программе:\n   №${next.courseLessonIndex} ${next.title}\n   ${lessonWhen(next)}`
       : '⏭ Следующее по программе: все занятия завершены или отменены',
     '',
   ];

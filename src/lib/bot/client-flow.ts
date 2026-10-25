@@ -1,29 +1,18 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { getPublicSiteUrl } from '@/lib/siteUrl';
-import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
 import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
-import { beginStudentPurchase } from './studentPurchaseFlow';
 import {
   beginStudentSupport,
   handleStudentSupportBack,
   handleStudentSupportCancel,
 } from './studentSupportFlow';
-import { handleClientLeadCallback, isClientLeadCallback } from './client-lead-flow';
-import {
-  handleClientLessonsCallback,
-  isClientLessonsCallback,
-  showClientLessonsMenu,
-  showClientPackageMenu,
-  showClientScheduleMenu,
-} from './client-lessons-flow';
 import { showClientPurchaseHistory } from './client-purchase-history';
 import {
-  handleClientLessonHomeworkCallback,
-  isClientLessonHomeworkCallback,
-  showClientLessonHomeworkHub,
-} from './client-lesson-homework-flow';
+  CLIENT_LESSONS_BOT_DISABLED_TEXT,
+  CLIENT_LESSONS_BOT_UI_ENABLED,
+} from './client-lessons-ui-flag';
 import {
   handleClientCourseHomeworkCallback,
   isClientCourseHomeworkCallback,
@@ -39,11 +28,10 @@ import { renderClientScreenById, type ClientScreenNavigateMode } from './client-
 import {
   handleClientSharedHubCallback,
   isClientSharedHubCallback,
-  showClientContactHub,
   showClientMiscHub,
   showClientPaymentsHub,
 } from './client-shared-hubs';
-import { getClientProductMode, resolveClientState, type ClientStateSnapshot } from './client-state';
+import { resolveClientState, type ClientStateSnapshot } from './client-state';
 import {
   buildClientReplyKeyboard,
   buildClientWelcomeTextAsync,
@@ -73,17 +61,6 @@ type CardMode =
 
 function courseInfoUrl(): string {
   return process.env.NEXT_PUBLIC_BOT_COURSE_INFO_URL?.trim() || getPublicSiteUrl();
-}
-
-async function formatTeacherList(): Promise<string> {
-  const pricing = await getCabinetPricing();
-  const names = pricing.teachers.map((t) => t.name.trim()).filter(Boolean);
-  if (names.length === 0) {
-    return 'Преподаватели: команда District — уточним при заявке.';
-  }
-  const lines = names.slice(0, 12).map((name) => `• ${name}`);
-  const more = names.length > 12 ? `\n… и ещё ${names.length - 12}` : '';
-  return `Преподаватели:\n${lines.join('\n')}${more}`;
 }
 
 async function applyCard(
@@ -203,22 +180,6 @@ async function showGuestCourseOfferScreen(
   );
 }
 
-async function showBuyEducationHub(
-  admin: SupabaseClient,
-  state: ClientStateSnapshot,
-  mode: CardMode,
-): Promise<void> {
-  const text = ['🎓 Купить обучение', '', 'Выберите формат:'].join('\n');
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📚 Купить курс', callback_data: 'cl:buy:course' }],
-      [{ text: '👨‍🏫 Занятия с преподавателем', callback_data: 'cl:buy:lessons' }],
-      [clientBackButton()],
-    ],
-  };
-  await applyCard(admin, state.telegramId, 'buy-education', text, keyboard, mode);
-}
-
 async function showBuyCourseOffersScreen(
   admin: SupabaseClient,
   state: ClientStateSnapshot,
@@ -254,67 +215,6 @@ async function showBuyCourseOffersScreen(
   }, mode);
 }
 
-async function showBuyLessonsFormatHub(
-  admin: SupabaseClient,
-  state: ClientStateSnapshot,
-  mode: CardMode,
-): Promise<void> {
-  const text = ['👨‍🏫 Занятия с преподавателем', '', 'Выберите формат:'].join('\n');
-  await applyCard(admin, state.telegramId, 'buy-lessons', text, {
-    inline_keyboard: [
-      [{ text: '📚 Индивидуальные', callback_data: 'cl:buy:individual' }],
-      [{ text: '👥 Групповые', callback_data: 'cl:buy:group' }],
-      [clientBackButton()],
-    ],
-  }, mode);
-}
-
-async function showLessonsHub(
-  admin: SupabaseClient,
-  state: ClientStateSnapshot,
-  mode: CardMode,
-): Promise<void> {
-  const text = await getBotCopy(BOT_COPY_KEYS.guestLessonsHub);
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: '📚 Индивидуальные', callback_data: 'cl:lessons:individual' }],
-      [{ text: '👥 Групповые', callback_data: 'cl:lessons:group' }],
-      [clientBackButton()],
-    ],
-  };
-  await applyCard(admin, state.telegramId, 'lessons', text, keyboard, mode);
-}
-
-async function showLessonFormatScreen(
-  admin: SupabaseClient,
-  telegramId: number,
-  format: 'individual' | 'group',
-  mode: CardMode,
-): Promise<void> {
-  const teachersBlock = await formatTeacherList();
-  const title = format === 'individual' ? 'Индивидуальные занятия' : 'Групповые занятия';
-  const body =
-    format === 'individual'
-      ? await getBotCopy(BOT_COPY_KEYS.guestLessonsIndividualBody)
-      : await getBotCopy(BOT_COPY_KEYS.guestLessonsGroupBody);
-  const screenId = format === 'individual' ? 'lesson-individual' : 'lesson-group';
-  const text = [`📚 ${title}`, '', body, '', teachersBlock, '', 'Оставьте заявку — администратор согласует расписание и стоимость.'].join(
-    '\n',
-  );
-  const keyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: '📝 Оставить заявку',
-          callback_data: format === 'individual' ? 'cl:lead:fmt:individual' : 'cl:lead:fmt:group',
-        },
-      ],
-      [clientBackButton()],
-    ],
-  };
-  await applyCard(admin, telegramId, screenId, text, keyboard, mode);
-}
-
 async function renderClientScreen(
   admin: SupabaseClient,
   screenId: string,
@@ -327,15 +227,6 @@ async function renderClientScreen(
   switch (screenId) {
     case 'course':
       await showOnlineCourseScreen(admin, state, mode);
-      break;
-    case 'lessons':
-      await showLessonsHub(admin, state, mode);
-      break;
-    case 'lesson-individual':
-      await showLessonFormatScreen(admin, telegramId, 'individual', mode);
-      break;
-    case 'lesson-group':
-      await showLessonFormatScreen(admin, telegramId, 'group', mode);
       break;
     case 'home':
     default:
@@ -360,28 +251,13 @@ function screenRouterExtras(
   memberRole?: BotRole,
 ): Parameters<typeof renderClientScreenById>[6] {
   return {
-    showBuyEducation: async (mode: ClientScreenNavigateMode) => {
-      const state = await resolveClientState(admin, telegramId, { memberRole });
-      await showBuyEducationHub(admin, state, mode as CardMode);
-    },
     showBuyCourseOffers: async (mode: ClientScreenNavigateMode) => {
       const state = await resolveClientState(admin, telegramId, { memberRole });
       await showBuyCourseOffersScreen(admin, state, mode as CardMode);
     },
-    showBuyLessons: async (mode: ClientScreenNavigateMode) => {
-      const state = await resolveClientState(admin, telegramId, { memberRole });
-      await showBuyLessonsFormatHub(admin, state, mode as CardMode);
-    },
     showOnlineCourse: async (mode: ClientScreenNavigateMode) => {
       const state = await resolveClientState(admin, telegramId, { memberRole });
       await showOnlineCourseScreen(admin, state, mode as CardMode);
-    },
-    showLessonsHub: async (mode: ClientScreenNavigateMode) => {
-      const state = await resolveClientState(admin, telegramId, { memberRole });
-      await showLessonsHub(admin, state, mode as CardMode);
-    },
-    showLessonFormat: async (format, mode) => {
-      await showLessonFormatScreen(admin, telegramId, format, mode as CardMode);
     },
   };
 }
@@ -502,25 +378,24 @@ export async function handleClientMessage(
     case CLIENT_LABELS.myCourse:
       await showClientMyCourseHub(admin, telegramId, chatId, { forcePush: true }, undefined);
       return true;
-    case CLIENT_LABELS.homework: {
-      const mode = getClientProductMode(state);
-      if (mode === 'course' || mode === 'both') {
-        await showClientHomeworkMenu(admin, telegramId, chatId, { forcePush: true });
-      } else {
-        await showClientLessonHomeworkHub(admin, telegramId, chatId, { forcePush: true });
-      }
+    case CLIENT_LABELS.homework:
+      await showClientHomeworkMenu(admin, telegramId, chatId, { forcePush: true });
       return true;
-    }
     case CLIENT_LABELS.contactTeacher:
-      if (!state.hasActiveLessonProduct) {
-        await telegramSend('sendMessage', {
-          chat_id: chatId,
-          text: 'Раздел доступен при активных занятиях с преподавателем.',
-          reply_markup: buildClientReplyKeyboard(state),
-        });
-        return true;
-      }
-      await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
+    case CLIENT_LABELS.lessonsWithTeacher:
+    case CLIENT_LABELS.buy:
+    case CLIENT_LABELS.leaveRequest:
+    case CLIENT_LABELS.myLessons:
+    case CLIENT_LABELS.schedule:
+    case CLIENT_LABELS.myPackage:
+    case CLIENT_LABELS.contact:
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: CLIENT_LESSONS_BOT_UI_ENABLED
+          ? 'Раздел занятий с преподавателем. Обновите меню /menu.'
+          : CLIENT_LESSONS_BOT_DISABLED_TEXT,
+        reply_markup: buildClientReplyKeyboard(state),
+      });
       return true;
     case CLIENT_LABELS.contactCurator:
       if (!state.hasActiveCourse) {
@@ -536,37 +411,21 @@ export async function handleClientMessage(
         await showStudentAppealsRoot(admin, telegramId, chatId, { forcePush: true });
       }
       return true;
-    case CLIENT_LABELS.contact:
-      await showClientContactHub(admin, telegramId, chatId, { forcePush: true });
-      return true;
     case CLIENT_LABELS.payments:
       await showClientPaymentsHub(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.misc:
       await showClientMiscHub(admin, telegramId, chatId, { forcePush: true });
       return true;
-    case CLIENT_LABELS.lessonsWithTeacher:
-    case CLIENT_LABELS.buy:
-    case CLIENT_LABELS.leaveRequest:
-      await showLessonsHub(admin, state, { kind: 'push', chatId });
-      return true;
     case CLIENT_LABELS.contactAdmin:
       await beginStudentSupport(admin, telegramId, chatId);
       return true;
     case CLIENT_LABELS.buyEducation:
-      await showBuyEducationHub(admin, state, { kind: 'push', chatId });
+    case CLIENT_LABELS.buyCourse:
+      await showBuyCourseOffersScreen(admin, state, { kind: 'push', chatId });
       return true;
     case CLIENT_LABELS.myApplications:
       await showClientApplicationsHub(admin, telegramId, chatId, { forcePush: true });
-      return true;
-    case CLIENT_LABELS.myLessons:
-      await showClientLessonsMenu(admin, telegramId, chatId, state, { forcePush: true });
-      return true;
-    case CLIENT_LABELS.schedule:
-      await showClientScheduleMenu(admin, telegramId, chatId, { forcePush: true });
-      return true;
-    case CLIENT_LABELS.myPackage:
-      await showClientPackageMenu(admin, telegramId, chatId, { forcePush: true });
       return true;
     case CLIENT_LABELS.purchaseHistory:
       await showClientPurchaseHistory(admin, telegramId, chatId, { forcePush: true });
@@ -673,24 +532,38 @@ export async function handleClientCallback(
 
   if (data === 'cl:buy:hub') {
     const state = await resolveClientState(admin, telegramId, { memberRole });
-    await showBuyEducationHub(admin, state, {
+    await showBuyCourseOffersScreen(admin, state, {
       kind: 'edit',
       hub: { chatId, messageId },
-      navStack: ['home', 'payments-hub', 'buy-education'],
+      navStack: ['home', 'payments-hub', 'buy-course-offers'],
     });
     return true;
   }
 
-  if (isClientLeadCallback(data)) {
-    return handleClientLeadCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
-  }
-
-  if (isClientLessonsCallback(data)) {
-    return handleClientLessonsCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
-  }
-
-  if (isClientLessonHomeworkCallback(data)) {
-    return handleClientLessonHomeworkCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
+  if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+    const { isClientLeadCallback, handleClientLeadCallback } = await import('./client-lead-flow');
+    if (isClientLeadCallback(data)) {
+      return handleClientLeadCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
+    }
+    const { isClientLessonsCallback, handleClientLessonsCallback } = await import(
+      './client-lessons-flow'
+    );
+    if (isClientLessonsCallback(data)) {
+      return handleClientLessonsCallback(admin, data, chatId, messageId, telegramId, callbackQueryId);
+    }
+    const { isClientLessonHomeworkCallback, handleClientLessonHomeworkCallback } = await import(
+      './client-lesson-homework-flow'
+    );
+    if (isClientLessonHomeworkCallback(data)) {
+      return handleClientLessonHomeworkCallback(
+        admin,
+        data,
+        chatId,
+        messageId,
+        telegramId,
+        callbackQueryId,
+      );
+    }
   }
 
   if (isClientCourseHomeworkCallback(data)) {
@@ -715,11 +588,6 @@ export async function handleClientCallback(
     data.startsWith('cl:guest:course:open:') ||
     data === 'cl:course:site' ||
     data === 'cl:buy:course' ||
-    data === 'cl:buy:lessons' ||
-    data === 'cl:buy:individual' ||
-    data === 'cl:buy:group' ||
-    data === 'cl:lessons:individual' ||
-    data === 'cl:lessons:group' ||
     data === 'cl:course:ask' ||
     data.startsWith('cl:course:ask:');
 
@@ -794,41 +662,6 @@ export async function handleClientCallback(
       'guest-course-detail',
     ];
     await showGuestCourseOfferScreen(admin, state, slug, {
-      kind: 'edit',
-      hub: { chatId, messageId },
-      navStack: stack,
-    });
-    return true;
-  }
-
-  if (data === 'cl:buy:lessons') {
-    const loaded = await loadClientHubPayload(admin, telegramId);
-    const stack = [...(loaded?.payload.clientNavStack ?? ['home', 'buy-education']), 'buy-lessons'];
-    await showBuyLessonsFormatHub(admin, state, {
-      kind: 'edit',
-      hub: { chatId, messageId },
-      navStack: stack,
-    });
-    return true;
-  }
-
-  if (data === 'cl:lessons:individual' || data === 'cl:buy:individual') {
-    const loaded = await loadClientHubPayload(admin, telegramId);
-    const parent = data.startsWith('cl:buy:') ? 'buy-lessons' : 'lessons';
-    const stack = [...(loaded?.payload.clientNavStack ?? ['home', parent]), 'lesson-individual'];
-    await showLessonFormatScreen(admin, telegramId, 'individual', {
-      kind: 'edit',
-      hub: { chatId, messageId },
-      navStack: stack,
-    });
-    return true;
-  }
-
-  if (data === 'cl:lessons:group' || data === 'cl:buy:group') {
-    const loaded = await loadClientHubPayload(admin, telegramId);
-    const parent = data.startsWith('cl:buy:') ? 'buy-lessons' : 'lessons';
-    const stack = [...(loaded?.payload.clientNavStack ?? ['home', parent]), 'lesson-group'];
-    await showLessonFormatScreen(admin, telegramId, 'group', {
       kind: 'edit',
       hub: { chatId, messageId },
       navStack: stack,

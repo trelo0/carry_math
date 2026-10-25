@@ -1,8 +1,11 @@
 'use client';
 
 import type { CuratorLessonView } from '@/lib/curator/cabinet-data';
-import { formatDateTime } from '@/components/curator/curator-utils';
-
+import {
+  compareCuratorLessonsProgramOrder,
+  curatorLessonDisplayNo,
+  formatDateTime,
+} from '@/components/curator/curator-utils';
 type Props = {
   lessons: CuratorLessonView[];
   onOpenLesson: (sanityId: string) => void;
@@ -11,7 +14,19 @@ type Props = {
 export default function CourseHistoryPanel({ lessons, onOpenLesson }: Props) {
   const completed = lessons
     .filter((l) => l.sessionStatus === 'completed')
-    .sort((a, b) => b.lessonNumber - a.lessonNumber);
+    .sort((a, b) => {
+      const ta = a.endedAt
+        ? new Date(a.endedAt).getTime()
+        : a.scheduledAt
+          ? new Date(a.scheduledAt).getTime()
+          : 0;
+      const tb = b.endedAt
+        ? new Date(b.endedAt).getTime()
+        : b.scheduledAt
+          ? new Date(b.scheduledAt).getTime()
+          : 0;
+      return tb - ta || compareCuratorLessonsProgramOrder(b, a);
+    });
 
   return (
     <div className="curator-panel">
@@ -26,7 +41,7 @@ export default function CourseHistoryPanel({ lessons, onOpenLesson }: Props) {
             <li key={lesson.sanityId}>
               <button type="button" className="staff-course-item-row" onClick={() => onOpenLesson(lesson.sanityId)}>
                 <span>
-                  <strong>Урок {lesson.lessonNumber}</strong> — {lesson.title}
+                  <strong>Занятие {curatorLessonDisplayNo(lesson)}</strong> — {lesson.title}
                 </span>
                 <span className="curator-muted">
                   {lesson.endedAt ? formatDateTime(lesson.endedAt) : 'Завершён'}

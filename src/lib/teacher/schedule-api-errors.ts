@@ -1,4 +1,4 @@
-const KNOWN: Record<string, string> = {
+﻿const KNOWN: Record<string, string> = {
   Unauthorized: 'Сессия истекла — обновите страницу и войдите снова',
   Forbidden: 'Нет доступа к этому занятию',
   'Lesson not found': 'Занятие не найдено',
@@ -26,4 +26,14 @@ export function formatScheduleApiError(
   if (status === 403) return KNOWN.Forbidden;
   if (status === 404) return 'Запись не найдена — обновите календарь';
   return fallback;
+}
+
+/** Разбор JSON-ответа без исключения: пустое или невалидное тело даёт {}. */
+export async function readJson<T extends object>(res: Response): Promise<Partial<T>> {
+  try {
+    const text = await res.text();
+    return text ? (JSON.parse(text) as Partial<T>) : {};
+  } catch {
+    return {};
+  }
 }

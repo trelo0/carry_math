@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { createCabinetLoginUrl } from '@/lib/cabinet-login';
+import { CLIENT_LESSONS_BOT_UI_ENABLED } from './client-lessons-ui-flag';
 
 function formatLessonDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ru-RU', {
@@ -23,6 +24,8 @@ export async function notifyStudentLessonScheduled(
     meetUrl?: string | null;
   },
 ): Promise<void> {
+  if (!CLIENT_LESSONS_BOT_UI_ENABLED) return;
+
   const { data } = await admin
     .from('bot_members')
     .select('chat_id')

@@ -16,6 +16,10 @@ import { notifyAdminsOfNewPurchaseRequest } from './admin/purchases';
 import { refreshClientMenu } from './client-flow';
 import { getCabinetPricing, type CabinetPricing } from '@/lib/studio/cabinetSettings';
 import { resolvePurchaseOffer } from './purchase-fulfillment';
+import {
+  CLIENT_LESSONS_BOT_DISABLED_TEXT,
+  CLIENT_LESSONS_BOT_UI_ENABLED,
+} from './client-lessons-ui-flag';
 
 type AdminMessage = { chatId: number; messageId: number };
 
@@ -129,13 +133,18 @@ async function editPurchaseMessage(message: AdminMessage, text: string, keyboard
 }
 
 function productMenuKeyboard(): InlineKeyboard {
-  return {
-    inline_keyboard: [
-      [{ text: '🎓 Курс', callback_data: 'sp:p:c' }],
+  const rows: InlineKeyboard['inline_keyboard'] = [[{ text: '🎓 Курс', callback_data: 'sp:p:c' }]];
+  if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+    rows.push(
       [{ text: '📚 Индивидуальные занятия', callback_data: 'sp:p:i' }],
       [{ text: '👥 Групповые занятия', callback_data: 'sp:p:g' }],
-    ],
-  };
+    );
+  }
+  return { inline_keyboard: rows };
+}
+
+function isLessonAccessProduct(product: AccessProduct): boolean {
+  return product === 'individual' || product === 'group';
 }
 
 async function resolveOffer(
@@ -351,6 +360,11 @@ export async function beginStudentPurchase(
     return;
   }
 
+  if (!CLIENT_LESSONS_BOT_UI_ENABLED && isLessonAccessProduct(product)) {
+    await sendPurchaseMessage(chatId, CLIENT_LESSONS_BOT_DISABLED_TEXT);
+    return;
+  }
+
   if (product === 'course') {
     const teacherId = pricing.teachers[0]?.teacherId;
     await renderConfirmStep(pricing, product, 0, teacherId, chatId, undefined, courseSlug, options.scenario);
@@ -419,6 +433,10 @@ export async function handleStudentPurchaseCallback(
       const code = data.slice('sp:p:'.length);
       const product = productFromCode(code);
       if (!product) return true;
+      if (!CLIENT_LESSONS_BOT_UI_ENABLED && isLessonAccessProduct(product)) {
+        await editPurchaseMessage(message, CLIENT_LESSONS_BOT_DISABLED_TEXT);
+        return true;
+      }
       await renderPackageStep(pricing, product, message.chatId, message);
       return true;
     }
@@ -428,6 +446,10 @@ export async function handleStudentPurchaseCallback(
       const [, , code, pkgRaw] = data.split(':');
       const product = productFromCode(code);
       if (!product) return true;
+      if (!CLIENT_LESSONS_BOT_UI_ENABLED && isLessonAccessProduct(product)) {
+        await editPurchaseMessage(message, CLIENT_LESSONS_BOT_DISABLED_TEXT);
+        return true;
+      }
       const packageIndex = Math.max(0, Number(pkgRaw) || 0);
       await renderTeacherStep(pricing, product, packageIndex, message.chatId, message);
       return true;
@@ -438,6 +460,10 @@ export async function handleStudentPurchaseCallback(
       const [, , code, pkgRaw, teacherRaw] = data.split(':');
       const product = productFromCode(code);
       if (!product) return true;
+      if (!CLIENT_LESSONS_BOT_UI_ENABLED && isLessonAccessProduct(product)) {
+        await editPurchaseMessage(message, CLIENT_LESSONS_BOT_DISABLED_TEXT);
+        return true;
+      }
       const packageIndex = Math.max(0, Number(pkgRaw) || 0);
       const teacherIndex = Math.max(0, Number(teacherRaw) || 0);
       const teacherId = pricing.teachers[teacherIndex]?.teacherId;
@@ -451,6 +477,10 @@ export async function handleStudentPurchaseCallback(
       const code = parts[2];
       const product = productFromCode(code);
       if (!product) return true;
+      if (!CLIENT_LESSONS_BOT_UI_ENABLED && isLessonAccessProduct(product)) {
+        await editPurchaseMessage(message, CLIENT_LESSONS_BOT_DISABLED_TEXT);
+        return true;
+      }
       const packageIndex = Math.max(0, Number(parts[3]) || 0);
       const teacherIndex = Math.max(0, Number(parts[4]) || 0);
       let courseSlug = parts[5] === 's' && parts[6] ? parts.slice(6).join(':') : undefined;

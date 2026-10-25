@@ -44,6 +44,9 @@ export async function POST(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
   }
+  if (lesson.status === 'completed') {
+    return NextResponse.json({ ok: true, alreadyCompleted: true });
+  }
   if (lesson.status !== 'scheduled') {
     return NextResponse.json(
       { error: 'Изменить статус можно только у запланированного занятия' },

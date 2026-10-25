@@ -16,6 +16,9 @@ export async function completeScheduledLesson(
     .maybeSingle();
   if (loadError) throw loadError;
   if (!lesson) throw new Error(`Занятие ${lessonId} не найдено.`);
+  if (lesson.status === 'completed') {
+    return { consumed: false };
+  }
   if (lesson.status !== 'scheduled') {
     throw new Error('Завершить можно только запланированное занятие');
   }
@@ -37,10 +40,17 @@ export async function completeScheduledLesson(
     .maybeSingle();
   if (updateError) throw updateError;
   if (!updated) {
+    const { data: current } = await admin
+      .from('scheduled_lessons')
+      .select('status')
+      .eq('id', lessonId)
+      .maybeSingle();
+    if (current?.status === 'completed') {
+      return { consumed: false };
+    }
     throw new Error('Не удалось завершить занятие');
   }
   if (!updated.package_id) {
-    await afterLessonCompleted(admin, lessonId);
     return { consumed: false };
   }
 
@@ -73,17 +83,7 @@ export async function completeScheduledLesson(
     .eq('id', packageId);
   if (pkgUpdateError) throw pkgUpdateError;
 
-  await afterLessonCompleted(admin, lessonId);
   return { consumed: true };
-}
-
-async function afterLessonCompleted(admin: SupabaseClient, lessonId: number): Promise<void> {
-  try {
-    const { maybeNotifyTrialLessonCompleted } = await import('@/lib/bot/admin/trial-completion-notify');
-    await maybeNotifyTrialLessonCompleted(admin, lessonId);
-  } catch (error) {
-    console.error('[completeScheduledLesson] trial notify failed', error);
-  }
 }
 
 /** Отмена до проведения — урок не списывается. */

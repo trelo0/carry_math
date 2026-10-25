@@ -16,12 +16,12 @@ import {
 import { resolveClientState } from './client-state';
 import { handleClientMessage, refreshClientMenu } from './client-flow';
 import { CLIENT_LABELS } from './client-menu';
-import { showClientLessonsMenu } from './client-lessons-flow';
 import { showClientMyCourseHub } from './client-course-hub';
 import { showClientCourseHomeworkHub } from './client-course-homework-hub';
-import { showClientLessonHomeworkHub } from './client-lesson-homework-flow';
-import { fetchNextClientLesson } from './client-lessons-data';
-import { formatLessonDateTime } from '@/lib/teacher/format';
+import {
+  CLIENT_LESSONS_BOT_DISABLED_TEXT,
+  CLIENT_LESSONS_BOT_UI_ENABLED,
+} from './client-lessons-ui-flag';
 import type { BotRole } from './roles';
 
 const LEGACY_LABELS = new Set<string>([
@@ -88,37 +88,31 @@ export async function handleClientLegacyReply(
     return true;
   }
 
-  if (text === LESSONS_INDIVIDUAL_LABEL || text === LESSONS_MIXED_LABEL) {
-    if (!state.hasLessonHistory && !state.hasUpcomingLessons && !state.hasActiveLessonProduct) {
-      await denySection(chatId);
+  if (
+    text === LESSONS_INDIVIDUAL_LABEL ||
+    text === LESSONS_MIXED_LABEL ||
+    (LESSONS_ACTIONS as readonly string[]).includes(text)
+  ) {
+    if (!CLIENT_LESSONS_BOT_UI_ENABLED) {
+      await telegramSend('sendMessage', { chat_id: chatId, text: CLIENT_LESSONS_BOT_DISABLED_TEXT });
       await refreshClientMenu(admin, telegramId, chatId, memberRole);
       return true;
     }
-    await showClientLessonsMenu(admin, telegramId, chatId);
-    return true;
-  }
+    const { showClientLessonsMenu } = await import('./client-lessons-flow');
+    const { fetchNextClientLesson } = await import('./client-lessons-data');
+    const { formatLessonDateTime } = await import('@/lib/teacher/format');
+    const { showClientLessonHomeworkHub } = await import('./client-lesson-homework-flow');
 
-  if ((COURSE_ACTIONS as readonly string[]).includes(text)) {
-    if (text === '📚 Сдать ДЗ ментору') {
-      if (!state.hasActiveCourse) {
+    if (text === LESSONS_INDIVIDUAL_LABEL || text === LESSONS_MIXED_LABEL) {
+      if (!state.hasLessonHistory && !state.hasUpcomingLessons && !state.hasActiveLessonProduct) {
         await denySection(chatId);
         await refreshClientMenu(admin, telegramId, chatId, memberRole);
         return true;
       }
-      await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      await showClientLessonsMenu(admin, telegramId, chatId);
       return true;
     }
-    if (text === '🆘 Получить помощь') {
-      await beginStudentSupport(admin, telegramId, chatId);
-      return true;
-    }
-    if (text === '📅 Ближайшее занятие') {
-      await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.schedule, memberRole);
-      return true;
-    }
-  }
 
-  if ((LESSONS_ACTIONS as readonly string[]).includes(text)) {
     const hasLessons =
       state.hasLessonHistory || state.hasUpcomingLessons || state.hasActiveLessonProduct;
     if (!hasLessons) {
@@ -147,6 +141,26 @@ export async function handleClientLegacyReply(
     }
     if (text === '📝 Сдать домашку') {
       await showClientLessonHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      return true;
+    }
+  }
+
+  if ((COURSE_ACTIONS as readonly string[]).includes(text)) {
+    if (text === '📚 Сдать ДЗ ментору') {
+      if (!state.hasActiveCourse) {
+        await denySection(chatId);
+        await refreshClientMenu(admin, telegramId, chatId, memberRole);
+        return true;
+      }
+      await showClientCourseHomeworkHub(admin, telegramId, chatId, { forcePush: true });
+      return true;
+    }
+    if (text === '🆘 Получить помощь') {
+      await beginStudentSupport(admin, telegramId, chatId);
+      return true;
+    }
+    if (text === '📅 Ближайшее занятие') {
+      await handleClientMessage(admin, telegramId, chatId, CLIENT_LABELS.schedule, memberRole);
       return true;
     }
   }

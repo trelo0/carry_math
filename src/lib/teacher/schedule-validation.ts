@@ -1,10 +1,19 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+﻿import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   dateKey,
   findScheduleConflict,
   lessonEndIso,
   timeToMinutes,
 } from '@/lib/teacher/schedule-utils';
+import {
+  bandsContain,
+  loadTeacherWorkingHours,
+  resolveDayHours,
+  type TeacherWorkingHoursData,
+  type WeeklySlotInput,
+} from '@/lib/teacher/working-hours';
+import { lessonsConflictingWithWeekly } from '@/lib/teacher/weekly-schedule-conflicts';
+import { wallClockFromIso, wallClockToLocalDate } from '@/lib/teacher/schedule-wall-clock';
 import { mapTeacherLessonToEvent } from '@/lib/teacher/schedule-utils';
 import type { TeacherLessonView } from '@/lib/teacher/cabinet-data';
 
@@ -16,16 +25,19 @@ export class ScheduleValidationError extends Error {
 }
 
 /** Занятия только текущего преподавателя — чужие teacher_telegram_id не участвуют в проверке. */
-async function loadTeacherLessons(
+export async function loadTeacherLessons(
   admin: SupabaseClient,
   teacherTelegramId: number,
+  range?: { from: string; to: string },
 ): Promise<TeacherLessonView[]> {
-  const { data, error } = await admin
+  let query = admin
     .from('scheduled_lessons')
     .select(
       'id, kind, starts_at, topic, status, telegram_id, group_id, meet_url, board_url, lesson_plan, cancel_reason, duration_minutes, teacher_telegram_id',
     )
     .eq('teacher_telegram_id', teacherTelegramId);
+  if (range) query = query.gte('starts_at', range.from).lt('starts_at', range.to);
+  const { data, error } = await query;
   if (error) throw error;
 
   return (data ?? [])
@@ -64,6 +76,7 @@ export async function validateLessonSlot(
     durationMinutes: number;
     excludeLessonId?: number;
     fromSlotId?: number;
+    workingHoursOverride?: TeacherWorkingHoursData;
   },
 ): Promise<void> {
   const starts = new Date(params.startsAt);
@@ -72,9 +85,10 @@ export async function validateLessonSlot(
   }
 
   const endsAt = lessonEndIso(params.startsAt, params.durationMinutes);
-  const endDate = new Date(endsAt);
-  const startTime = `${String(starts.getHours()).padStart(2, '0')}:${String(starts.getMinutes()).padStart(2, '0')}`;
-  const endTime = `${String(endDate.getHours()).padStart(2, '0')}:${String(endDate.getMinutes()).padStart(2, '0')}`;
+  const startWall = wallClockFromIso(params.startsAt);
+  const endWall = wallClockFromIso(endsAt);
+  const startTime = startWall.time;
+  const endTime = endWall.time;
 
   const lessons = await loadTeacherLessons(admin, teacherTelegramId);
 
@@ -110,7 +124,7 @@ export async function validateLessonSlot(
     }
   }
 
-  const dayKey = dateKey(starts);
+  const dayKey = startWall.dateKey;
   const startMin = timeToMinutes(startTime);
   const endMin = timeToMinutes(endTime);
   const { data: blockedRows } = await admin
@@ -129,4 +143,61 @@ export async function validateLessonSlot(
       throw new ScheduleValidationError(`Время пересекается с блоком «${label}»`);
     }
   }
+
+  const workingHours =
+    params.workingHoursOverride ?? (await loadTeacherWorkingHours(admin, teacherTelegramId));
+  const resolved = resolveDayHours(workingHours, wallClockToLocalDate(dayKey));
+  if (resolved.kind === 'off') {
+    throw new ScheduleValidationError('В этот день у преподавателя выходной');
+  }
+  if (resolved.kind === 'work' && !bandsContain(resolved.bands, startTime, endTime)) {
+    throw new ScheduleValidationError('Время вне рабочих часов преподавателя');
+  }
 }
+
+/**
+ * Запланированные занятия дня, не попадающие в рабочие интервалы.
+ * bands = null — день выходной (все занятия считаются конфликтующими).
+ */
+export async function findLessonsOutsideHours(
+  admin: SupabaseClient,
+  teacherTelegramId: number,
+  day: string,
+  bands: { startTime: string; endTime: string }[] | null,
+): Promise<TeacherLessonView[]> {
+  // Запрашиваем только окно вокруг дня (часовые пояса сервера и клиента могут отличаться на сутки).
+  const [y, m, d] = day.split('-').map(Number);
+  const from = new Date(y, m - 1, d - 1).toISOString();
+  const to = new Date(y, m - 1, d + 2).toISOString();
+  const lessons = await loadTeacherLessons(admin, teacherTelegramId, { from, to });
+  return lessons.filter((lesson) => {
+    if (lesson.status !== 'scheduled') return false;
+    const startWall = wallClockFromIso(lesson.startsAt);
+    if (startWall.dateKey !== day) return false;
+    if (bands == null) return true;
+    const startTime = startWall.time;
+    const endWall = wallClockFromIso(lessonEndIso(lesson.startsAt, lesson.durationMinutes));
+    const endTime = endWall.time;
+    if (endWall.dateKey !== day) return true;
+    return !bandsContain(bands, startTime, endTime);
+  });
+}
+
+export async function findLessonsConflictingWithWeekly(
+  admin: SupabaseClient,
+  teacherTelegramId: number,
+  weekly: WeeklySlotInput[],
+  minDateKey?: string,
+): Promise<TeacherLessonView[]> {
+  const workingHours = await loadTeacherWorkingHours(admin, teacherTelegramId);
+  const minKey = minDateKey ?? dateKey(new Date());
+  const from = new Date(minKey + 'T00:00:00').toISOString();
+  const lessons = await loadTeacherLessons(admin, teacherTelegramId, {
+    from,
+    to: new Date(Date.now() + 400 * 86400000).toISOString(),
+  });
+  return lessonsConflictingWithWeekly(lessons, workingHours, weekly, minKey);
+}
+
+
+

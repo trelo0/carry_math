@@ -10,6 +10,14 @@ import {
 } from './client-nav';
 import { beginStudentSupportThreadFromLead } from './studentSupportFlow';
 import { shorten } from './admin/core';
+import { CLIENT_LESSONS_BOT_UI_ENABLED } from './client-lessons-ui-flag';
+
+const LESSON_LEAD_SERVICES = new Set(['Индивидуальные занятия', 'Групповые занятия']);
+
+function isLessonApplicationLead(lead: LeadRow): boolean {
+  const service = lead.service?.trim() ?? '';
+  return LESSON_LEAD_SERVICES.has(service);
+}
 
 const STATUS_UI: Record<string, { emoji: string; label: string }> = {
   new: { emoji: '🔴', label: 'Новая' },
@@ -40,7 +48,10 @@ export async function showClientApplicationsHub(
   chatId: number,
   deliver?: ClientHubDeliverOptions,
 ): Promise<void> {
-  const apps = await listClientInquiryLeads(admin, telegramId, ['application']);
+  let apps = await listClientInquiryLeads(admin, telegramId, ['application']);
+  if (!CLIENT_LESSONS_BOT_UI_ENABLED) {
+    apps = apps.filter((lead) => !isLessonApplicationLead(lead));
+  }
   const questions = await listClientInquiryLeads(admin, telegramId, ['student_question', 'guest_question']);
 
   const lines = ['📨 История обращений', ''];
@@ -48,7 +59,7 @@ export async function showClientApplicationsHub(
 
   if (apps.length === 0 && questions.length === 0) {
     lines.push('Пока нет заявок и обращений.');
-    keyboard.push([{ text: '🎓 Купить обучение', callback_data: 'cl:buy:hub' }]);
+    keyboard.push([{ text: '🎓 Купить курс', callback_data: 'cl:buy:course' }]);
   } else {
     if (apps.length) {
       lines.push('📚 Заявки на обучение', '');

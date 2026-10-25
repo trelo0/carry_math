@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getUserContext, type AccessProduct } from './accesses';
 import { isPackageTableError } from './packages';
 import type { BotRole } from './roles';
+import { CLIENT_LESSONS_BOT_UI_ENABLED } from './client-lessons-ui-flag';
 
 /** Пользовательское состояние меню (не путать с bot_members.role). */
 export type ClientUiPhase = 'guest' | 'client_idle' | 'client_active';
@@ -26,6 +27,9 @@ export type ClientStateSnapshot = {
 export type ClientProductMode = 'none' | 'lessons' | 'course' | 'both';
 
 export function getClientProductMode(state: ClientStateSnapshot): ClientProductMode {
+  if (!CLIENT_LESSONS_BOT_UI_ENABLED) {
+    return state.hasActiveCourse ? 'course' : 'none';
+  }
   if (state.hasActiveCourse && state.hasActiveLessonProduct) return 'both';
   if (state.hasActiveCourse) return 'course';
   if (state.hasActiveLessonProduct) return 'lessons';
@@ -138,7 +142,9 @@ export async function resolveClientState(
   const hasActiveCourse = products.course || hasCoursePackage || hasCourseEnrollment;
   const hasActiveLessonProduct =
     products.individual || products.group || activePackageLessons;
-  const hasActiveProducts = hasActiveCourse || hasActiveLessonProduct;
+  const hasActiveProducts =
+    hasActiveCourse ||
+    (CLIENT_LESSONS_BOT_UI_ENABLED && hasActiveLessonProduct);
 
   const memberRole = options?.memberRole ?? 'guest';
   /** Учёт в кабинете/боте как student — отдельный сценарий от чистого guest. */

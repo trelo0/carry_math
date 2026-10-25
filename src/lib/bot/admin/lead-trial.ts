@@ -74,9 +74,6 @@ export async function createTrialLessonForLead(
     topic: string;
     durationMinutes?: number;
     actorTelegramId: number;
-    purchaseRequestId?: string | null;
-    groupId?: number | null;
-    trialPriceByn?: number | null;
   },
 ): Promise<{ lessonId: number; priceByn: number }> {
   const durationMinutes = input.durationMinutes ?? 60;
@@ -92,8 +89,7 @@ export async function createTrialLessonForLead(
     throw error;
   }
 
-  const priceByn = input.trialPriceByn ?? (await resolveTrialPriceByn(input.teacherId));
-  const paidViaOrder = Boolean(input.purchaseRequestId);
+  const priceByn = await resolveTrialPriceByn(input.teacherId);
   const { data, error } = await admin
     .from('scheduled_lessons')
     .insert({
@@ -101,16 +97,14 @@ export async function createTrialLessonForLead(
       kind: 'trial',
       lead_id: input.lead.id,
       package_id: null,
-      group_id: input.groupId ?? null,
-      purchase_request_id: input.purchaseRequestId ?? null,
       teacher_telegram_id: input.teacherTelegramId,
       starts_at: input.startsAt,
       duration_minutes: durationMinutes,
       topic: input.topic,
       status: 'scheduled',
-      is_paid: paidViaOrder,
+      is_paid: false,
       trial_price_byn: priceByn,
-      trial_payment_status: paidViaOrder ? 'paid' : 'not_requested',
+      trial_payment_status: 'not_requested',
     })
     .select('id')
     .single();
@@ -209,12 +203,6 @@ export async function syncTrialLessonConducted(
       eventType: 'trial_conducted',
       detail: { lesson_id: lesson.id },
     });
-  }
-  try {
-    const { maybeNotifyTrialLessonCompleted } = await import('@/lib/bot/admin/trial-completion-notify');
-    await maybeNotifyTrialLessonCompleted(admin, lesson.id);
-  } catch {
-    /* optional columns */
   }
   return true;
 }

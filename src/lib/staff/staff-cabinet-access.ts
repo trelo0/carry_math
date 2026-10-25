@@ -43,7 +43,7 @@ export async function resolveStaffCabinetLoginPath(
     return buildStaffCabinetPath({ section: 'course-list' });
   }
 
-  return buildStaffCabinetPath({ section: 'settings' });
+  return buildStaffCabinetPath({ section: 'course-list' });
 }
 
 export async function resolveCuratorWebCabinetPath(
@@ -52,7 +52,7 @@ export async function resolveCuratorWebCabinetPath(
   courseId?: number | null,
 ): Promise<string> {
   const can = await memberCanAccessStaffCabinetWeb(admin, telegramId);
-  if (!can) return buildStaffCabinetPath({ section: 'settings' });
+  if (!can) return buildStaffCabinetPath({ section: 'course-list' });
 
   if (courseId != null && Number.isFinite(courseId)) {
     return buildStaffCabinetPath({

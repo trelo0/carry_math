@@ -2,7 +2,11 @@
 
 import { useCallback, useState } from 'react';
 import Link from 'next/link';
-import type { CuratorCabinetData, CuratorHomeworkQueueItem } from '@/lib/curator/cabinet-data';
+import {
+  normalizeCuratorCabinetData,
+  type CuratorCabinetData,
+  type CuratorHomeworkQueueItem,
+} from '@/lib/curator/cabinet-data';
 import CuratorDashboard from './CuratorDashboard';
 import CuratorLessonsPanel from './CuratorLessonsPanel';
 import CuratorStudentsPanel from './CuratorStudentsPanel';
@@ -29,7 +33,8 @@ const SECTIONS: { id: CuratorSection; label: string }[] = [
 async function reloadData(): Promise<CuratorCabinetData> {
   const res = await fetch('/api/cabinet/curator/data', { cache: 'no-store' });
   if (!res.ok) throw new Error('Не удалось обновить данные');
-  return res.json() as Promise<CuratorCabinetData>;
+  const json = (await res.json()) as CuratorCabinetData;
+  return normalizeCuratorCabinetData(json);
 }
 
 export default function CuratorShell({
@@ -38,7 +43,7 @@ export default function CuratorShell({
   initialLessonId,
   showCabinetPick,
 }: Props) {
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => normalizeCuratorCabinetData(initialData));
   const [section, setSection] = useState<CuratorSection>(initialSection ?? 'dashboard');
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
   const [busy, setBusy] = useState(false);

@@ -1,27 +1,35 @@
 import type { ClientStateSnapshot, ClientUiPhase } from './client-state';
-import { getClientProductMode } from './client-state';
 import { BOT_COPY_KEYS, getBotCopy } from '@/lib/bot/bot-copy';
 
 export const CLIENT_LABELS = {
   onlineCourse: '🎓 Онлайн-курс',
+  /** @deprecated ind/group UI off */
   lessonsWithTeacher: '👨‍🏫 Занятия с преподавателем',
   contactAdmin: '💬 Связаться с администратором',
-  /** @deprecated используйте lessonsWithTeacher */
+  /** @deprecated */
   buy: '👨‍🏫 Занятия с преподавателем',
+  /** @deprecated */
   leaveRequest: '📝 Оставить заявку на занятия',
+  /** @deprecated */
   myLessons: '📚 Мои занятия',
   myCourse: '🎓 Мой курс',
   homework: '📝 Домашние задания',
+  /** @deprecated */
   contactTeacher: '💬 Связаться с преподавателем',
   contactCurator: '📨 Мои обращения',
+  /** @deprecated */
   contact: '💬 Связь',
   payments: '💳 Финансы',
   misc: '🆘 Получить помощь',
+  /** @deprecated hub с занятиями */
   buyEducation: '🎓 Купить обучение',
+  /** @deprecated */
   schedule: '🗓 Расписание',
+  /** @deprecated */
   myPackage: '📦 Мой пакет',
   purchaseHistory: '🧾 Мои оплаты',
   myApplications: '📨 Мои заявки',
+  buyCourse: '🎓 Купить курс',
 } as const;
 
 export type ClientReplyLabel = (typeof CLIENT_LABELS)[keyof typeof CLIENT_LABELS];
@@ -57,41 +65,23 @@ export function buildClientReplyKeyboard(state: ClientStateSnapshot): ClientRepl
     case 'guest':
       rows.push(
         [{ text: CLIENT_LABELS.onlineCourse }],
-        [{ text: CLIENT_LABELS.lessonsWithTeacher }],
         [{ text: CLIENT_LABELS.contactAdmin }],
       );
       break;
     case 'client_idle':
       rows.push(
-        [{ text: CLIENT_LABELS.myLessons }, { text: CLIENT_LABELS.buyEducation }],
+        [{ text: CLIENT_LABELS.onlineCourse }, { text: CLIENT_LABELS.buyCourse }],
         [{ text: CLIENT_LABELS.purchaseHistory }, { text: CLIENT_LABELS.myApplications }],
         [{ text: CLIENT_LABELS.contactAdmin }],
       );
       break;
-    case 'client_active': {
-      const mode = getClientProductMode(state);
-      if (mode === 'both') {
-        rows.push(
-          [{ text: CLIENT_LABELS.schedule }, { text: CLIENT_LABELS.myCourse }],
-          [{ text: CLIENT_LABELS.contact }, { text: CLIENT_LABELS.payments }],
-          [{ text: CLIENT_LABELS.misc }],
-        );
-      } else if (mode === 'course') {
-        rows.push(
-          [{ text: CLIENT_LABELS.myCourse }, { text: CLIENT_LABELS.homework }],
-          [{ text: CLIENT_LABELS.contactCurator }, { text: CLIENT_LABELS.payments }],
-          [{ text: CLIENT_LABELS.misc }],
-        );
-      } else {
-        // lessons
-        rows.push(
-          [{ text: CLIENT_LABELS.myLessons }, { text: CLIENT_LABELS.homework }],
-          [{ text: CLIENT_LABELS.contactTeacher }, { text: CLIENT_LABELS.payments }],
-          [{ text: CLIENT_LABELS.misc }],
-        );
-      }
+    case 'client_active':
+      rows.push(
+        [{ text: CLIENT_LABELS.myCourse }, { text: CLIENT_LABELS.homework }],
+        [{ text: CLIENT_LABELS.contactCurator }, { text: CLIENT_LABELS.payments }],
+        [{ text: CLIENT_LABELS.misc }],
+      );
       break;
-    }
   }
 
   return { keyboard: rows, resize_keyboard: true };

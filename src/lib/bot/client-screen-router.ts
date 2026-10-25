@@ -10,9 +10,9 @@ import {
   showClientHomeworkMenu,
 } from './client-course-homework-hub';
 import { showClientMyCourseHub, showClientCoursePicker } from './client-course-hub';
-import { showClientScheduleMenu, showClientPackageMenu, showClientLessonsMenu } from './client-lessons-flow';
 import { resolveClientState } from './client-state';
 import { loadClientHubPayload, type ClientHubState } from './client-nav';
+import { CLIENT_LESSONS_BOT_UI_ENABLED } from './client-lessons-ui-flag';
 
 function splitHubScreenId(screenId: string): { base: string; param?: string } {
   if (screenId.startsWith('course-hw-hub:')) {
@@ -40,12 +40,8 @@ export async function renderClientScreenById(
   memberRole: BotRole | undefined,
   mode: ClientScreenNavigateMode,
   extras?: {
-    showBuyEducation?: (mode: ClientScreenNavigateMode) => Promise<void>;
     showOnlineCourse?: (mode: ClientScreenNavigateMode) => Promise<void>;
-    showLessonsHub?: (mode: ClientScreenNavigateMode) => Promise<void>;
-    showLessonFormat?: (format: 'individual' | 'group', mode: ClientScreenNavigateMode) => Promise<void>;
     showBuyCourseOffers?: (mode: ClientScreenNavigateMode) => Promise<void>;
-    showBuyLessons?: (mode: ClientScreenNavigateMode) => Promise<void>;
   },
 ): Promise<void> {
   const editAt = mode.kind === 'edit' ? mode.hub : undefined;
@@ -94,15 +90,6 @@ export async function renderClientScreenById(
         param || activeCourseSlug,
       );
       return;
-    case 'course-hw-hist-empty':
-      await showClientCourseHomeworkHistory(
-        admin,
-        telegramId,
-        chatId,
-        deliver,
-        param || activeCourseSlug,
-      );
-      return;
     case 'course-hw-lesson':
       if (param) {
         await showClientCourseHomeworkLessonStatus(admin, telegramId, chatId, param, deliver);
@@ -125,20 +112,31 @@ export async function renderClientScreenById(
       return;
     case 'schedule-list':
     case 'schedule-empty':
-      await showClientScheduleMenu(admin, telegramId, chatId, deliver);
-      return;
     case 'package-list':
     case 'package-empty':
-      await showClientPackageMenu(admin, telegramId, chatId, deliver);
-      return;
     case 'lessons-menu':
-      await showClientLessonsMenu(admin, telegramId, chatId, state, deliver);
-      return;
     case 'buy-education':
-      await extras?.showBuyEducation?.(mode);
-      return;
     case 'buy-lessons':
-      await extras?.showBuyLessons?.(mode);
+    case 'lessons':
+    case 'lesson-individual':
+    case 'lesson-group':
+      if (CLIENT_LESSONS_BOT_UI_ENABLED) {
+        const { showClientScheduleMenu, showClientPackageMenu, showClientLessonsMenu } =
+          await import('./client-lessons-flow');
+        if (base === 'schedule-list' || base === 'schedule-empty') {
+          await showClientScheduleMenu(admin, telegramId, chatId, deliver);
+          return;
+        }
+        if (base === 'package-list' || base === 'package-empty') {
+          await showClientPackageMenu(admin, telegramId, chatId, deliver);
+          return;
+        }
+        if (base === 'lessons-menu') {
+          await showClientLessonsMenu(admin, telegramId, chatId, state, deliver);
+          return;
+        }
+      }
+      await extras?.showBuyCourseOffers?.(mode);
       return;
     case 'buy-course-offers':
       await extras?.showBuyCourseOffers?.(mode);
@@ -146,15 +144,6 @@ export async function renderClientScreenById(
     case 'course':
     case 'guest-course-detail':
       await extras?.showOnlineCourse?.(mode);
-      return;
-    case 'lessons':
-      await extras?.showLessonsHub?.(mode);
-      return;
-    case 'lesson-individual':
-      await extras?.showLessonFormat?.('individual', mode);
-      return;
-    case 'lesson-group':
-      await extras?.showLessonFormat?.('group', mode);
       return;
     case 'home':
     default:

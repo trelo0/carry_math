@@ -130,8 +130,6 @@ export type AdminPayload = {
   leadTrialTeacherName?: string;
   leadTrialStartsAt?: string;
   leadTrialRescheduleLessonId?: number;
-  leadTrialOrderFormat?: 'individual' | 'group';
-  leadTrialGroupId?: number;
   leadFollowupLeadId?: string;
   leadFollowupNav?: string;
   courseApplyStep?: 'name' | 'wishes' | 'contact' | 'confirm';
@@ -197,7 +195,6 @@ export type ConversationStep =
   | 'admin:leads:search'
   | 'admin:lead:trial:datetime'
   | 'admin:lead:trial:confirm'
-  | 'admin:lead:trial:order'
   | 'admin:lead:followup:date'
   | 'admin:hw:search'
   | 'admin:hw:revision'

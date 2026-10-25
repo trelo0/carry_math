@@ -1,7 +1,12 @@
 'use client';
 
 import type { CuratorCabinetData } from '@/lib/curator/cabinet-data';
-import { formatDateTime, sessionLabel, sessionPillClass } from './curator-utils';
+import {
+  curatorLessonDisplayNo,
+  formatDateTime,
+  sessionLabel,
+  sessionPillClass,
+} from './curator-utils';
 
 type Props = {
   data: CuratorCabinetData;
@@ -63,7 +68,7 @@ export default function CuratorDashboard({
               {dashboard.liveLessons.map((lesson) => (
                 <li key={lesson.sanityId}>
                   <div>
-                    <strong>№{lesson.lessonNumber} · {lesson.title}</strong>
+                    <strong>№{curatorLessonDisplayNo(lesson)} · {lesson.title}</strong>
                     <p className="curator-muted">{lesson.moduleTitle}</p>
                   </div>
                   <button type="button" className="curator-btn curator-btn-accent" onClick={() => onOpenLesson(lesson.sanityId)}>
@@ -80,7 +85,7 @@ export default function CuratorDashboard({
           {dashboard.lastLesson ? (
             <>
               <p className="curator-lesson-name">
-                №{dashboard.lastLesson.lessonNumber} · {dashboard.lastLesson.title}
+                №{curatorLessonDisplayNo(dashboard.lastLesson)} · {dashboard.lastLesson.title}
               </p>
               <p className="curator-muted">{dashboard.lastLesson.moduleTitle}</p>
               <p>{formatDateTime(dashboard.lastLesson.endedAt ?? dashboard.lastLesson.scheduledAt)}</p>
@@ -105,7 +110,7 @@ export default function CuratorDashboard({
           {dashboard.nextLesson ? (
             <>
               <p className="curator-lesson-name">
-                №{dashboard.nextLesson.lessonNumber} · {dashboard.nextLesson.title}
+                №{curatorLessonDisplayNo(dashboard.nextLesson)} · {dashboard.nextLesson.title}
               </p>
               <p className="curator-muted">{dashboard.nextLesson.moduleTitle}</p>
               <p>{formatDateTime(dashboard.nextLesson.scheduledAt)}</p>
