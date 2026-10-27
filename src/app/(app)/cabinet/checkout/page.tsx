@@ -120,5 +120,16 @@ export default async function CheckoutPage({
     );
   }
 
-  return <CheckoutContentComponent offer={offer} courseSlug={courseSlug || offer.slug} purchaseScenarios={purchaseScenarios} />;
+  const slug = courseSlug || offer.slug;
+  const offerCatalog = cabinet.courseCatalogs.find((c) => c.slug === slug);
+  const offerEnrollment = cabinet.courseEnrollments.find((e) => e.courseId === offerCatalog?.id);
+
+  return (
+    <CheckoutContentComponent
+      offer={offer}
+      courseSlug={slug}
+      purchaseScenarios={purchaseScenarios}
+      savedPurchaseScenario={offerEnrollment?.purchaseScenario ?? null}
+    />
+  );
 }

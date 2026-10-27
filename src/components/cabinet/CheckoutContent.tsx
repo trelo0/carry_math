@@ -5,6 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PurchaseScenarioModal from './PurchaseScenarioModal';
 import CheckoutPayButton from './CheckoutPayButton';
+import {
+  hasPurchaseScenarioCards,
+  purchaseScenarioLabel,
+  type PurchaseScenario,
+} from '@/lib/course-purchase-scenario';
 import type { CoursePaymentOffer, PurchaseScenarios } from '@/lib/studio/courseContent';
 
 function pluralLessons(n: number): string {
@@ -19,12 +24,24 @@ interface CheckoutContentProps {
   offer: CoursePaymentOffer;
   courseSlug: string;
   purchaseScenarios: PurchaseScenarios | null;
+  savedPurchaseScenario?: PurchaseScenario | null;
 }
 
-export default function CheckoutContent({ offer, courseSlug, purchaseScenarios }: CheckoutContentProps) {
+export default function CheckoutContent({
+  offer,
+  courseSlug,
+  purchaseScenarios,
+  savedPurchaseScenario = null,
+}: CheckoutContentProps) {
   const router = useRouter();
   const [showModal, setShowModal] = useState(true);
-  const payMode = purchaseScenarios ? 'first' : 'direct';
+  const isFirstPurchase = !savedPurchaseScenario;
+  const payMode = isFirstPurchase
+    ? hasPurchaseScenarioCards(purchaseScenarios)
+      ? 'first'
+      : 'direct'
+    : 'extend';
+  const savedScenarioLabel = purchaseScenarioLabel(savedPurchaseScenario);
 
   const handlePayClick = () => {
     setShowModal(true);
@@ -33,11 +50,12 @@ export default function CheckoutContent({ offer, courseSlug, purchaseScenarios }
   if (showModal) {
     return (
       <PurchaseScenarioModal
-        scenarios={purchaseScenarios}
+        scenarios={payMode === 'first' ? purchaseScenarios : null}
         mode={payMode}
         priceByn={offer.priceByn}
         courseSlug={courseSlug}
         grantedLessons={offer.grantedLessons}
+        savedScenarioLabel={savedScenarioLabel}
         onClose={() => {
           setShowModal(false);
           router.push('/cabinet?section=payments');

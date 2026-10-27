@@ -3,9 +3,10 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { ensureMember } from '@/lib/bot/roles';
+import { notifyAdminsOfCourseCabinetOpen } from '@/lib/bot/admin/course-cabinet-notify';
 
 /** Открывает карту курса в кабинете (без зачисления и без выдачи доступа). */
-export async function POST() {
+export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) {
@@ -33,6 +34,23 @@ export async function POST() {
   const telegramId = link.telegram_id as number;
   const now = new Date().toISOString();
 
+  let courseId: number | null = null;
+  try {
+    const body = (await request.json()) as { courseId?: unknown };
+    if (typeof body.courseId === 'number' && Number.isFinite(body.courseId)) {
+      courseId = body.courseId;
+    }
+  } catch {
+    // пустое тело — ок
+  }
+
+  const { data: existingProfile } = await admin
+    .from('student_profiles')
+    .select('course_map_viewed_at')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  const firstCourseOpen = !existingProfile?.course_map_viewed_at;
+
   const { error } = await admin.from('student_profiles').upsert(
     {
       telegram_id: telegramId,
@@ -54,6 +72,15 @@ export async function POST() {
   }
 
   await ensureMember(admin, telegramId, {}, 'student');
+
+  if (firstCourseOpen) {
+    try {
+      await notifyAdminsOfCourseCabinetOpen(admin, telegramId, courseId);
+    } catch (err) {
+      console.error('[course/enroll] admin notify failed:', err);
+    }
+  }
+
   revalidatePath('/cabinet');
   return NextResponse.json({ ok: true });
 }

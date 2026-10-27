@@ -2,21 +2,8 @@
 
 import { useState } from 'react';
 import ConsentCheckbox from '@/components/forms/ConsentCheckbox';
-
-type Scenario = 'start_from_beginning' | 'join_current';
-
-type ScenarioCard = {
-  title: string;
-  description: string;
-  benefits: string[];
-  buttonLabel: string;
-  subtitle?: string;
-};
-
-type PurchaseScenarios = {
-  startFromBeginning: ScenarioCard;
-  joinCurrent: ScenarioCard;
-};
+import type { PurchaseScenario } from '@/lib/course-purchase-scenario';
+import type { PurchaseScenarios } from '@/lib/studio/courseContent';
 
 interface PurchaseScenarioModalProps {
   scenarios: PurchaseScenarios | null;
@@ -28,6 +15,15 @@ interface PurchaseScenarioModalProps {
   savedScenarioLabel?: string | null;
 }
 
+function initialSelectedScenario(scenarios: PurchaseScenarios | null): PurchaseScenario | null {
+  if (!scenarios) return null;
+  const hasStart = Boolean(scenarios.startFromBeginning);
+  const hasJoin = Boolean(scenarios.joinCurrent);
+  if (hasStart && !hasJoin) return 'start_from_beginning';
+  if (hasJoin && !hasStart) return 'join_current';
+  return null;
+}
+
 export default function PurchaseScenarioModal({
   scenarios,
   priceByn,
@@ -37,7 +33,9 @@ export default function PurchaseScenarioModal({
   grantedLessons = 8,
   savedScenarioLabel = null,
 }: PurchaseScenarioModalProps) {
-  const [selectedScenario, setSelectedScenario] = useState<Scenario | null>(null);
+  const [selectedScenario, setSelectedScenario] = useState<PurchaseScenario | null>(() =>
+    initialSelectedScenario(scenarios),
+  );
   const [consent, setConsent] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +43,10 @@ export default function PurchaseScenarioModal({
   const isExtend = mode === 'extend';
   const isDirect = mode === 'direct';
   if (!isExtend && !isDirect && !scenarios) return null;
+
+  const showStart = Boolean(scenarios?.startFromBeginning);
+  const showJoin = Boolean(scenarios?.joinCurrent);
+  const twoCards = showStart && showJoin;
 
   const handlePayClick = async () => {
     const scenarioToSend = isExtend || isDirect ? undefined : selectedScenario;
@@ -94,9 +96,21 @@ export default function PurchaseScenarioModal({
     }
   };
 
-  const handleScenarioSelect = (scenario: Scenario) => {
+  const handleScenarioSelect = (scenario: PurchaseScenario) => {
     setSelectedScenario(scenario);
     setError(null);
+  };
+
+  const payButtonLabel = (): string => {
+    if (isProcessing) return 'Создание платежа...';
+    if (isExtend || isDirect) return `Оплатить · ${grantedLessons} занятий`;
+    if (selectedScenario === 'start_from_beginning' && scenarios?.startFromBeginning) {
+      return scenarios.startFromBeginning.buttonLabel;
+    }
+    if (selectedScenario === 'join_current' && scenarios?.joinCurrent) {
+      return scenarios.joinCurrent.buttonLabel;
+    }
+    return twoCards ? 'Выберите формат обучения' : 'Подтвердить и оплатить';
   };
 
   return (
@@ -122,67 +136,71 @@ export default function PurchaseScenarioModal({
               }.`
             : isDirect
               ? `Пакет из ${grantedLessons} занятий. Оплата на защищённой странице bePaid.`
-              : 'Два варианта прохождения курса. Выберите подходящий для вас.'}
+              : twoCards
+                ? 'Два варианта прохождения курса. Выберите подходящий для вас.'
+                : 'Подтвердите формат обучения перед оплатой.'}
         </p>
 
         {!isExtend && !isDirect && scenarios ? (
-        <div className="scenario-cards">
-          {/* Card 1: Start from beginning */}
-          <div
-            className={`scenario-card ${selectedScenario === 'start_from_beginning' ? 'selected' : ''}`}
-            onClick={() => handleScenarioSelect('start_from_beginning')}
-          >
-            <h3 className="scenario-card-title">{scenarios.startFromBeginning.title}</h3>
-            <p className="scenario-card-description">
-              {scenarios.startFromBeginning.description}
-            </p>
-            {scenarios.startFromBeginning.benefits.length > 0 && (
-              <ul className="scenario-card-benefits">
-                {scenarios.startFromBeginning.benefits.map((benefit, index) => (
-                  <li key={index}>{benefit}</li>
-                ))}
-              </ul>
-            )}
-            {scenarios.startFromBeginning.subtitle && (
-              <p className="scenario-card-subtitle">{scenarios.startFromBeginning.subtitle}</p>
-            )}
-          </div>
+          <div className="scenario-cards">
+            {showStart && scenarios.startFromBeginning ? (
+              <div
+                className={`scenario-card ${selectedScenario === 'start_from_beginning' ? 'selected' : ''}`}
+                onClick={() => handleScenarioSelect('start_from_beginning')}
+              >
+                <h3 className="scenario-card-title">{scenarios.startFromBeginning.title}</h3>
+                <p className="scenario-card-description">{scenarios.startFromBeginning.description}</p>
+                {scenarios.startFromBeginning.benefits.length > 0 && (
+                  <ul className="scenario-card-benefits">
+                    {scenarios.startFromBeginning.benefits.map((benefit, index) => (
+                      <li key={index}>{benefit}</li>
+                    ))}
+                  </ul>
+                )}
+                {scenarios.startFromBeginning.subtitle && (
+                  <p className="scenario-card-subtitle">{scenarios.startFromBeginning.subtitle}</p>
+                )}
+              </div>
+            ) : null}
 
-          {/* Card 2: Join current */}
-          <div
-            className={`scenario-card ${selectedScenario === 'join_current' ? 'selected' : ''}`}
-            onClick={() => handleScenarioSelect('join_current')}
-          >
-            <h3 className="scenario-card-title">{scenarios.joinCurrent.title}</h3>
-            <p className="scenario-card-description">{scenarios.joinCurrent.description}</p>
-            {scenarios.joinCurrent.benefits.length > 0 && (
-              <ul className="scenario-card-benefits">
-                {scenarios.joinCurrent.benefits.map((benefit, index) => (
-                  <li key={index}>{benefit}</li>
-                ))}
-              </ul>
-            )}
-            {scenarios.joinCurrent.subtitle && (
-              <p className="scenario-card-subtitle">{scenarios.joinCurrent.subtitle}</p>
-            )}
+            {showJoin && scenarios.joinCurrent ? (
+              <div
+                className={`scenario-card ${selectedScenario === 'join_current' ? 'selected' : ''}`}
+                onClick={() => handleScenarioSelect('join_current')}
+              >
+                <h3 className="scenario-card-title">{scenarios.joinCurrent.title}</h3>
+                <p className="scenario-card-description">{scenarios.joinCurrent.description}</p>
+                {scenarios.joinCurrent.benefits.length > 0 && (
+                  <ul className="scenario-card-benefits">
+                    {scenarios.joinCurrent.benefits.map((benefit, index) => (
+                      <li key={index}>{benefit}</li>
+                    ))}
+                  </ul>
+                )}
+                {scenarios.joinCurrent.subtitle && (
+                  <p className="scenario-card-subtitle">{scenarios.joinCurrent.subtitle}</p>
+                )}
+              </div>
+            ) : null}
           </div>
-        </div>
         ) : null}
 
         <div className="pscenario-price">
           <strong>{priceByn} BYN</strong>
-          <span>{isDirect || isExtend ? 'к оплате' : 'одинаковая цена для обоих форматов'}</span>
+          <span>
+            {isDirect || isExtend
+              ? 'к оплате'
+              : twoCards
+                ? 'одинаковая цена для обоих форматов'
+                : 'к оплате'}
+          </span>
         </div>
 
         <div className="pscenario-consent">
           <ConsentCheckbox id="purchase-scenario-consent" checked={consent} onChange={setConsent} />
         </div>
 
-        {error && (
-          <div className="pscenario-error">
-            {error}
-          </div>
-        )}
+        {error && <div className="pscenario-error">{error}</div>}
 
         <div className="pscenario-actions">
           {(isExtend || isDirect || selectedScenario) && consent ? (
@@ -192,13 +210,7 @@ export default function PurchaseScenarioModal({
               onClick={handlePayClick}
               disabled={isProcessing}
             >
-              {isProcessing
-                ? 'Создание платежа...'
-                : isExtend || isDirect
-                  ? `Оплатить · ${grantedLessons} занятий`
-                  : selectedScenario === 'start_from_beginning'
-                    ? scenarios!.startFromBeginning.buttonLabel
-                    : scenarios!.joinCurrent.buttonLabel}
+              {payButtonLabel()}
             </button>
           ) : (
             <button type="button" className="pscenario-button primary" disabled>

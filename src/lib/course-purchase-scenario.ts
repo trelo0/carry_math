@@ -1,6 +1,22 @@
 import { courseLessonPackageMatchesCourse } from '@/lib/bot/education/course-access';
+import type { PurchaseScenarios } from '@/lib/studio/courseContent';
 
 export type PurchaseScenario = 'start_from_beginning' | 'join_current';
+
+export function hasPurchaseScenarioCards(scenarios: PurchaseScenarios | null | undefined): boolean {
+  return Boolean(scenarios?.startFromBeginning || scenarios?.joinCurrent);
+}
+
+/** Единственный настроенный сценарий (иначе null — нужен выбор или direct). */
+export function solePurchaseScenario(
+  scenarios: PurchaseScenarios | null | undefined,
+): PurchaseScenario | null {
+  const hasStart = Boolean(scenarios?.startFromBeginning);
+  const hasJoin = Boolean(scenarios?.joinCurrent);
+  if (hasStart && !hasJoin) return 'start_from_beginning';
+  if (hasJoin && !hasStart) return 'join_current';
+  return null;
+}
 
 export function purchaseScenarioLabel(scenario: PurchaseScenario | null | undefined): string | null {
   if (scenario === 'start_from_beginning') return 'С начала курса';

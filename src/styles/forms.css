@@ -1420,6 +1420,10 @@
   color: var(--text-secondary);
 }
 
+.webinar-popup-sub--course {
+  margin-top: 12px;
+}
+
 .webinar-popup-options {
   display: flex;
   flex-direction: column;

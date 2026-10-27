@@ -54,7 +54,7 @@ export default function WebinarSignupPanel({
           ) : (
             <>
               {notice ? <p className="modal-notice-note">{notice}</p> : null}
-              <p className="webinar-popup-sub">
+              <p className="webinar-popup-sub webinar-popup-sub--course">
                 Оставьте заявку через Telegram — мы свяжемся с вами для записи на курс.
               </p>
             </>

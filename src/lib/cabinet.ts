@@ -340,15 +340,6 @@ export function hadAccess(data: CabinetData, product: CabinetAccessProduct): boo
   return false;
 }
 
-export function hadAnyLessonsProduct(data: CabinetData): boolean {
-  if (data.accessHistory.includes('individual') || data.accessHistory.includes('group')) return true;
-  if (data.accesses.some((a) => a.product === 'individual' || a.product === 'group')) return true;
-  if (data.packages.some((p) => (p.product === 'individual' || p.product === 'group') && p.total > 0)) {
-    return true;
-  }
-  return data.hasOrdinaryStudentTrack;
-}
-
 /** Оплата курса: есть пакет занятий course (строка в lesson_packages). */
 export function hasCoursePayment(data: Pick<CabinetData, 'accesses' | 'packages'>): boolean {
   return data.packages.some((p) => p.product === 'course' && p.total > 0);
@@ -460,14 +451,9 @@ export function hasStartedCourseCabinetTrack(
   return data.courseMapViewed;
 }
 
-/**
- * Р­РєСЂР°РЅ В«РєР°Р±РёРЅРµС‚ С‚РѕР»СЊРєРѕ РґР»СЏ РєСѓСЂСЃР°В»: ind/group Р±РµР· РѕРЅР»Р°Р№РЅ-РєСѓСЂСЃР°
- * РёР»Рё РЅРµС‚ РґР°РЅРЅС‹С… РєР°С‚Р°Р»РѕРіР° вЂ” РЅРµ РїРѕРєР°Р·С‹РІР°РµРј РєР°СЂС‚Сѓ/РїСЂРµРІСЊСЋ.
- */
+/** Нет опубликованного курса — заглушка вместо превью/карты. */
 export function shouldShowCourseCabinetGate(data: CabinetData): boolean {
-  if (!hasCourseCatalogOffer(data)) return true;
-  if (hasStartedCourseCabinetTrack(data)) return false;
-  return hadAnyLessonsProduct(data);
+  return !hasCourseCatalogOffer(data);
 }
 
 const ACTIVE = 'active';

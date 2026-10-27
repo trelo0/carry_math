@@ -105,9 +105,10 @@ export type PurchaseScenarioCard = {
   subtitle?: string;
 };
 
+/** Одна или обе карточки; пусто — checkout без выбора (direct). */
 export type PurchaseScenarios = {
-  startFromBeginning: PurchaseScenarioCard;
-  joinCurrent: PurchaseScenarioCard;
+  startFromBeginning?: PurchaseScenarioCard;
+  joinCurrent?: PurchaseScenarioCard;
 };
 
 export type DistrictCourseContent = {
@@ -487,12 +488,51 @@ function normalizePurchaseScenarioCard(raw: Record<string, unknown> | null): Pur
   };
 }
 
+type PurchaseScenarioMode =
+  | 'none'
+  | 'both'
+  | 'start_from_beginning'
+  | 'join_current';
+
+function inferPurchaseScenarioModeFromCards(
+  startFromBeginning: PurchaseScenarioCard | null,
+  joinCurrent: PurchaseScenarioCard | null,
+): PurchaseScenarioMode {
+  if (startFromBeginning && joinCurrent) return 'both';
+  if (startFromBeginning) return 'start_from_beginning';
+  if (joinCurrent) return 'join_current';
+  return 'none';
+}
+
 function normalizePurchaseScenarios(raw: Record<string, unknown> | null): PurchaseScenarios | null {
   if (!raw) return null;
-  const startFromBeginning = normalizePurchaseScenarioCard(raw.startFromBeginning as Record<string, unknown> | null);
+
+  const startFromBeginning = normalizePurchaseScenarioCard(
+    raw.startFromBeginning as Record<string, unknown> | null,
+  );
   const joinCurrent = normalizePurchaseScenarioCard(raw.joinCurrent as Record<string, unknown> | null);
-  if (!startFromBeginning || !joinCurrent) return null;
-  return { startFromBeginning, joinCurrent };
+
+  const modeRaw = raw.mode as string | undefined;
+  const mode: PurchaseScenarioMode =
+    modeRaw === 'none' ||
+    modeRaw === 'both' ||
+    modeRaw === 'start_from_beginning' ||
+    modeRaw === 'join_current'
+      ? modeRaw
+      : inferPurchaseScenarioModeFromCards(startFromBeginning, joinCurrent);
+
+  if (mode === 'none') return null;
+
+  const out: PurchaseScenarios = {};
+  if ((mode === 'both' || mode === 'start_from_beginning') && startFromBeginning) {
+    out.startFromBeginning = startFromBeginning;
+  }
+  if ((mode === 'both' || mode === 'join_current') && joinCurrent) {
+    out.joinCurrent = joinCurrent;
+  }
+
+  if (!out.startFromBeginning && !out.joinCurrent) return null;
+  return out;
 }
 
 function normalizeCourse(raw: Record<string, unknown> | null): DistrictCourseContent | null {

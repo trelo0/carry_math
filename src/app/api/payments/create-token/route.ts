@@ -8,6 +8,10 @@ import {
   PurchaseFulfillError,
   resolvePurchaseOffer,
 } from '@/lib/bot/purchase-fulfillment';
+import {
+  hasPurchaseScenarioCards,
+  solePurchaseScenario,
+} from '@/lib/course-purchase-scenario';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
 
@@ -101,8 +105,11 @@ export async function POST(request: Request) {
     const { resolveCourseIdForContent } = await import('@/lib/bot/education/course-record');
     const courseId = await resolveCourseIdForContent(admin, courseContent);
 
-    let effectiveScenario = scenario;
-    if (!effectiveScenario && courseId) {
+    const purchaseScenarios = courseContent.purchaseScenarios;
+    const scenarioCards = hasPurchaseScenarioCards(purchaseScenarios);
+
+    let enrollmentHasScenario = false;
+    if (courseId) {
       const { data: enrollment } = await admin
         .from('course_enrollments')
         .select('purchase_scenario')
@@ -110,12 +117,33 @@ export async function POST(request: Request) {
         .eq('course_id', courseId)
         .maybeSingle();
       const saved = enrollment?.purchase_scenario;
-      if (saved === 'start_from_beginning' || saved === 'join_current') {
-        effectiveScenario = saved;
-      }
+      enrollmentHasScenario = saved === 'start_from_beginning' || saved === 'join_current';
     }
 
-    if (!effectiveScenario) {
+    let effectiveScenario: 'start_from_beginning' | 'join_current' | null = scenario ?? null;
+
+    if (enrollmentHasScenario) {
+      effectiveScenario = null;
+    } else if (scenarioCards) {
+      if (!effectiveScenario) {
+        effectiveScenario = solePurchaseScenario(purchaseScenarios);
+      }
+      if (!effectiveScenario) {
+        return NextResponse.json(
+          { error: 'Выберите формат обучения (scenario required).' },
+          { status: 400 },
+        );
+      }
+      if (
+        effectiveScenario === 'start_from_beginning' &&
+        !purchaseScenarios?.startFromBeginning
+      ) {
+        return NextResponse.json({ error: 'Invalid scenario for course' }, { status: 400 });
+      }
+      if (effectiveScenario === 'join_current' && !purchaseScenarios?.joinCurrent) {
+        return NextResponse.json({ error: 'Invalid scenario for course' }, { status: 400 });
+      }
+    } else {
       effectiveScenario = 'start_from_beginning';
     }
 
@@ -196,11 +224,15 @@ export async function POST(request: Request) {
             value: String(telegramId),
             visible: false,
           },
-          custom_field_2: {
-            label: 'Scenario',
-            value: effectiveScenario,
-            visible: false,
-          },
+          ...(effectiveScenario
+            ? {
+                custom_field_2: {
+                  label: 'Scenario',
+                  value: effectiveScenario,
+                  visible: false,
+                },
+              }
+            : {}),
         },
       },
     };

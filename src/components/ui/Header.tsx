@@ -14,7 +14,7 @@ type NavigationItem = {
 
 const SECTION_IDS = ["hero", "teachers", "formats", "signup", "process"] as const;
 const INDIVIDUAL_SECTION_IDS = ["hero", "teachers", "principles", "formats", "process", "signup"] as const;
-const MAIN_SECTION_IDS = ["hero", "teacher", "program", "reviews", "signup", "faq", "paths"] as const;
+const MAIN_SECTION_IDS = ["hero", "teacher", "program", "reviews", "signup", "faq"] as const;
 
 const NAV_ITEMS: NavigationItem[] = [
   { label: "Главная", href: "/", home: true },
@@ -40,7 +40,6 @@ const MAIN_NAV_ITEMS: NavigationItem[] = [
   { label: "Отзывы", href: "#reviews" },
   { label: "Инициация", href: "#signup" },
   { label: "FAQ", href: "#faq" },
-  { label: "Другой путь", href: "/individual" },
 ];
 
 export function Header({
@@ -211,7 +210,7 @@ export function Header({
             Кабинет курса
           </Link>
         ) : (
-          <button type="button" className="header-cta btn btn-gold" onClick={() => openAuth()}>
+          <button type="button" className="header-cta btn btn-gold" onClick={() => openAuth('/cabinet')}>
             Войти на курс
           </button>
         )
@@ -280,7 +279,7 @@ export function Header({
               className="btn btn-gold mobile-menu-cta"
               onClick={() => {
                 setMenuOpen(false);
-                openAuth();
+                openAuth('/cabinet');
               }}
             >
               Войти на курс

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import PurchaseScenarioModal from '@/components/cabinet/PurchaseScenarioModal';
 import CoursePackageRenewConfirm from '@/components/cabinet/CoursePackageRenewConfirm';
 import type { CoursePaymentOffer } from '@/lib/studio/courseContent';
-import type { PurchaseScenario } from '@/lib/course-purchase-scenario';
+import { hasPurchaseScenarioCards, type PurchaseScenario } from '@/lib/course-purchase-scenario';
 
 type CoursePurchaseCtaProps = {
   offer: CoursePaymentOffer;
@@ -31,7 +31,11 @@ export default function CoursePurchaseCta({
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
   const scenarios = offer.purchaseScenarios ?? null;
   const isFirstPurchase = !savedPurchaseScenario;
-  const payMode = isFirstPurchase ? (scenarios ? 'first' : 'direct') : 'extend';
+  const payMode = isFirstPurchase
+    ? hasPurchaseScenarioCards(scenarios)
+      ? 'first'
+      : 'direct'
+    : 'extend';
   const hasActivePackage = packageRemaining > 0;
 
   const openPurchaseFlow = () => {

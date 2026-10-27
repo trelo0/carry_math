@@ -35,7 +35,6 @@ import {
   buildModulesFromCatalogPreviews,
   buildStopsFromCatalogPreviews,
   getCourseCabinetState,
-  hasCourseCatalogOffer,
   hasCoursePayment,
   getCourseCabinetStateForCourse,
   hasCoursePaymentForCourse,
@@ -1731,7 +1730,6 @@ export default function CabinetShell({
   const displayName = profileSaved.name || data.studentName || 'Ученик';
   const days = daysInSystem(data.createdAt);
   const courseCabinetGate = shouldShowCourseCabinetGate(data);
-  const noCourseCatalog = !hasCourseCatalogOffer(data);
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   const botUrl = botUsername ? `https://t.me/${botUsername}` : null;
   const courseChoices = useMemo(() => {
@@ -2450,14 +2448,7 @@ export default function CabinetShell({
 
         <div className="cab-body">
           <main className="cab-content">
-            {section === 'course' && courseCabinetGate && (
-              <CourseCabinetGate
-                courseTitle={courseName}
-                botUrl={botUrl}
-                noCatalog={noCourseCatalog}
-                onOpenPayments={() => setSection('payments')}
-              />
-            )}
+            {section === 'course' && courseCabinetGate && <CourseCabinetGate botUrl={botUrl} />}
 
             {section === 'course' && !courseCabinetGate && courseState === 'preview' && (
               <div className="cab-stack cab-course-screen">

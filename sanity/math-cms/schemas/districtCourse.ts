@@ -1,5 +1,46 @@
 import { defineField, defineType, defineArrayMember } from 'sanity'
 
+const purchaseScenarioCardFields = [
+  defineField({
+    name: 'title',
+    title: 'Заголовок',
+    type: 'string',
+    validation: (Rule) => Rule.required(),
+  }),
+  defineField({
+    name: 'description',
+    title: 'Описание',
+    type: 'text',
+    rows: 3,
+    validation: (Rule) => Rule.required(),
+  }),
+  defineField({
+    name: 'benefits',
+    title: 'Преимущества',
+    description: 'Список преимуществ (обычно 3-4 пункта)',
+    type: 'array',
+    of: [defineArrayMember({ type: 'string' })],
+    validation: (Rule) => Rule.required().min(1),
+  }),
+  defineField({
+    name: 'buttonLabel',
+    title: 'Текст кнопки',
+    type: 'string',
+    validation: (Rule) => Rule.required(),
+  }),
+  defineField({
+    name: 'subtitle',
+    title: 'Подпись',
+    description: 'Дополнительная подпись, поясняющая кому подходит этот формат',
+    type: 'text',
+    rows: 2,
+  }),
+]
+
+function purchaseScenarioMode(parent: { mode?: string } | undefined): string | undefined {
+  return parent?.mode
+}
+
 export default defineType({
   name: 'districtCourse',
   title: 'Настройки курса',
@@ -231,102 +272,71 @@ export default defineType({
       name: 'purchaseScenarios',
       title: 'Сценарии покупки',
       description:
-        'Необязательно. Если заполнить обе карточки — при покупке ученик выбирает формат (как на основном курсе). Пусто — простая оплата bePaid без выбора.',
+        'Режим «Без выбора» — оплата без окна формата (старт с начала по умолчанию). Иначе ученик подтверждает выбранный сценарий при первой покупке.',
       type: 'object',
       group: 'pricing',
       options: { collapsible: false },
+      validation: (Rule) =>
+        Rule.custom((value: { mode?: string; startFromBeginning?: { title?: string }; joinCurrent?: { title?: string } } | undefined) => {
+          const mode = value?.mode ?? 'none'
+          if (mode === 'none') return true
+          if (mode === 'start_from_beginning' && !value?.startFromBeginning?.title) {
+            return 'Заполните карточку «С начала»'
+          }
+          if (mode === 'join_current' && !value?.joinCurrent?.title) {
+            return 'Заполните карточку «С активного модуля»'
+          }
+          if (mode === 'both') {
+            if (!value?.startFromBeginning?.title || !value?.joinCurrent?.title) {
+              return 'Заполните обе карточки для режима «Два сценария»'
+            }
+          }
+          return true
+        }),
       fields: [
         defineField({
+          name: 'mode',
+          title: 'Режим покупки',
+          type: 'string',
+          initialValue: 'none',
+          options: {
+            list: [
+              { title: 'Без выбора (простая оплата)', value: 'none' },
+              { title: 'Два сценария на выбор', value: 'both' },
+              { title: 'Только «с начала»', value: 'start_from_beginning' },
+              { title: 'Только «с активного модуля»', value: 'join_current' },
+            ],
+            layout: 'radio',
+          },
+          validation: (Rule) => Rule.required(),
+        }),
+        defineField({
           name: 'startFromBeginning',
-          title: 'Начать с начала',
+          title: 'Карточка: с начала',
           type: 'object',
-          fields: [
-            defineField({
-              name: 'title',
-              title: 'Заголовок',
-              type: 'string',
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'description',
-              title: 'Описание',
-              type: 'text',
-              rows: 3,
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'benefits',
-              title: 'Преимущества',
-              description: 'Список преимуществ (обычно 3-4 пункта)',
-              type: 'array',
-              of: [
-                defineArrayMember({
-                  type: 'string',
-                }),
-              ],
-              validation: (Rule) => Rule.required().min(1),
-            }),
-            defineField({
-              name: 'buttonLabel',
-              title: 'Текст кнопки',
-              type: 'string',
-              initialValue: 'Начать с начала',
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'subtitle',
-              title: 'Подпись',
-              description: 'Дополнительная подпись, поясняющая кому подходит этот формат',
-              type: 'text',
-              rows: 2,
-            }),
-          ],
+          fields: purchaseScenarioCardFields,
+          hidden: ({ parent }) => {
+            const mode = purchaseScenarioMode(parent)
+            return !mode || mode === 'none' || mode === 'join_current'
+          },
+          options: {
+            collapsible: true,
+            collapsed: false,
+          },
         }),
         defineField({
           name: 'joinCurrent',
-          title: 'Подключиться к курсу',
+          title: 'Карточка: с активного модуля',
           type: 'object',
-          fields: [
-            defineField({
-              name: 'title',
-              title: 'Заголовок',
-              type: 'string',
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'description',
-              title: 'Описание',
-              type: 'text',
-              rows: 3,
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'benefits',
-              title: 'Преимущества',
-              description: 'Список преимуществ (обычно 3-4 пункта)',
-              type: 'array',
-              of: [
-                defineArrayMember({
-                  type: 'string',
-                }),
-              ],
-              validation: (Rule) => Rule.required().min(1),
-            }),
-            defineField({
-              name: 'buttonLabel',
-              title: 'Текст кнопки',
-              type: 'string',
-              initialValue: 'Подключиться к курсу',
-              validation: (Rule) => Rule.required(),
-            }),
-            defineField({
-              name: 'subtitle',
-              title: 'Подпись',
-              description: 'Дополнительная подпись, поясняющая кому подходит этот формат',
-              type: 'text',
-              rows: 2,
-            }),
-          ],
+          fields: purchaseScenarioCardFields,
+          hidden: ({ parent }) => {
+            const mode = purchaseScenarioMode(parent)
+            return !mode || mode === 'none' || mode === 'start_from_beginning'
+          },
+          options: {
+            collapsible: true,
+            collapsed: false,
+          },
         }),
       ],
     }),

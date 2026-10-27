@@ -15,7 +15,6 @@ import {
   sendAdminMessage,
 } from '../admin/core';
 import { CURATOR_HW_STATUS_LABELS, CURATOR_HW_STATUS_SHORT } from './curator-types';
-import { loadCuratorLibrary } from './curator-library';
 import {
   getCuratorHomeworkRecord,
   getCuratorNotificationById,
@@ -284,82 +283,6 @@ function backButton(text: string, callback: string): InlineButton {
 
 function notFoundKeyboard(backText: string, backCallback: string): InlineKeyboard {
   return { inline_keyboard: [[backButton(`⬅️ ${backText}`, backCallback)]] };
-}
-
-// --- Библиотека учебных материалов (§4) ------------------------------------
-
-export async function renderCuratorLibrary(): Promise<{ text: string; keyboard: InlineKeyboard }> {
-  const library = await loadCuratorLibrary();
-  if (library.length === 0) {
-    return {
-      text: '📝 ДОМАШКИ\n\nПока нет опубликованных заданий в программе курса.',
-      keyboard: { inline_keyboard: [[backButton('⬅️ Назад', 'c:menu')]] },
-    };
-  }
-  const text = `📝 ДОМАШКИ\n\n📚 Курс\n\n${library.map((w) => `📂 ${w.title}`).join('\n')}`;
-  return {
-    text,
-    keyboard: {
-      inline_keyboard: [
-        ...library.map((w): InlineButton[] => [{ text: `📂 ${w.title}`, callback_data: `c:libw:${w.id}` }]),
-        [backButton('⬅️ Назад', 'c:menu')],
-      ],
-    },
-  };
-}
-
-async function findLibraryTask(taskId: string) {
-  const library = await loadCuratorLibrary();
-  for (const webinar of library) {
-    const task = webinar.tasks.find((t) => t.id === taskId);
-    if (task) return { webinar, task };
-  }
-  return null;
-}
-
-export async function renderCuratorWebinar(webinarId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
-  const library = await loadCuratorLibrary();
-  const webinar = library.find((w) => w.id === webinarId);
-  if (!webinar) return null;
-  const text = `📂 ${webinar.title}\n\n${webinar.tasks.map((t) => `📄 ${t.title}`).join('\n')}`;
-  return {
-    text,
-    keyboard: {
-      inline_keyboard: [
-        ...webinar.tasks.map((t): InlineButton[] => [{ text: `📄 ${t.title}`, callback_data: `c:libv:${t.id}` }]),
-        [backButton('⬅️ Назад', 'c:lib')],
-      ],
-    },
-  };
-}
-
-export async function renderCuratorLibraryTask(taskId: string): Promise<{
-  text: string;
-  keyboard: InlineKeyboard;
-  webinarId: string;
-} | null> {
-  const hit = await findLibraryTask(taskId);
-  if (!hit) return null;
-  const { webinar, task } = hit;
-  return {
-    webinarId: webinar.id,
-    text: `📄 ${task.title}\n\nУсловие задания:\n\n${task.condition}`,
-    keyboard: {
-      inline_keyboard: [
-        ...(task.fileUrl ? [[{ text: '👀 Открыть файл', url: task.fileUrl }] as InlineButton[]] : []),
-        [backButton('⬅️ Назад', `c:libw:${webinar.id}`)],
-      ],
-    },
-  };
-}
-
-export async function renderCuratorLibraryFile(taskId: string): Promise<{ text: string; keyboard: InlineKeyboard } | null> {
-  const hit = await findLibraryTask(taskId);
-  if (!hit?.task.fileUrl) return null;
-  return {
-    text: `📎 ${hit.task.title}\n\n${hit.task.fileUrl}`,
-    keyboard: { inline_keyboard: [[backButton('⬅️ Назад', `c:libv:${taskId}`)]] },
-  };
 }
 
 // --- Ученики (§5, §6) -------------------------------------------------------
@@ -1072,8 +995,10 @@ async function routeCuratorCallback(
   const cabinetUrl = await curatorCabinetUrl(admin, telegramId);
   const caps = await loadStaffCapabilities(admin, telegramId);
   const combined = resolveStaffBotMode(caps) === 'combined';
+  const legacyLibrary =
+    action === 'lib' || action === 'libw' || action === 'libv' || action === 'libf';
 
-  if (!combined) {
+  if (!combined || legacyLibrary) {
     if (action !== 'noop') {
       await editCuratorScreen(message, 'Эта кнопка устарела. Используйте меню под полем ввода.', {
         inline_keyboard: [[{ text: '🏠 Главная', callback_data: 'c:hub' }]],
@@ -1294,40 +1219,6 @@ async function routeCuratorCallback(
         await beginCuratorReply(admin, telegramId, message.chatId, studentId);
         return true;
       }
-      return true;
-    }
-
-    // Библиотека: корень → вебинар → задание → файл-заглушка.
-    case 'lib': {
-      const screen = await renderCuratorLibrary();
-      await editCuratorScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-    case 'libw': {
-      const screen = id ? await renderCuratorWebinar(id) : null;
-      if (!screen) {
-        await editCuratorScreen(message, 'Вебинар не найден.', notFoundKeyboard('Назад', 'c:lib'));
-        return true;
-      }
-      await editCuratorScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-    case 'libv': {
-      const screen = id ? await renderCuratorLibraryTask(id) : null;
-      if (!screen) {
-        await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
-        return true;
-      }
-      await editCuratorScreen(message, screen.text, screen.keyboard);
-      return true;
-    }
-    case 'libf': {
-      const screen = id ? await renderCuratorLibraryFile(id) : null;
-      if (!screen) {
-        await editCuratorScreen(message, 'Задание не найдено.', notFoundKeyboard('Назад', 'c:lib'));
-        return true;
-      }
-      await editCuratorScreen(message, screen.text, screen.keyboard);
       return true;
     }
 

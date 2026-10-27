@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import AtmosphereLayers from '@/components/ui/AtmosphereLayers';
 
 const MainFaq = dynamic(() => import('@/components/ui/MainFaq'));
-import { useForm } from '@/contexts/FormContext';
+import { useAuth } from '@/contexts/AuthContext';
 import type { MainPageContent } from '@/data/mainPageContent';
 import {
   MAIN_PAGE_DEFAULTS,
@@ -194,7 +194,7 @@ export default function MainPageClient({
   content?: MainPageContent;
 }) {
   const reviewList = reviews && reviews.length > 0 ? reviews : DEFAULT_REVIEWS;
-  const { openForm } = useForm();
+  const { openAuth } = useAuth();
 
   // Контент из Sanity с фолбэками на статические дефолты.
   const D = MAIN_PAGE_DEFAULTS;
@@ -244,10 +244,6 @@ export default function MainPageClient({
     a: pickStr(item?.answer, ''),
   }));
 
-  const paths = content?.paths;
-  const pathsSectionTitle = pickStr(paths?.sectionTitle, D.paths.sectionTitle);
-  const pathColumns = pickArr(paths?.columns, D.paths.columns);
-  const pathsCtaText = pickStr(paths?.ctaText, D.paths.ctaText);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const layoutRef = useRef<HTMLDivElement | null>(null);
   const notesRef = useRef<HTMLDivElement | null>(null);
@@ -432,10 +428,14 @@ export default function MainPageClient({
             <div className="hero-signup-wrap">
               <span className="hero-frame-mark hero-frame-mark--bl" aria-hidden="true" />
               <span className="hero-frame-mark hero-frame-mark--tr" aria-hidden="true" />
-              <a className="hero-signup" href="#signup">
+              <button
+                type="button"
+                className="hero-signup"
+                onClick={() => openAuth('/cabinet')}
+              >
                 {heroButtonText}
                 <span className="hero-signup-arrow" aria-hidden="true">→</span>
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -823,7 +823,7 @@ export default function MainPageClient({
               <button
                 type="button"
                 className="init-cta"
-                onClick={() => openForm({ variant: 'webinar' })}
+                onClick={() => openAuth('/cabinet')}
               >
                 {initButtonText}
               </button>
@@ -841,41 +841,6 @@ export default function MainPageClient({
         </div>
       </section>
 
-      <section className="main-paths" id="paths" data-reveal>
-        <span className="watermark" aria-hidden="true">PATHS</span>
-        <div className="container">
-          <span className="section-kicker section-kicker--center">РАЗВИЛКА // ЕСЛИ КУРС НЕ ПОДХОДИТ</span>
-          <h2 className="main-section-title">{pathsSectionTitle}</h2>
-
-          <div className="paths-grid">
-            {pathColumns.map((col, index) => (
-              <div
-                className={`path-col ${index === 0 ? 'path-col--solo' : 'path-col--team'}`}
-                key={`${col.title}-${index}`}
-              >
-                <h3 className="path-title">{col.title}</h3>
-                <p className="path-sub">{col.sub}</p>
-                <div className="path-card">
-                  <span className="path-card-mark path-card-mark--tl" aria-hidden="true" />
-                  <span className="path-card-mark path-card-mark--br" aria-hidden="true" />
-                  <p className="path-desc">{col.description}</p>
-                  <div className="path-perks-wrap">
-                    <ul className="path-perks">
-                      {(col.perks ?? []).map((perk) => (
-                        <li key={perk}>{perk}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <a className="paths-cta" href="/individual">
-            {pathsCtaText}
-          </a>
-        </div>
-      </section>
     </div>
   );
 }
