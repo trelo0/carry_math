@@ -698,7 +698,7 @@ export async function guardStaffToStudentMessage(
     staffChatId: number;
     studentTelegramId: number;
     text: string;
-    staffRole: 'teacher' | 'curator' | 'check';
+    staffRole: 'teacher' | 'curator' | 'check' | 'admin';
     fallbackName?: string;
   },
 ): Promise<{ blocked: boolean }> {

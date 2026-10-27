@@ -108,6 +108,7 @@ export function isCommsHubAction(data: string): boolean {
   return (
     data.startsWith('ah:hw:') ||
     data.startsWith('ah:msg:') ||
+    data.startsWith('ah:gin:') ||
     /^ah:person:\d+:(hw|msg|history)$/.test(data)
   );
 }
@@ -281,6 +282,27 @@ async function startAdminMessageToStudent(
   studentTelegramId: number,
 ): Promise<void> {
   const label = await staffStudentLabel(admin, studentTelegramId);
+  const { openStaffStudentDmTopic, staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  if (staffDmTopicsEnabled()) {
+    const opened = await openStaffStudentDmTopic(admin, {
+      staffTelegramId: adminTelegramId,
+      studentTelegramId,
+      staffRole: 'admin',
+    });
+    await editAdminMessage(
+      message,
+      opened.ok
+        ? `✉️ ${label}\n\nТема в чате с ботом открыта. Пишите ответ в Topics — ученик получит сообщение в боте.`
+        : `❌ ${opened.error ?? 'Не удалось открыть тему.'}`,
+      {
+        inline_keyboard: [
+          [{ text: '⬅️ Назад', callback_data: `ah:person:${studentTelegramId}:msg` }],
+          [homeButton()],
+        ],
+      },
+    );
+    return;
+  }
   await saveState(admin, adminTelegramId, message, 'admin:msg:compose', {
     adminMsgStudentId: studentTelegramId,
   });
@@ -299,6 +321,17 @@ export async function handleCommsHubAction(
   adminTelegramId: number,
 ): Promise<boolean> {
   const deliver = editDeliver(message);
+
+  if (data.startsWith('ah:gin:')) {
+    const { handleAdminGuestInboxCallback } = await import('./admin-guest-inbox');
+    return handleAdminGuestInboxCallback(
+      admin,
+      data,
+      adminTelegramId,
+      message.chatId,
+      message.messageId,
+    );
+  }
 
   const personMatch = data.match(/^ah:person:(\d+):(hw|msg|history)$/);
   if (personMatch) {
@@ -366,20 +399,27 @@ export async function handleAdminComposeMessageStep(
     await sendAdminMessage(state.chat_id, 'У ученика нет chat_id — бот не может написать.', homeOnlyKeyboard());
     return true;
   }
-  const result = await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: `💬 Сообщение от администрации:\n\n${body}`,
-  });
-  await clearState(admin, adminTelegramId);
-  await sendAdminMessage(
-    state.chat_id,
-    result.ok ? '✅ Сообщение отправлено.' : `❌ Не удалось: ${result.description ?? 'ошибка'}`,
-    {
+  const { deliverStaffToStudent } = await import('@/lib/bot/staff/messaging');
+  try {
+    await deliverStaffToStudent(admin, {
+      staffTelegramId: adminTelegramId,
+      staffRole: 'admin',
+      studentTelegramId: studentId,
+      body,
+    });
+    await clearState(admin, adminTelegramId);
+    await sendAdminMessage(state.chat_id, '✅ Сообщение отправлено.', {
       inline_keyboard: [
         [{ text: '↩️ К ученику', callback_data: `admin:user:${studentId}::` }],
         [homeButton()],
       ],
-    },
-  );
+    });
+  } catch (error) {
+    await sendAdminMessage(
+      state.chat_id,
+      error instanceof Error ? error.message : 'Не удалось отправить.',
+      homeOnlyKeyboard(),
+    );
+  }
   return true;
 }

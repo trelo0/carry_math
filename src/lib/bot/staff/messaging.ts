@@ -4,7 +4,7 @@ import { teacherOwnsStudent } from '@/lib/teacher/teacher-access';
 import { assertCuratorAssigned } from '@/lib/bot/education/course-homework';
 import { guardStaffToStudentMessage } from '@/lib/bot/moderation';
 
-export type StaffMessageRole = 'teacher' | 'curator' | 'check';
+export type StaffMessageRole = 'teacher' | 'curator' | 'check' | 'admin';
 
 export type StaffMessageRow = {
   id: number;
@@ -83,12 +83,14 @@ async function assertStaffCanMessageStudent(
     if (!ok) throw new Error('Нет доступа к этому ученику.');
     return;
   }
+  if (staffRole === 'admin') {
+    const { assertAdminCanReachStudent } = await import('@/lib/bot/staff/dm-topics');
+    await assertAdminCanReachStudent(admin, staffTelegramId, studentTelegramId);
+    return;
+  }
   if (staffRole === 'check') {
-    const { assertHomeworkCheckerAssigned } = await import('@/lib/bot/education/course-homework');
-    if (courseId == null) {
-      throw new Error('Укажите курс для переписки с учеником.');
-    }
-    await assertHomeworkCheckerAssigned(admin, staffTelegramId, studentTelegramId, { courseId });
+    const { assertCheckerCanReachStudent } = await import('@/lib/bot/staff/dm-topics');
+    await assertCheckerCanReachStudent(admin, staffTelegramId, studentTelegramId, courseId);
     return;
   }
   await assertCuratorAssigned(admin, staffTelegramId, studentTelegramId, { courseId });
@@ -176,10 +178,11 @@ export async function deliverStaffToStudent(
   const roleLabel =
     params.staffRole === 'teacher'
       ? 'преподавателя'
-      : params.staffRole === 'check'
-        ? 'куратора курса'
-        : 'куратора';
-  const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
+      : params.staffRole === 'admin'
+        ? 'администрации'
+        : params.staffRole === 'check'
+          ? 'проверяющего ДЗ'
+          : 'куратора курса';
   const messageId = await insertStaffMessage(admin, {
     staffTelegramId: params.staffTelegramId,
     studentTelegramId: params.studentTelegramId,
@@ -191,8 +194,33 @@ export async function deliverStaffToStudent(
     courseId: params.courseId,
   });
 
-  const showCb =
-    messageId != null ? `cl:msg:show:${messageId}` : 'cl:apl:in';
+  const { usesStaffDmTopics } = await import('@/lib/bot/staff/dm-topics');
+  const directToStudent = usesStaffDmTopics(params.staffRole);
+  const bodyText = params.body.trim() || '(вложение)';
+  const ref = params.attachmentRef?.trim() ?? '';
+  const fileId = ref.startsWith('tg:') ? ref.slice(3) : null;
+
+  if (directToStudent) {
+    if (fileId && params.attachmentKind) {
+      const { sendTelegramFileById } = await import('@/lib/bot/studentHomeworkFlow');
+      const cap = bodyText !== '(вложение)'
+        ? `💬 Сообщение от ${roleLabel}:\n\n${bodyText}`
+        : `💬 Вложение от ${roleLabel}`;
+      await sendTelegramFileById(chatId, fileId, params.attachmentKind);
+      if (bodyText !== '(вложение)') {
+        await telegramSend('sendMessage', { chat_id: chatId, text: cap });
+      }
+    } else {
+      await telegramSend('sendMessage', {
+        chat_id: chatId,
+        text: `💬 Сообщение от ${roleLabel}:\n\n${bodyText}`,
+      });
+    }
+    return;
+  }
+
+  const { studentNotifyKeyboard } = await import('@/lib/bot/student-push-notify');
+  const showCb = messageId != null ? `cl:msg:show:${messageId}` : 'cl:apl:in';
   await telegramSend('sendMessage', {
     chat_id: chatId,
     text: `💬 Новое сообщение от ${roleLabel}.\n\nНажмите «Показать», чтобы прочитать.`,
@@ -243,8 +271,34 @@ export async function notifyStaffInboundFromStudent(
     attachmentRef?: string | null;
     attachmentKind?: 'photo' | 'document' | 'voice' | null;
     courseId?: number | null;
+    topicDelivery?: {
+      contextIntro?: string;
+      plain?: boolean;
+      skipTopic?: boolean;
+    };
   },
 ): Promise<void> {
+  const { usesStaffDmTopics, deliverInboundToStaffTopic } = await import('@/lib/bot/staff/dm-topics');
+  const topicRole = params.staffRole;
+  if (
+    !params.topicDelivery?.skipTopic &&
+    usesStaffDmTopics(topicRole) &&
+    (topicRole === 'check' || topicRole === 'admin' || topicRole === 'curator')
+  ) {
+    const delivered = await deliverInboundToStaffTopic(admin, {
+      staffTelegramId: params.staffTelegramId,
+      staffRole: topicRole,
+      studentTelegramId: params.studentTelegramId,
+      body: params.body,
+      attachmentRef: params.attachmentRef,
+      attachmentKind: params.attachmentKind,
+      courseIdHint: params.courseId,
+      contextIntro: params.topicDelivery?.contextIntro,
+      plain: params.topicDelivery?.plain ?? Boolean(params.topicDelivery?.contextIntro),
+    });
+    if (delivered) return;
+  }
+
   await insertStaffMessage(admin, {
     staffTelegramId: params.staffTelegramId,
     studentTelegramId: params.studentTelegramId,
@@ -695,6 +749,27 @@ export type StudentStaffThreadSummary = {
   lastDirection: 'student_to_staff' | 'staff_to_student';
   waitingReply: boolean;
 };
+
+export async function listStudentAdminStaffThreads(
+  admin: SupabaseClient,
+  studentTelegramId: number,
+  limit = 8,
+): Promise<{ threads: StudentStaffThreadSummary[]; storageEnabled: boolean }> {
+  try {
+    const { data, error } = await admin
+      .from('staff_student_messages')
+      .select('staff_telegram_id, staff_role, body, created_at, direction')
+      .eq('student_telegram_id', studentTelegramId)
+      .eq('staff_role', 'admin')
+      .order('created_at', { ascending: false })
+      .limit(400);
+    if (error) throw error;
+    return summarizeStudentThreads(data ?? [], limit);
+  } catch (error) {
+    if (!isMessagesTableError(error)) throw error;
+    return { threads: [], storageEnabled: false };
+  }
+}
 
 export async function listStudentCourseStaffThreads(
   admin: SupabaseClient,

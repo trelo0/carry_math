@@ -4,13 +4,19 @@
  *   node scripts/test-telegram-private-topics.mjs a
  *   node scripts/test-telegram-private-topics.mjs b --staff-id=123456789 --confirm-create
  *   node scripts/test-telegram-private-topics.mjs c --staff-id=123456789 --thread-id=999 --confirm-send
- *   node scripts/test-telegram-private-topics.mjs d --file=path/to/update.json
+ *   node scripts/test-telegram-private-topics.mjs d --file=update.json
+ *   node scripts/test-telegram-private-topics.mjs d --example
  *   node scripts/test-telegram-private-topics.mjs webhook-info
  *
  * TELEGRAM_BOT_TOKEN из .env.local (значение не выводится).
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SPIKE_UPDATE_EXAMPLE = resolve(__dirname, 'fixtures/spike-staff-topic-reply.example.json');
 
 const API = 'https://api.telegram.org';
 
@@ -66,8 +72,8 @@ function usage() {
   webhook-info               getWebhookInfo (read-only)
   b --staff-id=ID --confirm-create
   c --staff-id=ID --thread-id=N --confirm-send
-  d --file=path.json         parse inbound update (no network)
-  d --example                print path to example JSON shape
+  d --file=update.json       parse inbound update (no network)
+  d --example                parse bundled example JSON (structure only)
   student-echo --student-id=ID --text="..." --confirm-student
                              sendMessage to student DM (test account only)`);
 }
@@ -189,34 +195,63 @@ async function modeC(token, flags) {
   console.log('message_thread_id in result:', msg.message_thread_id ?? '(absent)');
 }
 
-const EXAMPLE_UPDATE = new URL('./fixtures/spike-topic-reply-update.example.json', import.meta.url);
+function spikeUpdateExamplePayload() {
+  return {
+    update_id: 900000001,
+    message: {
+      message_id: 42,
+      from: { id: 111111111, is_bot: false, first_name: 'TestStaff' },
+      chat: { id: 111111111, first_name: 'TestStaff', type: 'private' },
+      date: 1760000000,
+      message_thread_id: 6780867,
+      is_topic_message: true,
+      direct_messages_topic: { topic_id: 6780867, user: { id: 111111111, is_bot: false } },
+      text: 'Ответ преподавателя в теме (пример)',
+    },
+  };
+}
+
+function ensureExampleFixturePath() {
+  if (!existsSync(SPIKE_UPDATE_EXAMPLE)) {
+    mkdirSync(resolve(__dirname, 'fixtures'), { recursive: true });
+    writeFileSync(
+      SPIKE_UPDATE_EXAMPLE,
+      `${JSON.stringify(spikeUpdateExamplePayload(), null, 2)}\n`,
+      'utf8',
+    );
+  }
+  return SPIKE_UPDATE_EXAMPLE;
+}
 
 function modeD(flags) {
   console.log('=== Mode D: analyze inbound update (offline) ===');
+  let filePath = null;
   if (flags.example) {
-    console.log('Пример структуры (подставьте значения из Vercel log / webhook body):');
-    console.log(EXAMPLE_UPDATE.pathname.replace(/^\/([A-Za-z]:)/, '$1'));
-    return;
+    filePath = ensureExampleFixturePath();
+    console.log('(example fixture)', filePath);
+  } else if (flags.file) {
+    filePath = resolve(process.cwd(), flags.file);
   }
-  const file = flags.file;
-  if (!file) {
+  if (!filePath) {
     console.log(`
 Mode D без изменения webhook:
   1. Ответьте в тестовой теме в @districtschool_bot.
-  2. Update уходит на Vercel webhook — скрипт его не получает.
-  3. Сохраните тело POST (корень = один update) в файл, напр. update.json в корне репо.
+  2. Update уходит на Vercel webhook — этот скрипт его не получает.
+  3. Сохраните JSON в D:\\online-math\\update.json (полный объект Update от Telegram).
   4. node scripts/test-telegram-private-topics.mjs d --file=update.json
 
-Шаблон полей: node scripts/test-telegram-private-topics.mjs d --example
+Проверка парсера: node scripts/test-telegram-private-topics.mjs d --example
+
+Откуда взять JSON: лог body на webhook (если включите временно) или deleteWebhook + getUpdates по согласованию.
 `);
     return;
   }
-  if (!existsSync(file)) {
-    console.error(`Файл не найден: ${file}`);
-    console.error('Создайте update.json: скопируйте JSON update из лога webhook (см. d --example).');
-    process.exit(1);
+  if (!existsSync(filePath)) {
+    console.log(`Файл не найден: ${filePath}`);
+    console.log('Создайте update.json в корне репо или: d --example');
+    return;
   }
-  const raw = readFileSync(file, 'utf8');
+  const raw = readFileSync(filePath, 'utf8');
   const update = JSON.parse(raw);
   const message = update.message ?? update.edited_message;
   if (!message) {
@@ -290,9 +325,6 @@ switch (mode) {
     break;
   case 'd':
     modeD(flags);
-    break;
-  case 'd-example':
-    modeD({ example: true });
     break;
   case 'student-echo':
     await modeStudentEcho(token, flags);

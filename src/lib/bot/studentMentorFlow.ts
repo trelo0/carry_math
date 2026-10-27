@@ -20,6 +20,7 @@ import { syncCourseStaffFromContent } from './education/course-staff';
 import { notifyStaffInboundFromStudent, type StaffMessageRole } from './staff/messaging';
 import { notifyAdminsOfSupportMessage } from './studentSupportFlow';
 import { isClientReplyLabel } from './client-menu';
+import { saveStudentStaffDmState, STUDENT_STAFF_DM_STEP } from './student-staff-dm-thread';
 
 export type StudentMentorContext = 'course' | 'lessons';
 
@@ -270,11 +271,9 @@ async function dispatchMentorDraft(
   const staffRole = state.payload.staffRole as StaffMessageRole | undefined;
   const courseId = state.payload.courseId as number | undefined;
   const lessonNum = state.payload.homeworkLessonNumber as number | undefined;
+  const isHwSubmit = Boolean(state.payload.homework) && lessonNum == null;
   const rawDraft = String(state.payload.draftText ?? '').trim() || 'Сообщение из Telegram';
-  const draftText =
-    lessonNum != null
-      ? `ВОПРОС ПО ДЗ №${lessonNum}\n\n${rawDraft}`
-      : rawDraft;
+  const draftText = rawDraft;
   const draftFileRef = state.payload.draftFileRef as string | undefined;
   const draftFileKind = state.payload.draftFileKind as 'photo' | 'document' | 'voice' | undefined;
 
@@ -282,6 +281,19 @@ async function dispatchMentorDraft(
     draftFileRef && draftFileRef.startsWith('tg:')
       ? { ref: draftFileRef, kind: draftFileKind ?? ('document' as const) }
       : undefined;
+
+  let contextIntro: string | undefined;
+  if (lessonNum != null && staffRole === 'check') {
+    contextIntro = `❓ Вопрос по ДЗ №${lessonNum}`;
+  } else if (staffRole === 'curator' && courseId != null) {
+    const { data: courseRow } = await admin
+      .from('courses')
+      .select('title')
+      .eq('id', courseId)
+      .maybeSingle();
+    const title = (courseRow?.title as string | undefined)?.trim() ?? 'курсу';
+    contextIntro = `💬 Сообщение от ученика по курсу «${title}»`;
+  }
 
   const target = await forwardToMentor(
     admin,
@@ -291,16 +303,33 @@ async function dispatchMentorDraft(
     staffRole,
     attachment,
     courseId,
+    { contextIntro, skipTopic: isHwSubmit && staffRole === 'check' },
   );
   if (target === 'support') {
     await notifyAdminsOfSupportMessage(admin, telegramId, draftText);
   }
   await clearStateIfAvailable(admin, telegramId);
+  if (target === 'mentor' && mentorTelegramId && staffRole && staffRole !== 'teacher') {
+    await saveStudentStaffDmState(admin, telegramId, chatId, {
+      staffTelegramId: mentorTelegramId,
+      staffRole: staffRole as 'admin' | 'curator' | 'check',
+      courseId,
+    });
+  }
+  const followUpHint =
+    target === 'mentor' && staffRole && staffRole !== 'teacher'
+      ? '\n\nМожете отправить ещё сообщение в этот диалог.'
+      : '';
   await sendAdminMessage(
     chatId,
     target === 'mentor'
-      ? '✅ Сообщение отправлено.\n\nОтвет придёт в Telegram.'
+      ? `✅ Сообщение отправлено.${followUpHint}\n\nОтвет придёт в Telegram.`
       : '✅ Сообщение отправлено администратору.\n\nМы свяжем вас с наставником.',
+    target === 'mentor' && staffRole && staffRole !== 'teacher'
+      ? {
+          inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cl:staff-dm:cancel' }]],
+        }
+      : undefined,
   );
 }
 
@@ -464,6 +493,7 @@ async function forwardToMentor(
   staffRoleOverride?: StaffMessageRole,
   attachment?: { ref: string; kind: 'photo' | 'document' | 'voice' },
   courseId?: number,
+  topicDelivery?: { contextIntro?: string; skipTopic?: boolean },
 ): Promise<'mentor' | 'support'> {
   if (!mentorTelegramId) return 'support';
 
@@ -481,6 +511,11 @@ async function forwardToMentor(
     attachmentRef: attachment?.ref,
     attachmentKind: attachment?.kind,
     courseId,
+    topicDelivery: {
+      contextIntro: topicDelivery?.contextIntro,
+      plain: true,
+      skipTopic: topicDelivery?.skipTopic,
+    },
   });
   return 'mentor';
 }
@@ -516,6 +551,8 @@ export async function handleStudentMentorMessage(
     await sendAdminMessage(chatId, 'Используйте кнопки «Отправить», «Изменить» или «Отменить».');
     return true;
   }
+
+  if (state?.step === STUDENT_STAFF_DM_STEP) return false;
 
   if (!state || state.step !== 'student:mentor') return false;
 
@@ -555,6 +592,8 @@ export async function handleStudentMentorAttachment(
     await sendAdminMessage(chatId, 'Используйте кнопки под предпросмотром.');
     return true;
   }
+
+  if (state?.step === STUDENT_STAFF_DM_STEP) return false;
 
   if (!state || state.step !== 'student:mentor') return false;
 

@@ -105,6 +105,20 @@ export function resolveCabinetEntryPath(
       ? preferredPath
       : null;
 
+  if (memberHasRole(roles, 'admin')) {
+    if (safe?.startsWith('/cabinet/lesson/') || safe?.startsWith('/cabinet/checkout')) {
+      return safe;
+    }
+    if (
+      safe?.startsWith('/cabinet/staff') ||
+      safe?.startsWith('/cabinet/admin') ||
+      safe?.startsWith('/cabinet/pick')
+    ) {
+      return safe.startsWith('/cabinet/pick') ? '/cabinet/admin' : safe;
+    }
+    return '/cabinet/admin';
+  }
+
   if (isCreatorTelegramId(telegramId)) {
     if (safe?.startsWith('/cabinet')) return safe;
     return '/cabinet/pick';

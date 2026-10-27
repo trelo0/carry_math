@@ -89,6 +89,11 @@ export async function handleStaffGlobalMenuMessage(
   if (!isStaffGlobalMenuLabel(text, caps)) return false;
 
   if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
+    const ws = await getStaffCourseWorkspace(admin, telegramId);
+    if (ws) {
+      const { clearStateIfAvailable } = await import('@/lib/bot/admin/core');
+      await clearStateIfAvailable(admin, telegramId);
+    }
     await sendStaffCourseManagementList(admin, chatId, telegramId);
     return true;
   }

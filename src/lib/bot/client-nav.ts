@@ -33,6 +33,7 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   'client:lead-form',
   'student:support',
   'student:support-thread',
+  'student:staff-dm',
   'client:lesson-hw-submit',
   'student:course-hw-submit',
   'student:course-hw-comment',
@@ -40,6 +41,8 @@ export const CLIENT_DIALOG_STEPS = new Set<string>([
   'student:mentor',
   'student:mentor-pick',
   'student:mentor-confirm',
+  'guest:course-inquiry',
+  'guest:course-inquiry-confirm',
 ]);
 
 export type ClientHubState = {

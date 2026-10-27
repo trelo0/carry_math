@@ -175,8 +175,22 @@ export async function notifyCuratorOverdueOnce(
   if (courseId != null) {
     const checker = await getStudentCheckStaff(admin, telegramId, courseId);
     const checkChat = checker ? await memberChatId(admin, checker.telegramId) : null;
-    if (checkChat) {
+    if (checkChat && checker) {
       try {
+        const { staffDmTopicsEnabled, deliverInboundToStaffTopic } = await import(
+          '@/lib/bot/staff/dm-topics'
+        );
+        if (staffDmTopicsEnabled()) {
+          await deliverInboundToStaffTopic(admin, {
+            staffTelegramId: checker.telegramId,
+            staffRole: 'check',
+            studentTelegramId: telegramId,
+            body: overdueText,
+            courseIdHint: courseId,
+            header: '⏰ Просрочено домашнее задание',
+          });
+          return true;
+        }
         await telegramSend('sendMessage', {
           chat_id: checkChat,
           text: overdueText,

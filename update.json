@@ -1,0 +1,12 @@
+{
+    "update_id": 1,
+    "message": {
+      "message_id": 1,
+      "from": { "id": 748782191, "is_bot": false },
+      "chat": { "id": 748782191, "type": "private" },
+      "date": 1760000000,
+      "message_thread_id": 1685717,
+      "is_topic_message": true,
+      "text": "жопа"
+    }
+  }

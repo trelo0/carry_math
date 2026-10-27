@@ -21,7 +21,7 @@ import {
 import { clearConflictingStaffStates } from '@/lib/bot/staff/staff-reply-state';
 import { mergeWorkspaceIntoPayload, resetStaffDialogKeepWorkspace } from '@/lib/bot/staff/staff-course-session';
 import { CHECK_STU_SEARCH_STEP, STAFF_CHECK_REPLY_STEP } from '@/lib/bot/staff/staff-steps';
-import { assertCheckCourseAccess, CheckAccessError } from './check-access';
+import { assertCheckCourseAccess, assertCheckStudentOnCourse, CheckAccessError } from './check-access';
 import { handleCheckHomeworkFamily, originToPayload } from './check-hw-callbacks';
 import {
   clearCheckStudentSearchQuery,
@@ -343,6 +343,33 @@ export async function handleCheckBotCallback(
 
       if (parts[3] === 'w' && parts[4]) {
         const studentTelegramId = Number(parts[4]);
+        const { openStaffStudentDmTopic, staffDmTopicsEnabled } = await import(
+          '@/lib/bot/staff/dm-topics'
+        );
+        if (staffDmTopicsEnabled()) {
+          try {
+            await assertCheckStudentOnCourse(admin, telegramId, courseId, studentTelegramId);
+          } catch (error) {
+            await sendAdminMessage(
+              chatId,
+              error instanceof Error ? error.message : 'Нет доступа к ученику.',
+            );
+            return true;
+          }
+          const opened = await openStaffStudentDmTopic(admin, {
+            staffTelegramId: telegramId,
+            studentTelegramId,
+            staffRole: 'check',
+            courseIdHint: courseId,
+          });
+          await sendAdminMessage(
+            chatId,
+            opened.ok
+              ? '✅ Откройте тему с учеником в чате с ботом (Topics). Ответы пишите внутри темы.'
+              : `❌ ${opened.error ?? 'Не удалось открыть тему.'}`,
+          );
+          return true;
+        }
         try {
           await clearConflictingStaffStates(admin, telegramId, 'curator_reply');
           const promptId = await sendAdminMessage(chatId, '✏️ Сообщение ученику.\n\n⬅️ Отмена', {

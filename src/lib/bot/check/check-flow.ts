@@ -193,13 +193,6 @@ export async function handleCheckMessage(
   if (teacherStyleHwMsg.has(text) && wsEarly?.role !== 'check') {
     return false;
   }
-  const { STAFF_COURSE_MANAGEMENT_LABEL } = await import('@/lib/bot/staff/staff-menu');
-  if (text === STAFF_COURSE_MANAGEMENT_LABEL || text === '🎓 Курс') {
-    const { exitStaffCourseWorkspace } = await import('@/lib/bot/staff/staff-course-session');
-    await exitStaffCourseWorkspace(admin, telegramId, chatId);
-    return true;
-  }
-
   let state = null;
   try {
     state = await getState(admin, telegramId);

@@ -59,6 +59,14 @@ export async function notifyAdminsOfCourseCabinetOpen(
     'Свяжитесь, чтобы узнать, как ему курс.',
   ].filter(Boolean) as string[];
 
+  const { notifyPrimaryAdminMainChatInbox } = await import('@/lib/bot/admin/admin-guest-inbox');
+  const inboxOk = await notifyPrimaryAdminMainChatInbox(admin, studentTelegramId, {
+    kind: 'support',
+    header: lines[0] ?? '🎓 Уведомление',
+    body: lines.slice(2).join('\n'),
+  });
+  if (inboxOk) return 1;
+
   const keyboard = {
     inline_keyboard: [[{ text: '✉️ Связаться', callback_data: `ah:msg:w:${studentTelegramId}` }]],
   };

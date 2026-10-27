@@ -120,8 +120,6 @@ async function showOnlineCourseScreen(
         ]);
       }
     }
-    keyboard.inline_keyboard.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
-    keyboard.inline_keyboard.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
   } else {
     keyboard.inline_keyboard.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
     keyboard.inline_keyboard.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
@@ -131,7 +129,7 @@ async function showOnlineCourseScreen(
   await applyCard(admin, state.telegramId, 'course', lines.join('\n').trim(), keyboard, mode);
 }
 
-async function showGuestCourseOfferScreen(
+export async function showGuestCourseOfferScreen(
   admin: SupabaseClient,
   state: ClientStateSnapshot,
   slug: string,
@@ -163,11 +161,14 @@ async function showGuestCourseOfferScreen(
   if (cabinetUrl) {
     keyboardRows.push([{ text: '🛒 Купить на сайте', url: cabinetUrl }]);
   }
-  keyboardRows.push([{ text: '📝 Оставить заявку на курс', callback_data: 'ca:start' }]);
-  const allOffers = await listCoursePaymentOffers();
-  if (allOffers.length > 1) {
-    keyboardRows.push([{ text: '◀️ К списку курсов', callback_data: 'cl:guest:course:list' }]);
-  }
+  keyboardRows.push([
+    {
+      text: '📖 Узнать больше о курсе',
+      callback_data: `cl:guest:course:ask:${offer.slug}`,
+    },
+  ]);
+  keyboardRows.push([{ text: '🌐 Перейти на сайт', url: courseInfoUrl() }]);
+  keyboardRows.push([{ text: '◀️ Назад', callback_data: 'cl:guest:course:list' }]);
   keyboardRows.push([clientHomeButton()]);
 
   await applyCard(
@@ -481,9 +482,11 @@ export async function handleClientCallback(
     const roleLabel =
       row.staffRole === 'teacher'
         ? 'преподавателя'
-        : row.staffRole === 'check'
-          ? 'куратора курса'
-          : 'куратора';
+        : row.staffRole === 'admin'
+          ? 'администрации'
+          : row.staffRole === 'check'
+            ? 'проверяющего ДЗ'
+            : 'куратора курса';
     await telegramSend('sendMessage', {
       chat_id: chatId,
       text: `💬 Сообщение от ${roleLabel}:\n\n${row.body}`,
@@ -512,6 +515,16 @@ export async function handleClientCallback(
       telegramId,
       callbackQueryId,
     );
+  }
+
+  if (data === 'cl:staff-dm:cancel') {
+    if (callbackQueryId) {
+      await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    }
+    const { handleStudentStaffDmCancel } = await import('./student-staff-dm-thread');
+    await handleStudentStaffDmCancel(admin, telegramId);
+    await resetClientDialogToHub(admin, telegramId);
+    return true;
   }
 
   if (data === 'cl:support:back' || data === 'cl:support:cancel') {
@@ -667,6 +680,16 @@ export async function handleClientCallback(
       navStack: stack,
     });
     return true;
+  }
+
+  if (
+    data.startsWith('cl:guest:course:ask') ||
+    data === 'cl:guest:course:ask:cancel' ||
+    data === 'cl:guest:course:ask:send' ||
+    data === 'cl:guest:course:ask:edit'
+  ) {
+    const { handleGuestCourseInquiryCallback } = await import('./guest-course-inquiry-flow');
+    return handleGuestCourseInquiryCallback(admin, data, telegramId, chatId, callbackQueryId);
   }
 
   if (data === 'cl:course:ask' || data.startsWith('cl:course:ask:')) {

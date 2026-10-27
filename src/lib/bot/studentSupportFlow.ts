@@ -20,6 +20,13 @@ import { isClientReplyLabel } from '@/lib/bot/client-menu';
 import { createInquiryLead, type InquiryKind } from './inquiry-leads';
 import { getMember } from './roles';
 import { studentNotifyKeyboard } from './student-push-notify';
+import { resolvePrimaryAdminTelegramId } from './admin/admin-guest-inbox';
+import {
+  deliverStudentPlainToStaffTopic,
+  saveStudentStaffDmState,
+  STUDENT_STAFF_DM_STEP,
+} from './student-staff-dm-thread';
+import { staffDmTopicsEnabled } from './staff/dm-topics';
 
 const SUPPORT_INTRO =
   '❓ ЗАДАЙТЕ СВОЙ ВОПРОС\n\n' +
@@ -31,7 +38,10 @@ const SUPPORT_THREAD_HINT =
 
 function supportIntroKeyboard() {
   return {
-    inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cl:support:cancel' }]],
+    inline_keyboard: [
+      [{ text: '◀️ Назад', callback_data: 'cl:support:back' }],
+      [{ text: '❌ Отмена', callback_data: 'cl:support:cancel' }],
+    ],
   };
 }
 
@@ -113,12 +123,40 @@ export async function notifyAdminsOfSupportMessage(
   admin: SupabaseClient,
   studentTelegramId: number,
   text: string,
+  attachment?: { ref: string; kind: 'photo' | 'document' | 'voice' },
+  topicDelivery?: { contextIntro?: string; plain?: boolean; skipTopic?: boolean },
 ): Promise<void> {
-  const adminChatIds = await getAdminChatIds(admin);
-  if (adminChatIds.length === 0) return;
+  const member = await getMember(admin, studentTelegramId);
+  if (member?.role === 'student' && staffDmTopicsEnabled()) {
+    const adminId = await resolvePrimaryAdminTelegramId(admin);
+    if (adminId) {
+      await deliverStudentPlainToStaffTopic(
+        admin,
+        studentTelegramId,
+        { staffTelegramId: adminId, staffRole: 'admin' },
+        text,
+        attachment,
+        { contextIntro: topicDelivery?.contextIntro, plain: topicDelivery?.plain ?? true },
+      );
+      return;
+    }
+  }
 
+  const { notifyPrimaryAdminMainChatInbox } = await import('@/lib/bot/admin/admin-guest-inbox');
   const label = await memberLabel(admin, studentTelegramId);
   const body = ['🆘 Сообщение в поддержку', '', `👤 ${label}`, '', text].join('\n');
+
+  const inboxSent = await notifyPrimaryAdminMainChatInbox(admin, studentTelegramId, {
+    kind: 'support',
+    header: '🆘 Сообщение в поддержку',
+    body: text,
+    attachmentRef: attachment?.ref,
+    attachmentKind: attachment?.kind,
+  });
+  if (inboxSent) return;
+
+  const adminChatIds = await getAdminChatIds(admin);
+  if (adminChatIds.length === 0) return;
 
   await Promise.all(
     adminChatIds.map((chatId) =>
@@ -196,7 +234,34 @@ async function deliverSupportToAdmin(
     forceNew: true,
     firstAttachment: attachment,
   });
-  await notifyAdminsOfSupportMessage(admin, telegramId, body);
+  const isStudent = kind === 'student_question';
+  await notifyAdminsOfSupportMessage(
+    admin,
+    telegramId,
+    body,
+    attachment ? { ref: `tg:${attachment.fileId}`, kind: attachment.kind } : undefined,
+    isStudent
+      ? {
+          contextIntro: '🆘 Обращение в поддержку\n\nОтветьте в этой теме — ученик получит ответ в боте.',
+          plain: true,
+        }
+      : undefined,
+  );
+  const adminId = isStudent ? await resolvePrimaryAdminTelegramId(admin) : null;
+  if (isStudent && adminId && staffDmTopicsEnabled()) {
+    await saveStudentStaffDmState(admin, telegramId, chatId, {
+      staffTelegramId: adminId,
+      staffRole: 'admin',
+      inquiryLeadId: lead?.id,
+    });
+    await sendAdminMessage(chatId, `${ack}\n\n${SUPPORT_THREAD_HINT}`, {
+      inline_keyboard: [
+        [{ text: '❌ Отмена', callback_data: 'cl:staff-dm:cancel' }],
+        ...studentNotifyKeyboard().inline_keyboard,
+      ],
+    });
+    return;
+  }
   if (lead?.id) {
     await enterSupportThread(admin, telegramId, chatId, lead.id);
   }
@@ -232,10 +297,12 @@ export async function handleStudentSupportMessage(
     const leadId = state.payload?.inquiryLeadId as string | undefined;
     if (!leadId) return false;
     await appendInquiryMessage(admin, leadId, telegramId, trimmed);
-    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed);
+    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed, undefined, { plain: true });
     await sendAdminMessage(chatId, '✅ Сообщение добавлено к обращению.', supportIntroKeyboard());
     return true;
   }
+
+  if (state.step === STUDENT_STAFF_DM_STEP) return false;
 
   if (state.step !== 'student:support') return false;
 
@@ -276,10 +343,18 @@ export async function handleStudentSupportAttachment(
     const leadId = state.payload?.inquiryLeadId as string | undefined;
     if (!leadId) return false;
     await appendInquiryMessage(admin, leadId, telegramId, body, media);
-    if (body) await notifyAdminsOfSupportMessage(admin, telegramId, body);
+    await notifyAdminsOfSupportMessage(
+      admin,
+      telegramId,
+      body,
+      media ? { ref: `tg:${media.fileId}`, kind: media.kind } : undefined,
+      { plain: true },
+    );
     await sendAdminMessage(chatId, '✅ Вложение добавлено к обращению.', supportIntroKeyboard());
     return true;
   }
+
+  if (state.step === STUDENT_STAFF_DM_STEP) return false;
 
   if (state.step !== 'student:support') return false;
 

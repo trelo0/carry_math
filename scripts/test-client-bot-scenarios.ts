@@ -64,10 +64,10 @@ async function main(): Promise<void> {
     check('phase guest', state.phase === 'guest');
     const rows = rowTexts(G, state);
     check(
-      'меню гостя (курс + занятия + админ)',
-      rows.length === 3 &&
+      'меню гостя (курс + админ)',
+      rows.length === 2 &&
         rows.some((r) => r.includes(CLIENT_LABELS.onlineCourse)) &&
-        rows.some((r) => r.includes(CLIENT_LABELS.lessonsWithTeacher)),
+        rows.some((r) => r.includes(CLIENT_LABELS.contactAdmin)),
     );
   }
 
@@ -86,10 +86,10 @@ async function main(): Promise<void> {
     check('phase client_idle', state.phase === 'client_idle');
     const rows = rowTexts(IDLE, state);
     check(
-      'idle: купить обучение или мои занятия',
-      rows.some(
-        (r) => r.includes(CLIENT_LABELS.buyEducation) || r.includes(CLIENT_LABELS.myLessons),
-      ),
+      'idle: курс, покупки и админ',
+      rows.some((r) => r.includes(CLIENT_LABELS.onlineCourse)) &&
+        rows.some((r) => r.includes(CLIENT_LABELS.buyCourse)) &&
+        rows.some((r) => r.includes(CLIENT_LABELS.contactAdmin)),
     );
   }
 
@@ -110,12 +110,21 @@ async function main(): Promise<void> {
     const state = await resolveClientState(admin, ACTIVE_LESSONS, { memberRole: 'student' });
     check('active lesson product', state.hasActiveLessonProduct);
     const rows = rowTexts(ACTIVE_LESSONS, state);
-    check('мои занятия + пакет', rows.some((r) => r.includes(CLIENT_LABELS.myLessons)));
+    check(
+      'уроки без курса — client_idle меню',
+      state.phase === 'client_idle' &&
+        rows.some((r) => r.includes(CLIENT_LABELS.onlineCourse)) &&
+        rows.some((r) => r.includes(CLIENT_LABELS.buyCourse)),
+    );
     await grantAccess(admin, ACTIVE_LESSONS, 'course');
     const combo = await resolveClientState(admin, ACTIVE_LESSONS, { memberRole: 'student' });
+    check('курс + уроки — client_active', combo.phase === 'client_active');
     const comboRows = rowTexts(ACTIVE_LESSONS, combo);
-    const flat = comboRows.join(' ');
-    check('курс и занятия без дубля myLessons', (flat.match(/Мои занятия/g) ?? []).length <= 1);
+    check(
+      'активный: мой курс и ДЗ',
+      comboRows.some((r) => r.includes(CLIENT_LABELS.myCourse)) &&
+        comboRows.some((r) => r.includes(CLIENT_LABELS.homework)),
+    );
     await revokeAccess(admin, ACTIVE_LESSONS, 'course');
   }
 

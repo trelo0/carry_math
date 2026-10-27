@@ -7,15 +7,19 @@ import {
 } from './client-nav';
 import { listStudentPurchasedVisibleCourseContexts } from './education/student-course-context';
 import { formatDateTimeShort } from './client-format';
-import { beginStudentMentorQuestion } from './studentMentorFlow';
 import { beginStudentSupport } from './studentSupportFlow';
 import { listPurchaseRequestsForTelegram } from './purchase-requests';
 import {
+  listStudentAdminStaffThreads,
   listStudentCourseStaffThreads,
   loadStudentCourseStaffMessageHistory,
   loadStudentStaffMessageHistory,
   staffStudentLabel,
 } from './staff/messaging';
+import {
+  beginStudentAdminDmThread,
+  beginStudentCuratorDmThread,
+} from './student-staff-dm-thread';
 import { sendLeadMessageAttachment } from './admin/lead-message-media';
 import { leadArchiveKindLabel, listClientLeadsForAppealsArchive } from './inquiry-leads';
 import { listLeadMessages } from './admin/lead-messages';
@@ -45,8 +49,9 @@ async function collectIncomingAppeals(
     const { threads } = await listStudentCourseStaffThreads(admin, telegramId, course.courseId);
     for (const t of threads) {
       if (t.lastDirection !== 'staff_to_student') continue;
-      const key = `staff:${t.staffRole}:${course.courseId}:${t.staffTelegramId}:${t.lastAt}`;
-      if (dismissed.has(key)) continue;
+      const key = `staff:${t.staffRole}:${course.courseId}:${t.staffTelegramId}`;
+      const dismissKey = `${key}:${t.lastAt}`;
+      if (dismissed.has(key) || dismissed.has(dismissKey)) continue;
       items.push({
         key,
         title: `Ответ по курсу «${course.title}»`,
@@ -58,6 +63,22 @@ async function collectIncomingAppeals(
         staffTelegramId: t.staffTelegramId,
       });
     }
+  }
+
+  const { threads: adminThreads } = await listStudentAdminStaffThreads(admin, telegramId);
+  for (const t of adminThreads) {
+    if (t.lastDirection !== 'staff_to_student') continue;
+    const key = `staff:admin:0:${t.staffTelegramId}`;
+    const dismissKey = `${key}:${t.lastAt}`;
+    if (dismissed.has(key) || dismissed.has(dismissKey)) continue;
+    items.push({
+      key,
+      title: 'Ответ администратора',
+      preview: t.lastBody.slice(0, 200),
+      at: t.lastAt,
+      kind: 'admin',
+      staffTelegramId: t.staffTelegramId,
+    });
   }
 
   try {
@@ -132,14 +153,19 @@ async function showAppealsIncoming(
 
   const lines = ['📥 Входящие', '', 'Новые ответы — выберите обращение:'];
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
-  for (const item of items.slice(0, 12)) {
+  items.slice(0, 12).forEach((item, index) => {
     keyboard.push([
       {
         text: `${item.title.slice(0, 40)} · ${formatDateTimeShort(item.at)}`.slice(0, 60),
-        callback_data: `cl:apl:open:${encodeURIComponent(item.key)}`,
+        callback_data:
+          item.kind === 'course' && item.courseId != null && item.staffTelegramId != null
+            ? `cl:apl:o:c:${item.courseId}:${item.staffTelegramId}`
+            : item.kind === 'admin' && item.staffTelegramId != null
+              ? `cl:apl:o:a:${item.staffTelegramId}`
+              : `cl:apl:i:${index}`,
       },
     ]);
-  }
+  });
   keyboard.push([{ text: '◀️ Назад', callback_data: 'cl:apl:root' }]);
 
   await deliverClientHubScreen(
@@ -169,7 +195,6 @@ async function showAppealsArchiveMenu(
       inline_keyboard: [
         [{ text: '🛡 Вопросы админу', callback_data: 'cl:apl:arch:admin' }],
         [{ text: '🎓 Вопросы по курсу', callback_data: 'cl:apl:arch:course' }],
-        [{ text: '👨‍🏫 Вопросы преподавателю', callback_data: 'cl:apl:arch:teacher' }],
         [{ text: '◀️ Назад', callback_data: 'cl:apl:root' }],
       ],
     },
@@ -275,7 +300,7 @@ async function showArchiveLeadThread(
     lines.join('\n').trim().slice(0, 3900),
     {
       inline_keyboard: [
-        [{ text: '✍️ Написать', callback_data: 'cl:misc:admin' }],
+        [{ text: '✍️ Написать', callback_data: 'cl:apl:w:admin' }],
         [{ text: '◀️ Назад', callback_data: 'cl:apl:arch:admin' }],
       ],
     },
@@ -398,7 +423,10 @@ async function showArchiveCourseThreadList(
     `appeals-arch-course-${courseId}`,
     lines.join('\n').trim().slice(0, 3900),
     {
-      inline_keyboard: [[{ text: '◀️ Назад', callback_data: 'cl:apl:arch:course' }]],
+      inline_keyboard: [
+        [{ text: '✍️ Написать куратору', callback_data: `cl:apl:w:c:${courseId}` }],
+        [{ text: '◀️ Назад', callback_data: 'cl:apl:arch:course' }],
+      ],
     },
     deliver,
   );
@@ -450,37 +478,25 @@ export async function handleClientAppealsCallback(
     }
     return true;
   }
-  if (data === 'cl:apl:arch:teacher') {
-    await showArchiveTeacherPick(admin, telegramId, chatId, { editAt });
+  if (data === 'cl:apl:w:admin') {
+    await beginStudentAdminDmThread(admin, telegramId, chatId);
     return true;
   }
-  if (data === 'cl:apl:arch:teacher:write') {
-    await beginStudentMentorQuestion(admin, telegramId, chatId, { context: 'lessons' });
-    return true;
-  }
-  if (data.startsWith('cl:apl:arch:teacher:') && data !== 'cl:apl:arch:teacher:write') {
-    const teacherId = Number(data.split(':')[4]);
-    if (Number.isFinite(teacherId)) {
-      await showArchiveTeacherHistory(admin, telegramId, chatId, teacherId, { editAt });
+  if (data.startsWith('cl:apl:w:c:')) {
+    const courseId = Number(data.split(':')[4]);
+    if (Number.isFinite(courseId)) {
+      await beginStudentCuratorDmThread(admin, telegramId, chatId, courseId);
     }
     return true;
   }
-  if (data.startsWith('cl:apl:write:course:')) {
-    const courseId = Number(data.split(':')[4]);
-    const slug = (await listStudentPurchasedVisibleCourseContexts(admin, telegramId)).find(
-      (c) => c.courseId === courseId,
-    )?.slug;
-    await beginStudentMentorQuestion(admin, telegramId, chatId, {
-      context: 'course',
-      courseId,
-      courseSlug: slug,
-    });
-    return true;
-  }
-  if (data.startsWith('cl:apl:open:')) {
-    const key = decodeURIComponent(data.slice('cl:apl:open:'.length));
+  if (data.startsWith('cl:apl:o:c:')) {
+    const parts = data.split(':');
+    const courseId = Number(parts[4]);
+    const staffId = Number(parts[5]);
     const items = await collectIncomingAppeals(admin, telegramId);
-    const item = items.find((i) => i.key === key);
+    const item = items.find(
+      (i) => i.courseId === courseId && i.staffTelegramId === staffId && i.kind === 'course',
+    );
     if (!item) {
       await showAppealsIncoming(admin, telegramId, chatId, { editAt });
       return true;
@@ -489,29 +505,61 @@ export async function handleClientAppealsCallback(
       admin,
       telegramId,
       chatId,
-      `appeal-open:${key.slice(0, 40)}`,
+      `appeal-open:c:${courseId}`,
       [`📩 ${item.title}`, '', formatDateTimeShort(item.at), '', item.preview].join('\n'),
       {
         inline_keyboard: [
-          [{ text: '✅ Прочитано', callback_data: `cl:apl:done:${encodeURIComponent(key)}` }],
-          item.kind === 'course' && item.courseId
-            ? [
-                {
-                  text: '✏️ Ответить',
-                  callback_data: `cl:apl:write:course:${item.courseId}`,
-                },
-              ]
-            : [{ text: '💬 К администратору', callback_data: 'cl:apl:arch:admin' }],
+          [{ text: '✅ Прочитано', callback_data: `cl:apl:d:c:${courseId}:${staffId}` }],
+          [{ text: '✏️ Ответить', callback_data: `cl:apl:w:c:${courseId}` }],
           [{ text: '◀️ Назад', callback_data: 'cl:apl:in' }],
-        ].filter(Boolean) as Array<Array<{ text: string; callback_data: string }>>,
+        ],
       },
       { editAt },
     );
     return true;
   }
-  if (data.startsWith('cl:apl:done:')) {
-    const key = decodeURIComponent(data.slice('cl:apl:done:'.length));
-    await markAppealRead(admin, telegramId, key);
+  if (data.startsWith('cl:apl:o:a:')) {
+    const staffId = Number(data.slice('cl:apl:o:a:'.length));
+    const items = await collectIncomingAppeals(admin, telegramId);
+    const item = items.find((i) => i.kind === 'admin' && i.staffTelegramId === staffId);
+    if (!item) {
+      await showAppealsIncoming(admin, telegramId, chatId, { editAt });
+      return true;
+    }
+    await deliverClientHubScreen(
+      admin,
+      telegramId,
+      chatId,
+      `appeal-open:a:${staffId}`,
+      [`📩 ${item.title}`, '', formatDateTimeShort(item.at), '', item.preview].join('\n'),
+      {
+        inline_keyboard: [
+          [{ text: '✅ Прочитано', callback_data: `cl:apl:d:a:${staffId}` }],
+          [{ text: '✏️ Ответить', callback_data: 'cl:apl:w:admin' }],
+          [{ text: '◀️ Назад', callback_data: 'cl:apl:in' }],
+        ],
+      },
+      { editAt },
+    );
+    return true;
+  }
+  if (data.startsWith('cl:apl:d:c:')) {
+    const parts = data.split(':');
+    const courseId = Number(parts[4]);
+    const staffId = Number(parts[5]);
+    const items = await collectIncomingAppeals(admin, telegramId);
+    const item = items.find(
+      (i) => i.kind === 'course' && i.courseId === courseId && i.staffTelegramId === staffId,
+    );
+    if (item) await markAppealRead(admin, telegramId, item.key);
+    await showAppealsIncoming(admin, telegramId, chatId, { editAt });
+    return true;
+  }
+  if (data.startsWith('cl:apl:d:a:')) {
+    const staffId = Number(data.slice('cl:apl:d:a:'.length));
+    const items = await collectIncomingAppeals(admin, telegramId);
+    const item = items.find((i) => i.kind === 'admin' && i.staffTelegramId === staffId);
+    if (item) await markAppealRead(admin, telegramId, item.key);
     await showAppealsIncoming(admin, telegramId, chatId, { editAt });
     return true;
   }

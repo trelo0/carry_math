@@ -32,6 +32,10 @@ import {
   handleStudentSupportMessage,
 } from '@/lib/bot/studentSupportFlow';
 import {
+  handleStudentStaffDmAttachment,
+  handleStudentStaffDmMessage,
+} from '@/lib/bot/student-staff-dm-thread';
+import {
   handleTeacherAttachment,
   handleTeacherCallback,
   handleTeacherMessage,
@@ -131,13 +135,16 @@ export async function POST(request: Request) {
   }
 
   const update = (await request.json().catch(() => null)) as {
+    update_id?: number;
     message?: {
             text?: string;
-      chat?: { id: number };
+      chat?: { id: number; type?: string };
       message_id?: number;
-            from?: TgFrom;
+            from?: TgFrom & { is_bot?: boolean };
       reply_to_message?: { from?: TgFrom };
       caption?: string;
+      is_topic_message?: boolean;
+      message_thread_id?: number;
       document?: {
         file_id?: string;
         file_name?: string;
@@ -169,6 +176,10 @@ export async function POST(request: Request) {
 
     try {
 
+    const { tryClaimTelegramUpdate } = await import('@/lib/bot/staff/dm-topics');
+    const claimOk = await tryClaimTelegramUpdate(admin, update.update_id);
+    if (!claimOk) return NextResponse.json({ ok: true });
+
     // Контроль доступа (§20): заблокированные и ограниченные пользователи
     // не получают доступ ни через сообщения, ни через команды, ни через
     // кнопки. Проверка стоит ДО всех веток, чтобы блокировку нельзя было
@@ -179,6 +190,14 @@ export async function POST(request: Request) {
       callbackQueryId: update.callback_query?.id,
     });
     if (enforced) return NextResponse.json({ ok: true });
+
+    if (update.message?.is_topic_message && update.message.message_thread_id && update.message.from) {
+      const { handleStaffDmTopicInboundMessage } = await import(
+        '@/lib/bot/staff/staff-dm-topic-inbound'
+      );
+      const topicHandled = await handleStaffDmTopicInboundMessage(admin, update.message);
+      if (topicHandled) return NextResponse.json({ ok: true });
+    }
 
     if (update.message) {
       const privilegedHandled = await handlePrivilegedBotCommands(admin, update.message);
@@ -742,6 +761,25 @@ export async function POST(request: Request) {
       );
       if (curatorDocHandled) return NextResponse.json({ ok: true });
 
+      const { handleGuestCourseInquiryAttachment } = await import('@/lib/bot/guest-course-inquiry-flow');
+      const guestCourseDocHandled = await handleGuestCourseInquiryAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.caption ?? update.message.document.file_name ?? '',
+        { fileId: update.message.document.file_id, kind: 'document' },
+      );
+      if (guestCourseDocHandled) return NextResponse.json({ ok: true });
+
+      const staffDmDocHandled = await handleStudentStaffDmAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.caption ?? update.message.document.file_name ?? '',
+        { fileId: update.message.document.file_id, kind: 'document' },
+      );
+      if (staffDmDocHandled) return NextResponse.json({ ok: true });
+
       const mentorDocHandled = await handleStudentMentorAttachment(
         admin,
         update.message.from.id,
@@ -833,11 +871,32 @@ export async function POST(request: Request) {
         );
         if (teacherPhotoHandled) return NextResponse.json({ ok: true });
 
+        const { handleGuestCourseInquiryAttachment: guestCoursePhoto } = await import(
+          '@/lib/bot/guest-course-inquiry-flow'
+        );
+        const guestCoursePhotoHandled = await guestCoursePhoto(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.caption ?? '',
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (guestCoursePhotoHandled) return NextResponse.json({ ok: true });
+
+        const staffDmPhotoHandled = await handleStudentStaffDmAttachment(
+          admin,
+          update.message.from.id,
+          update.message.chat.id,
+          update.message.caption ?? '',
+          { fileId: largest.file_id, kind: 'photo' },
+        );
+        if (staffDmPhotoHandled) return NextResponse.json({ ok: true });
+
         const mentorPhotoHandled = await handleStudentMentorAttachment(
           admin,
           update.message.from.id,
           update.message.chat.id,
-          update.message.caption ?? 'Фото',
+          update.message.caption ?? 'Photo',
           { fileId: largest.file_id, kind: 'photo' },
         );
         if (mentorPhotoHandled) return NextResponse.json({ ok: true });
@@ -879,6 +938,27 @@ export async function POST(request: Request) {
         update.message.voice.file_id,
       );
       if (checkVoiceHandled) return NextResponse.json({ ok: true });
+
+      const { handleGuestCourseInquiryAttachment: guestCourseVoice } = await import(
+        '@/lib/bot/guest-course-inquiry-flow'
+      );
+      const guestCourseVoiceHandled = await guestCourseVoice(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        '',
+        { fileId: update.message.voice.file_id, kind: 'voice' },
+      );
+      if (guestCourseVoiceHandled) return NextResponse.json({ ok: true });
+
+      const staffDmVoiceHandled = await handleStudentStaffDmAttachment(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        '',
+        { fileId: update.message.voice.file_id, kind: 'voice' },
+      );
+      if (staffDmVoiceHandled) return NextResponse.json({ ok: true });
 
       const mentorVoiceHandled = await handleStudentMentorAttachment(
         admin,
@@ -1048,6 +1128,23 @@ export async function POST(request: Request) {
         update.message.text,
       );
       if (hwHandled) return NextResponse.json({ ok: true });
+
+      const { handleGuestCourseInquiryMessage } = await import('@/lib/bot/guest-course-inquiry-flow');
+      const guestCourseMsgHandled = await handleGuestCourseInquiryMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (guestCourseMsgHandled) return NextResponse.json({ ok: true });
+
+      const staffDmHandled = await handleStudentStaffDmMessage(
+        admin,
+        update.message.from.id,
+        update.message.chat.id,
+        update.message.text,
+      );
+      if (staffDmHandled) return NextResponse.json({ ok: true });
 
       const mentorHandled = await handleStudentMentorMessage(
         admin,
