@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useScheduleFetch } from './schedule-api-react';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
 import { formatScheduleApiError, readJson } from '@/lib/teacher/schedule-api-errors';
@@ -31,6 +32,7 @@ export default function ScheduleDaySlotModal({
   patchTeacher,
   onClose,
 }: Props) {
+  const sfetch = useScheduleFetch();
   const slotDate = existing?.slotDate ?? dateKey(day);
   const [startTime, setStartTime] = useState(existing?.startTime ?? '12:00');
   const [endTime, setEndTime] = useState(existing?.endTime ?? '13:00');
@@ -48,7 +50,7 @@ export default function ScheduleDaySlotModal({
       runAction,
       setFeedback,
       async () => {
-        const res = await fetch(`/api/cabinet/teacher/day-slots?slotId=${existing.id}`, { method: 'DELETE' });
+        const res = await sfetch(`/api/cabinet/teacher/day-slots?slotId=${existing.id}`, { method: 'DELETE' });
         const body = await readJson<{ error: string }>(res);
         if (!res.ok) throw new Error(formatScheduleApiError(body.error, 'Не удалось удалить', res.status));
         patchTeacher?.((prev) => removeTeacherDaySlot(prev, existing.id));
@@ -72,7 +74,7 @@ export default function ScheduleDaySlotModal({
       runAction,
       setFeedback,
       async () => {
-        const res = await fetch('/api/cabinet/teacher/day-slots', {
+        const res = await sfetch('/api/cabinet/teacher/day-slots', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

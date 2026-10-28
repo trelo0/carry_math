@@ -29,6 +29,7 @@ import {
   eventHeadline,
   eventPaymentLabel,
   eventSubline,
+  eventPaidClass,
   eventTone,
 } from './ScheduleWeekBoard';
 
@@ -212,7 +213,7 @@ export default function ScheduleDayTimeline({
                 <button
                   key={event.id}
                   type="button"
-                  className={`sr-ev sr-dt-ev sr-ev--tone-${eventTone(event)}${selectedEventId === event.id ? ' is-selected' : ''}${event.durationMinutes <= 60 ? ' is-short' : ''}`}
+                  className={`sr-ev sr-dt-ev sr-ev--tone-${eventTone(event)}${eventPaidClass(event)}${selectedEventId === event.id ? ' is-selected' : ''}${event.durationMinutes <= 60 ? ' is-short' : ''}`}
                   title={`${timeRange(event)} \u00b7 ${eventHeadline(event)} \u00b7 ${eventSubline(event)}`}
                   style={{
                     left: `calc(${left}% + 1px)`,

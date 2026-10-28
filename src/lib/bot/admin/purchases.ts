@@ -98,7 +98,7 @@ export async function notifyAdminsOfNewPurchaseRequest(
 ): Promise<number> {
   const userLabel = await getMemberLabel(admin, request.telegram_id);
   const text = formatAdminPurchaseRequestNotification(request, userLabel);
-  const keyboard = adminPurchaseRequestKeyboard(request.id);
+  const keyboard = adminPurchaseRequestKeyboard(request.id, request.telegram_id);
 
   const chatIds = await getAdminChatIds(admin);
   let sent = 0;
@@ -243,6 +243,7 @@ async function renderPurchaseDetail(
       [{ text: '❌ Отклонить', callback_data: `ap:x:${request.id}:${filterCode}:${page}` }],
     );
   }
+  keyboard.push([{ text: '💬 Связаться', callback_data: `ah:msg:w:${request.telegram_id}` }]);
   keyboard.push([back], [homeButton()]);
 
   await editAdminMessage(message, lines.join('\n'), { inline_keyboard: keyboard });

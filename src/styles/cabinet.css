@@ -212,6 +212,72 @@
   border-top: 0;
 }
 
+/* Кнопка «В настройки» при просмотре кабинета из админки */
+.cabinet-return-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 210, 255, 0.42);
+  background: linear-gradient(135deg, rgba(0, 140, 255, 0.28), rgba(0, 210, 255, 0.14));
+  color: #f0f8ff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow:
+    0 0 0 1px rgba(0, 210, 255, 0.08) inset,
+    0 6px 20px rgba(0, 40, 90, 0.35);
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+}
+
+.cabinet-return-btn__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(0, 210, 255, 0.16);
+  border: 1px solid rgba(0, 210, 255, 0.35);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.cabinet-return-btn__text {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.cabinet-return-btn:hover {
+  color: #fff;
+  border-color: rgba(0, 210, 255, 0.65);
+  background: linear-gradient(135deg, rgba(0, 163, 255, 0.42), rgba(0, 210, 255, 0.22));
+  box-shadow:
+    0 0 0 1px rgba(0, 210, 255, 0.12) inset,
+    0 8px 24px rgba(0, 60, 120, 0.4);
+  transform: translateY(-1px);
+}
+
+.cabinet-return-btn:active {
+  transform: translateY(0);
+}
+
+.cab-sidebar-footer .cabinet-return-btn {
+  margin-bottom: 2px;
+}
+
 .cab-exam-countdown {
   display: flex;
   align-items: center;

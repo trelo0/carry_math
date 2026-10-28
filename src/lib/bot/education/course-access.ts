@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { firstRow } from '@/lib/supabase/single-row';
 import type { CourseLessonContent, DistrictCourseContent } from '@/lib/studio/courseContent';
 import { DISTRICT_COURSE_SLUG, flattenCourseLessons } from '@/lib/studio/courseContent';
 import { revokeAccess } from '@/lib/bot/accesses';
@@ -332,15 +333,16 @@ export async function studentHasCourseAccessForCourse(
   courseId: number,
 ): Promise<boolean> {
   const aliasIds = await expandCourseIdAliases(admin, courseId);
-  const { data: enrollment } = await admin
+  const { data: enrollmentRows, error: enrErr } = await admin
     .from('course_enrollments')
     .select('id')
     .eq('telegram_id', telegramId)
     .in('course_id', aliasIds)
     .eq('status', 'active')
-    .limit(1)
-    .maybeSingle();
-  if (!enrollment) return false;
+    .order('id', { ascending: false })
+    .limit(1);
+  if (enrErr) throw enrErr;
+  if (!firstRow(enrollmentRows)) return false;
   const entitlement = await sumCoursePackageLessonEntitlement(admin, telegramId, courseId);
   return entitlement > 0;
 }
@@ -424,15 +426,15 @@ export async function grantEnrollmentTrialAccess(
     }
   }
 
-  const { data: trialLesson, error: lessonError } = await admin
+  const { data: trialRows, error: lessonError } = await admin
     .from('course_lessons')
     .select('id')
     .eq('course_id', courseId)
     .eq('is_trial_free', true)
     .order('lesson_index', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
   if (lessonError) throw lessonError;
+  const trialLesson = firstRow(trialRows);
   if (!trialLesson?.id) return;
 
   const { error } = await admin.from('course_lesson_access').upsert(
@@ -461,13 +463,18 @@ async function upsertSanityLessonAccess(
     package_id: packageId ?? null,
   };
 
-  const { data: existing, error: findError } = await admin
+  const { data: accessRows, error: findError } = await admin
     .from('course_lesson_access')
     .select('id')
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
-    .maybeSingle();
+    .order('id', { ascending: false });
   if (findError) throw findError;
+  const existing = firstRow(accessRows);
+  if (accessRows && accessRows.length > 1) {
+    const extraIds = accessRows.slice(1).map((r) => r.id as number);
+    await admin.from('course_lesson_access').delete().in('id', extraIds);
+  }
 
   if (existing?.id) {
     const { error } = await admin.from('course_lesson_access').update(patch).eq('id', existing.id);
@@ -490,18 +497,19 @@ async function deductOnePackageCreditFallback(
   packageId: number,
 ): Promise<number | null> {
   const now = new Date().toISOString();
-  const { data: pkg, error: selectError } = await admin
+  const { data: pkgRows, error: selectError } = await admin
     .from('lesson_packages')
     .select('id, remaining_lessons, used_lessons')
     .eq('id', packageId)
     .eq('telegram_id', telegramId)
     .eq('product', 'course')
     .eq('status', 'active')
-    .maybeSingle();
+    .limit(1);
   if (selectError) throw selectError;
+  const pkg = firstRow(pkgRows);
   if (!pkg || (pkg.remaining_lessons as number) <= 0) return null;
 
-  const { data: updated, error: updateError } = await admin
+  const { data: updatedRows, error: updateError } = await admin
     .from('lesson_packages')
     .update({
       remaining_lessons: (pkg.remaining_lessons as number) - 1,
@@ -511,8 +519,9 @@ async function deductOnePackageCreditFallback(
     .eq('id', pkg.id)
     .gt('remaining_lessons', 0)
     .select('id')
-    .maybeSingle();
+    .limit(1);
   if (updateError) throw updateError;
+  const updated = firstRow(updatedRows);
   return updated ? (updated.id as number) : null;
 }
 
@@ -561,7 +570,7 @@ async function consumeCoursePackageCredit(
     }
     if (courseId != null) return null;
 
-    const { data: pkg, error: selectError2 } = await admin
+    const { data: pkgRows, error: selectError2 } = await admin
       .from('lesson_packages')
       .select('id')
       .eq('telegram_id', telegramId)
@@ -569,9 +578,9 @@ async function consumeCoursePackageCredit(
       .eq('status', 'active')
       .gt('remaining_lessons', 0)
       .order('purchased_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
     if (selectError2) throw selectError2;
+    const pkg = firstRow(pkgRows);
     if (!pkg?.id) return null;
     return deductOnePackageCreditFallback(admin, telegramId, pkg.id as number);
   }
@@ -688,12 +697,15 @@ export async function ensureCurrentLessonUnlocked(
   const published = buildPublishedLessonSequence(content);
   if (published.length === 0) return 0;
 
-  const { data: enrollment } = await admin
+  const { data: enrollmentRows, error: enrErr } = await admin
     .from('course_enrollments')
     .select('purchase_scenario, start_lesson_id, start_module_id')
     .eq('telegram_id', telegramId)
     .eq('course_id', courseId)
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
+  if (enrErr) throw enrErr;
+  const enrollment = firstRow(enrollmentRows);
 
   const scenario = enrollment?.purchase_scenario as 'start_from_beginning' | 'join_current' | null;
   const startLessonId = enrollment?.start_lesson_id as number | null;
@@ -778,13 +790,14 @@ export async function ensureCurrentLessonUnlocked(
   const linkedPackageId = await consumeCoursePackageCredit(admin, telegramId, packageId, courseId);
   if (!linkedPackageId) return 0;
 
-  const { data: existingGrant } = await admin
+  const { data: grantRows, error: grantFindErr } = await admin
     .from('package_lesson_grants')
     .select('package_id')
     .eq('package_id', linkedPackageId)
     .eq('sanity_lesson_id', current.sanityId)
-    .maybeSingle();
-  if (!existingGrant) {
+    .limit(1);
+  if (grantFindErr) throw grantFindErr;
+  if (!firstRow(grantRows)) {
     const { error: grantError } = await admin.from('package_lesson_grants').insert({
       package_id: linkedPackageId,
       sanity_lesson_id: current.sanityId,
@@ -874,12 +887,15 @@ export async function syncJoinCurrentEnrollmentAccess(
 ): Promise<void> {
   if (!content) return;
 
-  const { data: enrollment } = await admin
+  const { data: enrollmentRows, error: enrErr } = await admin
     .from('course_enrollments')
     .select('purchase_scenario, start_lesson_id')
     .eq('telegram_id', telegramId)
     .eq('course_id', courseId)
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
+  if (enrErr) throw enrErr;
+  const enrollment = firstRow(enrollmentRows);
 
   if (enrollment?.purchase_scenario !== 'join_current') return;
 
@@ -1223,13 +1239,13 @@ export async function canStudentWatchSanityLesson(
 
   // Пробное без строки access
   if (lesson.isTrialFree) {
-    const { data: enrollment } = await admin
+    const { data: enrollmentRows } = await admin
       .from('course_enrollments')
       .select('id')
       .eq('telegram_id', telegramId)
       .eq('status', 'active')
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    const enrollment = firstRow(enrollmentRows);
     if (enrollment) {
       const lives = courseId ? await getEnrollmentLives(admin, telegramId, courseId) : null;
       if (lives?.access_blocked) {

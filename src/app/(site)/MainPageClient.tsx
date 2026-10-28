@@ -196,6 +196,20 @@ export default function MainPageClient({
   const reviewList = reviews && reviews.length > 0 ? reviews : DEFAULT_REVIEWS;
   const { openAuth } = useAuth();
 
+  const trackCtaIntent = (source: 'home_hero' | 'home_initiation') => {
+    void fetch('/api/analytics/cta-intent', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source }),
+    }).catch(() => {});
+  };
+
+  const openAuthFromCta = (source: 'home_hero' | 'home_initiation') => {
+    trackCtaIntent(source);
+    openAuth('/cabinet');
+  };
+
   // Контент из Sanity с фолбэками на статические дефолты.
   const D = MAIN_PAGE_DEFAULTS;
   const hero = content?.hero;
@@ -431,7 +445,7 @@ export default function MainPageClient({
               <button
                 type="button"
                 className="hero-signup"
-                onClick={() => openAuth('/cabinet')}
+                onClick={() => openAuthFromCta('home_hero')}
               >
                 {heroButtonText}
                 <span className="hero-signup-arrow" aria-hidden="true">→</span>
@@ -823,7 +837,7 @@ export default function MainPageClient({
               <button
                 type="button"
                 className="init-cta"
-                onClick={() => openAuth('/cabinet')}
+                onClick={() => openAuthFromCta('home_initiation')}
               >
                 {initButtonText}
               </button>

@@ -265,9 +265,17 @@ export async function handleCombinedStaffCallback(
     }
     case 'msg': {
       if (sub === 'c') {
-        const rows = await loadStaffMyCourseRows(admin, telegramId);
-        const screen = renderMyCourseListForFilter(rows, 'curator-tools');
-        await editCombinedScreen(message, screen.text, screen.keyboard);
+        const { staffDmTopicsEnabled } = await import('./dm-topics');
+        if (staffDmTopicsEnabled()) {
+          const { curatorCourseMessagesTopicsHint } = await import('./curator-dm-topic-open');
+          await editCombinedScreen(message, curatorCourseMessagesTopicsHint(), {
+            inline_keyboard: [[{ text: '⬅️ Главное меню', callback_data: 's:menu' }]],
+          });
+        } else {
+          const rows = await loadStaffMyCourseRows(admin, telegramId);
+          const screen = renderMyCourseListForFilter(rows, 'curator-tools');
+          await editCombinedScreen(message, screen.text, screen.keyboard);
+        }
         handled = true;
         break;
       }

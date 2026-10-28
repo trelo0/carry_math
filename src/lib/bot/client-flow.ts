@@ -97,7 +97,7 @@ async function showOnlineCourseScreen(
   if (state.hasActiveCourse && state.phase !== 'guest') {
     const cabinetUrl = await createCabinetLoginUrl(admin, state.telegramId, '/cabinet?section=course');
     keyboard.inline_keyboard.push([{ text: '🌐 Открыть курс в кабинете', url: cabinetUrl }]);
-    keyboard.inline_keyboard.push([{ text: '💬 Вопрос куратору по курсу', callback_data: 'cl:course:ask' }]);
+    keyboard.inline_keyboard.push([{ text: '💬 Связаться по курсу', callback_data: 'cl:course:ask' }]);
   } else if (isGuestCatalog) {
     const offers = await listCoursePaymentOffers();
     lines.push('');

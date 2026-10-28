@@ -55,9 +55,12 @@ export async function beginStudentSupport(
   admin: SupabaseClient,
   telegramId: number,
   chatId: number,
+  options?: { fromCabinet?: boolean },
 ): Promise<void> {
   try {
-    await saveClientDialogState(admin, telegramId, chatId, 'student:support', {});
+    await saveClientDialogState(admin, telegramId, chatId, 'student:support', {
+      fromCabinet: options?.fromCabinet ?? false,
+    });
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
   }
@@ -124,10 +127,14 @@ export async function notifyAdminsOfSupportMessage(
   studentTelegramId: number,
   text: string,
   attachment?: { ref: string; kind: 'photo' | 'document' | 'voice' },
-  topicDelivery?: { contextIntro?: string; plain?: boolean; skipTopic?: boolean },
+  topicDelivery?: {
+    contextIntro?: string;
+    plain?: boolean;
+    skipTopic?: boolean;
+    skipContactPing?: boolean;
+  },
 ): Promise<void> {
-  const member = await getMember(admin, studentTelegramId);
-  if (member?.role === 'student' && staffDmTopicsEnabled()) {
+  if (staffDmTopicsEnabled()) {
     const adminId = await resolvePrimaryAdminTelegramId(admin);
     if (adminId) {
       await deliverStudentPlainToStaffTopic(
@@ -138,6 +145,15 @@ export async function notifyAdminsOfSupportMessage(
         attachment,
         { contextIntro: topicDelivery?.contextIntro, plain: topicDelivery?.plain ?? true },
       );
+      if (!topicDelivery?.skipContactPing) {
+        const { resolveMemberChatId } = await import('@/lib/bot/staff/messaging');
+        const chatId = (await resolveMemberChatId(admin, adminId)) ?? adminId;
+        const { notifyAdminClientContactPing } = await import('@/lib/bot/admin/admin-dm-topic');
+        await notifyAdminClientContactPing(admin, chatId, studentTelegramId, {
+          header: '🆘 Обращение в поддержку',
+          preview: text,
+        });
+      }
       return;
     }
   }
@@ -235,20 +251,26 @@ async function deliverSupportToAdmin(
     firstAttachment: attachment,
   });
   const isStudent = kind === 'student_question';
+  let skipContactPing = false;
+  try {
+    const st = await getState(admin, telegramId);
+    skipContactPing = Boolean(st?.payload?.fromCabinet);
+  } catch (error) {
+    if (!isConversationStateTableError(error)) throw error;
+  }
+  const supportTopicIntro =
+    '🆘 Обращение в поддержку\n\nОтветьте в этой теме — собеседник получит ответ в боте.';
   await notifyAdminsOfSupportMessage(
     admin,
     telegramId,
     body,
     attachment ? { ref: `tg:${attachment.fileId}`, kind: attachment.kind } : undefined,
-    isStudent
-      ? {
-          contextIntro: '🆘 Обращение в поддержку\n\nОтветьте в этой теме — ученик получит ответ в боте.',
-          plain: true,
-        }
+    staffDmTopicsEnabled() || isStudent
+      ? { contextIntro: supportTopicIntro, plain: true, skipContactPing }
       : undefined,
   );
-  const adminId = isStudent ? await resolvePrimaryAdminTelegramId(admin) : null;
-  if (isStudent && adminId && staffDmTopicsEnabled()) {
+  const adminId = staffDmTopicsEnabled() ? await resolvePrimaryAdminTelegramId(admin) : null;
+  if (adminId && staffDmTopicsEnabled()) {
     await saveStudentStaffDmState(admin, telegramId, chatId, {
       staffTelegramId: adminId,
       staffRole: 'admin',
@@ -297,7 +319,10 @@ export async function handleStudentSupportMessage(
     const leadId = state.payload?.inquiryLeadId as string | undefined;
     if (!leadId) return false;
     await appendInquiryMessage(admin, leadId, telegramId, trimmed);
-    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed, undefined, { plain: true });
+    await notifyAdminsOfSupportMessage(admin, telegramId, trimmed, undefined, {
+      plain: true,
+      skipContactPing: true,
+    });
     await sendAdminMessage(chatId, '✅ Сообщение добавлено к обращению.', supportIntroKeyboard());
     return true;
   }
@@ -348,7 +373,7 @@ export async function handleStudentSupportAttachment(
       telegramId,
       body,
       media ? { ref: `tg:${media.fileId}`, kind: media.kind } : undefined,
-      { plain: true },
+      { plain: true, skipContactPing: true },
     );
     await sendAdminMessage(chatId, '✅ Вложение добавлено к обращению.', supportIntroKeyboard());
     return true;

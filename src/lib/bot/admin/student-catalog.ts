@@ -120,6 +120,17 @@ async function idsLowPackage(admin: SupabaseClient): Promise<number[]> {
   return [...new Set((data ?? []).map((r) => r.telegram_id as number))];
 }
 
+async function idsOnCourseEnrollments(admin: SupabaseClient): Promise<Set<number>> {
+  const ids = new Set<number>();
+  const [{ data: enrollments }, accessCourse] = await Promise.all([
+    admin.from('course_enrollments').select('telegram_id').neq('status', 'cancelled'),
+    idsWithAccessProduct(admin, 'course'),
+  ]);
+  for (const row of enrollments ?? []) ids.add(row.telegram_id as number);
+  for (const id of accessCourse) ids.add(id);
+  return ids;
+}
+
 async function idsWithAccessProduct(admin: SupabaseClient, product: string): Promise<Set<number>> {
   const { data, error } = await admin
     .from('user_accesses')
@@ -163,7 +174,7 @@ async function resolveStudentIds(admin: SupabaseClient, filter: StudentFilterId)
   if (filter === 'new') return idsNewStudents(admin);
   if (filter === 'low_pkg') return idsLowPackage(admin);
   if (filter === 'individual') return [...(await idsWithAccessProduct(admin, 'individual'))];
-  if (filter === 'course') return [...(await idsWithAccessProduct(admin, 'course'))];
+  if (filter === 'course') return [...(await idsOnCourseEnrollments(admin))];
   if (filter === 'group') return [...(await idsInGroups(admin))];
   return null;
 }
@@ -253,7 +264,7 @@ async function loadStudentPageMembers(
     const members: MemberRow[] = [];
     for (const id of idFilter) {
       const m = await getMember(admin, id);
-      if (m && m.role === 'student') members.push(m);
+      if (m) members.push(m);
     }
     members.sort((a, b) => memberDisplayName(a).localeCompare(memberDisplayName(b), 'ru'));
     const from = page * USERS_PER_PAGE;

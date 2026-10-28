@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
+import { CABINETS_RETURN_HREF, type CabinetPreviewRole } from '@/lib/admin/settings-sections';
 import { useRouter } from 'next/navigation';
 import { memberHasRole } from '@/lib/bot/roles';
 import { buildStaffCabinetPath } from '@/lib/staff/staff-cabinet-url';
@@ -131,10 +132,16 @@ function canShowSchedule(data: StaffCabinetData): boolean {
   return canShowTeacher(data);
 }
 
-function buildStaffNav(data: StaffCabinetData): NavGroup[] {
+function buildStaffNav(data: StaffCabinetData, previewRole: StaffPreviewRole): NavGroup[] {
   const groups: NavGroup[] = [];
-  const showTeacher = canShowTeacher(data);
-  const showCourseNav = hasCourseAssignments(data) && Boolean(data.curator);
+  const showTeacher =
+    previewRole === 'curator' ? false : previewRole === 'teacher' ? canShowTeacher(data) : canShowTeacher(data);
+  const showCourseNav =
+    previewRole === 'teacher'
+      ? false
+      : previewRole === 'curator'
+        ? Boolean(data.curator) && (hasCourseAssignments(data) || data.fullStaffPreview)
+        : hasCourseAssignments(data) && Boolean(data.curator);
   const combined = showTeacher && showCourseNav;
 
   if (combined) {
@@ -163,16 +170,28 @@ function buildStaffNav(data: StaffCabinetData): NavGroup[] {
   return groups;
 }
 
-function defaultSection(data: StaffCabinetData): StaffSection {
+type StaffPreviewRole = CabinetPreviewRole | null;
+
+function defaultSection(data: StaffCabinetData, previewRole: StaffPreviewRole): StaffSection {
+  if (previewRole === 'curator') return 'course';
+  if (previewRole === 'teacher') return 'teacher-calendar';
   if (canShowSchedule(data)) return 'teacher-calendar';
   return 'course';
 }
 
-function resolveInitialSection(data: StaffCabinetData, initial?: string): StaffSection {
-  if (!initial) return defaultSection(data);
+function resolveInitialSection(
+  data: StaffCabinetData,
+  initial: string | undefined,
+  previewRole: StaffPreviewRole,
+): StaffSection {
+  const fallback = defaultSection(data, previewRole);
+  if (!initial) return fallback;
   const mapped = LEGACY_SECTION_MAP[initial] ?? initial;
-  if (STAFF_SECTIONS.includes(mapped as StaffSection)) return mapped as StaffSection;
-  return defaultSection(data);
+  if (!STAFF_SECTIONS.includes(mapped as StaffSection)) return fallback;
+  const section = mapped as StaffSection;
+  if (previewRole === 'teacher' && section === 'course') return 'teacher-calendar';
+  if (previewRole === 'curator' && section === 'teacher-calendar') return 'course';
+  return section;
 }
 
 function isCourseSection(section: StaffSection): boolean {
@@ -227,6 +246,7 @@ type Props = {
   initialLessonId?: string;
   initialCourseId?: number | null;
   initialCourseRole?: 'curator' | 'check' | null;
+  cabinetPreview?: StaffPreviewRole;
   showCabinetPick?: boolean;
 };
 
@@ -237,8 +257,11 @@ export default function StaffShell({
   initialLessonId,
   initialCourseId,
   initialCourseRole,
+  cabinetPreview = null,
   showCabinetPick,
 }: Props) {
+  const previewRole: StaffPreviewRole =
+    cabinetPreview === 'curator' || cabinetPreview === 'teacher' ? cabinetPreview : null;
   const router = useRouter();
   const [data, setData] = useState(() => normalizeStaffData(initialData));
   const [activeCourseId, setActiveCourseId] = useState<number | null>(
@@ -248,7 +271,7 @@ export default function StaffShell({
     initialCourseRole ?? initialData.curator?.activeCourseRole ?? null,
   );
   const [section, setSection] = useState<StaffSection>(() =>
-    resolveInitialSection(initialData, initialSection),
+    resolveInitialSection(initialData, initialSection, previewRole),
   );
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(initialLessonId ?? null);
   const [courseTab, setCourseTab] = useState<CourseTab>(
@@ -269,7 +292,7 @@ export default function StaffShell({
   const [courseError, setCourseError] = useState<string | null>(null);
 
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, getSidebarCollapsed, () => true);
-  const navGroups = useMemo(() => buildStaffNav(data), [data]);
+  const navGroups = useMemo(() => buildStaffNav(data, previewRole), [data, previewRole]);
   const ownCourses = useMemo(() => curatorCourses(data), [data]);
   const showCourseList = !courseOpen && ownCourses.length > 1;
 
@@ -295,11 +318,12 @@ export default function StaffShell({
           courseRole: isCourse ? nextRole : null,
           tab: tab ?? undefined,
           lesson: lesson ?? undefined,
+          cabinetPreview: previewRole,
         }),
         { scroll: false },
       );
     },
-    [section, activeCourseId, activeCourseRole, courseTab, selectedLessonId, router],
+    [section, activeCourseId, activeCourseRole, courseTab, selectedLessonId, router, previewRole],
   );
 
   const refresh = useCallback(async (scope: StaffRefreshScope = 'full') => {
@@ -448,6 +472,8 @@ export default function StaffShell({
     section !== 'teacher-calendar';
 
   const roleLabel = useMemo(() => {
+    if (previewRole === 'curator') return 'Просмотр · куратор';
+    if (previewRole === 'teacher') return 'Просмотр · преподаватель';
     if (data.fullStaffPreview) return 'Admin · preview';
     const parts: string[] = [];
     if (memberHasRole(data.memberRoles, 'teacher')) parts.push('Преподаватель');
@@ -455,16 +481,24 @@ export default function StaffShell({
     if (data.curator?.assignedCourses.some((c) => c.role === 'check')) parts.push('Проверка ДЗ');
     if (memberHasRole(data.memberRoles, 'staff')) parts.push('Сотрудник');
     return parts.join(' · ') || 'Staff';
-  }, [data.fullStaffPreview, data.memberRoles, data.curator?.assignedCourses]);
+  }, [previewRole, data.fullStaffPreview, data.memberRoles, data.curator?.assignedCourses]);
 
   useEffect(() => {
+    if (previewRole === 'curator' && section === 'teacher-calendar') {
+      setSection('course');
+      return;
+    }
+    if (previewRole === 'teacher' && section === 'course') {
+      setSection('teacher-calendar');
+      return;
+    }
     if (section === 'teacher-calendar' && !canShowSchedule(data)) {
-      setSection(defaultSection(data));
+      setSection(defaultSection(data, previewRole));
     }
-    if (isCourseSection(section) && !hasCourseAssignments(data)) {
-      setSection(defaultSection(data));
+    if (isCourseSection(section) && !hasCourseAssignments(data) && previewRole !== 'curator') {
+      setSection(defaultSection(data, previewRole));
     }
-  }, [section, data]);
+  }, [section, data, previewRole]);
 
   const handleNavClick = (itemId: StaffSection) => {
     setSection(itemId);
@@ -532,9 +566,12 @@ export default function StaffShell({
           ))}
         </nav>
         <div className="curator-sidebar-foot">
-          {showCabinetPick || data.fullStaffPreview ? (
-            <Link href="/cabinet/pick" className="curator-link curator-pick-link">
-              Выбор кабинета
+          {showCabinetPick ? (
+            <Link href={CABINETS_RETURN_HREF} className="cabinet-return-btn curator-pick-link">
+              <span className="cabinet-return-btn__icon" aria-hidden="true">
+                ←
+              </span>
+              <span className="cabinet-return-btn__text">В настройки</span>
             </Link>
           ) : null}
           <span className="staff-sidebar-avatar" aria-hidden="true">

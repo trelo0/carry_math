@@ -14,6 +14,7 @@ import {
 } from '@/lib/course-purchase-scenario';
 import { getDistrictCourseContent } from '@/lib/studio/courseContent';
 import { getCabinetPricing } from '@/lib/studio/cabinetSettings';
+import { recordCheckoutStarted } from '@/lib/bot/admin/user-activity-events';
 
 export const dynamic = 'force-dynamic';
 
@@ -238,6 +239,14 @@ export async function POST(request: Request) {
     };
 
     if (process.env.NODE_ENV === 'development' && process.env.BEPAY_MOCK === 'true') {
+      void recordCheckoutStarted(admin, {
+        telegramId,
+        courseId: courseId ?? null,
+        courseTitle: courseContent.title?.trim() || offer.title || 'Курс',
+        purchaseRequestId: purchaseRequest.id,
+        scenario: effectiveScenario,
+      }).catch((err) => console.error('[create-token mock] checkout notify failed:', err));
+
       return NextResponse.json({
         redirect_url: `${siteUrl}/cabinet?section=payments&payment=success`,
         mock: true,
@@ -307,6 +316,14 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
+
+    void recordCheckoutStarted(admin, {
+      telegramId,
+      courseId: courseId ?? null,
+      courseTitle: courseContent.title?.trim() || offer.title || 'Курс',
+      purchaseRequestId: purchaseRequest.id,
+      scenario: effectiveScenario,
+    }).catch((err) => console.error('[create-token] checkout notify failed:', err));
 
     return NextResponse.json({ redirect_url: redirectUrl });
   } catch (error) {

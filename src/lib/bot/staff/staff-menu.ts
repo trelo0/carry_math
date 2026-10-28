@@ -1,5 +1,6 @@
 import type { ReplyKeyboard } from '@/lib/bot/admin/core';
 import type { StaffCapabilities } from './capabilities';
+import { staffDmTopicsEnabled } from './dm-topics';
 
 /** Reply-меню куратора курса. */
 export const CURATOR_BOT_MENU_LABELS = {
@@ -74,6 +75,20 @@ export function resolveStaffBotMode(caps: StaffCapabilities): StaffBotMode {
 }
 
 export function staffCourseWorkspaceReplyKeyboard(role: 'curator' | 'check'): ReplyKeyboard {
+  if (role === 'check' && staffDmTopicsEnabled()) {
+    return {
+      keyboard: [
+        [{ text: CHECK_BOT_MENU_LABELS.home }],
+        [
+          { text: CHECK_BOT_MENU_LABELS.homework },
+          { text: CHECK_BOT_MENU_LABELS.students },
+        ],
+        [{ text: CHECK_BOT_MENU_LABELS.library }],
+        [{ text: STAFF_EXIT_ALL_COURSES_LABEL }],
+      ],
+      resize_keyboard: true,
+    };
+  }
   if (role === 'curator') {
     return {
       keyboard: [

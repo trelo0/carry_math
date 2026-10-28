@@ -95,6 +95,12 @@ async function openSection(
     return;
   }
   if (section === 'msg') {
+    const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+    if (staffDmTopicsEnabled()) {
+      const { checkCourseMessagesTopicsHint } = await import('@/lib/bot/staff/curator-dm-topic-open');
+      await editScreen(message, checkCourseMessagesTopicsHint(), { inline_keyboard: [] });
+      return;
+    }
     const studentIds = await listCourseStudentTelegramIds(admin, courseId);
     const { threads } = await listCheckThreadsForCourse(admin, telegramId, courseId, studentIds);
     const incoming = threads.filter((t) => t.unreadCount > 0).length;
@@ -112,6 +118,7 @@ export async function handleCheckBotCallback(
   message: AdminMessage,
   telegramId: number,
   data: string,
+  callbackQueryId?: string,
 ): Promise<boolean> {
   if (!data.startsWith('k:')) return false;
   const parts = data.split(':');
@@ -343,9 +350,7 @@ export async function handleCheckBotCallback(
 
       if (parts[3] === 'w' && parts[4]) {
         const studentTelegramId = Number(parts[4]);
-        const { openStaffStudentDmTopic, staffDmTopicsEnabled } = await import(
-          '@/lib/bot/staff/dm-topics'
-        );
+        const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
         if (staffDmTopicsEnabled()) {
           try {
             await assertCheckStudentOnCourse(admin, telegramId, courseId, studentTelegramId);
@@ -356,18 +361,18 @@ export async function handleCheckBotCallback(
             );
             return true;
           }
-          const opened = await openStaffStudentDmTopic(admin, {
+          const { openStaffDmTopicAndNavigate } = await import('@/lib/bot/staff/staff-dm-topic-navigate');
+          const opened = await openStaffDmTopicAndNavigate(admin, {
             staffTelegramId: telegramId,
             studentTelegramId,
             staffRole: 'check',
             courseIdHint: courseId,
+            callbackQueryId,
+            notifyChatId: chatId,
           });
-          await sendAdminMessage(
-            chatId,
-            opened.ok
-              ? '✅ Откройте тему с учеником в чате с ботом (Topics). Ответы пишите внутри темы.'
-              : `❌ ${opened.error ?? 'Не удалось открыть тему.'}`,
-          );
+          if (!opened.ok) {
+            await sendAdminMessage(chatId, `❌ ${opened.error ?? 'Не удалось открыть тему.'}`);
+          }
           return true;
         }
         try {

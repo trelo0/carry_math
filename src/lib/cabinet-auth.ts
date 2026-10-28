@@ -106,6 +106,9 @@ export function resolveCabinetEntryPath(
       : null;
 
   if (memberHasRole(roles, 'admin')) {
+    if (safe?.includes('cabinetPreview=')) {
+      return safe;
+    }
     if (safe?.startsWith('/cabinet/lesson/') || safe?.startsWith('/cabinet/checkout')) {
       return safe;
     }
@@ -114,9 +117,9 @@ export function resolveCabinetEntryPath(
       safe?.startsWith('/cabinet/admin') ||
       safe?.startsWith('/cabinet/pick')
     ) {
-      return safe.startsWith('/cabinet/pick') ? '/cabinet/admin' : safe;
+      return safe.startsWith('/cabinet/pick') ? '/cabinet/admin/courses' : safe;
     }
-    return '/cabinet/admin';
+    return '/cabinet/admin/courses';
   }
 
   if (isCreatorTelegramId(telegramId)) {
@@ -187,13 +190,49 @@ async function loadStaffMember(
   };
 }
 
+/** Заголовок: админ работает с API преподавателя от имени выбранного teacher. */
+export const ADMIN_ACT_AS_TEACHER_HEADER = 'x-admin-act-as-teacher';
+
+async function readActAsTeacherId(): Promise<number | null> {
+  try {
+    const { headers } = await import('next/headers');
+    const raw = (await headers()).get(ADMIN_ACT_AS_TEACHER_HEADER);
+    const id = Number(raw);
+    return raw && Number.isFinite(id) && id > 0 ? Math.trunc(id) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Staff-кабинет: curator и/или teacher. */
 export async function getStaffAuth(): Promise<StaffAuthContext | null> {
   const base = await getCabinetAuth();
   if (!base) return null;
   const member = await loadStaffMember(base);
   if (!member) return null;
-  return { ...base, ...member };
+  const ctx: StaffAuthContext = { ...base, ...member };
+
+  // Подмена личности — только реальному admin и только на существующего teacher.
+  if (memberHasRole(ctx.roles, 'admin')) {
+    const actAs = await readActAsTeacherId();
+    if (actAs != null && actAs !== ctx.telegramId) {
+      const teacherRoles = await loadMemberRoles(ctx.admin, actAs);
+      if (!memberHasRole(teacherRoles, 'teacher')) return null;
+      const { data: teacher } = await ctx.admin
+        .from('bot_members')
+        .select('full_name')
+        .eq('telegram_id', actAs)
+        .maybeSingle();
+      return {
+        ...ctx,
+        telegramId: actAs,
+        role: 'teacher',
+        roles: teacherRoles,
+        fullName: (teacher?.full_name as string | null) ?? null,
+      };
+    }
+  }
+  return ctx;
 }
 
 /** Кабинет: проведение занятий (куратор курса или admin preview). */

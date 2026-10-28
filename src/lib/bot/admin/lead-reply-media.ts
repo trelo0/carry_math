@@ -36,6 +36,14 @@ export async function handleAdminLeadReplyMedia(
   caption?: string,
 ): Promise<boolean> {
   if (state.step !== 'admin:lead:reply') return false;
+  const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  if (staffDmTopicsEnabled()) {
+    await sendAdminMessage(
+      state.chat_id,
+      'Ответы по заявкам — в Topics. Нажмите «Ответить» в карточке заявки.',
+    );
+    return true;
+  }
   const leadId = state.payload.leadReplyLeadId;
   const clientTgId = state.payload.leadReplyClientTelegramId;
   const nav = state.payload.leadReplyNav ?? 'a:0';

@@ -208,16 +208,21 @@ export function formatAdminPurchaseRequestNotification(
   ].join('\n');
 }
 
-export function adminPurchaseRequestKeyboard(requestId: string): {
+export function adminPurchaseRequestKeyboard(
+  requestId: string,
+  clientTelegramId?: number,
+): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
-  return {
-    inline_keyboard: [
-      [
-        { text: '✅ Подтвердить оплату', callback_data: `ap:ok:${requestId}:p:0` },
-        { text: '❌ Отклонить', callback_data: `ap:x:${requestId}:p:0` },
-      ],
-      [{ text: '💳 Открыть заявку', callback_data: `ap:l:${requestId}:p:0` }],
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [
+      { text: '✅ Подтвердить оплату', callback_data: `ap:ok:${requestId}:p:0` },
+      { text: '❌ Отклонить', callback_data: `ap:x:${requestId}:p:0` },
     ],
-  };
+    [{ text: '💳 Открыть заявку', callback_data: `ap:l:${requestId}:p:0` }],
+  ];
+  if (clientTelegramId != null && clientTelegramId > 0) {
+    rows.push([{ text: '💬 Связаться', callback_data: `ah:msg:w:${clientTelegramId}` }]);
+  }
+  return { inline_keyboard: rows };
 }

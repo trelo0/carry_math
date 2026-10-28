@@ -1,7 +1,9 @@
-import { isCreatorTelegramId } from '@/lib/bot/roles';
+import { isCreatorTelegramId, loadMemberRoles, memberHasRole } from '@/lib/bot/roles';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { getCabinetData } from '@/lib/cabinet';
 import CabinetShell from '@/components/cabinet/CabinetShell';
 import CabinetTelegramGate from '@/components/cabinet/CabinetTelegramGate';
+import CtaIntentConsumer from '@/components/cabinet/CtaIntentConsumer';
 
 const SECTIONS = ['course', 'payments', 'settings'] as const;
 type CabinetSection = (typeof SECTIONS)[number];
@@ -29,6 +31,7 @@ export default async function CabinetPageContent({
   section,
   payment,
   returnTo,
+  cabinetPreview,
 }: {
   phone: string;
   createdAt: string;
@@ -36,6 +39,7 @@ export default async function CabinetPageContent({
   section?: string;
   payment?: string;
   returnTo: string;
+  cabinetPreview?: 'student';
 }) {
   const cabinet = await getCabinetData(phone, createdAt, courseSlug, {
     loadMapProgress: false,
@@ -47,15 +51,25 @@ export default async function CabinetPageContent({
     return <CabinetTelegramGate returnTo={returnTo} />;
   }
 
-  const showCabinetPick =
-    cabinet.telegramId != null && isCreatorTelegramId(cabinet.telegramId);
+  let showCabinetPick = cabinetPreview === 'student';
+  if (showCabinetPick && cabinet.telegramId != null) {
+    try {
+      const roles = await loadMemberRoles(createAdminClient(), cabinet.telegramId);
+      showCabinetPick = isCreatorTelegramId(cabinet.telegramId) || memberHasRole(roles, 'admin');
+    } catch {
+      showCabinetPick = false;
+    }
+  }
 
   return (
-    <CabinetShell
-      data={cabinet}
-      initialSection={parseSection(section)}
-      initialPaymentResult={parsePaymentResult(payment)}
-      showCabinetPick={showCabinetPick}
-    />
+    <>
+      <CtaIntentConsumer />
+      <CabinetShell
+        data={cabinet}
+        initialSection={parseSection(section)}
+        initialPaymentResult={parsePaymentResult(payment)}
+        showCabinetPick={showCabinetPick}
+      />
+    </>
   );
 }

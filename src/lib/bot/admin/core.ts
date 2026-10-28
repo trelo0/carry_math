@@ -120,6 +120,8 @@ export type AdminPayload = {
   adminMsgStudentId?: number;
   leadReplyLeadId?: string;
   inquiryLeadId?: string;
+  /** Deep link /start support из кабинета на сайте (пинг админу уже отправлен). */
+  fromCabinet?: boolean;
   leadReplyNav?: string;
   leadReplyClientTelegramId?: number;
   leadTrialLeadId?: string;

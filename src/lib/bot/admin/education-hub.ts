@@ -133,7 +133,7 @@ export async function renderCourseDetail(
 
   const keyboard: InlineButton[][] = [
     [{ text: '👥 Сотрудники курса', callback_data: `ae:cs:${courseId}:m` }],
-    [{ text: '👨‍🎓 Ученики курса', callback_data: `ae:ls:course:0` }],
+    [{ text: '👨‍🎓 Ученики курса', callback_data: `ae:cr:${courseId}:0` }],
     [{ text: '❤️ Жизни курса', callback_data: 'ae:lives' }],
     [{ text: '⬅️ К списку курсов', callback_data: 'ae:courses:0' }],
     [homeButton()],
@@ -227,6 +227,24 @@ export async function handleEducationHubAction(
   const courseMatch = data.match(/^ae:course:(\d+)$/);
   if (courseMatch) {
     await renderCourseDetail(admin, message, Number(courseMatch[1]));
+    return true;
+  }
+  const crStudent = data.match(/^ae:cr:(\d+):s:(\d+):(\d+)$/);
+  if (crStudent) {
+    const { renderAdminCourseStudentCard } = await import('./admin-course-students');
+    await renderAdminCourseStudentCard(
+      admin,
+      message,
+      Number(crStudent[1]),
+      Number(crStudent[2]),
+      Number(crStudent[3]) || 0,
+    );
+    return true;
+  }
+  const crList = data.match(/^ae:cr:(\d+):(\d+)$/);
+  if (crList) {
+    const { renderAdminCourseStudentsList } = await import('./admin-course-students');
+    await renderAdminCourseStudentsList(admin, message, Number(crList[1]), Number(crList[2]) || 0);
     return true;
   }
   if (data.startsWith('ae:ind:')) {

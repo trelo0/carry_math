@@ -48,6 +48,12 @@ type Props = {
   allEvents?: ScheduleEvent[];
   showCancelled?: boolean;
   onViewAllRoster?: () => void;
+  /** Админ: отметить занятие оплаченным / снять отметку. */
+  onTogglePaid?: (event: ScheduleEvent, paid: boolean) => void;
+  /** Админ: статистика вынесена под календарь. */
+  hideStats?: boolean;
+  /** Админ: блок вместо статистики. */
+  sidebarSlot?: React.ReactNode;
   stats: WeekStats;
 };
 
@@ -82,6 +88,9 @@ export default function ScheduleRightPanel({
   allEvents = [],
   showCancelled = false,
   onViewAllRoster,
+  onTogglePaid,
+  hideStats = false,
+  sidebarSlot,
   stats,
 }: Props) {
   const work = getDayWorkState(teacherData?.workingHours, day);
@@ -250,6 +259,19 @@ export default function ScheduleRightPanel({
               Отменить занятие
             </button>
           </li>
+          {onTogglePaid ? (
+            <li>
+              <button
+                type="button"
+                className="sr-quick"
+                disabled={!selectedEvent || selectedEvent.status === 'cancelled' || !selectedEvent.lessonId || busy}
+                onClick={() => selectedEvent && onTogglePaid(selectedEvent, selectedEvent.isPaid !== true)}
+              >
+                <span className="sr-quick-ico">₽</span>
+                {selectedEvent?.isPaid === true ? 'Снять отметку об оплате' : 'Отметить оплаченным'}
+              </button>
+            </li>
+          ) : null}
         </ul>
         <p className="sr-muted sr-quick-hint">{targetHint}</p>
         {onAddBlockSlot && !selectedEvent ? (
@@ -325,7 +347,8 @@ export default function ScheduleRightPanel({
         </section>
       ) : null}
 
-      <ScheduleWeekStats stats={stats} />
+      {sidebarSlot}
+      {hideStats ? null : <ScheduleWeekStats stats={stats} />}
     </aside>
   );
 }

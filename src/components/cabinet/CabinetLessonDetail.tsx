@@ -137,10 +137,20 @@ export default function CabinetLessonDetail({ stop, coverUrl, coursePurchased }:
   const theaterRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const watchedRef = useRef(false);
+  const trialPageRef = useRef(false);
 
   useEffect(() => {
     router.prefetch('/cabinet?section=course');
   }, [router]);
+
+  useEffect(() => {
+    if (!stop.isTrialFree || trialPageRef.current || !stop.sanityLessonId) return;
+    trialPageRef.current = true;
+    void fetch(
+      `/api/cabinet/course/lessons/${encodeURIComponent(stop.sanityLessonId)}/trial-view`,
+      { method: 'POST', credentials: 'same-origin' },
+    ).catch(() => {});
+  }, [stop.isTrialFree, stop.sanityLessonId]);
 
   useEffect(() => {
     const courseSlug = courseSlugFromLessonLocation();

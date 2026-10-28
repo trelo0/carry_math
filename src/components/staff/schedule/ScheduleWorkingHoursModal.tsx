@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useScheduleFetch } from './schedule-api-react';
 import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
@@ -112,6 +113,7 @@ export default function ScheduleWorkingHoursModal({
   onAddOffDay,
   onClose,
 }: Props) {
+  const sfetch = useScheduleFetch();
   const [drafts, setDrafts] = useState(() => toDrafts(workingHours.weekly));
   const [moves, setMoves] = useState<Record<number, Move>>({});
   const [saving, setSaving] = useState(false);
@@ -200,7 +202,7 @@ export default function ScheduleWorkingHoursModal({
             };
           });
 
-        const res = await fetch('/api/cabinet/teacher/availability/apply-week', {
+        const res = await sfetch('/api/cabinet/teacher/availability/apply-week', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ weekly: weeklyDraft, moves: movePayload }),
@@ -229,7 +231,7 @@ export default function ScheduleWorkingHoursModal({
       setFeedback,
       async () => {
         try {
-          const res = await fetch('/api/cabinet/teacher/availability', {
+          const res = await sfetch('/api/cabinet/teacher/availability', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),

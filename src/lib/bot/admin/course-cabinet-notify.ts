@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { staffStudentLabel } from '../staff/messaging';
+import { staffDmTopicsEnabled } from '../staff/dm-topics';
+import { adminClientTopicCallback } from './admin-dm-topic';
 
 async function getAdminChatIds(admin: SupabaseClient): Promise<number[]> {
   const envIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
@@ -59,16 +61,19 @@ export async function notifyAdminsOfCourseCabinetOpen(
     'Свяжитесь, чтобы узнать, как ему курс.',
   ].filter(Boolean) as string[];
 
-  const { notifyPrimaryAdminMainChatInbox } = await import('@/lib/bot/admin/admin-guest-inbox');
-  const inboxOk = await notifyPrimaryAdminMainChatInbox(admin, studentTelegramId, {
-    kind: 'support',
-    header: lines[0] ?? '🎓 Уведомление',
-    body: lines.slice(2).join('\n'),
-  });
-  if (inboxOk) return 1;
+  // Системное уведомление — не пишем в staff_student_messages / topic (только пуш + «Связаться»).
+  if (!staffDmTopicsEnabled()) {
+    const { notifyPrimaryAdminMainChatInbox } = await import('@/lib/bot/admin/admin-guest-inbox');
+    const inboxOk = await notifyPrimaryAdminMainChatInbox(admin, studentTelegramId, {
+      kind: 'support',
+      header: lines[0] ?? '🎓 Уведомление',
+      body: lines.slice(2).join('\n'),
+    });
+    if (inboxOk) return 1;
+  }
 
   const keyboard = {
-    inline_keyboard: [[{ text: '✉️ Связаться', callback_data: `ah:msg:w:${studentTelegramId}` }]],
+    inline_keyboard: [[{ text: '💬 Связаться', callback_data: adminClientTopicCallback(studentTelegramId) }]],
   };
 
   let sent = 0;

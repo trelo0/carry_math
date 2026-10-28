@@ -1,3 +1,4 @@
+import type { CabinetPreviewRole } from '@/lib/admin/settings-sections';
 import type { StaffCourseAssignmentRole } from '@/lib/staff/course-assignment-ui';
 
 export type StaffCabinetUrlParams = {
@@ -7,6 +8,7 @@ export type StaffCabinetUrlParams = {
   lesson?: string;
   courseId?: number | null;
   courseRole?: StaffCourseAssignmentRole | null;
+  cabinetPreview?: CabinetPreviewRole | null;
 };
 
 export function buildStaffCabinetPath(params: StaffCabinetUrlParams): string {
@@ -19,6 +21,9 @@ export function buildStaffCabinetPath(params: StaffCabinetUrlParams): string {
   }
   if (params.courseRole === 'curator' || params.courseRole === 'check') {
     sp.set('courseRole', params.courseRole);
+  }
+  if (params.cabinetPreview === 'curator' || params.cabinetPreview === 'teacher') {
+    sp.set('cabinetPreview', params.cabinetPreview);
   }
   const qs = sp.toString();
   return qs ? `/cabinet/staff?${qs}` : '/cabinet/staff';

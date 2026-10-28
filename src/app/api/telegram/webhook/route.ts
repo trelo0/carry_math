@@ -442,7 +442,14 @@ export async function POST(request: Request) {
         update.message.from.id,
         memberPatch(update.message.from, update.message.chat.id),
       );
-      await beginStudentSupport(admin, update.message.from.id, update.message.chat.id);
+      const supportTelegramId = update.message.from.id;
+      await beginStudentSupport(admin, supportTelegramId, update.message.chat.id, {
+        fromCabinet: true,
+      });
+      const { notifyAdminCabinetSupportIntent } = await import('@/lib/bot/admin/admin-dm-topic');
+      await notifyAdminCabinetSupportIntent(admin, supportTelegramId).catch((err) =>
+        console.error('[webhook] cabinet support admin notify failed:', err),
+      );
       return NextResponse.json({ ok: true });
     }
 

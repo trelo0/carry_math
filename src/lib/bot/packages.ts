@@ -74,17 +74,11 @@ export async function grantLessonPackage(
     return data as LessonPackageRow;
   }
   
-  // Legacy: accumulate в активный пакет того же курса
-  let existingQuery = admin
-    .from('lesson_packages')
-    .select('id, total_lessons, remaining_lessons, status')
-    .eq('telegram_id', telegramId)
-    .eq('product', product)
-    .eq('status', 'active');
-  if (product === 'course' && options.courseId != null) {
-    existingQuery = existingQuery.eq('course_id', options.courseId);
-  }
-  const { data: existing } = await existingQuery.maybeSingle();
+  // Legacy: accumulate в один активный пакет (если их несколько — сливаем в последний).
+  const existing =
+    product === 'course' && options.courseId != null
+      ? await consolidateActiveCoursePackages(admin, telegramId, options.courseId)
+      : await pickLatestActivePackage(admin, telegramId, product);
 
   if (existing) {
     const { data, error } = await admin
@@ -124,6 +118,97 @@ export async function grantLessonPackage(
   return data as LessonPackageRow;
 }
 
+type ActivePackageRow = {
+  id: number;
+  total_lessons: number;
+  remaining_lessons: number;
+  title?: string;
+};
+
+/** Один активный пакет без maybeSingle (PostgREST падает, если строк > 1). */
+async function pickLatestActivePackage(
+  admin: SupabaseClient,
+  telegramId: number,
+  product: AccessProduct,
+  courseId?: number | null,
+): Promise<ActivePackageRow | null> {
+  let q = admin
+    .from('lesson_packages')
+    .select('id, total_lessons, remaining_lessons, title')
+    .eq('telegram_id', telegramId)
+    .eq('product', product)
+    .eq('status', 'active');
+  if (product === 'course' && courseId != null) q = q.eq('course_id', courseId);
+  const { data, error } = await q.order('id', { ascending: false }).limit(1);
+  if (error) throw error;
+  const row = data?.[0];
+  return row
+    ? {
+        id: row.id as number,
+        total_lessons: row.total_lessons as number,
+        remaining_lessons: row.remaining_lessons as number,
+        title: row.title as string | undefined,
+      }
+    : null;
+}
+
+/** Несколько active на один курс — сливаем остатки в последний, остальные отменяем. */
+async function consolidateActiveCoursePackages(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+): Promise<ActivePackageRow | null> {
+  const { data: rows, error } = await admin
+    .from('lesson_packages')
+    .select('id, total_lessons, remaining_lessons, title')
+    .eq('telegram_id', telegramId)
+    .eq('product', 'course')
+    .eq('course_id', courseId)
+    .eq('status', 'active')
+    .order('id', { ascending: false });
+  if (error) throw error;
+  if (!rows?.length) return null;
+  if (rows.length === 1) {
+    const r = rows[0];
+    return {
+      id: r.id as number,
+      total_lessons: r.total_lessons as number,
+      remaining_lessons: r.remaining_lessons as number,
+      title: r.title as string | undefined,
+    };
+  }
+
+  const [primary, ...rest] = rows;
+  let total = primary.total_lessons as number;
+  let remaining = primary.remaining_lessons as number;
+  for (const p of rest) {
+    total += p.total_lessons as number;
+    remaining += p.remaining_lessons as number;
+  }
+  const now = new Date().toISOString();
+  const { error: mergeError } = await admin
+    .from('lesson_packages')
+    .update({ total_lessons: total, remaining_lessons: remaining, updated_at: now })
+    .eq('id', primary.id);
+  if (mergeError) throw mergeError;
+
+  const dupIds = rest.map((p) => p.id as number);
+  if (dupIds.length > 0) {
+    const { error: cancelError } = await admin
+      .from('lesson_packages')
+      .update({ status: 'cancelled', updated_at: now })
+      .in('id', dupIds);
+    if (cancelError) throw cancelError;
+  }
+
+  return {
+    id: primary.id as number,
+    total_lessons: total,
+    remaining_lessons: remaining,
+    title: primary.title as string | undefined,
+  };
+}
+
 export async function recordPayment(
   admin: SupabaseClient,
   telegramId: number,
@@ -152,13 +237,16 @@ export async function ensureCourseEnrollmentOnPurchase(
   const targetCourseId = await resolveCourseId(admin, courseId);
   if (!targetCourseId) return null;
 
-  const { data: existing } = await admin
+  const { data: existingRows, error: existingError } = await admin
     .from('course_enrollments')
     .select('id')
     .eq('telegram_id', telegramId)
     .eq('course_id', targetCourseId)
     .eq('status', 'active')
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
+  if (existingError) throw existingError;
+  const existing = existingRows?.[0] ?? null;
 
   if (!existing) {
     await enrollStudent(admin, telegramId, targetCourseId);
@@ -342,4 +430,61 @@ export async function completeProductPurchase(
     if (!isPackageTableError(error)) throw error;
   }
   return { packageId: pkg.id, lessonsGranted, curatorAssigned, teacherAssigned };
+}
+
+/** Ручное пополнение из админки: пакет всегда начисляется; открытие занятий — best effort. */
+export async function adminManualCoursePackageTopUp(
+  admin: SupabaseClient,
+  telegramId: number,
+  courseId: number,
+  lessons: number,
+  title: string,
+  courseSlug: string,
+  actorTelegramId: number,
+): Promise<{ packageId: number; lessonsGranted: number; unlockWarning?: string }> {
+  await grantAccess(admin, telegramId, 'course', {});
+
+  const pkg = await grantLessonPackage(admin, telegramId, 'course', {
+    title,
+    lessons,
+    courseId,
+  });
+
+  let lessonsGranted = 0;
+  let unlockWarning: string | undefined;
+  try {
+    await ensureCourseEnrollmentOnPurchase(admin, telegramId, courseId, { courseSlug });
+    const courseContent = await getDistrictCourseContent(courseSlug).catch(() => null);
+    lessonsGranted = await grantPackageLessonAccess(
+      admin,
+      telegramId,
+      courseId,
+      pkg.id,
+      lessons,
+      courseContent,
+    );
+    if (courseContent) {
+      const { syncJoinCurrentEnrollmentAccess } = await import('./education/course-access');
+      await syncJoinCurrentEnrollmentAccess(admin, telegramId, courseId, courseContent, pkg.id);
+    }
+  } catch (error) {
+    unlockWarning =
+      error instanceof Error ? error.message : 'Не удалось синхронизировать доступ к занятиям';
+    console.error('[adminManualCoursePackageTopUp unlock]', error);
+  }
+
+  try {
+    await recordPayment(
+      admin,
+      telegramId,
+      'course',
+      0,
+      pkg.id,
+      `admin-topup-${actorTelegramId}-${Date.now()}`,
+    );
+  } catch (error) {
+    if (!isPackageTableError(error)) console.warn('[admin topup payment log]', error);
+  }
+
+  return { packageId: pkg.id, lessonsGranted, unlockWarning };
 }

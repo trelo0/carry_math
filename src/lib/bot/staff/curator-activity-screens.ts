@@ -11,6 +11,7 @@ import { withCuratorCabinetRow } from './curator-cabinet-ui';
 import type { StaffScreenNav } from './staff-screen-nav';
 import type { CuratorAttentionItem } from './curator-attention';
 import { loadCuratorCourseStudents, type CuratorStudentView } from '@/lib/curator/students';
+import { staffDmTopicsEnabled } from './dm-topics';
 
 function backButton(text: string, callback: string) {
   return { text, callback_data: callback };
@@ -38,7 +39,7 @@ export function renderCuratorActivityHome(
     `Заморозка (0 жизней): ${snapshot.frozenCount}`,
     `⚠️ Требует внимания: ${snapshot.attentionCount}`,
   ];
-  if (snapshot.newQuestions > 0) {
+  if (!staffDmTopicsEnabled() && snapshot.newQuestions > 0) {
     parts.push(`Непрочитанных диалогов: ${snapshot.newQuestions} (раздел «Сообщения»)`);
   }
 

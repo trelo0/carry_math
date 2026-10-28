@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import Link from 'next/link';
+import { CABINETS_RETURN_HREF } from '@/lib/admin/settings-sections';
 import {
   normalizeCuratorCabinetData,
   type CuratorCabinetData,
@@ -104,8 +105,11 @@ export default function CuratorShell({
         </nav>
         <div className="curator-sidebar-foot">
           {showCabinetPick ? (
-            <Link href="/cabinet/pick" className="curator-link curator-pick-link">
-              Выбор кабинета
+            <Link href={CABINETS_RETURN_HREF} className="cabinet-return-btn curator-pick-link">
+              <span className="cabinet-return-btn__icon" aria-hidden="true">
+                ←
+              </span>
+              <span className="cabinet-return-btn__text">В настройки</span>
             </Link>
           ) : null}
           <p>{data.curatorName ?? 'Куратор'}</p>

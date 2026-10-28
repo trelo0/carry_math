@@ -108,6 +108,7 @@ export function isCommsHubAction(data: string): boolean {
   return (
     data.startsWith('ah:hw:') ||
     data.startsWith('ah:msg:') ||
+    data.startsWith('admin:msg:w:') ||
     data.startsWith('ah:gin:') ||
     /^ah:person:\d+:(hw|msg|history)$/.test(data)
   );
@@ -183,7 +184,7 @@ async function renderThreadView(
   }
 
   const keyboard: InlineButton[][] = [
-    [{ text: '✉️ Написать ученику', callback_data: `ah:msg:w:${studentTelegramId}` }],
+    [{ text: '💬 Связаться', callback_data: `ah:msg:w:${studentTelegramId}` }],
     [{ text: '👤 Карточка', callback_data: `admin:user:${studentTelegramId}::` }],
     [{ text: '◀️ Непрочитанные', callback_data: `ah:msg:u:${backPage}` }],
     [homeButton()],
@@ -282,25 +283,15 @@ async function startAdminMessageToStudent(
   studentTelegramId: number,
 ): Promise<void> {
   const label = await staffStudentLabel(admin, studentTelegramId);
-  const { openStaffStudentDmTopic, staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
   if (staffDmTopicsEnabled()) {
-    const opened = await openStaffStudentDmTopic(admin, {
-      staffTelegramId: adminTelegramId,
-      studentTelegramId,
-      staffRole: 'admin',
+    await editAdminMessage(message, `✉️ ${label}\n\nОткройте переписку в Topics.`, {
+      inline_keyboard: [
+        [{ text: '💬 Связаться', callback_data: `ah:msg:w:${studentTelegramId}` }],
+        [{ text: '⬅️ Назад', callback_data: `ah:person:${studentTelegramId}:msg` }],
+        [homeButton()],
+      ],
     });
-    await editAdminMessage(
-      message,
-      opened.ok
-        ? `✉️ ${label}\n\nТема в чате с ботом открыта. Пишите ответ в Topics — ученик получит сообщение в боте.`
-        : `❌ ${opened.error ?? 'Не удалось открыть тему.'}`,
-      {
-        inline_keyboard: [
-          [{ text: '⬅️ Назад', callback_data: `ah:person:${studentTelegramId}:msg` }],
-          [homeButton()],
-        ],
-      },
-    );
     return;
   }
   await saveState(admin, adminTelegramId, message, 'admin:msg:compose', {
@@ -319,6 +310,7 @@ export async function handleCommsHubAction(
   data: string,
   message: AdminMessage,
   adminTelegramId: number,
+  callbackQueryId?: string,
 ): Promise<boolean> {
   const deliver = editDeliver(message);
 
@@ -330,6 +322,7 @@ export async function handleCommsHubAction(
       adminTelegramId,
       message.chatId,
       message.messageId,
+      callbackQueryId,
     );
   }
 
@@ -361,9 +354,35 @@ export async function handleCommsHubAction(
     return true;
   }
 
-  const threadMatch = data.match(/^ah:msg:t:(\d+):(\d+):(teacher|curator):(\d+)$/);
+  const threadMatch = data.match(/^ah:msg:t:(\d+):(\d+):(teacher|curator|admin|check):(\d+)$/);
   if (threadMatch) {
-    await renderThreadView(admin, message, Number(threadMatch[1]), Number(threadMatch[4]) || 0);
+    const studentId = Number(threadMatch[1]);
+    const staffRole = threadMatch[3];
+    const backPage = Number(threadMatch[4]) || 0;
+    const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+    if (staffDmTopicsEnabled() && (staffRole === 'admin' || staffRole === 'check')) {
+      const { openStaffDmTopicAndNavigate } = await import('@/lib/bot/staff/staff-dm-topic-navigate');
+      const opened = await openStaffDmTopicAndNavigate(admin, {
+        staffTelegramId: adminTelegramId,
+        studentTelegramId: studentId,
+        staffRole: staffRole === 'check' ? 'check' : 'admin',
+        callbackQueryId,
+        notifyChatId: message.chatId,
+      });
+      if (!opened.ok) {
+        await editAdminMessage(message, `❌ ${opened.error ?? 'Не удалось открыть тему.'}`, {
+          inline_keyboard: [[{ text: '◀️ Непрочитанные', callback_data: `ah:msg:u:${backPage}` }], [homeButton()]],
+        });
+      }
+      return true;
+    }
+    await renderThreadView(admin, message, studentId, backPage);
+    return true;
+  }
+
+  const legacyWrite = data.match(/^admin:msg:w:(\d+)$/);
+  if (legacyWrite) {
+    await startAdminMessageToStudent(admin, adminTelegramId, message, Number(legacyWrite[1]));
     return true;
   }
 

@@ -352,9 +352,10 @@ export type MemberRow = {
   // Поле заполняют только запросы, которые явно его выбирают: до применения
   // bot_moderation.sql колонки в таблице ещё нет.
   moderation_status?: string;
+  extra_roles?: string[] | null;
 };
 
-const MEMBER_COLUMNS = 'telegram_id, role, phone, full_name, chat_id';
+const MEMBER_COLUMNS = 'telegram_id, role, phone, full_name, chat_id, extra_roles';
 
 export async function getMember(admin: SupabaseClient, telegramId: number): Promise<MemberRow | null> {
   const { data, error } = await admin

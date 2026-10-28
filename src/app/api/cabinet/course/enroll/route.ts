@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { ensureMember } from '@/lib/bot/roles';
-import { notifyAdminsOfCourseCabinetOpen } from '@/lib/bot/admin/course-cabinet-notify';
+import { recordCourseMapFirstView } from '@/lib/bot/admin/user-activity-events';
 
 /** Открывает карту курса в кабинете (без зачисления и без выдачи доступа). */
 export async function POST(request: Request) {
@@ -44,14 +44,7 @@ export async function POST(request: Request) {
     // пустое тело — ок
   }
 
-  const { data: existingProfile } = await admin
-    .from('student_profiles')
-    .select('course_map_viewed_at')
-    .eq('telegram_id', telegramId)
-    .maybeSingle();
-  const firstCourseOpen = !existingProfile?.course_map_viewed_at;
-
-  const { error } = await admin.from('student_profiles').upsert(
+  const { error: profileError } = await admin.from('student_profiles').upsert(
     {
       telegram_id: telegramId,
       course_map_viewed_at: now,
@@ -60,8 +53,8 @@ export async function POST(request: Request) {
     { onConflict: 'telegram_id' },
   );
 
-  if (error) {
-    const message = String(error.message ?? error);
+  if (profileError) {
+    const message = String(profileError.message ?? profileError);
     if (message.includes('course_map_viewed_at')) {
       return NextResponse.json(
         { error: 'Нужна миграция course_map_viewed.sql в Supabase' },
@@ -73,9 +66,12 @@ export async function POST(request: Request) {
 
   await ensureMember(admin, telegramId, {}, 'student');
 
-  if (firstCourseOpen) {
+  if (courseId != null) {
+    let courseTitle = 'Курс';
+    const { data: courseRow } = await admin.from('courses').select('title').eq('id', courseId).maybeSingle();
+    if (courseRow?.title?.trim()) courseTitle = courseRow.title.trim();
     try {
-      await notifyAdminsOfCourseCabinetOpen(admin, telegramId, courseId);
+      await recordCourseMapFirstView(admin, telegramId, courseId, courseTitle);
     } catch (err) {
       console.error('[course/enroll] admin notify failed:', err);
     }

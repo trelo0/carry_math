@@ -753,9 +753,11 @@ async function renderLeadDetail(
   }
 
   const linkedId = await resolveLinkedTelegramId(admin, lead);
+  const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  const contactLabel = staffDmTopicsEnabled() ? '💬 Связаться' : '💬 Ответить';
   const keyboard: InlineButton[][] = [
     [
-      { text: '💬 Ответить', callback_data: `al:rp:${lead.id}:${nav}` },
+      { text: contactLabel, callback_data: `al:rp:${lead.id}:${nav}` },
       { text: '📜 История чата', callback_data: `al:hist:${lead.id}:${nav}:0` },
     ],
     [
@@ -852,6 +854,7 @@ async function startLeadReply(
   lead: LeadRow,
   category: LeadListCategory,
   page: number,
+  callbackQueryId?: string,
 ): Promise<void> {
   const nav = listNavSuffix(category, page);
   const linkedId = await resolveLinkedTelegramId(admin, lead);
@@ -863,6 +866,48 @@ async function startLeadReply(
   }
   if (statusOf(lead) === 'new') {
     await setLeadStatus(admin, lead.id, 'in_progress', adminTelegramId);
+  }
+  const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  if (staffDmTopicsEnabled()) {
+    const comment = lead.comment?.replace(/telegram_id:\d+\s*/g, '').trim();
+    const intro = [
+      `📌 Заявка · ${lead.name}`,
+      lead.service ? `📚 ${lead.service}` : '',
+      '',
+      comment ? `💬 ${comment.slice(0, 500)}` : '',
+      '',
+      'Ответьте в этой теме — клиент получит сообщение в боте.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const { openStaffDmTopicAndNavigate } = await import('@/lib/bot/staff/staff-dm-topic-navigate');
+    const opened = await openStaffDmTopicAndNavigate(admin, {
+      staffTelegramId: adminTelegramId,
+      studentTelegramId: linkedId,
+      staffRole: 'admin',
+      introText: intro,
+      callbackQueryId,
+      notifyChatId: message.chatId,
+    });
+    if (!opened.ok && callbackQueryId) {
+      const { telegramSend } = await import('@/lib/telegram');
+      await telegramSend('answerCallbackQuery', {
+        callback_query_id: callbackQueryId,
+        text: opened.error ?? 'Не удалось открыть тему.',
+        show_alert: true,
+      });
+    }
+    await editAdminMessage(
+      message,
+      opened.ok ? `✉️ ${lead.name}\n\nДиалог в Topics.` : `❌ ${opened.error ?? 'Не удалось открыть тему.'}`,
+      {
+        inline_keyboard: [
+          [{ text: '◀️ К заявке', callback_data: `al:l:${lead.id}:${nav}` }],
+          [homeButton()],
+        ],
+      },
+    );
+    return;
   }
   await saveState(admin, adminTelegramId, message, 'admin:lead:reply', {
     leadReplyLeadId: lead.id,
@@ -889,6 +934,15 @@ export async function handleAdminLeadReplyStep(
   text: string,
 ): Promise<boolean> {
   if (state.step !== 'admin:lead:reply') return false;
+  const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+  if (staffDmTopicsEnabled()) {
+    await clearState(admin, adminTelegramId);
+    await sendAdminMessage(
+      state.chat_id,
+      'Ответы по заявкам — в Topics. Откройте «Связаться» в карточке заявки или в списке вопросов.',
+    );
+    return true;
+  }
   const leadId = state.payload.leadReplyLeadId;
   const clientTgId = state.payload.leadReplyClientTelegramId;
   const nav = state.payload.leadReplyNav ?? 'a:0';
@@ -1030,6 +1084,7 @@ export async function handleLeadsAction(
   data: string,
   message: AdminMessage,
   actorTelegramId: number,
+  callbackQueryId?: string,
 ): Promise<boolean> {
   const deliver = editDeliver(message);
   const columns = await resolveLeadColumns(admin);
@@ -1140,7 +1195,7 @@ export async function handleLeadsAction(
         await deliver('Заявка не найдена.', { inline_keyboard: [[homeButton()]] });
         return true;
       }
-      await startLeadReply(admin, actorTelegramId, message, lead, ctx.category, ctx.page);
+      await startLeadReply(admin, actorTelegramId, message, lead, ctx.category, ctx.page, callbackQueryId);
       return true;
     }
 
@@ -1330,9 +1385,16 @@ export async function notifyAdminsOfNewLead(admin: SupabaseClient, lead: LeadRow
   if (lead.comment) lines.push(`💬 ${lead.comment}`);
   lines.push('', `🕐 ${formatDateTime(lead.created_at)}`);
 
-  const keyboard = {
+  const linkedId = await resolveLinkedTelegramId(admin, lead);
+  const keyboard: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } = {
     inline_keyboard: [[{ text: '📝 Открыть заявку', callback_data: `al:l:${lead.id}:n:0:a` }]],
   };
+  if (linkedId) {
+    const { adminClientTopicCallback } = await import('@/lib/bot/admin/admin-dm-topic');
+    keyboard.inline_keyboard.push([
+      { text: '💬 Связаться', callback_data: adminClientTopicCallback(linkedId) },
+    ]);
+  }
 
   const chatIds = await getAdminChatIds(admin);
   let sent = 0;

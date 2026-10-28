@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useScheduleFetch } from './schedule-api-react';
 import type { TeacherCabinetData } from '@/lib/teacher/cabinet-data';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
@@ -80,6 +81,7 @@ export default function ScheduleDayHoursModal({
   patchTeacher,
   onClose,
 }: Props) {
+  const sfetch = useScheduleFetch();
   const key = dateKey(day);
   const resolved = useMemo(() => resolveDayHours(workingHours, day), [workingHours, day]);
 
@@ -141,7 +143,7 @@ export default function ScheduleDayHoursModal({
   };
 
   const postAvailability = async (payload: Record<string, unknown>) => {
-    const res = await fetch('/api/cabinet/teacher/availability', {
+    const res = await sfetch('/api/cabinet/teacher/availability', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -213,7 +215,7 @@ export default function ScheduleDayHoursModal({
           };
         });
 
-        const res = await fetch('/api/cabinet/teacher/availability/apply-day', {
+        const res = await sfetch('/api/cabinet/teacher/availability/apply-day', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -2,10 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { telegramSend } from '@/lib/telegram';
 import { insertStaffMessage, resolveMemberChatId, staffStudentLabel } from '@/lib/bot/staff/messaging';
 import {
+  deliverInboundToStaffTopic,
   listAdminTelegramIdsForTopics,
-  openStaffStudentDmTopic,
   staffDmTopicsEnabled,
 } from '@/lib/bot/staff/dm-topics';
+import { adminClientTopicCallback, notifyAdminClientContactPing } from './admin-dm-topic';
 
 export type AdminInboxKind = 'support' | 'course_inquiry';
 
@@ -62,7 +63,7 @@ function topicContextIntro(
   ].join('\n');
 }
 
-/** Уведомление в основной чат admin (не в topic). Topic — только по «Ответить». */
+/** Гость/клиент: при Topics — сообщение в тему + короткий пинг с «Связаться»; иначе legacy inbox. */
 export async function notifyPrimaryAdminMainChatInbox(
   admin: SupabaseClient,
   clientTelegramId: number,
@@ -80,6 +81,26 @@ export async function notifyPrimaryAdminMainChatInbox(
 
   const adminChatId = (await resolveMemberChatId(admin, adminTelegramId)) ?? adminTelegramId;
   const label = await staffStudentLabel(admin, clientTelegramId);
+
+  if (staffDmTopicsEnabled()) {
+    const intro = topicContextIntro(params.kind, label, params.body, params.courseTitle);
+    const delivered = await deliverInboundToStaffTopic(admin, {
+      staffTelegramId: adminTelegramId,
+      staffRole: 'admin',
+      studentTelegramId: clientTelegramId,
+      body: params.body,
+      attachmentRef: params.attachmentRef,
+      attachmentKind: params.attachmentKind,
+      contextIntro: intro,
+      plain: true,
+    });
+    if (!delivered) return false;
+    return notifyAdminClientContactPing(admin, adminChatId, clientTelegramId, {
+      header: params.header,
+      preview: params.body,
+      courseTitle: params.courseTitle,
+    });
+  }
 
   const messageId = await insertStaffMessage(admin, {
     staffTelegramId: adminTelegramId,
@@ -108,7 +129,7 @@ export async function notifyPrimaryAdminMainChatInbox(
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '✏️ Ответить', callback_data: replyCb },
+          { text: '💬 Связаться', callback_data: adminClientTopicCallback(clientTelegramId) },
           { text: '✅ Закрыть', callback_data: closeCb },
         ],
       ],
@@ -149,7 +170,7 @@ export async function handleAdminGuestInboxCallback(
   adminTelegramId: number,
   chatId: number,
   messageId: number,
-  _callbackQueryId?: string,
+  callbackQueryId?: string,
 ): Promise<boolean> {
   if (data.startsWith(PREFIX_CLOSE)) {
     const id = Number(data.slice(PREFIX_CLOSE.length));
@@ -200,11 +221,14 @@ export async function handleAdminGuestInboxCallback(
   const label = await staffStudentLabel(admin, clientTelegramId);
   const intro = topicContextIntro(kind, label, body, courseTitle);
 
-  const opened = await openStaffStudentDmTopic(admin, {
+  const { openStaffDmTopicAndNavigate } = await import('@/lib/bot/staff/staff-dm-topic-navigate');
+  const opened = await openStaffDmTopicAndNavigate(admin, {
     staffTelegramId: adminTelegramId,
     studentTelegramId: clientTelegramId,
     staffRole: 'admin',
     introText: intro,
+    callbackQueryId,
+    notifyChatId: chatId,
   });
 
   if (!opened.ok) {
@@ -227,10 +251,5 @@ export async function handleAdminGuestInboxCallback(
   } catch {
     /* optional */
   }
-
-  await telegramSend('sendMessage', {
-    chat_id: chatId,
-    text: '✅ Тема открыта. Ответьте в Topics (чат с ботом).',
-  });
   return true;
 }

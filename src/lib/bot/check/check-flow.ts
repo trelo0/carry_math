@@ -112,6 +112,12 @@ export async function sendCheckSectionForCourse(
     return;
   }
   if (section === 'msg') {
+    const { staffDmTopicsEnabled } = await import('@/lib/bot/staff/dm-topics');
+    if (staffDmTopicsEnabled()) {
+      const { checkCourseMessagesTopicsHint } = await import('@/lib/bot/staff/curator-dm-topic-open');
+      await sendAdminMessage(chatId, checkCourseMessagesTopicsHint(), { inline_keyboard: [] });
+      return;
+    }
     const { listCourseStudentTelegramIds } = await import('@/lib/curator/students');
     const { listCheckThreadsForCourse } = await import('@/lib/bot/staff/messaging');
     const { renderCheckMessagesHub } = await import('./check-screens');
@@ -406,9 +412,7 @@ export async function handleCheckCallback(
   if (!data.startsWith('k:')) return false;
   if (!(await canUseCheckBot(admin, telegramId))) return false;
 
-  if (callbackQueryId) {
-    await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(() => undefined);
-  }
+  const opensTopic = /^k:msg:\d+:w:\d+$/.test(data);
 
   if (data.startsWith('k:pk:')) {
     const ws = await getStaffCourseWorkspace(admin, telegramId);
@@ -437,7 +441,10 @@ export async function handleCheckCallback(
   }
 
   const message: AdminMessage = { chatId, messageId };
-  await handleCheckBotCallback(admin, message, telegramId, data);
+  await handleCheckBotCallback(admin, message, telegramId, data, callbackQueryId);
+  if (callbackQueryId && !opensTopic) {
+    await telegramSend('answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(() => undefined);
+  }
   return true;
 }
 

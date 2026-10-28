@@ -37,6 +37,7 @@ function cabinetReturnPath(sp: {
   section?: string;
   payment?: string;
   course?: string;
+  cabinetPreview?: string;
 }): string {
   const params = new URLSearchParams();
   const section = parseSection(sp.section);
@@ -44,6 +45,7 @@ function cabinetReturnPath(sp: {
   const payment = parsePaymentResult(sp.payment);
   if (payment) params.set('payment', payment);
   if (sp.course?.trim()) params.set('course', sp.course.trim());
+  if (sp.cabinetPreview === 'student') params.set('cabinetPreview', 'student');
   const qs = params.toString();
   return qs ? `/cabinet?${qs}` : '/cabinet';
 }
@@ -51,7 +53,7 @@ function cabinetReturnPath(sp: {
 export default async function CabinetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string; login?: string; payment?: string; course?: string }>;
+  searchParams: Promise<{ section?: string; login?: string; payment?: string; course?: string; cabinetPreview?: string }>;
 }) {
   const sp = await searchParams;
   const returnTo = cabinetReturnPath(sp);
@@ -105,6 +107,7 @@ export default async function CabinetPage({
         section={sp.section}
         payment={sp.payment}
         returnTo={returnTo}
+        cabinetPreview={sp.cabinetPreview === 'student' ? 'student' : undefined}
       />
     </Suspense>
   );

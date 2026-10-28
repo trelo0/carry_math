@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { firstRow } from '@/lib/supabase/single-row';
 import { studentHasCourseAccessForCourse, studentHasCourseProductAccess } from './course-access';
 import {
   flattenCourseLessons,
@@ -85,6 +86,27 @@ export function deadlineUiState(
   return 'ok';
 }
 
+/** Дубликаты progress до unique (telegram_id, sanity_lesson_id) — схлопываем. */
+async function dedupeSanityProgressRows(
+  admin: SupabaseClient,
+  telegramId: number,
+  sanityLessonId: string,
+): Promise<void> {
+  const { data: rows, error } = await admin
+    .from('course_lesson_student_progress')
+    .select('id')
+    .eq('telegram_id', telegramId)
+    .eq('sanity_lesson_id', sanityLessonId)
+    .order('id', { ascending: false });
+  if (error || !rows || rows.length <= 1) return;
+  const extraIds = rows
+    .slice(1)
+    .map((r) => r.id as number)
+    .filter((id) => Number.isFinite(id));
+  if (extraIds.length === 0) return;
+  await admin.from('course_lesson_student_progress').delete().in('id', extraIds);
+}
+
 async function loadDeadlineRow(
   admin: SupabaseClient,
   telegramId: number,
@@ -95,12 +117,13 @@ async function loadDeadlineRow(
     .select(DEADLINE_SELECT)
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
   if (error) {
     if (isMissingColumnError(error)) return null;
     throw error;
   }
-  return (data as (CourseLessonStudentProgress & HomeworkDeadlineFields) | null) ?? null;
+  return (firstRow(data) as (CourseLessonStudentProgress & HomeworkDeadlineFields) | null) ?? null;
 }
 
 async function resolveLesson(
@@ -145,6 +168,8 @@ export async function ensureHomeworkDeadlineStarted(
   if (!lesson || !lessonHasHomework(lesson)) return null;
   if (options?.hasAccess === false) return null;
 
+  await dedupeSanityProgressRows(admin, telegramId, sanityLessonId);
+
   if (lesson.isTrialFree) {
     const hasCourseProduct = options?.courseId
       ? await studentHasCourseAccessForCourse(admin, telegramId, options.courseId)
@@ -182,12 +207,13 @@ export async function ensureHomeworkDeadlineStarted(
       .eq('sanity_lesson_id', sanityLessonId)
       .is('homework_deadline_at', null)
       .select(DEADLINE_SELECT)
-      .maybeSingle();
+      .limit(1);
     if (error) {
       if (isMissingColumnError(error)) return existing;
       throw error;
     }
-    if (data) return data as CourseLessonStudentProgress & HomeworkDeadlineFields;
+    const updated = firstRow(data);
+    if (updated) return updated as CourseLessonStudentProgress & HomeworkDeadlineFields;
     return loadDeadlineRow(admin, telegramId, sanityLessonId);
   }
 
@@ -202,7 +228,7 @@ export async function ensureHomeworkDeadlineStarted(
       updated_at: nowIso,
     })
     .select(DEADLINE_SELECT)
-    .maybeSingle();
+    .limit(1);
 
   if (error) {
     if (isMissingColumnError(error)) return null;
@@ -210,7 +236,7 @@ export async function ensureHomeworkDeadlineStarted(
     const again = await loadDeadlineRow(admin, telegramId, sanityLessonId);
     if (again?.homework_deadline_at) return again;
     if (again) {
-      const { data: patched, error: patchError } = await admin
+      const { data: patchedRows, error: patchError } = await admin
         .from('course_lesson_student_progress')
         .update({
           lesson_first_opened_at: again.lesson_first_opened_at ?? nowIso,
@@ -223,15 +249,16 @@ export async function ensureHomeworkDeadlineStarted(
         .eq('sanity_lesson_id', sanityLessonId)
         .is('homework_deadline_at', null)
         .select(DEADLINE_SELECT)
-        .maybeSingle();
+        .limit(1);
       if (patchError && !isMissingColumnError(patchError)) throw patchError;
+      const patched = firstRow(patchedRows);
       if (patched) return patched as CourseLessonStudentProgress & HomeworkDeadlineFields;
       return loadDeadlineRow(admin, telegramId, sanityLessonId);
     }
     throw error;
   }
 
-  return (data as (CourseLessonStudentProgress & HomeworkDeadlineFields) | null) ?? null;
+  return (firstRow(data) as (CourseLessonStudentProgress & HomeworkDeadlineFields) | null) ?? null;
 }
 
 /** Пауза таймера при отправке ДЗ. */
@@ -303,13 +330,13 @@ export async function resumeDeadlineOnReject(
     patch.homework_overdue_at = nowIso;
   }
 
-  const { data, error } = await admin
+  const { data: resumeRows, error } = await admin
     .from('course_lesson_student_progress')
     .update(patch)
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
     .select(DEADLINE_SELECT)
-    .maybeSingle();
+    .limit(1);
   if (error) {
     if (isMissingColumnError(error)) {
       return { progress: row, remainingMs, immediatelyOverdue };
@@ -317,6 +344,7 @@ export async function resumeDeadlineOnReject(
     throw error;
   }
 
+  const data = firstRow(resumeRows);
   return {
     progress: (data as (CourseLessonStudentProgress & HomeworkDeadlineFields) | null) ?? row,
     remainingMs,
@@ -394,14 +422,15 @@ export async function claimDeadlineReminder(
     | 'hw_overdue_curator_at',
 ): Promise<boolean> {
   const now = new Date().toISOString();
-  const { data, error } = await admin
+  const { data: claimRows, error } = await admin
     .from('course_lesson_student_progress')
     .update({ [column]: now, updated_at: now })
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
     .is(column, null)
     .select('id')
-    .maybeSingle();
+    .limit(1);
+  const data = firstRow(claimRows);
   if (error) {
     if (isMissingColumnError(error)) return false;
     throw error;
@@ -421,14 +450,15 @@ export async function ensureOverdueMarked(
   const deadline = Date.parse(row.homework_deadline_at);
   if (!Number.isFinite(deadline) || deadline > now.getTime()) return false;
 
-  const { data, error } = await admin
+  const { data: overdueRows, error } = await admin
     .from('course_lesson_student_progress')
     .update({ homework_overdue_at: now.toISOString(), updated_at: now.toISOString() })
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', sanityLessonId)
     .is('homework_overdue_at', null)
     .select('id')
-    .maybeSingle();
+    .limit(1);
+  const data = firstRow(overdueRows);
   if (error) {
     if (isMissingColumnError(error)) return false;
     throw error;
@@ -489,13 +519,14 @@ export async function resetTrialHomeworkDeadlineOnCoursePurchase(
       return;
     }
 
-    const { data: enrollment } = await admin
+    const { data: enrollmentRows } = await admin
       .from('course_enrollments')
       .select('started_at')
       .eq('telegram_id', telegramId)
       .eq('course_id', courseId)
       .eq('status', 'active')
-      .maybeSingle();
+      .limit(1);
+    const enrollment = firstRow(enrollmentRows);
     const enrolledAt = enrollment?.started_at
       ? Date.parse(String(enrollment.started_at))
       : NaN;
@@ -582,13 +613,15 @@ export async function ensureTrialHomeworkDeadlineIfEligible(
   if (row?.homework_deadline_at) return;
   if (row?.homework_status === 'approved' || row?.homework_status === 'submitted') return;
 
-  const { data: watchRow, error: watchError } = await admin
+  const { data: watchRows, error: watchError } = await admin
     .from('course_lesson_student_progress')
     .select('recording_watched_at, live_attended_at')
     .eq('telegram_id', telegramId)
     .eq('sanity_lesson_id', trial.sanityId)
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
   if (watchError && !isMissingColumnError(watchError)) throw watchError;
+  const watchRow = firstRow(watchRows);
   if (!watchRow?.recording_watched_at && !watchRow?.live_attended_at) return;
 
   await ensureHomeworkDeadlineStarted(admin, telegramId, trial.sanityId, {

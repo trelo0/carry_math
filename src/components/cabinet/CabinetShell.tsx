@@ -86,6 +86,7 @@ import {
   writeLastSelectedStop,
 } from '@/lib/cabinet-course-cache';
 import HomeworkDeadlineBadge from '@/components/cabinet/HomeworkDeadlineBadge';
+import { CABINETS_RETURN_HREF } from '@/lib/admin/settings-sections';
 
 /* -------------------------------------------------------------------------- */
 /* Типы карты курса (данные из Supabase + Sanity).                             */
@@ -1672,6 +1673,7 @@ export default function CabinetShell({
   const [courseDescExpanded, setCourseDescExpanded] = useState(false);
   const [mapHydrating, setMapHydrating] = useState(false);
   const courseCacheRef = useRef<Map<string, CabinetCourseViewSlice>>(new Map());
+  const mapViewTrackedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     setCourseDescExpanded(false);
@@ -1812,6 +1814,19 @@ export default function CabinetShell({
           activeCatalog?.title,
         )
       : 'preview';
+
+  useEffect(() => {
+    if (section !== 'course' || courseCabinetGate || courseState === 'preview') return;
+    const courseId = activeCourseId;
+    if (courseId == null || mapViewTrackedRef.current.has(courseId)) return;
+    mapViewTrackedRef.current.add(courseId);
+    void fetch('/api/cabinet/course/map-viewed', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseId }),
+    }).catch(() => {});
+  }, [section, courseCabinetGate, courseState, activeCourseId]);
 
   const catalogModulesFallback =
     activeCatalog?.modulePreviews?.map((m) => ({
@@ -2404,8 +2419,11 @@ export default function CabinetShell({
             </div>
           )}
           {showCabinetPick ? (
-            <a href="/cabinet/pick" className="cab-nav-item cab-pick-link">
-              Выбор кабинета
+            <a href={CABINETS_RETURN_HREF} className="cabinet-return-btn cab-pick-link">
+              <span className="cabinet-return-btn__icon" aria-hidden="true">
+                ←
+              </span>
+              <span className="cabinet-return-btn__text">В настройки</span>
             </a>
           ) : null}
           <p className="cab-sidebar-tagline">

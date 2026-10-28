@@ -178,6 +178,10 @@ async function finalizeMentorQuestionStart(
       const checker = await getStudentCheckStaff(admin, telegramId, courseId);
       mentor = checker;
       if (checker) staffRole = 'check';
+    } else if (context === 'course') {
+      const checker = await getStudentCheckStaff(admin, telegramId, courseId);
+      mentor = checker;
+      if (checker) staffRole = 'check';
     } else {
       const curator = await getStudentCurator(admin, telegramId, { courseId });
       mentor = curator;

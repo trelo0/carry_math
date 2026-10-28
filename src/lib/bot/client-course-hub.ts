@@ -277,7 +277,7 @@ export async function showClientMyCourseHub(
   if (cabinetUrl) {
     rows.push([{ text: '🌐 Открыть кабинет курса', url: cabinetUrl }]);
   }
-  rows.push([{ text: '💬 Связаться с куратором', callback_data: `cl:course:ask:${slug}` }]);
+  rows.push([{ text: '💬 Связаться по курсу', callback_data: `cl:course:ask:${slug}` }]);
   if (purchased.length <= 1) {
     rows.push([{ text: '🏠 Главное меню', callback_data: 'cl:home' }]);
   }

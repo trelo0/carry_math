@@ -1,0 +1,1931 @@
+{
+  "siteSettings": {
+    "name": "siteSettings",
+    "title": "Настройки сайта",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название (логотип)",
+        "type": "string",
+        "description": "Например: District",
+        "required": true
+      },
+      {
+        "name": "footerDescription",
+        "title": "Описание в футере",
+        "type": "text"
+      },
+      {
+        "name": "instagramUrl",
+        "title": "Instagram URL",
+        "type": "url"
+      },
+      {
+        "name": "headerButtonText",
+        "title": "Текст кнопки в шапке",
+        "type": "string",
+        "initialValue": "Записаться"
+      },
+      {
+        "name": "heroButtonText",
+        "title": "Текст кнопки в hero",
+        "type": "string",
+        "initialValue": "Записаться на занятие"
+      },
+      {
+        "name": "teacherCardButtonText",
+        "title": "Текст кнопки в карточке преподавателя",
+        "type": "string",
+        "initialValue": "Записаться на пробное занятие"
+      },
+      {
+        "name": "modalTitle",
+        "title": "Заголовок модального окна записи",
+        "type": "string",
+        "initialValue": "Запись на занятие"
+      },
+      {
+        "name": "modalSubmitButtonText",
+        "title": "Текст кнопки отправки в модальном окне",
+        "type": "string",
+        "initialValue": "Отправить заявку"
+      }
+    ]
+  },
+  "courseHero": {
+    "name": "courseHero",
+    "title": "Курс — Hero (главный экран)",
+    "fields": [
+      {
+        "name": "eyebrow",
+        "title": "Надзаголовок",
+        "type": "string",
+        "description": "Например: «Онлайн-школа по математике»",
+        "initialValue": "Онлайн-школа по математике"
+      },
+      {
+        "name": "headline",
+        "title": "Главный заголовок",
+        "type": "string",
+        "description": "Например: «Готовим победителей». Последнее слово автоматически подсвечивается золотым.",
+        "initialValue": "Готовим победителей"
+      },
+      {
+        "name": "pills",
+        "title": "Короткие преимущества",
+        "type": "array",
+        "description": "Пилюли в первой карточке: «Живые вебинары» и т.д.",
+        "initialValue": [
+          "Живые вебинары",
+          "Геймифицированная платформа",
+          "Личный куратор"
+        ],
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "name": "questTitle",
+        "title": "Квест-блок — заголовок",
+        "type": "string",
+        "initialValue": "Здесь подготовка - это квест"
+      },
+      {
+        "name": "questNote",
+        "title": "Квест-блок — подводка",
+        "type": "string",
+        "initialValue": "Ты не просто учишь формулы, ты:"
+      },
+      {
+        "name": "questPoints",
+        "title": "Квест-блок — пункты",
+        "type": "array",
+        "initialValue": [
+          "Открываешь секретные коды фракций",
+          "Прокачиваешь личный прогресс на карте",
+          "Общаешься с наставником в закрытом ТГ-канале"
+        ],
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "name": "buttonText",
+        "title": "Текст кнопки записи",
+        "type": "string",
+        "initialValue": "Записаться"
+      }
+    ]
+  },
+  "mentorBlock": {
+    "name": "mentorBlock",
+    "title": "Курс — Наставник",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Твой наставник по математике"
+      },
+      {
+        "name": "specs",
+        "title": "Характеристики (шкалы)",
+        "type": "array",
+        "description": "Название характеристики и значение в процентах (0–100).",
+        "initialValue": [
+          {
+            "_key": "spec1",
+            "label": "Харизма и удержание внимания",
+            "value": 98
+          },
+          {
+            "_key": "spec2",
+            "label": "Взлом ЦТ / декодирование информации",
+            "value": 100
+          },
+          {
+            "_key": "spec3",
+            "label": "Ментальная стойкость",
+            "value": 95
+          },
+          {
+            "_key": "spec4",
+            "label": "Прокачка новичков",
+            "value": 92
+          },
+          {
+            "_key": "spec5",
+            "label": "Индекс занудства",
+            "value": 4
+          },
+          {
+            "_key": "spec6",
+            "label": "Синхронизация (понятный язык)",
+            "value": 99
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "label",
+                "title": "Название",
+                "type": "string"
+              },
+              {
+                "name": "value",
+                "title": "Значение, %",
+                "type": "number"
+              }
+            ],
+            "previewField": "label"
+          }
+        ]
+      },
+      {
+        "name": "journal",
+        "title": "Журнал заданий",
+        "type": "array",
+        "description": "Разделы журнала: название и текстовое описание.",
+        "initialValue": [
+          {
+            "_key": "journal1",
+            "title": "Год инициации в системе (опыт)",
+            "text": "Преподавательский стаж 4 года"
+          },
+          {
+            "_key": "journal2",
+            "title": "Базовый сектор подготовки (образование)",
+            "text": "2019 — лицей №2, физмат профиль\n2023 — БГУ, механико-математический факультет, специальность: математика [научно-педагогическая деятельность]"
+          },
+          {
+            "_key": "journal3",
+            "title": "Главный боевой трофей (результат)",
+            "text": "Личный результат: 98 баллов ЦТ"
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Название раздела",
+                "type": "string"
+              },
+              {
+                "name": "text",
+                "title": "Описание",
+                "type": "text",
+                "rows": 4
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      },
+      {
+        "name": "mentorName",
+        "title": "Имя наставника",
+        "type": "string",
+        "initialValue": "Лидия Владимировна"
+      },
+      {
+        "name": "mentorClass",
+        "title": "Класс персонажа",
+        "type": "string",
+        "description": "Подпись над именем на карточке.",
+        "initialValue": "Наставник гильдии"
+      },
+      {
+        "name": "mentorLevel",
+        "title": "Уровень персонажа",
+        "type": "string",
+        "description": "Подпись под именем на карточке.",
+        "initialValue": "LVL 99 · МАТЕМАТИКА"
+      },
+      {
+        "name": "badges",
+        "title": "Достижения (бейджи)",
+        "type": "array",
+        "description": "Символ ❖ добавляется автоматически.",
+        "initialValue": [
+          "98 баллов ЦТ",
+          "4 года опыта",
+          "БГУ, мехмат"
+        ],
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "name": "quoteStatus",
+        "title": "Цитата — статусная строка",
+        "type": "string",
+        "initialValue": "[Наставник гильдии online. Сектор MM-01]"
+      },
+      {
+        "name": "quoteText",
+        "title": "Цитата наставника",
+        "type": "text",
+        "description": "Кавычки «…» добавляются автоматически.",
+        "rows": 4,
+        "initialValue": "Математика — это четкая архитектура. Я научу твой мозг видеть скрытые ловушки составителей тестов за три секунды. Экзамен — это просто финальный босс, которого мы обязаны пройти на максимум."
+      }
+    ]
+  },
+  "programBlock": {
+    "name": "programBlock",
+    "title": "Курс — Программа обучения",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Программа обучения"
+      },
+      {
+        "name": "missions",
+        "title": "Миссии",
+        "type": "array",
+        "description": "Карточки на карте миссий. Номера («Миссия 01») и XP добавляются автоматически по порядку.",
+        "initialValue": [
+          {
+            "_key": "mission1",
+            "title": "Диагностика",
+            "text": "Определяем уровень, цели и точки роста."
+          },
+          {
+            "_key": "mission2",
+            "title": "Личный план",
+            "text": "Собираем программу под твои задачи."
+          },
+          {
+            "_key": "mission3",
+            "title": "Практика",
+            "text": "Решаем реальные варианты ЕГЭ и олимпиад."
+          },
+          {
+            "_key": "mission4",
+            "title": "Контроль",
+            "text": "Срезы, разбор ошибок и отчёты родителям."
+          },
+          {
+            "_key": "mission5",
+            "title": "Победа",
+            "text": "Выходим на экзамен подготовленным на 100%."
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Название миссии",
+                "type": "string"
+              },
+              {
+                "name": "text",
+                "title": "Описание",
+                "type": "text",
+                "rows": 2
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      }
+    ]
+  },
+  "reviewsBlock": {
+    "name": "reviewsBlock",
+    "title": "Курс — Отзывы (заголовок секции)",
+    "description": "Сами отзывы создаются отдельными документами типа «Отзыв (главная страница)».",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Отзывы"
+      }
+    ]
+  },
+  "review": {
+    "name": "review",
+    "title": "Отзыв (главная страница)",
+    "fields": [
+      {
+        "name": "name",
+        "title": "Автор",
+        "type": "string",
+        "description": "Например: Анастасия К.",
+        "required": true
+      },
+      {
+        "name": "result",
+        "title": "Результат",
+        "type": "string",
+        "description": "Например: 87 баллов ЦТ",
+        "required": true
+      },
+      {
+        "name": "text",
+        "title": "Текст отзыва",
+        "type": "text",
+        "rows": 4,
+        "required": true
+      },
+      {
+        "name": "order",
+        "title": "Порядок вывода",
+        "type": "number"
+      }
+    ]
+  },
+  "initBlock": {
+    "name": "initBlock",
+    "title": "Курс — Инициация (цена и состав)",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "description": "Например: «Время пройти инициацию». Последнее слово автоматически подсвечивается золотым.",
+        "initialValue": "Время пройти инициацию"
+      },
+      {
+        "name": "subtitle",
+        "title": "Подзаголовок",
+        "type": "string",
+        "initialValue": "Полноценный абонемент на месяц"
+      },
+      {
+        "name": "steps",
+        "title": "Пункты абонемента",
+        "type": "array",
+        "description": "Номера (01, 02…) добавляются автоматически. Иконка: search, pencil, sliders или chart.",
+        "initialValue": [
+          {
+            "_key": "initStep1",
+            "icon": "search",
+            "title": "8 занятий с экспертом",
+            "lines": [
+              "2 раза в неделю",
+              "1 занятие ~90 минут",
+              "Разбор ловушек ЦТ в режиме реального времени",
+              "Решаем только то, что реально будет на ЦТ"
+            ]
+          },
+          {
+            "_key": "initStep2",
+            "icon": "pencil",
+            "title": "Ручная проверка домашних заданий",
+            "lines": [
+              "Поддержка, мотивация и контроль 24/7",
+              "Личный куратор в Telegram с развернутыми комментариями к домашнему заданию — он разбирает каждую твою ошибку"
+            ]
+          },
+          {
+            "_key": "initStep3",
+            "icon": "sliders",
+            "title": "Доступ к интерактивной платформе",
+            "lines": [
+              "Улица Дистрикта с визуализацией твоего прогресса"
+            ]
+          },
+          {
+            "_key": "initStep4",
+            "icon": "chart",
+            "title": "Оружейная комната",
+            "lines": [
+              "Шпаргалки, чек-листы и материалы по всем темам ЦТ"
+            ]
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "icon",
+                "title": "Иконка",
+                "type": "string",
+                "initialValue": "chart",
+                "list": [
+                  {
+                    "title": "Лупа (search)",
+                    "value": "search"
+                  },
+                  {
+                    "title": "Карандаш (pencil)",
+                    "value": "pencil"
+                  },
+                  {
+                    "title": "Слайдеры (sliders)",
+                    "value": "sliders"
+                  },
+                  {
+                    "title": "График (chart)",
+                    "value": "chart"
+                  }
+                ]
+              },
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string"
+              },
+              {
+                "name": "lines",
+                "title": "Строки описания",
+                "type": "array",
+                "of": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      },
+      {
+        "name": "priceLabel",
+        "title": "Подпись над ценой",
+        "type": "string",
+        "initialValue": "Стоимость"
+      },
+      {
+        "name": "priceValue",
+        "title": "Цена",
+        "type": "string",
+        "description": "Например: «180 BYN»",
+        "initialValue": "180 BYN"
+      },
+      {
+        "name": "pricePeriod",
+        "title": "Подпись под ценой",
+        "type": "string",
+        "initialValue": "за один месяц подготовки"
+      },
+      {
+        "name": "priceNote",
+        "title": "Примечание (возврат)",
+        "type": "text",
+        "rows": 2,
+        "initialValue": "100% возврат после первого занятия, если формат не подошёл"
+      },
+      {
+        "name": "buttonText",
+        "title": "Текст кнопки записи",
+        "type": "string",
+        "initialValue": "Записаться на курс"
+      }
+    ]
+  },
+  "faqBlock": {
+    "name": "faqBlock",
+    "title": "Курс — FAQ (заголовок секции)",
+    "description": "Сами вопросы и ответы создаются отдельными документами типа «Вопрос FAQ (страница курса)».",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Часто задаваемые вопросы"
+      }
+    ]
+  },
+  "faqItem": {
+    "name": "faqItem",
+    "title": "Вопрос FAQ (страница курса)",
+    "fields": [
+      {
+        "name": "question",
+        "title": "Вопрос",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "answer",
+        "title": "Ответ",
+        "type": "text",
+        "rows": 4,
+        "required": true
+      },
+      {
+        "name": "order",
+        "title": "Порядок вывода",
+        "type": "number"
+      }
+    ]
+  },
+  "pathsBlock": {
+    "name": "pathsBlock",
+    "title": "Курс — «Не подошёл курс?» (развилка)",
+    "fields": [
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Не подошёл курс?"
+      },
+      {
+        "name": "columns",
+        "title": "Колонки",
+        "type": "array",
+        "description": "Обычно две: «Одиночный рейд» и «Командный сектор».",
+        "initialValue": [
+          {
+            "_key": "pathRaid",
+            "title": "Одиночный рейд",
+            "sub": "Индивидуальные занятия с наставником 5–11 класс",
+            "description": "Личный маршрут по математике: программа, темп и фокус — только под тебя. Наставник ведёт от диагностики до экзамена.",
+            "perks": [
+              "Программа строится под твою цель и стартовый уровень",
+              "Гибкий график — занятия когда удобно, даже вечером",
+              "Максимальное внимание наставника всё занятие",
+              "Личный куратор и разбор каждой ошибки 24/7"
+            ]
+          },
+          {
+            "_key": "pathSquad",
+            "title": "Командный сектор",
+            "sub": "Занятия в мини-группах до 5-ти человек 5–10 класс",
+            "description": "Мини-отряд до 5 человек: общий рейтинг, командные квесты и дух соревнования — мотивация, которой не хватает в одиночку.",
+            "perks": [
+              "Цена ниже, качество подготовки то же",
+              "Командный рейтинг и совместные квесты",
+              "Игровая мотивация: уровни, лиги, награды",
+              "Занятия в мини-группе до 5 человек"
+            ]
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок колонки",
+                "type": "string"
+              },
+              {
+                "name": "sub",
+                "title": "Подзаголовок (формат и классы)",
+                "type": "string"
+              },
+              {
+                "name": "description",
+                "title": "Описание",
+                "type": "text",
+                "rows": 3
+              },
+              {
+                "name": "perks",
+                "title": "Преимущества",
+                "type": "array",
+                "of": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      },
+      {
+        "name": "ctaText",
+        "title": "Текст кнопки внизу",
+        "type": "string",
+        "initialValue": "Узнать больше"
+      }
+    ]
+  },
+  "individualHeroBlock": {
+    "name": "individualHeroBlock",
+    "title": "Индивидуальные — Hero-блок",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "description": "Техническая строка над заголовком, например: «ФОРМАТЫ ЗАНЯТИЙ // 5–11 КЛАСС».",
+        "initialValue": "ФОРМАТЫ ЗАНЯТИЙ // 5–11 КЛАСС"
+      },
+      {
+        "name": "title",
+        "title": "Главный заголовок",
+        "type": "string",
+        "description": "Последнее слово автоматически подсвечивается золотым.",
+        "initialValue": "Занятия с наставником гильдии"
+      },
+      {
+        "name": "description",
+        "title": "Описание",
+        "type": "text",
+        "initialValue": "Индивидуальные уроки один на один с наставником и мини-группы до 5 человек — выбери свой формат и идём к цели вместе."
+      },
+      {
+        "name": "panelTitle",
+        "title": "Заголовок панели «Выбор пути»",
+        "type": "string",
+        "initialValue": "Выбор пути"
+      },
+      {
+        "name": "slots",
+        "title": "Пункты панели выбора",
+        "type": "array",
+        "initialValue": [
+          {
+            "_key": "slotSolo",
+            "icon": "🗡",
+            "title": "Одиночный рейд",
+            "sub": "индивидуальные · 5–11 класс",
+            "href": "#formats-solo"
+          },
+          {
+            "_key": "slotGroup",
+            "icon": "🛡",
+            "title": "Командный сектор",
+            "sub": "мини-группы до 5 · 5–10 класс",
+            "href": "#formats-group"
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "icon",
+                "title": "Иконка (эмодзи)",
+                "type": "string"
+              },
+              {
+                "name": "title",
+                "title": "Название",
+                "type": "string"
+              },
+              {
+                "name": "sub",
+                "title": "Подпись",
+                "type": "string"
+              },
+              {
+                "name": "href",
+                "title": "Якорь ссылки",
+                "type": "string",
+                "description": "Куда ведёт пункт, например: #formats-solo"
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      }
+    ]
+  },
+  "teachersBlock": {
+    "name": "teachersBlock",
+    "title": "Индивидуальные — Наставники (заголовки)",
+    "description": "Заголовки секции наставников. Сами карточки (имя, фото, услуги, цены) — отдельные документы «Наставник».",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "initialValue": "КВЕСТ 01 // ОТРЯД ГИЛЬДИИ :: SELECT"
+      },
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Выбери наставника"
+      },
+      {
+        "name": "badges",
+        "title": "Бейджи достижений в карточках",
+        "type": "array",
+        "description": "Символ ❖ добавляется автоматически.",
+        "initialValue": [
+          "98 баллов ЦТ",
+          "4 года опыта",
+          "БГУ, мехмат"
+        ],
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "teacher": {
+    "name": "teacher",
+    "title": "Наставник",
+    "fields": [
+      {
+        "name": "name",
+        "title": "Имя",
+        "type": "string"
+      },
+      {
+        "name": "subject",
+        "title": "Предмет",
+        "type": "string"
+      },
+      {
+        "name": "description",
+        "title": "Описание",
+        "type": "text"
+      },
+      {
+        "name": "badges",
+        "title": "Чипы-достижения",
+        "type": "array",
+        "description": "Короткие чипы под описанием карточки наставника на странице /individual: «98 баллов ЦТ», «БГУ, мехмат» и т.п. Если оставить пустым — покажутся общие чипы блока «Наставники».",
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "name": "photo",
+        "title": "Фото",
+        "type": "image"
+      },
+      {
+        "name": "hasSpots",
+        "title": "Есть места",
+        "type": "boolean"
+      },
+      {
+        "name": "trialLesson",
+        "title": "Пробное занятие",
+        "type": "object",
+        "fields": [
+          {
+            "name": "price",
+            "title": "Цена",
+            "type": "string"
+          },
+          {
+            "name": "duration",
+            "title": "Длительность",
+            "type": "string",
+            "placeholder": "например: 60 мин"
+          },
+          {
+            "name": "description",
+            "title": "Описание",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "name": "reviews",
+        "title": "Отзывы",
+        "type": "array",
+        "description": "Скриншоты отзывов учеников. Показываются под карточкой преподавателя на сайте.",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "teacherReview",
+            "title": "Отзыв",
+            "fields": [
+              {
+                "name": "image",
+                "title": "Скриншот отзыва",
+                "type": "image",
+                "required": true
+              },
+              {
+                "name": "caption",
+                "title": "Имя ученика / подпись",
+                "type": "string"
+              }
+            ],
+            "previewField": "caption"
+          }
+        ]
+      },
+      {
+        "name": "services",
+        "title": "Услуги",
+        "type": "array",
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "name",
+                "title": "Название",
+                "type": "string"
+              },
+              {
+                "name": "price",
+                "title": "Цена",
+                "type": "string"
+              },
+              {
+                "name": "duration",
+                "title": "Длительность",
+                "type": "string",
+                "placeholder": "например: 60 мин"
+              },
+              {
+                "name": "spotsStatus",
+                "title": "Статус мест",
+                "type": "object",
+                "fields": [
+                  {
+                    "name": "type",
+                    "title": "Количество мест",
+                    "type": "string",
+                    "list": [
+                      {
+                        "title": "Много мест",
+                        "value": "many"
+                      },
+                      {
+                        "title": "Мало мест",
+                        "value": "few"
+                      },
+                      {
+                        "title": "Мест нет",
+                        "value": "none"
+                      },
+                      {
+                        "title": "Кастомный текст",
+                        "value": "custom"
+                      }
+                    ]
+                  },
+                  {
+                    "name": "count",
+                    "title": "Сколько мест осталось",
+                    "type": "number"
+                  },
+                  {
+                    "name": "text",
+                    "title": "Текст",
+                    "type": "string"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "principlesBlock": {
+    "name": "principlesBlock",
+    "title": "Индивидуальные — Принципы (заголовки)",
+    "description": "Заголовки секции принципов. Сами принципы и статистика — отдельные документы «Принцип» и «Статистика».",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "initialValue": "КВЕСТ 02 // СТАТИСТИКА + ПРИНЦИПЫ :: CODE"
+      },
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции (первая строка)",
+        "type": "string",
+        "initialValue": "Три принципа, на"
+      },
+      {
+        "name": "sectionTitleGold",
+        "title": "Заголовок секции (вторая строка, оранжевая)",
+        "type": "string",
+        "initialValue": "которых мы стоим"
+      },
+      {
+        "name": "sectionSubtitle",
+        "title": "Подзаголовок секции (каждое предложение с новой строки)",
+        "type": "text",
+        "rows": 3
+      }
+    ]
+  },
+  "stat": {
+    "name": "stat",
+    "title": "Статистика",
+    "fields": [
+      {
+        "name": "value",
+        "title": "Значение",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "label",
+        "title": "Подпись",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "order",
+        "title": "Порядок",
+        "type": "number",
+        "required": true
+      }
+    ]
+  },
+  "principle": {
+    "name": "principle",
+    "title": "Принцип",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "description",
+        "title": "Описание",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "order",
+        "title": "Порядок",
+        "type": "number",
+        "required": true
+      }
+    ]
+  },
+  "formatsBlock": {
+    "name": "formatsBlock",
+    "title": "Индивидуальные — Формат «Соло или команда»",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "initialValue": "КВЕСТ 03 // ВАРИАНТЫ ЗАНЯТИЙ :: VS MODE"
+      },
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Соло или команда?"
+      },
+      {
+        "name": "columns",
+        "title": "Колонки сравнения",
+        "type": "array",
+        "description": "Обычно две: «Одиночный рейд» и «Командный сектор».",
+        "initialValue": [
+          {
+            "_key": "formatSolo",
+            "icon": "🗡",
+            "title": "Одиночный рейд",
+            "sub": "индивидуальные · 5–11 класс",
+            "description": "Личный маршрут по математике: программа, темп и фокус — только под тебя. Наставник ведёт от диагностики до экзамена.",
+            "perks": [
+              "Программа строится под твою цель и стартовый уровень",
+              "Гибкий график — занятия когда удобно, даже вечером",
+              "Максимальное внимание наставника всё занятие",
+              "Личный куратор и разбор каждой ошибки 24/7"
+            ],
+            "ctaText": "Записаться на соло"
+          },
+          {
+            "_key": "formatGroup",
+            "icon": "🛡",
+            "title": "Командный сектор",
+            "sub": "мини-группы до 5 · 5–10 класс",
+            "description": "Мини-отряд единомышленников: общий рейтинг, командные квесты и дух соревнования. Качество то же, цена ниже.",
+            "perks": [
+              "Цена ниже, качество подготовки то же",
+              "Командный рейтинг и совместные квесты",
+              "Игровая мотивация: уровни, лиги, награды",
+              "Занятия в мини-группе до 5 человек"
+            ],
+            "ctaText": "Записаться в группу"
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "icon",
+                "title": "Иконка перед заголовком (эмодзи)",
+                "type": "string"
+              },
+              {
+                "name": "title",
+                "title": "Заголовок колонки",
+                "type": "string"
+              },
+              {
+                "name": "sub",
+                "title": "Подзаголовок (формат и классы)",
+                "type": "string"
+              },
+              {
+                "name": "description",
+                "title": "Описание",
+                "type": "text",
+                "rows": 3
+              },
+              {
+                "name": "perks",
+                "title": "Преимущества",
+                "type": "array",
+                "of": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "name": "ctaText",
+                "title": "Текст кнопки",
+                "type": "string"
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      }
+    ]
+  },
+  "processBlock": {
+    "name": "processBlock",
+    "title": "Индивидуальные — «Как проходят занятия» (заголовки)",
+    "description": "Заголовки секции. Сами шаги — отдельные документы «Шаг процесса».",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "initialValue": "КВЕСТ 04 // КАК ПРОХОДИТ ОБУЧЕНИЕ :: ПРОТОКОЛ"
+      },
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции",
+        "type": "string",
+        "initialValue": "Как проходит обучение"
+      },
+      {
+        "name": "sectionSubtitle",
+        "title": "Подзаголовок секции",
+        "type": "string"
+      }
+    ]
+  },
+  "processStep": {
+    "name": "processStep",
+    "title": "Шаг процесса",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название",
+        "type": "string"
+      },
+      {
+        "name": "description",
+        "title": "Описание",
+        "type": "text"
+      },
+      {
+        "name": "order",
+        "title": "Порядок",
+        "type": "number",
+        "required": true
+      }
+    ]
+  },
+  "choosePathBlock": {
+    "name": "choosePathBlock",
+    "title": "Индивидуальные — «Время выбрать свой путь» (запись)",
+    "description": "Заголовки и тексты блока записи. Сами наставники, услуги и цены — в документах «Наставник».",
+    "fields": [
+      {
+        "name": "kicker",
+        "title": "Надзаголовок (киккер)",
+        "type": "string",
+        "initialValue": "КВЕСТ 05 // ЗАПИСЬ :: START QUEST"
+      },
+      {
+        "name": "sectionTitle",
+        "title": "Заголовок секции (до золотой части)",
+        "type": "string",
+        "initialValue": "Время выбрать"
+      },
+      {
+        "name": "sectionTitleGold",
+        "title": "Заголовок секции (золотая часть)",
+        "type": "string",
+        "initialValue": "свой путь"
+      },
+      {
+        "name": "soloTabText",
+        "title": "Текст вкладки «соло»",
+        "type": "string",
+        "initialValue": "🗡 Одиночный рейд"
+      },
+      {
+        "name": "groupTabText",
+        "title": "Текст вкладки «команда»",
+        "type": "string",
+        "initialValue": "🛡 Командный сектор"
+      },
+      {
+        "name": "trialGuideTitle",
+        "title": "Блок о пробном занятии — заголовок",
+        "type": "string",
+        "initialValue": "Пробное занятие — первый шаг"
+      },
+      {
+        "name": "trialGuideText",
+        "title": "Блок о пробном занятии — текст",
+        "type": "text",
+        "description": "Перенос строки в тексте = разделение на два предложения.",
+        "initialValue": "Пробное занятие необходимо для начала индивидуальных занятий.\nОно поможет определить уровень и подобрать подходящую программу."
+      },
+      {
+        "name": "benefits",
+        "title": "Преимущества внизу блока",
+        "type": "array",
+        "initialValue": [
+          {
+            "_key": "benefitPro",
+            "title": "Профессиональные",
+            "text": "опытные преподаватели"
+          },
+          {
+            "_key": "benefitPersonal",
+            "title": "Индивидуальный подход",
+            "text": "программа под ваши цели"
+          },
+          {
+            "_key": "benefitSchedule",
+            "title": "Удобный график",
+            "text": "занимайтесь в комфортное время"
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string"
+              },
+              {
+                "name": "text",
+                "title": "Текст",
+                "type": "string"
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      }
+    ]
+  },
+  "diagnosticBlock": {
+    "name": "diagnosticBlock",
+    "title": "Индивидуальные — «Система подготовки»",
+    "description": "Текст блока «Система подготовки» внизу страницы /individual.",
+    "fields": [
+      {
+        "name": "eyebrow",
+        "title": "Левая секция — надзаголовок",
+        "type": "string",
+        "initialValue": "Система подготовки"
+      },
+      {
+        "name": "title",
+        "title": "Левая секция — заголовок",
+        "type": "string",
+        "initialValue": "Твой путь к результату"
+      },
+      {
+        "name": "text",
+        "title": "Левая секция — текст",
+        "type": "text",
+        "initialValue": "Понятная система обучения, которая помогает двигаться от первых тем к уверенным знаниям. Шаг за шагом, в своём темпе."
+      },
+      {
+        "name": "buttonText",
+        "title": "Кнопка (не используется на сайте)",
+        "type": "string",
+        "readOnly": true,
+        "initialValue": ""
+      },
+      {
+        "name": "steps",
+        "title": "Правая секция — шаги",
+        "type": "array",
+        "description": "Номера (01, 02, 03…) добавляются автоматически по порядку.",
+        "initialValue": [
+          {
+            "_key": "diagStep1",
+            "title": "Понятная программа",
+            "text": "Последовательное изучение тем от основ к сложным задачам."
+          },
+          {
+            "_key": "diagStep2",
+            "title": "Практика и закрепление",
+            "text": "Вебинары, задания и применение знаний на практике."
+          },
+          {
+            "_key": "diagStep3",
+            "title": "Поддержка наставника",
+            "text": "Разбор сложных вопросов и помощь на пути к цели."
+          }
+        ],
+        "of": [
+          {
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string"
+              },
+              {
+                "name": "text",
+                "title": "Текст",
+                "type": "text"
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      }
+    ]
+  },
+  "cabinetAsideSettings": {
+    "name": "cabinetAsideSettings",
+    "title": "Боковая панель кабинета",
+    "fields": [
+      {
+        "name": "cabinetQuotes",
+        "title": "Цитаты",
+        "type": "array",
+        "description": "Показываются в боковой панели. Каждый день — следующая по кругу.",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "cabinetQuote",
+            "fields": [
+              {
+                "name": "text",
+                "title": "Текст",
+                "type": "text",
+                "rows": 3,
+                "required": true
+              },
+              {
+                "name": "author",
+                "title": "Подпись",
+                "type": "string",
+                "initialValue": "District"
+              }
+            ],
+            "previewField": "text"
+          }
+        ]
+      },
+      {
+        "name": "achievements",
+        "title": "Достижения",
+        "type": "array",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "cabinetAchievement",
+            "title": "Достижение кабинета",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Название",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "subtitle",
+                "title": "Описание",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "ruleKey",
+                "title": "Правило разблокировки",
+                "type": "string",
+                "required": true,
+                "list": [
+                  {
+                    "title": "Куплен пакет курса",
+                    "value": "course_package_purchased"
+                  },
+                  {
+                    "title": "Записан на курс",
+                    "value": "course_enrolled"
+                  },
+                  {
+                    "title": "Открыта карта курса",
+                    "value": "course_map_viewed"
+                  },
+                  {
+                    "title": "Пройден 1 урок",
+                    "value": "lesson_complete_1"
+                  },
+                  {
+                    "title": "Пройдено 5 уроков",
+                    "value": "lesson_complete_5"
+                  },
+                  {
+                    "title": "Пройдено 10 уроков",
+                    "value": "lesson_complete_10"
+                  },
+                  {
+                    "title": "Просмотрен 1 вебинар",
+                    "value": "webinar_complete_1"
+                  },
+                  {
+                    "title": "Просмотрено 3 вебинара",
+                    "value": "webinar_complete_3"
+                  },
+                  {
+                    "title": "Сдано первое ДЗ",
+                    "value": "hw_submitted_1"
+                  },
+                  {
+                    "title": "Первое ДЗ принято",
+                    "value": "hw_approved_1"
+                  },
+                  {
+                    "title": "Принято 5 ДЗ",
+                    "value": "hw_approved_5"
+                  },
+                  {
+                    "title": "Участие в эфире",
+                    "value": "webinar_live_1"
+                  },
+                  {
+                    "title": "Просмотр записи урока",
+                    "value": "recording_watched_1"
+                  },
+                  {
+                    "title": "Первое сообщение куратору",
+                    "value": "curator_message_1"
+                  },
+                  {
+                    "title": "Профиль заполнен",
+                    "value": "profile_complete"
+                  },
+                  {
+                    "title": "100+ баллов РТ",
+                    "value": "score_100"
+                  },
+                  {
+                    "title": "Куплен пакет занятий",
+                    "value": "individual_package_purchased"
+                  },
+                  {
+                    "title": "Запись на занятие",
+                    "value": "group_lesson_scheduled"
+                  },
+                  {
+                    "title": "Первая оплата",
+                    "value": "payment_success_1"
+                  },
+                  {
+                    "title": "(legacy) 1 урок",
+                    "value": "lesson_1"
+                  },
+                  {
+                    "title": "(legacy) 3 вебинара",
+                    "value": "webinar_3"
+                  }
+                ]
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      },
+      {
+        "name": "examDate",
+        "title": "Дата ЦТ / экзамена",
+        "type": "date",
+        "description": "Для счётчика в боковой панели кабинета"
+      },
+      {
+        "name": "examLabel",
+        "title": "Подпись счётчика",
+        "type": "string",
+        "initialValue": "До ЦТ по математике"
+      }
+    ]
+  },
+  "districtCourse": {
+    "name": "districtCourse",
+    "title": "Настройки курса",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название курса",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "cabinetEyebrow",
+        "title": "Заголовок курса",
+        "type": "string",
+        "description": "Короткий заголовок над названием в кабинете",
+        "initialValue": "Курс подготовки"
+      },
+      {
+        "name": "description",
+        "title": "Описание курса",
+        "type": "text",
+        "rows": 4
+      },
+      {
+        "name": "coverImage",
+        "title": "Обложка курса",
+        "type": "image"
+      },
+      {
+        "name": "curator",
+        "title": "Преподаватель (имя в кабинете)",
+        "type": "reference",
+        "description": "Только для отображения имени на сайте/в кабинете. Не влияет на назначение в боте."
+      },
+      {
+        "name": "curatorTelegramId",
+        "title": "Куратор (Telegram ID)",
+        "type": "number",
+        "description": "Число из админ-бота → Пользователи → человек с ролью curator (поле telegram_id). При покупке курса этот куратор автоматически привязывается к ученику (домашки, жизни). Это не преподаватель: преподаватель — имя на экране, куратор — кто ведёт ученика в Telegram. Пусто — берётся defaultCuratorTelegramId из «Кабинет → Цены»."
+      },
+      {
+        "name": "checkTelegramId",
+        "title": "Проверяющий ДЗ (Telegram ID)",
+        "type": "number",
+        "description": "Сотрудник с ролью check в боте. Проверяет домашние задания по этому курсу (не ведёт эфиры и не куратор). После сохранения документа назначение подтянется в базу при следующей синхронизации курса. Можно также назначить в админ-боте: Обучение → Курс → Сотрудники курса."
+      },
+      {
+        "name": "deliveryFormat",
+        "title": "Формат обучения",
+        "type": "string",
+        "initialValue": "Онлайн"
+      },
+      {
+        "name": "pricing",
+        "title": "Карточка оплаты в кабинете",
+        "type": "object",
+        "description": "Данные для блока «Оплата курса». Без цены и числа занятий карточка не показывается.",
+        "fields": [
+          {
+            "name": "priceByn",
+            "title": "Цена (BYN)",
+            "type": "number"
+          },
+          {
+            "name": "grantedLessons",
+            "title": "Количество занятий",
+            "type": "number",
+            "description": "Сколько занятий выдаётся после оплаты."
+          },
+          {
+            "name": "cardText",
+            "title": "Текст в карточке",
+            "type": "text",
+            "description": "Короткое описание под названием на карточке оплаты (не путать с описанием курса).",
+            "rows": 3
+          }
+        ]
+      },
+      {
+        "name": "cabinetPreviewInside",
+        "title": "Что внутри курса",
+        "type": "array",
+        "description": "Карточки на экране превью: заголовок + короткое описание (обычно 4 штуки).",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "cabinetPreviewInsideItem",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "description",
+                "title": "Описание",
+                "type": "text",
+                "rows": 2
+              }
+            ],
+            "previewField": "title"
+          }
+        ]
+      },
+      {
+        "name": "showInCatalog",
+        "title": "Доступен для новых учеников",
+        "type": "boolean",
+        "description": "Если выключено — курс не показывается в каталоге и его нельзя купить. Ученики с уже оплаченным пакетом или зачислением по-прежнему видят курс в кабинете.",
+        "initialValue": true
+      },
+      {
+        "name": "courseClosed",
+        "title": "Закрыть курс",
+        "type": "boolean",
+        "description": "Если включено — курс полностью скрывается из кабинета для всех, включая тех, кто покупал раньше. Остаётся только запись в истории оплат.",
+        "initialValue": false
+      },
+      {
+        "name": "slug",
+        "title": "Код курса (slug)",
+        "type": "slug",
+        "description": "Обязательно. Нажмите Generate после названия (например: algebra-2026). Нужен для оплаты и ссылок.",
+        "required": true
+      },
+      {
+        "name": "purchaseScenarios",
+        "title": "Сценарии покупки",
+        "type": "object",
+        "description": "Режим «Без выбора» — оплата без окна формата (старт с начала по умолчанию). Иначе ученик подтверждает выбранный сценарий при первой покупке.",
+        "fields": [
+          {
+            "name": "mode",
+            "title": "Режим покупки",
+            "type": "string",
+            "required": true,
+            "initialValue": "none",
+            "list": [
+              {
+                "title": "Без выбора (простая оплата)",
+                "value": "none"
+              },
+              {
+                "title": "Два сценария на выбор",
+                "value": "both"
+              },
+              {
+                "title": "Только «с начала»",
+                "value": "start_from_beginning"
+              },
+              {
+                "title": "Только «с активного модуля»",
+                "value": "join_current"
+              }
+            ]
+          },
+          {
+            "name": "startFromBeginning",
+            "title": "Карточка: с начала",
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "description",
+                "title": "Описание",
+                "type": "text",
+                "rows": 3,
+                "required": true
+              },
+              {
+                "name": "benefits",
+                "title": "Преимущества",
+                "type": "array",
+                "description": "Список преимуществ (обычно 3-4 пункта)",
+                "required": true,
+                "of": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "name": "buttonLabel",
+                "title": "Текст кнопки",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "subtitle",
+                "title": "Подпись",
+                "type": "text",
+                "description": "Дополнительная подпись, поясняющая кому подходит этот формат",
+                "rows": 2
+              }
+            ]
+          },
+          {
+            "name": "joinCurrent",
+            "title": "Карточка: с активного модуля",
+            "type": "object",
+            "fields": [
+              {
+                "name": "title",
+                "title": "Заголовок",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "description",
+                "title": "Описание",
+                "type": "text",
+                "rows": 3,
+                "required": true
+              },
+              {
+                "name": "benefits",
+                "title": "Преимущества",
+                "type": "array",
+                "description": "Список преимуществ (обычно 3-4 пункта)",
+                "required": true,
+                "of": [
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "name": "buttonLabel",
+                "title": "Текст кнопки",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "subtitle",
+                "title": "Подпись",
+                "type": "text",
+                "description": "Дополнительная подпись, поясняющая кому подходит этот формат",
+                "rows": 2
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "activeModuleOverride",
+        "title": "Ручной выбор активного модуля",
+        "type": "reference",
+        "description": "Если выбран, этот модуль будет считаться активным для сценария \"Подключиться к курсу\". Если не выбран — автоматическое определение по вебинарам."
+      }
+    ]
+  },
+  "districtModule": {
+    "name": "districtModule",
+    "title": "Настройки модуля",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название модуля",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "color",
+        "title": "Цвет",
+        "type": "string",
+        "required": true,
+        "initialValue": "#38c6ff",
+        "list": [
+          {
+            "title": "Голубой",
+            "value": "#38c6ff"
+          },
+          {
+            "title": "Синий",
+            "value": "#4f7cff"
+          },
+          {
+            "title": "Фиолетовый",
+            "value": "#8b5cf6"
+          },
+          {
+            "title": "Оранжевый",
+            "value": "#f59e0b"
+          },
+          {
+            "title": "Зелёный",
+            "value": "#22c55e"
+          },
+          {
+            "title": "Бирюзовый",
+            "value": "#14b8a6"
+          },
+          {
+            "title": "Розовый",
+            "value": "#ec4899"
+          },
+          {
+            "title": "Красный",
+            "value": "#ef4444"
+          }
+        ]
+      },
+      {
+        "name": "sortOrder",
+        "title": "Порядок в курсе",
+        "type": "number",
+        "description": "0 = первый модуль, 1 = второй и т.д. При создании через «Курс → Модули» подставляется следующий номер автоматически; можно изменить вручную.",
+        "required": true
+      },
+      {
+        "name": "lessons",
+        "title": "Привязанные занятия",
+        "type": "array",
+        "description": "Заполняется автоматически при публикации занятия (ссылка на lesson). Удаление — кнопка «Удалить» у занятия.",
+        "readOnly": true,
+        "of": [
+          {
+            "type": "reference"
+          }
+        ]
+      }
+    ]
+  },
+  "districtCourseLesson": {
+    "name": "districtCourseLesson",
+    "title": "Настройки занятия",
+    "fields": [
+      {
+        "name": "title",
+        "title": "Название",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "lessonDate",
+        "title": "Дата",
+        "type": "date"
+      },
+      {
+        "name": "description",
+        "title": "Описание",
+        "type": "text",
+        "rows": 4
+      },
+      {
+        "name": "moduleOrder",
+        "title": "Порядок в модуле",
+        "type": "number",
+        "description": "1 = первое занятие в модуле, 2 = второе и т.д. При создании через «Занятия» номер ставится автоматически; можно изменить вручную.",
+        "required": true
+      },
+      {
+        "name": "contentChips",
+        "title": "Чипы",
+        "type": "array",
+        "description": "До 4 пунктов в карточке занятия",
+        "initialValue": [
+          "Теория",
+          "Разбор задач",
+          "Практика",
+          "Домашнее задание"
+        ],
+        "of": [
+          {
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "name": "liveUrl",
+        "title": "Ссылка на трансляцию",
+        "type": "url"
+      },
+      {
+        "name": "recordingUrl",
+        "title": "Ссылка на запись",
+        "type": "url"
+      },
+      {
+        "name": "lessonMaterials",
+        "title": "Материалы к занятию",
+        "type": "array",
+        "description": "Необязательно при создании. Обычно файлы добавляет куратор в личном кабинете во время вебинара. Здесь — только если нужно заранее.",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "lessonFile",
+            "title": "Файл",
+            "fields": [
+              {
+                "name": "file",
+                "title": "Файл",
+                "type": "file"
+              },
+              {
+                "name": "published",
+                "title": "Опубликован",
+                "type": "boolean",
+                "description": "Файл виден ученикам в кабинете только когда включено",
+                "initialValue": false
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "lessonHomeworkFiles",
+        "title": "Домашнее задание",
+        "type": "array",
+        "description": "Необязательно при создании. Файлы ДЗ чаще выкладывает куратор в кабинете после эфира. В кабинете видны только с включённой публикацией.",
+        "of": [
+          {
+            "type": "object",
+            "typeName": "lessonFile",
+            "title": "Файл",
+            "fields": [
+              {
+                "name": "file",
+                "title": "Файл",
+                "type": "file"
+              },
+              {
+                "name": "published",
+                "title": "Опубликован",
+                "type": "boolean",
+                "description": "Файл виден ученикам в кабинете только когда включено",
+                "initialValue": false
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "isTrialFree",
+        "title": "Пробное / бесплатное",
+        "type": "boolean",
+        "description": "Включено — занятие открывается при записи на курс бесплатно и не списывает кредит из оплаченного пакета. Можно включать/выключать в любой момент.",
+        "initialValue": false
+      }
+    ]
+  }
+}

@@ -1,7 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import ScheduleWeekStats from './ScheduleWeekStats';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
+import { scheduleFetchWith, type ScheduleTeacherApiContext } from '@/lib/teacher/schedule-api-context';
+import { ScheduleApiProvider } from './schedule-api-react';
 import type { TeacherCabinetData, TeacherDaySlot, TeacherRosterStudent } from '@/lib/teacher/cabinet-data';
 import { setRosterArchiveState } from '@/lib/teacher/schedule-optimistic';
 import { getScheduleFilters, isScheduleFilterValid } from '@/lib/teacher/schedule-config';
@@ -9,6 +12,7 @@ import type { ScheduleEvent, ScheduleFilter, ScheduleViewMode } from '@/lib/teac
 import {
   addDays,
   dateKey,
+  eventMatchesRosterStudent,
   filterScheduleEvents,
   getWeekDays,
   isSameDay,
@@ -42,6 +46,15 @@ type Props = {
   onFocusLessonHandled?: () => void;
   /** Админ видит отменённые занятия полупрозрачными карточками; преподаватель — нет. */
   showCancelled?: boolean;
+  /** Админка: только занятия (без рoster/слотов/рабочих часов). */
+  lessonsOnly?: boolean;
+  /** Админ: переключить отметку оплаты занятия. */
+  onTogglePaid?: (event: ScheduleEvent, paid: boolean) => void;
+  /** Админ: статистика недели под календарём (горизонтально), а не в правой колонке. */
+  statsBelow?: boolean;
+  /** Админ: блок в правой колонке на месте статистики. */
+  sidebarSlot?: ReactNode;
+  scheduleApi?: ScheduleTeacherApiContext;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   busy: boolean;
   runAction: StaffRunAction;
@@ -60,6 +73,14 @@ type LessonModal = { type: 'reschedule' | 'cancel'; eventId: string };
 type SlotModalState = { day: Date; existing?: TeacherDaySlot };
 
 const SCHEDULE_VIEW_STORAGE_KEY = 'district-teacher-schedule-view';
+const HIDE_CANCELLED_STORAGE_KEY = 'district-admin-schedule-hide-cancelled';
+
+type RosterCalendarFilter = { rosterStudentId: number; name: string };
+
+function readHideCancelledPref(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(HIDE_CANCELLED_STORAGE_KEY) === '1';
+}
 
 function readStoredViewMode(): ScheduleViewMode {
   if (typeof window === 'undefined') return 'week';
@@ -81,10 +102,16 @@ export default function TeacherSchedulePanel({
   focusLessonId,
   onFocusLessonHandled,
   showCancelled = false,
+  lessonsOnly = false,
+  onTogglePaid,
+  statsBelow = false,
+  sidebarSlot,
+  scheduleApi,
   patchTeacher,
   busy,
   runAction,
-}: Props) {  const filters = useMemo(() => getScheduleFilters(), []);
+}: Props) {
+  const filters = useMemo(() => getScheduleFilters(), []);
   const isMobile = useIsMobile();
   const [rootRef, rootWidth] = useElementWidth<HTMLDivElement>();
   const size = rootWidth > 0 ? scheduleSizeFor(rootWidth) : 'wide';
@@ -107,6 +134,8 @@ export default function TeacherSchedulePanel({
   const [slotModal, setSlotModal] = useState<SlotModalState | null>(null);
   const [rosterListOpen, setRosterListOpen] = useState(false);
   const [notice, setNotice] = useState<ActionFeedback | null>(null);
+  const [hideCancelledLessons, setHideCancelledLessons] = useState(false);
+  const [studentCalendarFilter, setStudentCalendarFilter] = useState<RosterCalendarFilter | null>(null);
   const monthExpandRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -117,9 +146,24 @@ export default function TeacherSchedulePanel({
     }
   }, [viewMode]);
 
+  useEffect(() => {
+    if (!showCancelled) return;
+    setHideCancelledLessons(readHideCancelledPref());
+  }, [showCancelled]);
+
+  useEffect(() => {
+    if (!showCancelled) return;
+    try {
+      window.localStorage.setItem(HIDE_CANCELLED_STORAGE_KEY, hideCancelledLessons ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [hideCancelledLessons, showCancelled]);
+
   const effectiveView: ScheduleViewMode = viewMode;
   const activeFilter = isScheduleFilterValid(filter) ? filter : 'all';
   const canCreate = Boolean(teacherData);
+  const canManageAvailability = canCreate && !lessonsOnly;
 
   const weekStart = useMemo(() => startOfWeek(selectedDay), [selectedDay]);
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
@@ -133,15 +177,23 @@ export default function TeacherSchedulePanel({
     [teacherData?.allLessons],
   );
 
+  const cancelledVisible = showCancelled && !hideCancelledLessons;
+
   const calendarEvents = useMemo(
     () =>
-      filterScheduleEvents(allEvents, activeFilter).filter(
-        (event) =>
-          event.kind !== 'course' &&
-          event.status !== 'completed' &&
-          (showCancelled || event.status !== 'cancelled'),
-      ),
-    [allEvents, activeFilter, showCancelled],
+      filterScheduleEvents(allEvents, activeFilter)
+        .filter(
+          (event) =>
+            event.kind !== 'course' &&
+            event.status !== 'completed' &&
+            (cancelledVisible || event.status !== 'cancelled'),
+        )
+        .filter(
+          (event) =>
+            !studentCalendarFilter ||
+            eventMatchesRosterStudent(event, studentCalendarFilter.rosterStudentId),
+        ),
+    [allEvents, activeFilter, cancelledVisible, studentCalendarFilter],
   );
 
   useEffect(() => {
@@ -196,7 +248,10 @@ export default function TeacherSchedulePanel({
     const d = new Date(event.startsAt);
     return dateKey(startOfWeek(d)) === dateKey(weekStart);
   });
-  const hoursUnset = Boolean(teacherData) && (teacherData?.workingHours.weekly.length ?? 0) === 0;
+  const hoursUnset =
+    !lessonsOnly &&
+    Boolean(teacherData) &&
+    (teacherData?.workingHours.weekly.length ?? 0) === 0;
 
   const scheduleRunAction: StaffRunAction = useCallback(
     (action, successText, options) =>
@@ -263,9 +318,10 @@ export default function TeacherSchedulePanel({
   };
 
   return (
+    <ScheduleApiProvider value={scheduleApi}>
     <div
       ref={rootRef}
-      className="sr-root sched-page"
+      className={`sr-root sched-page${statsBelow ? ' sr-root--stats-below' : ''}`}
       data-size={size}
       data-mobile={isMobile ? 'true' : 'false'}
       data-panel={drawerOpen ? 'open' : 'closed'}
@@ -276,7 +332,7 @@ export default function TeacherSchedulePanel({
         periodLabel={formatPeriodLabel(effectiveView, selectedDay, weekStart)}
         showToday={showToday}
         panelOpen={drawerOpen}
-        compactTopbar={compactPanel}
+        compactTopbar={compactPanel || lessonsOnly}
         onPrev={() => shift(-1)}
         onNext={() => shift(1)}
         onToday={() => pickDay(new Date())}
@@ -301,9 +357,34 @@ export default function TeacherSchedulePanel({
               {item.label}
             </button>
           ))}
+          {showCancelled ? (
+            <button
+              type="button"
+              className={`sr-filter${hideCancelledLessons ? ' is-active' : ''}`}
+              aria-pressed={hideCancelledLessons}
+              onClick={() => setHideCancelledLessons((v) => !v)}
+            >
+              {hideCancelledLessons ? 'Отменённые скрыты' : 'Скрыть отменённые'}
+            </button>
+          ) : null}
+          {studentCalendarFilter ? (
+            <span className="sr-filter sr-filter--student">
+              <span>
+                По ученику: <strong>{studentCalendarFilter.name}</strong>
+              </span>
+              <button
+                type="button"
+                className="sr-filter-clear"
+                aria-label="Сбросить фильтр по ученику"
+                onClick={() => setStudentCalendarFilter(null)}
+              >
+                ×
+              </button>
+            </span>
+          ) : null}
         </div>
         <div className="sr-actions">
-          {canCreate ? (
+          {canManageAvailability ? (
             <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setHoursOpen(true)}>
               <IconClockRef size={15} /> Рабочее время
             </button>
@@ -356,7 +437,7 @@ export default function TeacherSchedulePanel({
                 onCreateAt={(d, startTime, endTime) =>
                   openAdd({ date: d, startTime, endTime, kind: 'individual' })
                 }
-                onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
+                onSelectBlockSlot={canManageAvailability ? openBlockSlot : undefined}
               />
             )}
           />
@@ -386,7 +467,7 @@ export default function TeacherSchedulePanel({
               onCreateAt={(day, startTime, endTime) =>
                 openAdd({ date: day, startTime, endTime, kind: 'individual' })
               }
-              onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
+              onSelectBlockSlot={canManageAvailability ? openBlockSlot : undefined}
             />
           </div>
         ) : (
@@ -404,10 +485,16 @@ export default function TeacherSchedulePanel({
             onCreateAt={(day, startTime, endTime) =>
               openAdd({ date: day, startTime, endTime, kind: 'individual' })
             }
-            onSelectBlockSlot={canCreate ? openBlockSlot : undefined}
+            onSelectBlockSlot={canManageAvailability ? openBlockSlot : undefined}
           />
         )}
       </div>
+
+      {statsBelow ? (
+        <div className="sr-stats-below">
+          <ScheduleWeekStats stats={weekStats} />
+        </div>
+      ) : null}
 
       {(() => {
         const rightPanel = (
@@ -420,20 +507,31 @@ export default function TeacherSchedulePanel({
             busy={busy}
             onSelectEvent={openEvent}
             onBack={() => setSelectedEventId(null)}
-            onEditDay={canCreate ? () => setDayHours({ day: selectedDay }) : undefined}
+            onEditDay={
+              canManageAvailability ? () => setDayHours({ day: selectedDay }) : undefined
+            }
             onReschedule={() => openLessonModal('reschedule')}
             onCancel={() => openLessonModal('cancel')}
-            showCancelled={showCancelled}
-            onAddStudent={canCreate ? () => setRosterModal({ type: 'new' }) : undefined}
-            onViewAllRoster={
-              (teacherData?.roster.length ?? 0) > 0 ? () => setRosterListOpen(true) : undefined
+            onTogglePaid={onTogglePaid}
+            hideStats={statsBelow}
+            sidebarSlot={sidebarSlot}
+            showCancelled={cancelledVisible}
+            onAddStudent={
+              canManageAvailability ? () => setRosterModal({ type: 'new' }) : undefined
             }
-            onOpenStudent={(student) => setRosterModal({ type: 'edit', id: student.id })}
-            onAddBlockSlot={canCreate ? openNewBlockSlot : undefined}
+            onViewAllRoster={
+              !lessonsOnly && (teacherData?.roster.length ?? 0) > 0
+                ? () => setRosterListOpen(true)
+                : undefined
+            }
+            onOpenStudent={
+              lessonsOnly ? undefined : (student) => setRosterModal({ type: 'edit', id: student.id })
+            }
+            onAddBlockSlot={canManageAvailability ? openNewBlockSlot : undefined}
             onRestoreArchived={
-              canCreate
+              canManageAvailability
                 ? async (student) => {
-                    const res = await fetch('/api/cabinet/teacher/roster/archive', {
+                    const res = await scheduleFetchWith(scheduleApi, '/api/cabinet/teacher/roster/archive', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ id: student.id, restore: true }),
@@ -485,6 +583,7 @@ export default function TeacherSchedulePanel({
             report={setNotice}
             patchTeacher={patchTeacher}
             onClose={() => setLessonModal(null)}
+            scheduleApi={scheduleApi}
           />
         ) : lessonModal.type === 'cancel' ? (
           <ScheduleCancelModal
@@ -495,6 +594,7 @@ export default function TeacherSchedulePanel({
             patchTeacher={patchTeacher}
             onFinished={onLessonFinished}
             onClose={() => setLessonModal(null)}
+            scheduleApi={scheduleApi}
           />
         ) : null
       ) : null}
@@ -518,10 +618,11 @@ export default function TeacherSchedulePanel({
           patchTeacher={patchTeacher}
           onClose={closeAdd}
           runAction={scheduleRunAction}
+          scheduleApi={scheduleApi}
         />
       ) : null}
 
-      {rosterListOpen && teacherData ? (
+      {!lessonsOnly && rosterListOpen && teacherData ? (
         <RosterListModal
           data={teacherData}
           nowMs={nowMs}
@@ -541,7 +642,7 @@ export default function TeacherSchedulePanel({
         />
       ) : null}
 
-      {rosterModal && teacherData
+      {!lessonsOnly && rosterModal && teacherData
         ? (() => {
             const target =
               rosterModal.type === 'new'
@@ -573,13 +674,18 @@ export default function TeacherSchedulePanel({
                 report={setNotice}
                 patchTeacher={patchTeacher}
                 onSchedule={(student) => setRosterModal({ type: 'schedule', id: student.id })}
+                onViewCalendar={(student) => {
+                  setRosterModal(null);
+                  setStudentCalendarFilter({ rosterStudentId: student.id, name: student.name });
+                  setSelectedEventId(null);
+                }}
                 onClose={() => setRosterModal(null)}
               />
             );
           })()
         : null}
 
-      {hoursOpen && teacherData ? (
+      {!lessonsOnly && hoursOpen && teacherData ? (
         <ScheduleWorkingHoursModal
           workingHours={teacherData.workingHours}
           events={calendarEvents}
@@ -596,7 +702,7 @@ export default function TeacherSchedulePanel({
         />
       ) : null}
 
-      {slotModal && teacherData ? (
+      {!lessonsOnly && slotModal && teacherData ? (
         <ScheduleDaySlotModal
           day={slotModal.day}
           existing={slotModal.existing}
@@ -608,7 +714,7 @@ export default function TeacherSchedulePanel({
         />
       ) : null}
 
-      {dayHours && teacherData ? (
+      {!lessonsOnly && dayHours && teacherData ? (
         <ScheduleDayHoursModal
           key={dateKey(dayHours.day)}
           day={dayHours.day}
@@ -626,6 +732,7 @@ export default function TeacherSchedulePanel({
 
       <ScheduleToastStack feedback={notice} onDismiss={() => setNotice(null)} />
     </div>
+    </ScheduleApiProvider>
   );
 }
 

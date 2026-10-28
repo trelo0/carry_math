@@ -139,6 +139,11 @@ export async function watchRecordingWithAccessGate(
     );
   }
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
+  void import('@/lib/bot/admin/trial-lesson-notify-hook')
+    .then(({ maybeNotifyTrialLessonWatch }) =>
+      maybeNotifyTrialLessonWatch(admin, telegramId, sanityLessonId, ctx.content, ctx.courseId),
+    )
+    .catch((err) => console.error('[courseWatch] trial notify failed:', err));
   return progress;
 }
 
@@ -171,6 +176,11 @@ export async function watchLiveWithAccessGate(
     );
   }
   await afterProgressMaybeCompleteAndUnlock(admin, telegramId, sanityLessonId, progress, ctx);
+  void import('@/lib/bot/admin/trial-lesson-notify-hook')
+    .then(({ maybeNotifyTrialLessonWatch }) =>
+      maybeNotifyTrialLessonWatch(admin, telegramId, sanityLessonId, ctx.content, ctx.courseId),
+    )
+    .catch((err) => console.error('[courseWatch] trial notify failed:', err));
   return progress;
 }
 

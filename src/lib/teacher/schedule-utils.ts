@@ -390,6 +390,13 @@ export function isPastScheduleEvent(event: ScheduleEvent, nowMs = Date.now()): b
   return new Date(event.endsAt).getTime() < nowMs;
 }
 
+/** Занятия ученика из «Мои ученики» (schedule_students.id). */
+export function eventMatchesRosterStudent(event: ScheduleEvent, rosterStudentId: number): boolean {
+  if (event.kind !== 'individual') return false;
+  const sid = event.sourceLesson?.scheduleStudentId;
+  return sid != null && sid === rosterStudentId;
+}
+
 export function filterScheduleEvents(events: ScheduleEvent[], filter: ScheduleFilter): ScheduleEvent[] {
   if (filter === 'all') return events;
   if (filter === 'course') return events.filter((e) => e.kind === 'course');

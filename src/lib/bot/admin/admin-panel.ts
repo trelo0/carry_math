@@ -8,7 +8,7 @@ export async function renderAdminWebPanel(
   telegramId: number,
   deliver: Deliver,
 ): Promise<void> {
-  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/staff');
+  const url = await createCabinetLoginUrl(admin, telegramId, '/cabinet/admin/courses');
   const keyboard: InlineButton[][] = [
     [{ text: '🌐 Открыть панель управления', url }],
     [homeButton()],

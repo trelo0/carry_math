@@ -177,20 +177,6 @@ export async function notifyCuratorOverdueOnce(
     const checkChat = checker ? await memberChatId(admin, checker.telegramId) : null;
     if (checkChat && checker) {
       try {
-        const { staffDmTopicsEnabled, deliverInboundToStaffTopic } = await import(
-          '@/lib/bot/staff/dm-topics'
-        );
-        if (staffDmTopicsEnabled()) {
-          await deliverInboundToStaffTopic(admin, {
-            staffTelegramId: checker.telegramId,
-            staffRole: 'check',
-            studentTelegramId: telegramId,
-            body: overdueText,
-            courseIdHint: courseId,
-            header: '⏰ Просрочено домашнее задание',
-          });
-          return true;
-        }
         await telegramSend('sendMessage', {
           chat_id: checkChat,
           text: overdueText,
@@ -240,12 +226,12 @@ export async function notifyAdminsHomeworkOverdue(
         text: overdueText,
         reply_markup: {
           inline_keyboard: [
+            [{ text: '💬 Связаться', callback_data: `ah:msg:w:${studentTelegramId}` }],
             [
               { text: '⏱ Просрочки', callback_data: 'ae:lives:od:0' },
               { text: '❤️ Жизни', callback_data: `al:m:${studentTelegramId}` },
             ],
             [{ text: '👤 Профиль', callback_data: `admin:user:${studentTelegramId}::` }],
-            [{ text: '💬 Ученик', url: `tg://user?id=${studentTelegramId}` }],
           ],
         },
       });

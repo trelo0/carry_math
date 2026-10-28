@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { authLoginRedirectPath, pathWithoutAuthLoginQuery } from '@/lib/auth-login-redirect';
+import { memberHasRole } from '@/lib/bot/roles';
 import { getStaffAuth } from '@/lib/cabinet-auth';
-import { isCreatorTelegramId } from '@/lib/bot/roles';
 import { getStaffCabinetData } from '@/lib/teacher/cabinet-data';
+import { parseCabinetPreview } from '@/lib/admin/settings-sections';
 import { parseStaffCourseRole } from '@/lib/staff/staff-cabinet-url';
 import StaffShell from '@/components/staff/StaffShell';
 import CabinetLoginGate from '@/components/cabinet/CabinetLoginGate';
@@ -29,10 +30,12 @@ export default async function StaffCabinetPage({
     login?: string;
     courseId?: string;
     courseRole?: string;
+    cabinetPreview?: string;
   }>;
 }) {
   const sp = await searchParams;
   const courseRole = parseStaffCourseRole(sp.courseRole);
+  const cabinetPreview = parseCabinetPreview(sp.cabinetPreview);
   const supabase = await createClient();
   const { data: authUser } = await supabase.auth.getUser();
 
@@ -112,7 +115,11 @@ export default async function StaffCabinetPage({
         sp.courseId && Number.isFinite(Number(sp.courseId)) ? Number(sp.courseId) : undefined
       }
       initialCourseRole={courseRole}
-      showCabinetPick={isCreatorTelegramId(staffAuth.telegramId)}
+      cabinetPreview={cabinetPreview === 'curator' || cabinetPreview === 'teacher' ? cabinetPreview : null}
+      showCabinetPick={
+        memberHasRole(staffAuth.roles, 'admin') &&
+        (cabinetPreview === 'curator' || cabinetPreview === 'teacher')
+      }
     />
   );
 }

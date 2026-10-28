@@ -129,9 +129,12 @@ export async function POST(request: Request) {
     const transaction = body.transaction;
     const { uid, status, amount, currency, tracking_id, custom_fields } = transaction;
 
-    if (!tracking_id) {
-      console.error('[bePaid webhook] Missing tracking_id');
-      return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
+    // Журнал: все статусы, в т.ч. оплаты по статическим ссылкам продуктов (без purchase_requests).
+    try {
+      const { recordBePaidJournalEntry } = await import('@/lib/bepaid/journal');
+      await recordBePaidJournalEntry(createAdminClient(), transaction as Record<string, unknown>);
+    } catch (journalError) {
+      console.error('[bePaid webhook] journal record failed:', journalError);
     }
 
     if (status !== 'successful') {
@@ -139,13 +142,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, status: 'ignored' });
     }
 
+    if (!tracking_id) {
+      return NextResponse.json({ ok: true, journal: true, fulfill: 'skipped_no_tracking' });
+    }
+
     const admin = createAdminClient();
 
-    // Поиск заявки по tracking_id
     const purchaseRequest = await getPurchaseRequest(admin, tracking_id);
     if (!purchaseRequest) {
-      console.error('[bePaid webhook] Purchase request not found:', tracking_id);
-      return NextResponse.json({ error: 'Purchase request not found' }, { status: 404 });
+      return NextResponse.json({ ok: true, journal: true, fulfill: 'skipped_no_request' });
     }
 
     // Проверка суммы и валюты
@@ -279,6 +284,19 @@ export async function POST(request: Request) {
           console.error('[bePaid webhook] Course side effects failed:', sideEffectError);
           return NextResponse.json({ error: 'Post-fulfill error' }, { status: 500 });
         }
+      }
+
+      if (atomicResult.success && purchaseRequest.product === 'course') {
+        const { recordCoursePurchasePaid } = await import('@/lib/bot/admin/user-activity-events');
+        void recordCoursePurchasePaid(admin, {
+          purchaseRequestId: purchaseRequest.id,
+          telegramId,
+          courseId: fulfillCourseContext?.courseId ?? null,
+          courseTitle: purchaseRequest.title?.trim() || 'Курс',
+          scenario: scenario ?? null,
+          amountByn: Number(purchaseRequest.amount_byn),
+          paidAt: new Date().toISOString(),
+        }).catch((err) => console.error('[bePaid webhook] purchase notify failed:', err));
       }
 
       return NextResponse.json({

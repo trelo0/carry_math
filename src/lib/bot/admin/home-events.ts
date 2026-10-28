@@ -27,6 +27,7 @@ const VISIBLE_LOG_ACTIONS = new Set([
   'purchase.approve',
   'purchase.reject',
   'lesson.cancel',
+  'lesson.create',
   'lesson.reschedule',
 ]);
 
@@ -51,6 +52,7 @@ function logRowToEvent(row: AdminActionLogRow, subtitle: string, openCallback: s
     'purchase.approve': '💳 Получена оплата',
     'purchase.reject': '💳 Оплата отклонена',
     'lesson.cancel': '📅 Занятие отменено',
+    'lesson.create': '📅 Занятие создано',
     'lesson.reschedule': '📅 Занятие перенесено',
   };
   return {

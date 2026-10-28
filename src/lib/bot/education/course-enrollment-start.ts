@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { firstRow } from '@/lib/supabase/single-row';
 import type { DistrictCourseContent } from '@/lib/studio/courseContent';
 import {
   buildPublishedLessonSequence,
@@ -128,12 +129,15 @@ export async function loadJoinCurrentGateContext(
 ): Promise<JoinCurrentGateContext | null> {
   if (!courseId) return null;
 
-  const { data: enrollment } = await admin
+  const { data: enrollmentRows, error: enrErr } = await admin
     .from('course_enrollments')
     .select('purchase_scenario, start_lesson_id, start_module_id')
     .eq('telegram_id', telegramId)
     .eq('course_id', courseId)
-    .maybeSingle();
+    .order('id', { ascending: false })
+    .limit(1);
+  if (enrErr) throw enrErr;
+  const enrollment = firstRow(enrollmentRows);
 
   if (enrollment?.purchase_scenario !== 'join_current') return null;
 

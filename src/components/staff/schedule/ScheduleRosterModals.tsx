@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useScheduleFetch } from './schedule-api-react';
 import type { TeacherCabinetData, TeacherRosterStudent } from '@/lib/teacher/cabinet-data';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
@@ -51,6 +52,7 @@ export function RosterStudentModal({
   report,
   patchTeacher,
   onSchedule,
+  onViewCalendar,
   onClose,
 }: {
   student?: TeacherRosterStudent;
@@ -61,8 +63,10 @@ export function RosterStudentModal({
   report: Report;
   patchTeacher?: Patch;
   onSchedule?: (student: TeacherRosterStudent) => void;
+  onViewCalendar?: (student: TeacherRosterStudent) => void;
   onClose: () => void;
 }) {
+  const sfetch = useScheduleFetch();
   const [name, setName] = useState(student?.name ?? '');
   const [phone, setPhone] = useState(student?.phone ?? '');
   const [classLabel, setClassLabel] = useState(student?.classLabel ?? '');
@@ -89,7 +93,7 @@ export function RosterStudentModal({
       runAction,
       setFeedback,
       async () => {
-        const res = await fetch('/api/cabinet/teacher/roster', {
+        const res = await sfetch('/api/cabinet/teacher/roster', {
           method: student ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -127,7 +131,7 @@ export function RosterStudentModal({
       runAction,
       setFeedback,
       async () => {
-        const res = await fetch('/api/cabinet/teacher/roster/archive', {
+        const res = await sfetch('/api/cabinet/teacher/roster/archive', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -168,7 +172,7 @@ export function RosterStudentModal({
   const restore = async (archived: TeacherRosterStudent) => {
     setSaving(true);
     try {
-      const res = await fetch('/api/cabinet/teacher/roster/archive', {
+      const res = await sfetch('/api/cabinet/teacher/roster/archive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: archived.id, restore: true }),
@@ -199,7 +203,7 @@ export function RosterStudentModal({
       async () => {
         const qs = new URLSearchParams({ id: String(student.id) });
         if (deleteWithLessons) qs.set('withLessons', '1');
-        const res = await fetch(`/api/cabinet/teacher/roster?${qs}`, { method: 'DELETE' });
+        const res = await sfetch(`/api/cabinet/teacher/roster?${qs}`, { method: 'DELETE' });
         const body = await readJson<{ error: string; removedLessonIds?: number[] }>(res);
         if (!res.ok) {
           throw new Error(formatScheduleApiError(body.error, 'Не удалось удалить ученика', res.status));
@@ -277,18 +281,29 @@ export function RosterStudentModal({
                 </button>
               </div>
             ) : (
-              <div className="sr-modal-foot-left sr-foot-actions">
+              <div className="sr-modal-foot-left sr-foot-actions sr-foot-actions--student">
+                <div className="sr-foot-actions__row sr-foot-actions__row--single">
+                  {onViewCalendar ? (
+                    <button type="button" className="sr-btn sr-btn--ghost" onClick={() => onViewCalendar(student)}>
+                      Расписание в календаре
+                    </button>
+                  ) : null}
+                </div>
                 {onSchedule ? (
-                  <button type="button" className="sr-btn sr-btn--ghost" onClick={() => onSchedule(student)}>
-                    Добавить в расписание
-                  </button>
+                  <div className="sr-foot-actions__row sr-foot-actions__row--single">
+                    <button type="button" className="sr-btn sr-btn--primary" onClick={() => onSchedule(student)}>
+                      Добавить в расписание
+                    </button>
+                  </div>
                 ) : null}
-                <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmArchive(true)}>
-                  Архивировать
-                </button>
-                <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmDelete(true)}>
-                  Удалить
-                </button>
+                <div className="sr-foot-actions__row">
+                  <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmArchive(true)}>
+                    Архивировать
+                  </button>
+                  <button type="button" className="sr-btn sr-btn--ghost" onClick={() => setConfirmDelete(true)}>
+                    Удалить
+                  </button>
+                </div>
               </div>
             )
           ) : null}
@@ -399,6 +414,7 @@ export function RosterScheduleModal({
   patchTeacher?: Patch;
   onClose: () => void;
 }) {
+  const sfetch = useScheduleFetch();
   const [todayKey] = useState(() => dateKey(new Date()));
   const [weekdays, setWeekdays] = useState<number[]>([]);
   const [timeByWeekday, setTimeByWeekday] = useState<Partial<Record<number, string>>>({});
@@ -536,7 +552,7 @@ export function RosterScheduleModal({
           startsAt,
           durationMinutes: durationForWeekday(weekdayIndex(new Date(startsAt))),
         }));
-        const res = await fetch('/api/cabinet/teacher/schedule/series', {
+        const res = await sfetch('/api/cabinet/teacher/schedule/series', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

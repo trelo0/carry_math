@@ -32,6 +32,13 @@ export function staffDmTopicsEnabled(): boolean {
   return true;
 }
 
+/** Deep-link в topic личного чата с ботом (Forum Topics). */
+export function botPrivateTopicUrl(messageThreadId: number): string | null {
+  const raw = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '');
+  if (!raw || !Number.isFinite(messageThreadId) || messageThreadId <= 0) return null;
+  return `https://t.me/${raw}/${messageThreadId}`;
+}
+
 export function usesStaffDmTopics(staffRole: StaffMessageRole | DmTopicStaffRole): boolean {
   if (!staffDmTopicsEnabled()) return false;
   return staffRole === 'check' || staffRole === 'admin' || staffRole === 'curator';
@@ -324,7 +331,7 @@ export async function openStaffStudentDmTopic(
     courseIdHint?: number | null;
     introText?: string;
   },
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; messageThreadId?: number }> {
   try {
     const topic = await ensureStaffDmTopic(admin, params);
     if (!topic) {
@@ -340,7 +347,7 @@ export async function openStaffStudentDmTopic(
     if (!sent.ok) {
       return { ok: false, error: sent.description ?? 'Не удалось отправить сообщение в тему.' };
     }
-    return { ok: true };
+    return { ok: true, messageThreadId: topic.messageThreadId };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Ошибка открытия темы.' };
   }

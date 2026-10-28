@@ -14,7 +14,7 @@ import {
   workBandsLabel,
 } from '@/lib/teacher/schedule-reference-utils';
 import type { TeacherWorkingHoursData } from '@/lib/teacher/working-hours';
-import { EventKindIcon, eventHeadline, eventSubline, eventTone } from './ScheduleWeekBoard';
+import { EventKindIcon, eventHeadline, eventPaidClass, eventSubline, eventTone } from './ScheduleWeekBoard';
 import { IconPalmRef, IconPlusRef } from './ScheduleRefIcons';
 
 type Props = {
@@ -101,7 +101,7 @@ export default function ScheduleDayAgenda({
             <li key={event.id}>
               <button
                 type="button"
-                className={`sr-agenda-card sr-ev--tone-${eventTone(event)}${selectedEventId === event.id ? ' is-selected' : ''}`}
+                className={`sr-agenda-card sr-ev--tone-${eventTone(event)}${eventPaidClass(event)}${selectedEventId === event.id ? ' is-selected' : ''}`}
                 onClick={() => onSelectEvent(event)}
               >
                 <span className="sr-agenda-time">

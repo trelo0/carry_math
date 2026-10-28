@@ -1,4 +1,5 @@
 import type { InlineKeyboard } from '@/lib/bot/admin/core';
+import { staffDmTopicsEnabled } from './dm-topics';
 import { withTeacherCabinetRow } from './teacher-cabinet-ui';
 
 function backButton(text: string, callback: string) {
@@ -85,23 +86,31 @@ export function renderCombinedMessagesHub(cabinetUrl: string | null): {
   text: string;
   keyboard: InlineKeyboard;
 } {
+  const topicsOn = staffDmTopicsEnabled();
+  const lines = topicsOn
+    ? [
+        '💬 СООБЩЕНИЯ',
+        '',
+        '🎓 Курс — переписка в Topics (чат с ботом, тема на ученика).',
+        '🏫 Занятия — переписка с учениками занятий в боте.',
+      ]
+    : [
+        '💬 СООБЩЕНИЯ',
+        '',
+        '🎓 Курс — переписка с учениками курса',
+        '🏫 Занятия — переписка с учениками занятий',
+      ];
+  const rows: InlineKeyboard['inline_keyboard'] = topicsOn
+    ? [[{ text: '🏫 Сообщения занятий', callback_data: 's:msg:t' }]]
+    : [
+        [{ text: '🎓 Сообщения курса', callback_data: 's:msg:c' }],
+        [{ text: '🏫 Сообщения занятий', callback_data: 's:msg:t' }],
+      ];
+  rows.push([backButton('⬅️ Главное меню', 's:menu')]);
   return {
-    text: [
-      '💬 СООБЩЕНИЯ',
-      '',
-      '🎓 Курс — переписка с учениками курса',
-      '🏫 Занятия — переписка с учениками занятий',
-    ].join('\n'),
+    text: lines.join('\n'),
     keyboard: {
-      inline_keyboard: withTeacherCabinetRow(
-        [
-          [{ text: '🎓 Сообщения курса', callback_data: 's:msg:c' }],
-          [{ text: '🏫 Сообщения занятий', callback_data: 's:msg:t' }],
-          [backButton('⬅️ Главное меню', 's:menu')],
-        ],
-        cabinetUrl,
-        { includeCabinet: false },
-      ),
+      inline_keyboard: withTeacherCabinetRow(rows, cabinetUrl, { includeCabinet: false }),
     },
   };
 }

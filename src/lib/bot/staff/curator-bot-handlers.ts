@@ -349,6 +349,23 @@ export async function handleCuratorBotCallback(
     return true;
   }
 
+  if (parts[1] === 'msg' && parts[2] === 'w' && parts[3]) {
+    const studentTg = Number(parts[3]);
+    if (Number.isFinite(studentTg)) {
+      const { getStaffCourseWorkspace } = await import('./staff-course-session');
+      const { openCuratorStudentDmTopicFromBot } = await import('./curator-dm-topic-open');
+      const ws = await getStaffCourseWorkspace(admin, telegramId);
+      await openCuratorStudentDmTopicFromBot(
+        admin,
+        telegramId,
+        message.chatId,
+        studentTg,
+        ws?.role === 'curator' ? ws.courseId : undefined,
+      );
+      return true;
+    }
+  }
+
   if (parts[1] === 'stu' && parts[2]) {
     const courseId = Number(parts[2]);
     if (!Number.isFinite(courseId)) return true;

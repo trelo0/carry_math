@@ -85,6 +85,10 @@ export function eventPaymentLabel(event: ScheduleEvent): 'paid' | 'unpaid' | nul
   return teacherLessonPaymentChipShort(event.isPaid);
 }
 
+export function eventPaidClass(event: ScheduleEvent): string {
+  return event.isPaid === true ? ' sr-ev--is-paid' : '';
+}
+
 export { teacherLessonPaymentChipAria };
 
 export function EventKindIcon({ kind, size = 13 }: { kind: ScheduleEvent['kind']; size?: number }) {
@@ -285,7 +289,7 @@ export default function ScheduleWeekBoard({
                       <button
                         key={event.id}
                         type="button"
-                        className={`sr-ev sr-ev--tone-${eventTone(event)}${selectedEventId === event.id ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${stacked ? ' is-stack' : ''}`}
+                        className={`sr-ev sr-ev--tone-${eventTone(event)}${eventPaidClass(event)}${selectedEventId === event.id ? ' is-selected' : ''}${compact ? ' is-compact' : ''}${stacked ? ' is-stack' : ''}`}
                         title={`${timeRange(event)} · ${eventHeadline(event)} · ${eventSubline(event)}`}
                         style={{
                           top: top + 1,

@@ -232,6 +232,28 @@ async function beginCuratorReply(
       return;
     }
   }
+  const { staffDmTopicsEnabled } = await import('../staff/dm-topics');
+  if (staffDmTopicsEnabled()) {
+    const { openCuratorStudentDmTopicFromBot } = await import('../staff/curator-dm-topic-open');
+    await openCuratorStudentDmTopicFromBot(
+      admin,
+      curatorTelegramId,
+      chatId,
+      studentTelegramId,
+      scope?.courseId,
+    );
+    return;
+  }
+  await beginCuratorReplyWizard(admin, curatorTelegramId, chatId, studentTelegramId, scope?.courseId);
+}
+
+export async function beginCuratorReplyWizard(
+  admin: SupabaseClient,
+  curatorTelegramId: number,
+  chatId: number,
+  studentTelegramId: number,
+  courseId?: number,
+): Promise<void> {
   await clearConflictingStaffStates(admin, curatorTelegramId, 'curator_reply');
   try {
     await saveState(
@@ -239,7 +261,7 @@ async function beginCuratorReply(
       curatorTelegramId,
       { chatId, messageId: 0 },
       STAFF_CURATOR_REPLY_STEP as never,
-      { studentTelegramId, courseId: scope?.courseId } as never,
+      { studentTelegramId, courseId } as never,
     );
   } catch (error) {
     if (!isConversationStateTableError(error)) throw error;
@@ -413,8 +435,7 @@ export function renderCuratorStudentProfile(
           { text: '+1 жизнь', callback_data: `c:life:g:${student.telegramId}` },
           { text: '−1 жизнь', callback_data: `c:life:d:${student.telegramId}` },
         ],
-        [{ text: '💬 Написать в боте', callback_data: `c:msg:w:${student.telegramId}` }],
-        [{ text: '📲 Открыть в Telegram', url: `tg://user?id=${student.telegramId}` }],
+        [{ text: '✉️ Связаться с учеником', callback_data: `c:msg:w:${student.telegramId}` }],
         ...hwButtons.slice(0, 12),
         [backButton('⬅️ Назад', 'c:stud')],
       ],
@@ -443,6 +464,7 @@ export function renderCuratorHomeworkCard(
           ? [[{ text: '❤️ Снять жизнь (не сдано)', callback_data: `c:lded:${student.id}:${homework.number}` }]]
           : []),
         [{ text: '👀 Посмотреть', callback_data: `c:vieww:${student.id}:${homework.number}` }],
+        [{ text: '✉️ Связаться с учеником', callback_data: `c:msg:w:${student.telegramId}` }],
         [{ text: '✅ ОДОБРИТЬ', callback_data: `c:appr:${student.id}:${homework.number}` }],
         [{ text: '❌ ОТКЛОНИТЬ', callback_data: `c:rej:${student.id}:${homework.number}` }],
         [backButton('⬅️ Назад', `c:sp:${student.id}`)],
@@ -998,7 +1020,30 @@ async function routeCuratorCallback(
   const legacyLibrary =
     action === 'lib' || action === 'libw' || action === 'libv' || action === 'libf';
 
-  if (!combined || legacyLibrary) {
+  const legacyCourseAction =
+    legacyLibrary ||
+    (action === 'msg' && id === 'w') ||
+    [
+      'shw',
+      'vieww',
+      'appr',
+      'rej',
+      'rejt',
+      'rejv',
+      'rejp',
+      'rejskip',
+      'rejc',
+      'sp',
+      'stud',
+      'hw',
+      'lded',
+      'life',
+      'notif',
+      'act',
+      'sch',
+    ].includes(action);
+
+  if ((!combined || legacyLibrary) && !legacyCourseAction) {
     if (action !== 'noop') {
       await editCuratorScreen(message, 'Эта кнопка устарела. Используйте меню под полем ввода.', {
         inline_keyboard: [[{ text: '🏠 Главная', callback_data: 'c:hub' }]],
@@ -1172,6 +1217,14 @@ async function routeCuratorCallback(
     }
 
     case 'msg': {
+      const { staffDmTopicsEnabled } = await import('../staff/dm-topics');
+      if (staffDmTopicsEnabled()) {
+        const { curatorCourseMessagesTopicsHint } = await import('../staff/curator-dm-topic-open');
+        await editCuratorScreen(message, curatorCourseMessagesTopicsHint(), {
+          inline_keyboard: [[backButton('⬅️ Назад', combined ? 's:menu' : 'c:menu')]],
+        });
+        return true;
+      }
       const msgCourse = await resolveCuratorBotCourseScope(admin, telegramId);
       const msgCourseId = msgCourse?.courseId ?? null;
       if (id === 'l') {

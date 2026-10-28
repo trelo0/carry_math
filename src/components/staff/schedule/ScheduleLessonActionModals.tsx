@@ -24,6 +24,11 @@ import {
   workBandsLabel,
 } from '@/lib/teacher/schedule-reference-utils';
 import type { TeacherWorkingHoursData } from '@/lib/teacher/working-hours';
+import type { ScheduleTeacherApiContext } from '@/lib/teacher/schedule-api-context';
+import {
+  scheduleTeacherApiPath,
+  withScheduleTeacherPayload,
+} from '@/lib/teacher/schedule-api-context';
 import { eventHeadline } from './ScheduleWeekBoard';
 import { IconXRef } from './ScheduleRefIcons';
 import FreeTimePicker from './FreeTimePicker';
@@ -37,6 +42,7 @@ type Common = {
   report: Dispatch<SetStateAction<ActionFeedback | null>>;
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   onClose: () => void;
+  scheduleApi?: ScheduleTeacherApiContext;
 };
 
 export function Shell({
@@ -100,6 +106,7 @@ export function ScheduleRescheduleModal({
   report,
   patchTeacher,
   onClose,
+  scheduleApi,
 }: RescheduleProps) {
   const [date, setDate] = useState(() => dateKey(new Date(event.startsAt)));
   const [startTime, setStartTime] = useState(() => isoToTimeLabel(event.startsAt));
@@ -162,11 +169,14 @@ export function ScheduleRescheduleModal({
         );
       },
       request: async () => {
-        const res = await fetch(`/api/cabinet/teacher/lessons/${lessonId}/reschedule`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startsAt, durationMinutes }),
-        });
+        const res = await fetch(
+          scheduleTeacherApiPath(scheduleApi, `/lessons/${lessonId}/reschedule`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(withScheduleTeacherPayload(scheduleApi, { startsAt, durationMinutes })),
+          },
+        );
         if (!res.ok) {
           patchTeacher?.((prev) => patchTeacherLesson(prev, lessonId, { startsAt: prevStartsAt }));
           const body = await readJson<{ error: string }>(res);
@@ -240,7 +250,16 @@ export function ScheduleRescheduleModal({
 
 /* ---------- Отмена ---------- */
 
-export function ScheduleCancelModal({ event, busy, runAction, report, patchTeacher, onClose, onFinished }: Common & {
+export function ScheduleCancelModal({
+  event,
+  busy,
+  runAction,
+  report,
+  patchTeacher,
+  onClose,
+  onFinished,
+  scheduleApi,
+}: Common & {
   onFinished?: (lessonId: number) => void;
 }) {
   const [reason, setReason] = useState<string>(CANCEL_REASONS[0].id);
@@ -265,10 +284,12 @@ export function ScheduleCancelModal({ event, busy, runAction, report, patchTeach
         );
       },
       request: async () => {
-        const res = await fetch(`/api/cabinet/teacher/lessons/${lessonId}/cancel`, {
+        const res = await fetch(scheduleTeacherApiPath(scheduleApi, `/lessons/${lessonId}/cancel`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason, reasonNote: reasonText }),
+          body: JSON.stringify(
+            withScheduleTeacherPayload(scheduleApi, { reason, reasonNote: reasonText }),
+          ),
         });
         if (!res.ok) {
           patchTeacher?.((prev) =>

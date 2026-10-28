@@ -42,6 +42,7 @@ async function assertEligibleForCourseStaffAssignment(
 export async function ensureStaffExtraForCourseAssignment(
   admin: SupabaseClient,
   staffTelegramId: number,
+  options?: { promote?: boolean },
 ): Promise<void> {
   const { data, error } = await admin
     .from('bot_members')
@@ -51,6 +52,11 @@ export async function ensureStaffExtraForCourseAssignment(
   if (error) throw error;
   if (!data) throw new Error(`Участник ${staffTelegramId} не найден в боте.`);
   const primary = normalizeMemberRole(String(data.role ?? 'guest'));
+  if ((primary === 'guest' || primary === 'student') && options?.promote) {
+    // Админ назначает любого человека: он автоматически становится staff.
+    await addMemberExtraRole(admin, staffTelegramId, 'staff');
+    return;
+  }
   if (primary === 'guest' || primary === 'student') {
     throw new Error('Нельзя назначить на курс: пользователь guest/student. Сначала teacher/admin или staff.');
   }
@@ -68,7 +74,13 @@ export async function upsertCourseStaffAssignment(
   courseId: number,
   staffTelegramId: number,
   role: CourseStaffRole,
+  options?: { promote?: boolean },
 ): Promise<void> {
+  if (options?.promote && (role === 'curator' || role === 'check')) {
+    // staff + роль по курсу (curator / check) — дополнительными ролями.
+    await ensureStaffExtraForCourseAssignment(admin, staffTelegramId, { promote: true });
+    await addMemberExtraRole(admin, staffTelegramId, role);
+  }
   await assertEligibleForCourseStaffAssignment(admin, staffTelegramId, role);
   if (role === 'curator' || role === 'check') {
     await ensureStaffExtraForCourseAssignment(admin, staffTelegramId);
@@ -138,6 +150,7 @@ export async function syncCourseStaffIds(
   courseId: number,
   ids: CourseStaffSyncIds,
   courseLabel = `курс #${courseId}`,
+  options?: { promote?: boolean },
 ): Promise<string[]> {
   const problems: string[] = [];
   const roleLabels = { curator: 'куратор', check: 'проверяющий ДЗ' } as const;
@@ -155,7 +168,7 @@ export async function syncCourseStaffIds(
         );
         continue;
       }
-      await upsertCourseStaffAssignment(admin, courseId, id, role);
+      await upsertCourseStaffAssignment(admin, courseId, id, role, options);
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       problems.push(`${courseLabel}: ${roleLabels[role]} ${id} — ${reason}`);

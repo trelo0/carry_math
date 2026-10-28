@@ -98,6 +98,7 @@ export async function handleHubAction(
   data: string,
   message: AdminMessage,
   telegramId: number,
+  callbackQueryId?: string,
 ): Promise<boolean> {
   const deliver = editDeliver(message);
 
@@ -194,7 +195,7 @@ export async function handleHubAction(
     return handleAuditHubAction(admin, data, message, telegramId);
   }
   if (isCommsHubAction(data)) {
-    return handleCommsHubAction(admin, data, message, telegramId);
+    return handleCommsHubAction(admin, data, message, telegramId, callbackQueryId);
   }
   if (data === 'ah:go:education') {
     await renderEducationMenu(deliver);

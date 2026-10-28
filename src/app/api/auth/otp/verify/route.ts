@@ -8,6 +8,7 @@ import { verifyOtpHash } from '@/lib/otp';
 import { getIp, rateLimit } from '@/lib/ratelimit';
 import { supabaseCookieOptions } from '@/lib/supabase/cookieOptions';
 import { resolveCabinetEntryPathForPhone } from '@/lib/cabinet-auth';
+import { handleCabinetAuthActivity } from '@/lib/bot/admin/user-activity-events';
 
 const MAX_ATTEMPTS = 5; // попыток на один код, дальше код сгорает
 
@@ -126,6 +127,12 @@ export async function POST(request: NextRequest) {
 
     // Связь user_id → phone → telegram_id: проставляем user_id в привязке.
     await admin.from('telegram_links').update({ user_id: userId }).eq('phone', phone);
+
+    void handleCabinetAuthActivity(admin, {
+      userId,
+      phone,
+      authDedupeRef: `otp:${matched.id}`,
+    }).catch((err) => console.error('[otp verify] auth activity notify failed:', err));
 
     return response;
   } catch (error) {

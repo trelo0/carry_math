@@ -276,7 +276,10 @@ export function renderCuratorStudentCard(
   return {
     text: lines.join('\n'),
     keyboard: {
-      inline_keyboard: [[back('⬅️ К списку', `c:stu:${courseId}`)]],
+      inline_keyboard: [
+        [{ text: '✉️ Связаться с учеником', callback_data: `c:msg:w:${student.telegramId}` }],
+        [back('⬅️ К списку', `c:stu:${courseId}`)],
+      ],
     },
   };
 }

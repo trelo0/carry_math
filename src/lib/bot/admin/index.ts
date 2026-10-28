@@ -209,13 +209,41 @@ export async function handleAdminCallback(
     await acknowledge('Недостаточно прав.', true);
     return true;
   }
-  await acknowledge();
+
+  const adminTopicOpen = data.match(/^ah:msg:w:(\d+)$/);
+  if (adminTopicOpen && callbackQueryId) {
+    const studentTelegramId = Number(adminTopicOpen[1]);
+    if (Number.isFinite(studentTelegramId)) {
+      const { openStaffDmTopicAndNavigate } = await import('@/lib/bot/staff/staff-dm-topic-navigate');
+      const opened = await openStaffDmTopicAndNavigate(admin, {
+        staffTelegramId: telegramId,
+        studentTelegramId,
+        staffRole: 'admin',
+        callbackQueryId,
+        notifyChatId: message.chatId,
+      });
+      if (!opened.ok) {
+        await acknowledge(opened.error ?? 'Не удалось открыть тему.', true);
+      }
+      return true;
+    }
+  }
+
+  const leadTopic =
+    data.startsWith('al:rp:') &&
+    !data.startsWith('al:rp:stop:') &&
+    callbackQueryId &&
+    isLeads;
+  const guestTopicReply = data.startsWith('ah:gin:r:') && callbackQueryId && isHub;
+  if (!leadTopic && !guestTopicReply && !(adminTopicOpen && callbackQueryId)) {
+    await acknowledge();
+  }
 
   try {
-    if (isHub) return await handleHubAction(admin, data, message, telegramId);
+    if (isHub) return await handleHubAction(admin, data, message, telegramId, callbackQueryId);
     if (isReminder) return await handleReminderAction(admin, data, message, telegramId);
     if (isTemplate) return await handleTemplateAction(admin, data, message, telegramId);
-    if (isLeads) return await handleLeadsAction(admin, data, message, telegramId);
+    if (isLeads) return await handleLeadsAction(admin, data, message, telegramId, callbackQueryId);
     if (isFinance) return await handleFinanceAction(admin, data, message, telegramId);
     if (isPurchases) return await handlePurchasesAction(admin, data, message, telegramId);
     if (isPackages) return await handlePackagesAction(admin, data, message, telegramId);

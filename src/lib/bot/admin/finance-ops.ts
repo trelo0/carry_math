@@ -167,7 +167,7 @@ async function renderDuePaymentDetail(
   ];
   const keyboard: InlineButton[][] = [
     [{ text: '🔗 Отправить ссылку на оплату', callback_data: `af:due:send:${payment.id}:${page}` }],
-    [{ text: '💬 Написать клиенту', callback_data: `admin:msg:w:${payment.telegram_id}` }],
+    [{ text: '💬 Связаться', callback_data: `ah:msg:w:${payment.telegram_id}` }],
     [{ text: '👤 Открыть клиента', callback_data: `admin:user:${payment.telegram_id}::` }],
     [{ text: '◀️ К списку', callback_data: `af:due:${page}` }],
     [homeButton()],

@@ -277,11 +277,17 @@ export async function loadCuratorCourseStudents(
       const overdueAt = (p as { homework_overdue_at?: string | null }).homework_overdue_at;
       const deadlineAt = (p as { homework_deadline_at?: string | null }).homework_deadline_at;
       const hwStatus = p.homework_status;
-      if (
+      const deadlineMs = deadlineAt && Number.isFinite(Date.parse(deadlineAt)) ? Date.parse(deadlineAt) : null;
+      const submittedMs = Date.parse(String(p.homework_submitted_at ?? ''));
+      const submittedLate =
+        (hwStatus === 'submitted' || hwStatus === 'approved') &&
+        deadlineMs != null &&
+        Number.isFinite(submittedMs) &&
+        submittedMs > deadlineMs;
+      const stillOverdue =
         (hwStatus === 'pending' || hwStatus === 'rejected') &&
-        (overdueAt ||
-          (deadlineAt && Number.isFinite(Date.parse(deadlineAt)) && Date.parse(deadlineAt) <= nowMs))
-      ) {
+        (Boolean(overdueAt) || (deadlineMs != null && deadlineMs <= nowMs));
+      if (overdueAt || stillOverdue || submittedLate) {
         overdueHomeworkCount += 1;
       }
       if (hwStatus === 'submitted') {

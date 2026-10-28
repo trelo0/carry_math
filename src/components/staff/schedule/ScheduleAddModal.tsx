@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useScheduleFetch } from './schedule-api-react';
 import type { TeacherCabinetData, TeacherDaySlot } from '@/lib/teacher/cabinet-data';
 import type { ScheduleEvent } from '@/lib/teacher/schedule-types';
 import { formatScheduleApiError, readJson } from '@/lib/teacher/schedule-api-errors';
@@ -31,6 +32,11 @@ import {
   workBandsLabel,
 } from '@/lib/teacher/schedule-reference-utils';
 import type { ActionFeedback, StaffRunAction } from '@/lib/staff/run-action';
+import type { ScheduleTeacherApiContext } from '@/lib/teacher/schedule-api-context';
+import {
+  scheduleTeacherApiPath,
+  withScheduleTeacherPayload,
+} from '@/lib/teacher/schedule-api-context';
 import CabinetFeedback from '@/components/ui/CabinetFeedback';
 import { IconXRef } from './ScheduleRefIcons';
 import FreeTimePicker from './FreeTimePicker';
@@ -49,6 +55,7 @@ type Props = {
   patchTeacher?: (patch: (prev: TeacherCabinetData) => TeacherCabinetData) => void;
   onClose: () => void;
   runAction: StaffRunAction;
+  scheduleApi?: ScheduleTeacherApiContext;
 };
 
 const WEEK_OPTIONS = [4, 8, 12, 24];
@@ -67,7 +74,10 @@ export default function ScheduleAddModal({
   patchTeacher,
   onClose,
   runAction,
+  scheduleApi,
 }: Props) {
+  const sfetch = useScheduleFetch();
+  const allowSeries = true;
   const [kind, setKind] = useState<'individual' | 'group'>(initialKind);
   const [slotDate, setSlotDate] = useState(() => dateKey(initialDate ?? new Date()));
   const [startTime, setStartTime] = useState(initialStartTime ?? '10:00');
@@ -169,18 +179,20 @@ export default function ScheduleAddModal({
           );
         },
         request: async () => {
-          const res = await fetch('/api/cabinet/teacher/schedule/series', {
+          const res = await sfetch('/api/cabinet/teacher/schedule/series', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              kind,
-              scheduleStudentId: rosterStudent?.id,
-              participantName: kind === 'group' ? participantName || undefined : undefined,
-              topic: topic.trim() || undefined,
-              lessonPlan: comment.trim() || undefined,
-              occurrences,
-              endTime,
-            }),
+            body: JSON.stringify(
+              withScheduleTeacherPayload(scheduleApi, {
+                kind,
+                scheduleStudentId: rosterStudent?.id,
+                participantName: kind === 'group' ? participantName || undefined : undefined,
+                topic: topic.trim() || undefined,
+                lessonPlan: comment.trim() || undefined,
+                occurrences,
+                endTime,
+              }),
+            ),
           });
           const body = await readJson<{
             error: string;
@@ -233,10 +245,10 @@ export default function ScheduleAddModal({
           participantName: participantName || undefined,
           scheduleStudentId: rosterStudent?.id,
         };
-        const res = await fetch('/api/cabinet/teacher/schedule', {
+        const res = await fetch(scheduleTeacherApiPath(scheduleApi, '/schedule'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(withScheduleTeacherPayload(scheduleApi, payload)),
         });
         const body = await readJson<{ error: string; lessonId: number; lessonIds: number[] }>(res);
         if (!res.ok) {
@@ -360,11 +372,13 @@ export default function ScheduleAddModal({
             />
           </label>
 
-          <label className="sr-check">
-            <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
-            <span>Повторять каждую неделю ({WEEKDAYS_FULL[weekdayIndex(day)]})</span>
-          </label>
-          {repeat ? (
+          {allowSeries ? (
+            <label className="sr-check">
+              <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
+              <span>Повторять каждую неделю ({WEEKDAYS_FULL[weekdayIndex(day)]})</span>
+            </label>
+          ) : null}
+          {allowSeries && repeat ? (
             <div className="sr-chips" aria-label="Количество недель">
               {WEEK_OPTIONS.map((count) => (
                 <button

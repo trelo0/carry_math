@@ -20,6 +20,7 @@
     "review:homework": "npx tsx scripts/review-homework.ts",
     "deduct:life": "npx tsx scripts/deduct-life.ts",
     "grant:life": "npx tsx scripts/grant-life.ts",
+    "gen:sanity-forms": "npx tsx scripts/gen-sanity-forms.ts",
     "test:admin": "npx tsx scripts/test-admin-all.ts",
     "migrate:staff": "npx tsx scripts/migrate-staff-roles.ts",
     "migrate:staff:dry": "npx tsx scripts/migrate-staff-roles.ts --dry-run",

@@ -152,6 +152,14 @@ export async function handleStaffWorkspaceMenuMessage(
       [CHECK_BOT_MENU_LABELS.messages]: 'msg' as const,
       [CHECK_BOT_MENU_LABELS.library]: 'lib' as const,
     };
+    if (text === CHECK_BOT_MENU_LABELS.messages) {
+      const { staffDmTopicsEnabled } = await import('./dm-topics');
+      if (staffDmTopicsEnabled()) {
+        const { checkCourseMessagesTopicsHint } = await import('./curator-dm-topic-open');
+        await sendAdminMessage(chatId, checkCourseMessagesTopicsHint(), { inline_keyboard: [] });
+        return true;
+      }
+    }
     const section = sectionMap[text as keyof typeof sectionMap];
     if (section) {
       await sendCheckSectionForCourse(admin, chatId, telegramId, section, ws.courseId);

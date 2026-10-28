@@ -6,6 +6,8 @@ import { siteLoginRedirectPath } from '@/lib/auth-login-redirect';
 import { resolveCabinetLoginToken } from '@/lib/cabinet-login';
 import { preparePhoneAuthSignIn } from '@/lib/auth-user-by-phone';
 import { supabaseCookieOptions } from '@/lib/supabase/cookieOptions';
+import { handleCabinetAuthActivity } from '@/lib/bot/admin/user-activity-events';
+import { createHash } from 'crypto';
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token')?.trim();
@@ -61,6 +63,14 @@ export async function GET(request: NextRequest) {
     }
 
     await admin.from('telegram_links').update({ user_id: userId }).eq('phone', phone);
+
+    const tokenRef = createHash('sha256').update(token).digest('hex').slice(0, 32);
+    void handleCabinetAuthActivity(admin, {
+      userId,
+      phone,
+      authDedupeRef: `magic:${tokenRef}`,
+    }).catch((err) => console.error('[auth/cabinet] auth activity notify failed:', err));
+
     return response;
   } catch (error) {
     console.error('[auth/cabinet]', error);
